@@ -611,7 +611,7 @@
   font-weight: 450;
   letter-spacing: -0.03em;
   line-height: 1;
-  padding: 0 0 7px;
+  padding: 0 0 2px;
   white-space: nowrap;
   transition: color 180ms ease;
 }
@@ -2575,7 +2575,7 @@
 
   .tabButton {
     font-size: calc(15px * var(--text-scale));
-    padding-bottom: 7px;
+    padding-bottom: 2px;
   }
 
   .rangeBar {
@@ -3179,18 +3179,20 @@
 
 .filterTrigger {
   display: inline-flex;
-  min-height: 40px;
+  height: 36px;
+  min-height: 36px;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   border: 1px solid var(--dash-border-focus);
   border-radius: 999px;
   background: var(--dash-surface);
   color: var(--dash-text-heading);
   cursor: pointer;
-  font-size: calc(15px * var(--text-scale));
-  font-weight: 520;
+  font-size: calc(14px * var(--text-scale));
+  font-weight: 590;
   letter-spacing: -0.035em;
-  padding: 0 16px 0 12px;
+  line-height: 1;
+  padding: 0 13px 0 11px;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
@@ -3206,9 +3208,9 @@
 }
 
 .filterTrigger svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 2.1;
+  width: 17px;
+  height: 17px;
+  stroke-width: 2;
 }
 
 .filterResultCount {
