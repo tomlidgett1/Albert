@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type SVGProps } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import styles from "./dash.module.css";
 
 type IconName =
@@ -57,41 +57,10 @@ const pageTabs: Record<string, string[]> = {
 
 const timeRanges = ["24h", "7d", "30d", "90d"];
 
-type ConnectionId = "lightspeed" | "xero" | "deputy";
-type ConnectionState = "available" | "connected";
-type ConnectionStep = "review" | "authorising" | "success";
+type LightspeedStatus = "idle" | "connecting" | "connected";
 
-const connectionOptions = [
-  {
-    id: "lightspeed",
-    name: "Lightspeed",
-    provider: "RETAIL OS",
-    mark: "L",
-    accent: "lightspeed",
-    description: "Bring sales, products, and store performance into Albert.",
-    detail: "Sales · inventory · products",
-  },
-  {
-    id: "xero",
-    name: "Xero",
-    provider: "ACCOUNTING",
-    mark: "X",
-    accent: "xero",
-    description: "Give Albert a clearer view of cash flow and business health.",
-    detail: "Invoices · bills · cash flow",
-  },
-  {
-    id: "deputy",
-    name: "Deputy",
-    provider: "WORKFORCE",
-    mark: "D",
-    accent: "deputy",
-    description: "Connect people, shifts, and labour signals to the bigger picture.",
-    detail: "People · rosters · timesheets",
-  },
-] as const;
-
-const connectionStepLabels = ["Review", "Authorise", "Ready"] as const;
+const connectionFilterOptions = ["Model", "Date", "Metadata", "Tool"] as const;
+type ConnectionFilter = (typeof connectionFilterOptions)[number];
 
 type Theme = "system" | "light" | "dark";
 
@@ -249,13 +218,9 @@ export default function DashPage() {
     getThemeSnapshot,
     getServerThemeSnapshot,
   );
-  const [connectionStates, setConnectionStates] = useState<Record<ConnectionId, ConnectionState>>({
-    lightspeed: "available",
-    xero: "available",
-    deputy: "available",
-  });
-  const [selectedConnection, setSelectedConnection] = useState<ConnectionId | null>(null);
-  const [connectionStep, setConnectionStep] = useState<ConnectionStep>("review");
+  const [lightspeedStatus, setLightspeedStatus] = useState<LightspeedStatus>("idle");
+  const [connectionFilterOpen, setConnectionFilterOpen] = useState(false);
+  const [connectionFilters, setConnectionFilters] = useState<ConnectionFilter[]>([]);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -269,6 +234,7 @@ export default function DashPage() {
   const tabBarRef = useRef<HTMLDivElement>(null);
   const rangeBarRef = useRef<HTMLDivElement>(null);
   const accountAreaRef = useRef<HTMLDivElement>(null);
+  const connectionFilterRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const albertPopupRef = useRef<HTMLElement>(null);
   const popupCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -278,43 +244,15 @@ export default function DashPage() {
     [query],
   );
   const tabs = pageTabs[activeItem] ?? ["Overview"];
-  const selectedConnectionOption = connectionOptions.find((option) => option.id === selectedConnection);
-  const connectedConnectionCount = connectionOptions.filter(
-    (option) => connectionStates[option.id] === "connected",
-  ).length;
-  const connectionStepIndex = connectionStep === "review" ? 0 : connectionStep === "authorising" ? 1 : 2;
-  const isConnectionsAddView = activeItem === "Connections" && activeTab === "Add connection";
-
   useEffect(() => {
-    if (!selectedConnection || connectionStep !== "authorising") return;
+    if (lightspeedStatus !== "connecting") return;
 
-    const connectionId = selectedConnection;
     const connectionTimer = window.setTimeout(() => {
-      setConnectionStates((states) => ({ ...states, [connectionId]: "connected" }));
-      setConnectionStep("success");
-    }, 1450);
+      setLightspeedStatus("connected");
+    }, 1700);
 
     return () => window.clearTimeout(connectionTimer);
-  }, [connectionStep, selectedConnection]);
-
-  useEffect(() => {
-    if (!selectedConnection) return;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedConnection(null);
-        setConnectionStep("review");
-      }
-    };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", closeOnEscape);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [selectedConnection]);
+  }, [lightspeedStatus]);
 
   useLayoutEffect(() => {
     const updateIndicator = (
@@ -361,6 +299,26 @@ export default function DashPage() {
       document.removeEventListener("keydown", closeMenuOnEscape);
     };
   }, [accountOpen]);
+
+  useEffect(() => {
+    if (!connectionFilterOpen) return;
+
+    const closeFilterOnOutsidePress = (event: PointerEvent) => {
+      if (!connectionFilterRef.current?.contains(event.target as Node)) {
+        setConnectionFilterOpen(false);
+      }
+    };
+    const closeFilterOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConnectionFilterOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeFilterOnOutsidePress);
+    document.addEventListener("keydown", closeFilterOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeFilterOnOutsidePress);
+      document.removeEventListener("keydown", closeFilterOnEscape);
+    };
+  }, [connectionFilterOpen]);
 
   useEffect(() => {
     if (!albertPopupOpen) {
@@ -436,18 +394,14 @@ export default function DashPage() {
     setAlbertPopupOpen(true);
   };
 
-  const openConnectionFlow = (connectionId: ConnectionId) => {
-    setSelectedConnection(connectionId);
-    setConnectionStep(connectionStates[connectionId] === "connected" ? "success" : "review");
+  const startLightspeedConnection = () => {
+    if (lightspeedStatus === "idle") setLightspeedStatus("connecting");
   };
 
-  const closeConnectionFlow = () => {
-    setSelectedConnection(null);
-    setConnectionStep("review");
-  };
-
-  const startConnectionFlow = () => {
-    setConnectionStep("authorising");
+  const toggleConnectionFilter = (filter: ConnectionFilter) => {
+    setConnectionFilters((filters) => (
+      filters.includes(filter) ? filters.filter((item) => item !== filter) : [...filters, filter]
+    ));
   };
 
   return (
@@ -724,129 +678,116 @@ export default function DashPage() {
           </div>
         ) : activeItem === "Connections" ? (
           <div className={styles.connectionsWorkspace}>
-            <div className={styles.connectionsHero}>
-              <div className={styles.connectionsHeroCopy}>
-                <p className={styles.contentEyebrow}>
-                  {isConnectionsAddView ? "ADD A CONNECTION" : "YOUR CONNECTED SYSTEMS"}
-                </p>
-                <h2>
-                  {isConnectionsAddView
-                    ? "Bring a system into focus."
-                    : "Make every tool part of the conversation."}
-                </h2>
-                <p>
-                  Connect the systems your team already trusts. Albert keeps the handoff
-                  clear, scoped, and easy to review.
-                </p>
+            <div className={styles.connectionsFilterRow}>
+              <div className={styles.filterControl} ref={connectionFilterRef}>
+                <button
+                  className={styles.filterTrigger}
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={connectionFilterOpen}
+                  onClick={() => setConnectionFilterOpen((open) => !open)}
+                >
+                  <Icon name="plus" />
+                  <span>Add filter</span>
+                </button>
+                {connectionFilterOpen ? (
+                  <div className={styles.filterMenu} role="menu" aria-label="Filter connections">
+                    {connectionFilterOptions.map((filter) => {
+                      const isSelected = connectionFilters.includes(filter);
+                      return (
+                        <button
+                          key={filter}
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={isSelected}
+                          onClick={() => toggleConnectionFilter(filter)}
+                        >
+                          <span>{filter}</span>
+                          <span className={styles.filterOptionCheck} aria-hidden="true">
+                            {isSelected ? "✓" : ""}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
 
-              <div className={styles.connectionSummaryCard} aria-label={`${connectedConnectionCount} of 3 connections active`}>
-                <div className={styles.connectionSummaryOrbit} aria-hidden="true">
-                  <span className={styles.connectionSummaryCore}>A</span>
-                  <i className={styles.connectionSummaryNodeOne} />
-                  <i className={styles.connectionSummaryNodeTwo} />
-                  <i className={styles.connectionSummaryNodeThree} />
-                </div>
-                <div>
-                  <strong>{connectedConnectionCount} / 3</strong>
-                  <span>systems connected</span>
-                </div>
-                <small>UI preview · no credentials stored</small>
-              </div>
-            </div>
-
-            <div className={styles.connectionsSectionHeader}>
-              <div>
-                <p className={styles.contentEyebrow}>AVAILABLE NOW</p>
-                <h3>{isConnectionsAddView ? "Choose a system to connect." : "Your business, in context."}</h3>
-              </div>
-              <span className={styles.connectionsSectionMeta}>3 connector previews</span>
-            </div>
-
-            <div className={styles.connectionsGrid}>
-              {connectionOptions.map((option, index) => {
-                const isConnected = connectionStates[option.id] === "connected";
-                return (
-                  <article
-                    className={`${styles.connectionCard} ${styles[`connectionCard${option.accent}`]}`}
-                    key={option.id}
-                    style={{ "--connection-order": index } as CSSProperties}
+              {connectionFilters.map((filter) => (
+                <span className={styles.activeFilterChip} key={filter}>
+                  {filter}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${filter} filter`}
+                    onClick={() => toggleConnectionFilter(filter)}
                   >
-                    <div className={styles.connectionCardGlow} aria-hidden="true" />
-                    <div className={styles.connectionCardTopline}>
-                      <span className={`${styles.connectionMark} ${styles[`connectionMark${option.accent}`]}`}>
-                        {option.mark}
-                      </span>
-                      <span className={`${styles.connectionStatus} ${isConnected ? styles.connectionStatusConnected : ""}`}>
-                        <i aria-hidden="true" />
-                        {isConnected ? "Connected" : "Ready to connect"}
-                      </span>
-                    </div>
-
-                    <div className={styles.connectionCardCopy}>
-                      <p>{option.provider}</p>
-                      <h3>{option.name}</h3>
-                      <span>{option.description}</span>
-                    </div>
-
-                    <div className={styles.connectionDetail}>
-                      <span className={styles.connectionDetailDot} aria-hidden="true" />
-                      {option.detail}
-                    </div>
-
-                    <div className={styles.connectionCardFooter}>
-                      <span className={styles.connectionMode}>{isConnected ? "Synced just now" : "OAuth demo"}</span>
-                      <button type="button" onClick={() => openConnectionFlow(option.id)}>
-                        {isConnected ? "View flow" : "Connect"}
-                        <Icon name="arrowUpRight" />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+                    <Icon name="close" />
+                  </button>
+                </span>
+              ))}
+              <span className={styles.filterResultCount}>3 results</span>
             </div>
 
-            <div className={styles.connectionExperience}>
-              <div className={styles.connectionExperienceCopy}>
-                <p className={styles.contentEyebrow}>HOW IT WORKS</p>
-                <h3>One secure handoff. A much clearer picture.</h3>
-                <ol>
-                  <li>
-                    <span>01</span>
-                    <div><strong>Choose a system</strong><small>Pick the source you want Albert to understand.</small></div>
-                  </li>
-                  <li>
-                    <span>02</span>
-                    <div><strong>Review the scope</strong><small>See exactly what the connection would make available.</small></div>
-                  </li>
-                  <li>
-                    <span>03</span>
-                    <div><strong>Start with context</strong><small>Albert can turn the signal into a useful next step.</small></div>
-                  </li>
-                </ol>
+            <article
+              className={`${styles.connectionFocusCard} ${lightspeedStatus === "connecting" ? styles.connectionFocusCardConnecting : ""} ${lightspeedStatus === "connected" ? styles.connectionFocusCardConnected : ""}`}
+            >
+              <div className={styles.connectionFocusGlow} aria-hidden="true" />
+              <div className={styles.connectionFocusHeader}>
+                <span className={styles.connectionFocusMark}>L</span>
+                <div>
+                  <p className={styles.contentEyebrow}>RETAIL OS</p>
+                  <h2>Lightspeed</h2>
+                </div>
+                <span className={styles.connectionFocusPill}>
+                  {lightspeedStatus === "connected" ? "CONNECTED" : "UI PREVIEW"}
+                </span>
               </div>
 
-              <div className={styles.connectionPreview} aria-label="Connection flow preview">
-                <div className={styles.connectionPreviewTopline}>
-                  <span>CONNECTION PREVIEW</span>
-                  <span><i aria-hidden="true" />UI ONLY</span>
+              <p className={styles.connectionFocusLead}>
+                Connect Lightspeed and let Albert see the signal behind your sales, products, and stores.
+              </p>
+
+              <div
+                className={styles.connectionFocusAnimation}
+                aria-live="polite"
+                aria-label={lightspeedStatus === "connecting" ? "Connecting to Lightspeed" : undefined}
+              >
+                <div className={styles.connectionFocusOrbit} aria-hidden="true">
+                  <span>L</span>
+                  <i className={styles.connectionFocusSatelliteOne} />
+                  <i className={styles.connectionFocusSatelliteTwo} />
+                  <i className={styles.connectionFocusSatelliteThree} />
                 </div>
-                <div className={styles.connectionPreviewFlow}>
-                  <div className={`${styles.connectionPreviewNode} ${styles.connectionPreviewAlbert}`}>
-                    <span>A</span>
-                    <div><strong>Albert</strong><small>asks for context</small></div>
-                  </div>
-                  <div className={styles.connectionPreviewLine} aria-hidden="true">
-                    <i /><span>secure OAuth</span><i />
-                  </div>
-                  <div className={`${styles.connectionPreviewNode} ${styles.connectionPreviewSystem}`}>
-                    <span>◎</span>
-                    <div><strong>Your system</strong><small>keeps access scoped</small></div>
-                  </div>
+                <div className={styles.connectionFocusBeam} aria-hidden="true"><i /><i /><i /></div>
+                <div className={styles.connectionFocusState}>
+                  {lightspeedStatus === "idle" ? "Ready when you are" : null}
+                  {lightspeedStatus === "connecting" ? "Connecting securely…" : null}
+                  {lightspeedStatus === "connected" ? "Lightspeed is connected" : null}
                 </div>
-                <p>Nothing is written back in this preview.</p>
               </div>
-            </div>
+
+              <div className={styles.connectionFocusFooter}>
+                <div className={styles.connectionFocusScope}>
+                  <span>Sales</span>
+                  <span>Inventory</span>
+                  <span>Products</span>
+                </div>
+                <button
+                  className={styles.connectionFocusButton}
+                  type="button"
+                  disabled={lightspeedStatus !== "idle"}
+                  onClick={startLightspeedConnection}
+                >
+                  {lightspeedStatus === "idle" ? "Connect Lightspeed" : null}
+                  {lightspeedStatus === "connecting" ? "Connecting" : null}
+                  {lightspeedStatus === "connected" ? "Connected" : null}
+                  {lightspeedStatus === "connecting" ? <span className={styles.connectionButtonDots} aria-hidden="true">...</span> : null}
+                  {lightspeedStatus === "connected" ? <span className={styles.connectionButtonCheck} aria-hidden="true">✓</span> : null}
+                  {lightspeedStatus === "idle" ? <Icon name="arrowUpRight" /> : null}
+                </button>
+              </div>
+              <p className={styles.connectionFocusNote}>UI ONLY · NO CREDENTIALS STORED</p>
+            </article>
           </div>
         ) : (
           <div className={styles.contentBody}>
@@ -858,112 +799,6 @@ export default function DashPage() {
           </div>
         )}
       </section>
-
-      {selectedConnectionOption ? (
-        <div
-          className={styles.connectionModalBackdrop}
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeConnectionFlow();
-          }}
-        >
-          <section
-            className={styles.connectionModal}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="connection-modal-title"
-            aria-describedby="connection-modal-description"
-          >
-            <button
-              className={styles.connectionModalClose}
-              type="button"
-              aria-label="Close connection flow"
-              onClick={closeConnectionFlow}
-            >
-              <Icon name="close" />
-            </button>
-
-            <div className={styles.connectionModalHeader}>
-              <span className={`${styles.connectionMark} ${styles[`connectionMark${selectedConnectionOption.accent}`]}`}>
-                {selectedConnectionOption.mark}
-              </span>
-              <div>
-                <p>CONNECTION PREVIEW</p>
-                <h2 id="connection-modal-title">Connect {selectedConnectionOption.name}</h2>
-              </div>
-            </div>
-
-            <div className={styles.connectionProgress} aria-label="Connection setup progress">
-              {connectionStepLabels.map((label, index) => (
-                <div
-                  className={`${styles.connectionProgressStep} ${index <= connectionStepIndex ? styles.connectionProgressStepActive : ""}`}
-                  key={label}
-                >
-                  <span>{index < connectionStepIndex ? "✓" : index + 1}</span>
-                  <small>{label}</small>
-                </div>
-              ))}
-              <i
-                className={styles.connectionProgressLine}
-                style={{ "--connection-progress": `${connectionStepIndex * 50}%` } as CSSProperties}
-                aria-hidden="true"
-              />
-            </div>
-
-            <div id="connection-modal-description" className={styles.connectionModalBody} aria-live="polite">
-              {connectionStep === "review" ? (
-                <>
-                  <div className={styles.connectionReviewBanner}>
-                    <span className={styles.connectionReviewIcon} aria-hidden="true">↗</span>
-                    <div><strong>Ready for a secure handoff</strong><small>This is a visual preview. No account access is requested.</small></div>
-                  </div>
-                  <p className={styles.connectionModalLead}>
-                    In the real flow, Albert would open {selectedConnectionOption.name} in a new window so you can review and approve access there.
-                  </p>
-                  <ul className={styles.connectionScopeList}>
-                    {selectedConnectionOption.detail.split(" · ").map((scope) => (
-                      <li key={scope}><span aria-hidden="true">✓</span>{scope}</li>
-                    ))}
-                  </ul>
-                  <div className={styles.connectionModalActions}>
-                    <button className={styles.connectionModalSecondary} type="button" onClick={closeConnectionFlow}>Not now</button>
-                    <button className={styles.connectionModalPrimary} type="button" onClick={startConnectionFlow}>
-                      Continue to {selectedConnectionOption.name}
-                      <Icon name="arrowUpRight" />
-                    </button>
-                  </div>
-                </>
-              ) : connectionStep === "authorising" ? (
-                <div className={styles.connectionAuthorising}>
-                  <div className={`${styles.connectionLoader} ${styles[`connectionLoader${selectedConnectionOption.accent}`]}`} aria-hidden="true">
-                    <span>{selectedConnectionOption.mark}</span>
-                    <i /><i /><i />
-                  </div>
-                  <p className={styles.connectionModalEyebrow}>OPENING SECURE HANDOFF</p>
-                  <h3>Waiting for {selectedConnectionOption.name}…</h3>
-                  <p>Preparing the approval screen you would see next.</p>
-                  <div className={styles.connectionHandoffStatus}>
-                    <span className={styles.connectionHandoffPulse} aria-hidden="true" />
-                    Simulating OAuth authorisation
-                  </div>
-                </div>
-              ) : (
-                <div className={styles.connectionSuccess}>
-                  <div className={styles.connectionSuccessMark} aria-hidden="true">✓</div>
-                  <p className={styles.connectionModalEyebrow}>CONNECTION READY</p>
-                  <h3>{selectedConnectionOption.name} is connected.</h3>
-                  <p>Albert now has a clear path to the signals that matter. You can change the scope at any time.</p>
-                  <div className={styles.connectionSuccessDetails}>
-                    <span><i aria-hidden="true" />Scoped access</span>
-                    <span><i aria-hidden="true" />Ready for Albert</span>
-                  </div>
-                  <button className={styles.connectionModalPrimary} type="button" onClick={closeConnectionFlow}>Done</button>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
 
       {albertPopupOpen ? (
         <div
