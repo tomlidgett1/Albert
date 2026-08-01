@@ -421,7 +421,7 @@
 .accountWorkspace {
   display: flex;
   width: calc(100% - 12px);
-  min-height: 62px;
+  min-height: 52px;
   align-items: center;
   gap: 12px;
   margin: 0 6px;
@@ -446,14 +446,14 @@
 }
 
 .accountLinks {
-  padding: 5px 6px;
+  padding: 4px 6px;
 }
 
 .accountLinks button,
 .logoutButton {
   display: flex;
   width: 100%;
-  min-height: 42px;
+  min-height: 36px;
   align-items: center;
   gap: 14px;
   border: 0;
@@ -473,8 +473,8 @@
 
 .accountLinks svg,
 .logoutButton svg {
-  width: 24px;
-  height: 24px;
+  width: 21px;
+  height: 21px;
   flex: 0 0 auto;
 }
 
@@ -485,7 +485,7 @@
 }
 
 .logoutButton {
-  margin: 5px 6px 5px;
+  margin: 4px 6px;
   width: calc(100% - 12px);
 }
 
