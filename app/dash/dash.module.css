@@ -44,6 +44,10 @@
   --dash-popup-text: light-dark(#1b1c1e, #f2f4f6);
   --dash-popup-muted: light-dark(#66686e, #a8acb5);
   --dash-popup-border: light-dark(rgba(36, 37, 40, 0.1), rgba(230, 233, 240, 0.15));
+  --dash-albert-icon: light-dark(#d2ff65, #52691a);
+  --dash-albert-hover: light-dark(#45474b, #dfe3e9);
+  --dash-albert-hover-text: light-dark(#ffffff, #151619);
+  --dash-albert-hover-shadow: light-dark(rgba(30, 31, 34, 0.14), rgba(0, 0, 0, 0.28));
   --dash-success-surface: light-dark(#eaf7ee, #1c3025);
   --dash-success-text: light-dark(#32704b, #9ce8b4);
   --dash-preview-surface: light-dark(#f4f6ff, #20242e);
@@ -141,7 +145,7 @@
 
 .searchBox {
   display: flex;
-  height: 42px;
+  height: 36px;
   align-items: center;
   gap: 11px;
   border: 1px solid var(--dash-border-input);
@@ -665,16 +669,21 @@
 }
 
 .albertTrigger:hover {
-  border-color: var(--dash-contrast-hover);
-  background: var(--dash-contrast-hover);
-  box-shadow: 0 5px 13px rgba(30, 31, 34, 0.14);
+  border-color: var(--dash-albert-hover);
+  background: var(--dash-albert-hover);
+  color: var(--dash-albert-hover-text);
+  box-shadow: 0 5px 13px var(--dash-albert-hover-shadow);
   transform: translateY(-1px);
+}
+
+.albertTrigger:active {
+  transform: translateY(0) scale(0.985);
 }
 
 .albertTrigger svg {
   width: 17px;
   height: 17px;
-  color: #d2ff65;
+  color: var(--dash-albert-icon);
 }
 
 .rangeButton {
