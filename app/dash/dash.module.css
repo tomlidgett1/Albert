@@ -126,7 +126,7 @@
   flex: 0 0 auto;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
@@ -150,7 +150,7 @@
   align-items: center;
   gap: 11px;
   border: 1px solid var(--dash-border-input);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--dash-input-surface);
   color: var(--dash-text-muted);
   padding: 0 10px 0 14px;
@@ -214,7 +214,7 @@
   align-items: center;
   gap: 9px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
   color: var(--dash-text);
   cursor: pointer;
@@ -289,7 +289,7 @@
   align-items: center;
   gap: 12px;
   border: 0;
-  border-radius: 15px;
+  border-radius: 10px;
   background: var(--dash-surface-active);
   color: var(--dash-text);
   cursor: pointer;
@@ -349,7 +349,7 @@
   width: 250px;
   overflow: hidden;
   border: 1px solid var(--dash-border-quiet);
-  border-radius: 20px;
+  border-radius: 16px;
   background: var(--dash-popup-surface);
   box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
   opacity: 0;
@@ -382,7 +382,7 @@
   align-items: center;
   gap: 2px;
   margin: 0 14px 13px;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--dash-surface-soft);
   padding: 3px;
 }
@@ -393,7 +393,7 @@
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
@@ -426,7 +426,7 @@
   gap: 12px;
   margin: 0 6px;
   border: 0;
-  border-radius: 13px;
+  border-radius: 9px;
   background: transparent;
   color: var(--dash-text-body);
   cursor: pointer;
@@ -457,7 +457,7 @@
   align-items: center;
   gap: 14px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--dash-text);
   cursor: pointer;
