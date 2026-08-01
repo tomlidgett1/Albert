@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Albert",
-  description: "A quiet, focused space to start a conversation with Albert.",
+  description: "Albert is a conversational analytics platform for the whole business.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
