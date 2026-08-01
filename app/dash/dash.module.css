@@ -232,6 +232,9 @@
 .accountTrigger:focus-visible,
 .accountPopover button:focus-visible,
 .tabButton:focus-visible,
+.chatHistoryTrigger:focus-visible,
+.chatHistoryClose:focus-visible,
+.chatHistoryItem:focus-visible,
 .rangeButton:focus-visible,
 .composerIconButton:focus-visible,
 .attachmentRow button:focus-visible,
@@ -782,6 +785,146 @@
   padding: 4px 2px;
 }
 
+.chatHistoryPanel {
+  display: flex;
+  width: min(100%, 720px);
+  max-height: 286px;
+  flex-direction: column;
+  align-self: center;
+  margin: 0 auto 12px;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 14px;
+  background: var(--dash-surface);
+  box-shadow: 0 10px 28px rgba(30, 31, 34, 0.07);
+  animation: chatHistoryIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.chatHistoryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--dash-border-soft);
+  padding: 12px 14px 10px;
+}
+
+.chatHistoryEyebrow {
+  margin: 0 0 3px;
+  color: var(--dash-text-subtle);
+  font-size: calc(9px * var(--text-scale));
+  font-weight: 650;
+  letter-spacing: 0.1em;
+}
+
+.chatHistoryHeader h2 {
+  margin: 0;
+  color: var(--dash-text-heading);
+  font-size: calc(18px * var(--text-scale));
+  font-weight: 620;
+  letter-spacing: -0.045em;
+}
+
+.chatHistoryClose {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.chatHistoryClose:hover {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.chatHistoryClose svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chatHistoryList {
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.chatHistoryItem {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  padding: 7px 9px;
+  text-align: left;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.chatHistoryItem:hover,
+.chatHistoryItemActive {
+  background: var(--dash-surface-hover);
+}
+
+.chatHistoryItemIcon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--dash-surface-inset);
+  color: var(--dash-text-muted);
+}
+
+.chatHistoryItemIcon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.chatHistoryItemCopy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chatHistoryItemCopy strong {
+  overflow: hidden;
+  color: var(--dash-text-heading);
+  font-size: calc(14px * var(--text-scale));
+  font-weight: 520;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatHistoryItemCopy small {
+  color: var(--dash-text-subtle);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.015em;
+}
+
+@keyframes chatHistoryIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chatHistoryPanel {
+    animation: none;
+  }
+}
+
 .chatMessage {
   max-width: min(84%, 560px);
   align-self: flex-end;
@@ -877,6 +1020,35 @@
   border: 0;
   cursor: pointer;
   padding: 0;
+}
+
+.chatHistoryTrigger {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--text-scale));
+  letter-spacing: -0.025em;
+  padding: 0 9px;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.chatHistoryTrigger:hover,
+.chatHistoryTrigger[aria-expanded="true"] {
+  border-color: var(--dash-border-soft);
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.chatHistoryTrigger svg {
+  width: 17px;
+  height: 17px;
 }
 
 .composerIconButton {
@@ -2565,6 +2737,14 @@
 
   .chatComposer {
     border-radius: 18px;
+  }
+
+  .chatHistoryPanel {
+    max-height: 250px;
+  }
+
+  .chatHistoryTrigger span {
+    display: none;
   }
 
   .popupBackdrop {

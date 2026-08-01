@@ -55,6 +55,13 @@ const pageTabs: Record<string, string[]> = {
   Connections: ["Connected apps"],
 };
 
+const recentConversations = [
+  { title: "Lightspeed connection setup", meta: "Today · 3 messages" },
+  { title: "Weekly sales summary", meta: "Yesterday · 8 messages" },
+  { title: "Prepare a customer follow-up", meta: "Monday · 5 messages" },
+  { title: "Q3 planning notes", meta: "July 28 · 12 messages" },
+];
+
 const timeRanges = ["24h", "7d", "30d", "90d"];
 
 type ConnectionId = "lightspeed" | "xero";
@@ -236,6 +243,7 @@ export default function DashPage() {
   const [albertPopupClosing, setAlbertPopupClosing] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const [attachmentName, setAttachmentName] = useState("");
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
   const [rangeIndicator, setRangeIndicator] = useState({ left: 0, width: 0 });
@@ -429,6 +437,7 @@ export default function DashPage() {
   const openAlbertChat = () => {
     setActiveItem("Chat");
     setActiveTab(pageTabs.Chat[0]);
+    setChatHistoryOpen(false);
     setAlbertPopupClosing(true);
   };
 
@@ -487,6 +496,7 @@ export default function DashPage() {
                   onClick={() => {
                     setActiveItem(item.label);
                     setActiveTab(pageTabs[item.label][0]);
+                    setChatHistoryOpen(false);
                   }}
                 >
                   <Icon name={item.icon} />
@@ -647,6 +657,41 @@ export default function DashPage() {
               </div>
             ) : null}
 
+            {chatHistoryOpen ? (
+              <section id="conversation-history" className={styles.chatHistoryPanel} aria-label="Conversation history">
+                <div className={styles.chatHistoryHeader}>
+                  <div>
+                    <p className={styles.chatHistoryEyebrow}>CONVERSATIONS</p>
+                    <h2>History</h2>
+                  </div>
+                  <button
+                    className={styles.chatHistoryClose}
+                    type="button"
+                    aria-label="Close conversation history"
+                    onClick={() => setChatHistoryOpen(false)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+                <div className={styles.chatHistoryList}>
+                  {recentConversations.map((conversation, index) => (
+                    <button
+                      className={`${styles.chatHistoryItem} ${index === 0 ? styles.chatHistoryItemActive : ""}`}
+                      type="button"
+                      key={conversation.title}
+                      onClick={() => setChatHistoryOpen(false)}
+                    >
+                      <span className={styles.chatHistoryItemIcon}><Icon name="chat" /></span>
+                      <span className={styles.chatHistoryItemCopy}>
+                        <strong>{conversation.title}</strong>
+                        <small>{conversation.meta}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
             <form
               className={styles.chatComposer}
               onSubmit={(event) => {
@@ -692,6 +737,16 @@ export default function DashPage() {
                     event.currentTarget.value = "";
                   }}
                 />
+                <button
+                  className={styles.chatHistoryTrigger}
+                  type="button"
+                  aria-expanded={chatHistoryOpen}
+                  aria-controls="conversation-history"
+                  onClick={() => setChatHistoryOpen((open) => !open)}
+                >
+                  <Icon name="panel" />
+                  <span>History</span>
+                </button>
                 <button
                   className={styles.composerIconButton}
                   type="button"
