@@ -1,11 +1,69 @@
 .dash {
   --sidebar-width: 260px;
+  --dash-canvas: light-dark(#ffffff, #111214);
+  --dash-sidebar: light-dark(#f5f5f5, #18191c);
+  --dash-surface: light-dark(#ffffff, #1b1d20);
+  --dash-surface-soft: light-dark(#f5f5f5, #24262a);
+  --dash-surface-muted: light-dark(#ededed, #292b30);
+  --dash-surface-hover: light-dark(#e7e7e7, #2c2e33);
+  --dash-surface-active: light-dark(#eeeeee, #292b30);
+  --dash-surface-inset: light-dark(#f4f4f4, #202226);
+  --dash-text: light-dark(#2b2c2f, #e5e7eb);
+  --dash-text-strong: light-dark(#202124, #f1f2f4);
+  --dash-text-heading: light-dark(#161719, #f5f6f8);
+  --dash-text-body: light-dark(#292a2d, #e0e2e7);
+  --dash-text-muted: light-dark(#646568, #a8abb4);
+  --dash-text-soft: light-dark(#77787c, #969aa4);
+  --dash-text-subtle: light-dark(#808185, #9296a1);
+  --dash-text-faint: light-dark(#929397, #7f838e);
+  --dash-border: light-dark(#dfdfdf, #34363c);
+  --dash-border-soft: light-dark(#dedede, #2d3036);
+  --dash-border-input: light-dark(#d5d5d5, #3a3d44);
+  --dash-border-focus: light-dark(#9da0a6, #6e737e);
+  --dash-border-quiet: light-dark(#d7d7d7, #3a3c42);
+  --dash-focus: light-dark(#2c2d30, #e6e8ee);
+  --dash-focus-ring: light-dark(rgba(0, 118, 232, 0.12), rgba(210, 255, 101, 0.2));
+  --dash-contrast: light-dark(#232426, #f1f2f4);
+  --dash-contrast-hover: light-dark(#45474b, #ffffff);
+  --dash-on-contrast: light-dark(#ffffff, #151619);
+  --dash-control: light-dark(#ededed, #292b30);
+  --dash-control-active: light-dark(#ffffff, #3a3d44);
+  --dash-control-text: light-dark(#626367, #aeb1ba);
+  --dash-active-text: light-dark(#17181a, #f4f5f7);
+  --dash-accent: #d2ff65;
+  --dash-chat-surface: light-dark(#f1f1f1, #2a2c31);
+  --dash-chat-text: light-dark(#242528, #e7e9ee);
+  --dash-input-surface: light-dark(#ffffff, #1e2024);
+  --dash-input-border: light-dark(#d9d9d9, #41444c);
+  --dash-disabled-surface: light-dark(#ededed, #303238);
+  --dash-disabled-text: light-dark(#9c9da0, #777b87);
+  --dash-popup-surface: light-dark(#fbfbfa, #1d1f23);
+  --dash-popup-preview: light-dark(#ffffff, #25282d);
+  --dash-popup-reply: light-dark(#f0f0ef, #2a2d33);
+  --dash-popup-reply-text: light-dark(#333438, #e1e4e9);
+  --dash-popup-text: light-dark(#1b1c1e, #f2f4f6);
+  --dash-popup-muted: light-dark(#66686e, #a8acb5);
+  --dash-popup-border: light-dark(rgba(36, 37, 40, 0.1), rgba(230, 233, 240, 0.15));
+  --dash-success-surface: light-dark(#eaf7ee, #1c3025);
+  --dash-success-text: light-dark(#32704b, #9ce8b4);
+  --dash-preview-surface: light-dark(#f4f6ff, #20242e);
+  --dash-preview-text: light-dark(#596b9b, #b5c3ee);
+  --dash-modal-backdrop: light-dark(rgba(20, 21, 23, 0.38), rgba(4, 5, 7, 0.72));
   min-height: 100vh;
   display: flex;
-  color: #2b2c2f;
-  background: #ffffff;
+  color: var(--dash-text);
+  background: var(--dash-canvas);
+  color-scheme: light;
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+.dash[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+.dash[data-theme="system"] {
+  color-scheme: light dark;
 }
 
 .sidebar {
@@ -17,8 +75,8 @@
   flex: 0 0 var(--sidebar-width);
   flex-direction: column;
   overflow-y: auto;
-  border-right: 1px solid #dfdfdf;
-  background: #f5f5f5;
+  border-right: 1px solid var(--dash-border);
+  background: var(--dash-sidebar);
   padding: 26px 8px 22px;
   transition: width 200ms ease, flex-basis 200ms ease, padding 200ms ease;
 }
@@ -38,7 +96,7 @@
   gap: 10px;
   border: 0;
   background: transparent;
-  color: #2b2c2f;
+  color: var(--dash-text);
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -58,7 +116,7 @@
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
-  color: #808185;
+  color: var(--dash-text-subtle);
 }
 
 .collapseButton {
@@ -70,15 +128,15 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #5f6064;
+  color: var(--dash-text-muted);
   cursor: pointer;
   padding: 0;
   transition: background 160ms ease, color 160ms ease;
 }
 
 .collapseButton:hover {
-  background: #e7e7e7;
-  color: #202124;
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-strong);
 }
 
 .collapseButton svg {
@@ -91,17 +149,17 @@
   height: 42px;
   align-items: center;
   gap: 11px;
-  border: 1px solid #d5d5d5;
+  border: 1px solid var(--dash-border-input);
   border-radius: 14px;
-  background: #ffffff;
-  color: #5d5e62;
+  background: var(--dash-input-surface);
+  color: var(--dash-text-muted);
   padding: 0 10px 0 14px;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .searchBox:focus-within {
-  border-color: #9da0a6;
-  box-shadow: 0 0 0 3px rgba(0, 118, 232, 0.12);
+  border-color: var(--dash-border-focus);
+  box-shadow: 0 0 0 3px var(--dash-focus-ring);
 }
 
 .searchBox svg {
@@ -116,13 +174,13 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #292a2d;
+  color: var(--dash-text-body);
   font-size: 15px;
   letter-spacing: -0.03em;
 }
 
 .searchBox input::placeholder {
-  color: #64666a;
+  color: var(--dash-text-muted);
   opacity: 1;
 }
 
@@ -134,8 +192,8 @@
   justify-content: center;
   border: 0;
   border-radius: 999px;
-  background: #ededed;
-  color: #77787c;
+  background: var(--dash-control);
+  color: var(--dash-text-soft);
   font-family: inherit;
   font-size: 14px;
   letter-spacing: -0.04em;
@@ -158,7 +216,7 @@
   border: 1px solid transparent;
   border-radius: 16px;
   background: transparent;
-  color: #2d2e31;
+  color: var(--dash-text);
   cursor: pointer;
   padding: 0 12px;
   text-align: left;
@@ -166,7 +224,7 @@
 }
 
 .navItem:hover {
-  background: #ebebeb;
+  background: var(--dash-surface-hover);
 }
 
 .projectButton:focus-visible,
@@ -182,14 +240,18 @@
 .albertTrigger:focus-visible,
 .popupClose:focus-visible,
 .popupSecondaryAction:focus-visible,
-.popupPrimaryAction:focus-visible {
-  outline: 2px solid #2c2d30;
+.popupPrimaryAction:focus-visible,
+.connectionCard button:focus-visible,
+.connectionModalClose:focus-visible,
+.connectionModalSecondary:focus-visible,
+.connectionModalPrimary:focus-visible {
+  outline: 2px solid var(--dash-focus);
   outline-offset: 2px;
 }
 
 .navItem.active {
   border-color: transparent;
-  background: #eeeeee;
+  background: var(--dash-surface-active);
 }
 
 .navItem svg {
@@ -210,7 +272,7 @@
 
 .noResults {
   margin: 12px 14px;
-  color: #7c7d80;
+  color: var(--dash-text-soft);
   font-size: 13px;
 }
 
@@ -229,8 +291,8 @@
   gap: 12px;
   border: 0;
   border-radius: 15px;
-  background: #eeeeee;
-  color: #2b2c2f;
+  background: var(--dash-surface-active);
+  color: var(--dash-text);
   cursor: pointer;
   padding: 8px 12px;
   text-align: left;
@@ -238,7 +300,7 @@
 }
 
 .accountTrigger:hover {
-  background: #e7e7e7;
+  background: var(--dash-surface-hover);
 }
 
 .accountAvatar {
@@ -248,8 +310,8 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
-  background: #222326;
-  color: #ffffff;
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   font-size: 18px;
   font-weight: 500;
   letter-spacing: -0.04em;
@@ -264,7 +326,7 @@
 
 .accountWorkspaceCopy strong {
   overflow: hidden;
-  color: #2a2b2e;
+  color: var(--dash-text-body);
   font-size: 16px;
   font-weight: 520;
   letter-spacing: -0.035em;
@@ -274,7 +336,7 @@
 }
 
 .accountWorkspaceCopy small {
-  color: #85868a;
+  color: var(--dash-text-subtle);
   font-size: 14px;
   letter-spacing: -0.025em;
   line-height: 1.05;
@@ -287,9 +349,9 @@
   left: 3px;
   width: 250px;
   overflow: hidden;
-  border: 1px solid #d7d7d7;
+  border: 1px solid var(--dash-border-quiet);
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--dash-popup-surface);
   box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
   opacity: 0;
   pointer-events: none;
@@ -309,7 +371,7 @@
 
 .accountEmail {
   margin: 14px 14px 11px;
-  color: #929397;
+  color: var(--dash-text-faint);
   font-size: 16px;
   letter-spacing: -0.035em;
 }
@@ -322,7 +384,7 @@
   gap: 2px;
   margin: 0 14px 13px;
   border-radius: 12px;
-  background: #f5f5f5;
+  background: var(--dash-surface-soft);
   padding: 3px;
 }
 
@@ -334,16 +396,16 @@
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: #67686c;
+  color: var(--dash-text-muted);
   cursor: pointer;
   padding: 0;
 }
 
 .themeSwitcher button:hover,
 .themeSwitcher .themeActive {
-  background: #ffffff;
+  background: var(--dash-control-active);
   box-shadow: 0 1px 3px rgba(30, 30, 32, 0.14);
-  color: #1f2023;
+  color: var(--dash-text-strong);
 }
 
 .themeSwitcher svg {
@@ -354,7 +416,7 @@
 .accountDivider {
   height: 1px;
   margin: 0 10px;
-  background: #dedede;
+  background: var(--dash-border-soft);
 }
 
 .accountWorkspace {
@@ -367,21 +429,21 @@
   border: 0;
   border-radius: 13px;
   background: transparent;
-  color: #292a2d;
+  color: var(--dash-text-body);
   cursor: pointer;
   padding: 8px 10px;
   text-align: left;
 }
 
 .accountWorkspace:hover {
-  background: #f4f4f4;
+  background: var(--dash-surface-inset);
 }
 
 .accountWorkspace > svg {
   width: 22px;
   height: 22px;
   margin-left: auto;
-  color: #66676a;
+  color: var(--dash-text-muted);
 }
 
 .accountLinks {
@@ -398,7 +460,7 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: #2e2f32;
+  color: var(--dash-text);
   cursor: pointer;
   padding: 0 10px;
   text-align: left;
@@ -407,7 +469,7 @@
 
 .accountLinks button:hover,
 .logoutButton:hover {
-  background: #f1f1f1;
+  background: var(--dash-surface-soft);
 }
 
 .accountLinks svg,
@@ -485,11 +547,11 @@
 .content {
   min-width: 0;
   flex: 1;
-  background: #ffffff;
+  background: var(--dash-canvas);
 }
 
 .pageHeader {
-  border-bottom: 1px solid #dedede;
+  border-bottom: 1px solid var(--dash-border-soft);
   padding: 22px 48px 0;
 }
 
@@ -500,15 +562,24 @@
   gap: 20px;
 }
 
+.headerSubnav {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
 .headerActions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 10px;
+  padding-bottom: 6px;
 }
 
 .pageHeader h1 {
   margin: 0;
-  color: #161719;
+  color: var(--dash-text-heading);
   font-size: 28px;
   font-weight: 620;
   letter-spacing: -0.05em;
@@ -518,6 +589,8 @@
 .tabBar {
   position: relative;
   display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: flex-end;
   gap: 28px;
   height: 45px;
@@ -534,20 +607,20 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #646568;
+  color: var(--dash-text-muted);
   cursor: pointer;
   font-size: 17px;
   font-weight: 450;
   letter-spacing: -0.03em;
   line-height: 1;
-  padding: 0 0 12px;
+  padding: 0 0 6px;
   white-space: nowrap;
   transition: color 180ms ease;
 }
 
 .tabButton:hover,
 .tabButton.tabActive {
-  color: #161719;
+  color: var(--dash-text-heading);
 }
 
 .tabButton.tabActive {
@@ -561,7 +634,7 @@
   left: 0;
   height: 2px;
   border-radius: 999px;
-  background: #262729;
+  background: var(--dash-contrast);
   pointer-events: none;
   transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -575,7 +648,7 @@
   gap: 0;
   margin-top: 0;
   border-radius: 999px;
-  background: #ededed;
+  background: var(--dash-control);
   padding: 3px;
 }
 
@@ -584,10 +657,10 @@
   height: 36px;
   align-items: center;
   gap: 7px;
-  border: 1px solid #232426;
+  border: 1px solid var(--dash-contrast);
   border-radius: 999px;
-  background: #232426;
-  color: #ffffff;
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   cursor: pointer;
   font-size: 14px;
   font-weight: 590;
@@ -598,8 +671,8 @@
 }
 
 .albertTrigger:hover {
-  border-color: #45474b;
-  background: #45474b;
+  border-color: var(--dash-contrast-hover);
+  background: var(--dash-contrast-hover);
   box-shadow: 0 5px 13px rgba(30, 31, 34, 0.14);
   transform: translateY(-1px);
 }
@@ -621,7 +694,7 @@
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: #626367;
+  color: var(--dash-control-text);
   cursor: pointer;
   font-size: 14px;
   font-weight: 450;
@@ -632,7 +705,7 @@
 
 .rangeButton:hover,
 .rangeButton.rangeActive {
-  color: #17181a;
+  color: var(--dash-active-text);
 }
 
 .rangeButton.rangeActive {
@@ -646,7 +719,7 @@
   left: 0;
   height: 30px;
   border-radius: 999px;
-  background: #ffffff;
+  background: var(--dash-control-active);
   box-shadow: 0 1px 3px rgba(26, 27, 30, 0.16), 0 0 0 1px rgba(26, 27, 30, 0.03);
   pointer-events: none;
   transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -659,7 +732,7 @@
 
 .contentEyebrow {
   margin: 0 0 12px;
-  color: #73757a;
+  color: var(--dash-text-subtle);
   font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.1em;
@@ -667,7 +740,7 @@
 
 .contentBody h2 {
   margin: 0;
-  color: #202124;
+  color: var(--dash-text-strong);
   font-size: clamp(36px, 4vw, 48px);
   font-weight: 620;
   letter-spacing: -0.06em;
@@ -677,7 +750,7 @@
 .contentDescription {
   max-width: 390px;
   margin: 14px 0 0;
-  color: #6c6e73;
+  color: var(--dash-text-muted);
   font-size: 15px;
   letter-spacing: -0.02em;
   line-height: 1.5;
@@ -702,7 +775,7 @@
 
 .chatEmptyState h2 {
   margin: 0;
-  color: #202124;
+  color: var(--dash-text-strong);
   font-size: clamp(30px, 3vw, 40px);
   font-weight: 620;
   letter-spacing: -0.06em;
@@ -711,7 +784,7 @@
 
 .chatEmptyState > p:not(.contentEyebrow) {
   margin: 12px 0 0;
-  color: #6c6e73;
+  color: var(--dash-text-muted);
   font-size: 15px;
   letter-spacing: -0.02em;
   line-height: 1.45;
@@ -732,8 +805,8 @@
   max-width: min(84%, 560px);
   align-self: flex-end;
   border-radius: 18px;
-  background: #f1f1f1;
-  color: #242528;
+  background: var(--dash-chat-surface);
+  color: var(--dash-chat-text);
   padding: 10px 13px;
 }
 
@@ -751,8 +824,8 @@
   margin-top: 7px;
   overflow: hidden;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #585a5f;
+  background: var(--dash-surface-active);
+  color: var(--dash-text-muted);
   font-size: 12px;
   font-weight: 550;
   letter-spacing: -0.02em;
@@ -764,16 +837,16 @@
 .chatComposer {
   width: min(100%, 720px);
   align-self: center;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--dash-input-border);
   border-radius: 20px;
-  background: #ffffff;
+  background: var(--dash-input-surface);
   box-shadow: 0 2px 5px rgba(26, 27, 30, 0.06), 0 8px 24px rgba(26, 27, 30, 0.04);
   padding: 12px 13px 10px;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .chatComposer:focus-within {
-  border-color: #a7a8ab;
+  border-color: var(--dash-border-focus);
   box-shadow: 0 0 0 3px rgba(37, 38, 41, 0.08), 0 8px 24px rgba(26, 27, 30, 0.05);
 }
 
@@ -785,7 +858,7 @@
   outline: 0;
   resize: none;
   background: transparent;
-  color: #292a2d;
+  color: var(--dash-text-body);
   font-size: 16px;
   letter-spacing: -0.03em;
   line-height: 1.45;
@@ -793,7 +866,7 @@
 }
 
 .chatComposer textarea::placeholder {
-  color: #77797e;
+  color: var(--dash-text-soft);
   opacity: 1;
 }
 
@@ -828,13 +901,13 @@
 .composerIconButton {
   border-radius: 9px;
   background: transparent;
-  color: #55575b;
+  color: var(--dash-text-muted);
   transition: background 160ms ease, color 160ms ease;
 }
 
 .composerIconButton:hover {
-  background: #f0f0f0;
-  color: #252629;
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
 }
 
 .composerIconButton svg {
@@ -844,7 +917,7 @@
 
 .composerModel {
   margin-left: 8px;
-  color: #65676b;
+  color: var(--dash-text-muted);
   font-size: 13px;
   font-weight: 560;
   letter-spacing: -0.025em;
@@ -853,19 +926,19 @@
 .chatSendButton {
   margin-left: auto;
   border-radius: 10px;
-  background: #242528;
-  color: #ffffff;
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 .chatSendButton:hover:not(:disabled) {
-  background: #414247;
+  background: var(--dash-contrast-hover);
   transform: translateY(-1px);
 }
 
 .chatSendButton:disabled {
-  background: #ededed;
-  color: #9c9da0;
+  background: var(--dash-disabled-surface);
+  color: var(--dash-disabled-text);
   cursor: default;
 }
 
@@ -882,8 +955,8 @@
   gap: 5px;
   margin: 0 0 9px;
   border-radius: 8px;
-  background: #f1f1f1;
-  color: #55575b;
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-muted);
   font-size: 12px;
   font-weight: 550;
   letter-spacing: -0.02em;
@@ -905,7 +978,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #6b6d71;
+  color: var(--dash-text-muted);
   cursor: pointer;
   font-size: 18px;
   font-weight: 400;
@@ -914,15 +987,15 @@
 }
 
 .attachmentRow button:hover {
-  background: #dedede;
-  color: #222326;
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
 }
 
 .chatHint {
   width: min(100%, 720px);
   align-self: center;
   margin: 8px 0 0;
-  color: #96979a;
+  color: var(--dash-text-faint);
   font-size: 11px;
   letter-spacing: -0.015em;
   line-height: 1.3;
@@ -951,9 +1024,9 @@
   position: relative;
   width: min(100%, 538px);
   overflow: hidden;
-  border: 1px solid rgba(20, 21, 23, 0.12);
+  border: 1px solid var(--dash-popup-border);
   border-radius: 28px;
-  background: #fbfbfa;
+  background: var(--dash-popup-surface);
   box-shadow: 0 28px 80px rgba(12, 13, 15, 0.26), 0 4px 16px rgba(12, 13, 15, 0.1);
   padding: 30px;
   animation: popupEnter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -997,18 +1070,18 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid rgba(33, 34, 37, 0.1);
+  border: 1px solid var(--dash-popup-border);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.76);
-  color: #515257;
+  background: var(--dash-popup-preview);
+  color: var(--dash-text-muted);
   cursor: pointer;
   padding: 0;
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 .popupClose:hover {
-  background: #252629;
-  color: #ffffff;
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   transform: rotate(4deg);
 }
 
@@ -1029,8 +1102,8 @@
   height: 42px;
   place-items: center;
   border-radius: 14px;
-  background: #202124;
-  color: #d2ff65;
+  background: var(--dash-contrast);
+  color: var(--dash-accent);
   box-shadow: 0 6px 18px rgba(24, 25, 27, 0.14);
 }
 
@@ -1040,7 +1113,7 @@
 }
 
 .popupEyebrow {
-  color: #57595f;
+  color: var(--dash-text-muted);
   font-size: 11px;
   font-weight: 720;
   letter-spacing: 0.14em;
@@ -1050,7 +1123,7 @@
 .albertPopup h2 {
   max-width: 410px;
   margin: 23px 0 0;
-  color: #1b1c1e;
+  color: var(--dash-popup-text);
   font-size: clamp(32px, 4.7vw, 42px);
   font-weight: 620;
   letter-spacing: -0.066em;
@@ -1060,7 +1133,7 @@
 .albertPopup > p {
   max-width: 435px;
   margin: 15px 0 0;
-  color: #66686e;
+  color: var(--dash-popup-muted);
   font-size: 15px;
   letter-spacing: -0.026em;
   line-height: 1.5;
@@ -1073,9 +1146,9 @@
   gap: 11px;
   margin-top: 27px;
   overflow: hidden;
-  border: 1px solid rgba(36, 37, 40, 0.1);
+  border: 1px solid var(--dash-popup-border);
   border-radius: 19px;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--dash-popup-preview);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.82);
   padding: 14px;
 }
@@ -1097,7 +1170,7 @@
   z-index: 1;
   display: flex;
   justify-content: space-between;
-  color: #92949a;
+  color: var(--dash-text-faint);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -1113,8 +1186,8 @@
   gap: 10px;
   margin-left: auto;
   border-radius: 14px 14px 4px 14px;
-  background: #222326;
-  color: #ffffff;
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   padding: 9px 12px 9px 9px;
 }
 
@@ -1125,7 +1198,7 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: 9px;
-  background: #d2ff65;
+  background: var(--dash-accent);
   color: #1d1e20;
 }
 
@@ -1148,15 +1221,15 @@
   z-index: 1;
   width: min(83%, 340px);
   border-radius: 4px 14px 14px;
-  background: #f0f0ef;
-  color: #333438;
+  background: var(--dash-popup-reply);
+  color: var(--dash-popup-reply-text);
   padding: 10px 12px;
 }
 
 .popupInsightReply span {
   display: block;
   margin-bottom: 4px;
-  color: #818389;
+  color: var(--dash-text-subtle);
   font-size: 10px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -1187,28 +1260,28 @@
 }
 
 .popupSecondaryAction {
-  border: 1px solid rgba(35, 36, 39, 0.13);
-  background: rgba(255, 255, 255, 0.72);
-  color: #56575c;
+  border: 1px solid var(--dash-popup-border);
+  background: var(--dash-popup-preview);
+  color: var(--dash-text-muted);
 }
 
 .popupSecondaryAction:hover {
-  border-color: rgba(35, 36, 39, 0.2);
-  background: #ffffff;
-  color: #1f2023;
+  border-color: var(--dash-border-focus);
+  background: var(--dash-surface);
+  color: var(--dash-text-strong);
 }
 
 .popupPrimaryAction {
   gap: 8px;
-  border: 1px solid #222326;
-  background: #222326;
-  color: #ffffff;
+  border: 1px solid var(--dash-contrast);
+  background: var(--dash-contrast);
+  color: var(--dash-on-contrast);
   box-shadow: 0 5px 14px rgba(30, 31, 34, 0.14);
 }
 
 .popupPrimaryAction:hover {
-  border-color: #404247;
-  background: #404247;
+  border-color: var(--dash-contrast-hover);
+  background: var(--dash-contrast-hover);
   box-shadow: 0 8px 19px rgba(30, 31, 34, 0.2);
   transform: translateY(-1px);
 }
@@ -1319,14 +1392,23 @@
   }
 
   .pageHeaderTop {
-    align-items: flex-start;
-    flex-wrap: wrap;
     gap: 12px;
   }
 
+  .headerSubnav {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0;
+  }
+
   .headerActions {
+    order: -1;
     width: 100%;
     justify-content: space-between;
+  }
+
+  .headerSubnav .tabBar {
+    flex: 0 0 auto;
   }
 
   .tabBar {
@@ -1337,7 +1419,7 @@
 
   .tabButton {
     font-size: 15px;
-    padding-bottom: 11px;
+    padding-bottom: 5px;
   }
 
   .rangeBar {

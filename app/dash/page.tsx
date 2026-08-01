@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SVGProps } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type SVGProps } from "react";
 import styles from "./dash.module.css";
 
 type IconName =
@@ -56,6 +56,99 @@ const pageTabs: Record<string, string[]> = {
 };
 
 const timeRanges = ["24h", "7d", "30d", "90d"];
+
+type ConnectionId = "lightspeed" | "xero" | "deputy";
+type ConnectionState = "available" | "connected";
+type ConnectionStep = "review" | "authorising" | "success";
+
+const connectionOptions = [
+  {
+    id: "lightspeed",
+    name: "Lightspeed",
+    provider: "RETAIL OS",
+    mark: "L",
+    accent: "lightspeed",
+    description: "Bring sales, products, and store performance into Albert.",
+    detail: "Sales · inventory · products",
+  },
+  {
+    id: "xero",
+    name: "Xero",
+    provider: "ACCOUNTING",
+    mark: "X",
+    accent: "xero",
+    description: "Give Albert a clearer view of cash flow and business health.",
+    detail: "Invoices · bills · cash flow",
+  },
+  {
+    id: "deputy",
+    name: "Deputy",
+    provider: "WORKFORCE",
+    mark: "D",
+    accent: "deputy",
+    description: "Connect people, shifts, and labour signals to the bigger picture.",
+    detail: "People · rosters · timesheets",
+  },
+] as const;
+
+const connectionStepLabels = ["Review", "Authorise", "Ready"] as const;
+
+type Theme = "system" | "light" | "dark";
+
+const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
+  { value: "system", label: "System theme", icon: "monitor" },
+  { value: "light", label: "Light theme", icon: "sun" },
+  { value: "dark", label: "Dark theme", icon: "moon" },
+];
+
+const themeStorageKey = "albert-theme";
+
+const themeListeners = new Set<() => void>();
+let themeSnapshot: Theme = "system";
+
+function isTheme(value: string | null): value is Theme {
+  return value === "system" || value === "light" || value === "dark";
+}
+
+function getThemeSnapshot(): Theme {
+  if (typeof window === "undefined") return themeSnapshot;
+
+  try {
+    const storedTheme = window.localStorage.getItem(themeStorageKey);
+    if (isTheme(storedTheme)) themeSnapshot = storedTheme;
+  } catch {
+    // The in-memory preference remains available when browser storage is blocked.
+  }
+
+  return themeSnapshot;
+}
+
+function getServerThemeSnapshot(): Theme {
+  return "system";
+}
+
+function subscribeToTheme(listener: () => void) {
+  themeListeners.add(listener);
+  const handleStorageChange = () => listener();
+  window.addEventListener("storage", handleStorageChange);
+
+  return () => {
+    themeListeners.delete(listener);
+    window.removeEventListener("storage", handleStorageChange);
+  };
+}
+
+function setThemePreference(nextTheme: Theme) {
+  themeSnapshot = nextTheme;
+
+  try {
+    window.localStorage.setItem(themeStorageKey, nextTheme);
+  } catch {
+    // The in-memory preference remains available when browser storage is blocked.
+  }
+
+  themeListeners.forEach((listener) => listener());
+}
 
 function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
   const shared = {
@@ -151,6 +244,18 @@ export default function DashPage() {
   const [activeItem, setActiveItem] = useState("Chat");
   const [activeTab, setActiveTab] = useState(pageTabs.Chat[0]);
   const [activeRange, setActiveRange] = useState(timeRanges[0]);
+  const theme = useSyncExternalStore(
+    subscribeToTheme,
+    getThemeSnapshot,
+    getServerThemeSnapshot,
+  );
+  const [connectionStates, setConnectionStates] = useState<Record<ConnectionId, ConnectionState>>({
+    lightspeed: "available",
+    xero: "available",
+    deputy: "available",
+  });
+  const [selectedConnection, setSelectedConnection] = useState<ConnectionId | null>(null);
+  const [connectionStep, setConnectionStep] = useState<ConnectionStep>("review");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -173,6 +278,24 @@ export default function DashPage() {
     [query],
   );
   const tabs = pageTabs[activeItem] ?? ["Overview"];
+  const selectedConnectionOption = connectionOptions.find((option) => option.id === selectedConnection);
+  const connectedConnectionCount = connectionOptions.filter(
+    (option) => connectionStates[option.id] === "connected",
+  ).length;
+  const connectionStepIndex = connectionStep === "review" ? 0 : connectionStep === "authorising" ? 1 : 2;
+  const isConnectionsAddView = activeItem === "Connections" && activeTab === "Add connection";
+
+  useEffect(() => {
+    if (!selectedConnection || connectionStep !== "authorising") return;
+
+    const connectionId = selectedConnection;
+    const connectionTimer = window.setTimeout(() => {
+      setConnectionStates((states) => ({ ...states, [connectionId]: "connected" }));
+      setConnectionStep("success");
+    }, 1450);
+
+    return () => window.clearTimeout(connectionTimer);
+  }, [connectionStep, selectedConnection]);
 
   useLayoutEffect(() => {
     const updateIndicator = (
@@ -294,8 +417,25 @@ export default function DashPage() {
     setAlbertPopupOpen(true);
   };
 
+  const openConnectionFlow = (connectionId: ConnectionId) => {
+    setSelectedConnection(connectionId);
+    setConnectionStep(connectionStates[connectionId] === "connected" ? "success" : "review");
+  };
+
+  const closeConnectionFlow = () => {
+    setSelectedConnection(null);
+    setConnectionStep("review");
+  };
+
+  const startConnectionFlow = () => {
+    setConnectionStep("authorising");
+  };
+
   return (
-    <main className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}>
+    <main
+      className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
+      data-theme={theme}
+    >
       <aside className={styles.sidebar} inert={albertPopupOpen}>
         <div className={styles.sidebarHeader}>
           <button className={styles.projectButton} type="button" aria-label="Switch project">
@@ -357,16 +497,19 @@ export default function DashPage() {
             inert={!accountOpen}
           >
             <p className={styles.accountEmail}>tom@lidgett.net</p>
-            <div className={styles.themeSwitcher} aria-label="Theme">
-              <button className={styles.themeActive} type="button" aria-label="System theme">
-                <Icon name="monitor" />
-              </button>
-              <button type="button" aria-label="Light theme">
-                <Icon name="sun" />
-              </button>
-              <button type="button" aria-label="Dark theme">
-                <Icon name="moon" />
-              </button>
+            <div className={styles.themeSwitcher} aria-label="Theme" role="group">
+              {themeOptions.map((option) => (
+                <button
+                  className={theme === option.value ? styles.themeActive : ""}
+                  key={option.value}
+                  type="button"
+                  aria-label={option.label}
+                  aria-pressed={theme === option.value}
+                  onClick={() => setThemePreference(option.value)}
+                >
+                  <Icon name={option.icon} />
+                </button>
+              ))}
             </div>
 
             <div className={styles.accountDivider} />
@@ -420,6 +563,28 @@ export default function DashPage() {
         <header className={styles.pageHeader}>
           <div className={styles.pageHeaderTop}>
             <h1 id="dash-title">{activeItem}</h1>
+          </div>
+          <div className={styles.headerSubnav}>
+            <div className={styles.tabBar} ref={tabBarRef} role="tablist" aria-label={`${activeItem} views`}>
+              {tabs.map((tab) => (
+                <button
+                  className={`${styles.tabButton} ${activeTab === tab ? styles.tabActive : ""}`}
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  data-active={activeTab === tab}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {tab}
+                </button>
+              ))}
+              <span
+                className={styles.tabIndicator}
+                style={{ left: tabIndicator.left, width: tabIndicator.width }}
+                aria-hidden="true"
+              />
+            </div>
             <div className={styles.headerActions}>
               <button
                 className={styles.albertTrigger}
@@ -452,26 +617,6 @@ export default function DashPage() {
                 />
               </div>
             </div>
-          </div>
-          <div className={styles.tabBar} ref={tabBarRef} role="tablist" aria-label={`${activeItem} views`}>
-            {tabs.map((tab) => (
-              <button
-                className={`${styles.tabButton} ${activeTab === tab ? styles.tabActive : ""}`}
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab}
-                data-active={activeTab === tab}
-                onClick={() => setActiveTab(tab)}
-              >
-                {tab}
-              </button>
-            ))}
-            <span
-              className={styles.tabIndicator}
-              style={{ left: tabIndicator.left, width: tabIndicator.width }}
-              aria-hidden="true"
-            />
           </div>
         </header>
         {activeItem === "Chat" ? (
@@ -559,6 +704,132 @@ export default function DashPage() {
             </form>
             <p className={styles.chatHint}>Albert can make mistakes. Check important information.</p>
           </div>
+        ) : activeItem === "Connections" ? (
+          <div className={styles.connectionsWorkspace}>
+            <div className={styles.connectionsHero}>
+              <div className={styles.connectionsHeroCopy}>
+                <p className={styles.contentEyebrow}>
+                  {isConnectionsAddView ? "ADD A CONNECTION" : "YOUR CONNECTED SYSTEMS"}
+                </p>
+                <h2>
+                  {isConnectionsAddView
+                    ? "Bring a system into focus."
+                    : "Make every tool part of the conversation."}
+                </h2>
+                <p>
+                  Connect the systems your team already trusts. Albert keeps the handoff
+                  clear, scoped, and easy to review.
+                </p>
+              </div>
+
+              <div className={styles.connectionSummaryCard} aria-label={`${connectedConnectionCount} of 3 connections active`}>
+                <div className={styles.connectionSummaryOrbit} aria-hidden="true">
+                  <span className={styles.connectionSummaryCore}>A</span>
+                  <i className={styles.connectionSummaryNodeOne} />
+                  <i className={styles.connectionSummaryNodeTwo} />
+                  <i className={styles.connectionSummaryNodeThree} />
+                </div>
+                <div>
+                  <strong>{connectedConnectionCount} / 3</strong>
+                  <span>systems connected</span>
+                </div>
+                <small>UI preview · no credentials stored</small>
+              </div>
+            </div>
+
+            <div className={styles.connectionsSectionHeader}>
+              <div>
+                <p className={styles.contentEyebrow}>AVAILABLE NOW</p>
+                <h3>{isConnectionsAddView ? "Choose a system to connect." : "Your business, in context."}</h3>
+              </div>
+              <span className={styles.connectionsSectionMeta}>3 connector previews</span>
+            </div>
+
+            <div className={styles.connectionsGrid}>
+              {connectionOptions.map((option, index) => {
+                const isConnected = connectionStates[option.id] === "connected";
+                return (
+                  <article
+                    className={`${styles.connectionCard} ${styles[`connectionCard${option.accent}`]}`}
+                    key={option.id}
+                    style={{ "--connection-order": index } as CSSProperties}
+                  >
+                    <div className={styles.connectionCardGlow} aria-hidden="true" />
+                    <div className={styles.connectionCardTopline}>
+                      <span className={`${styles.connectionMark} ${styles[`connectionMark${option.accent}`]}`}>
+                        {option.mark}
+                      </span>
+                      <span className={`${styles.connectionStatus} ${isConnected ? styles.connectionStatusConnected : ""}`}>
+                        <i aria-hidden="true" />
+                        {isConnected ? "Connected" : "Ready to connect"}
+                      </span>
+                    </div>
+
+                    <div className={styles.connectionCardCopy}>
+                      <p>{option.provider}</p>
+                      <h3>{option.name}</h3>
+                      <span>{option.description}</span>
+                    </div>
+
+                    <div className={styles.connectionDetail}>
+                      <span className={styles.connectionDetailDot} aria-hidden="true" />
+                      {option.detail}
+                    </div>
+
+                    <div className={styles.connectionCardFooter}>
+                      <span className={styles.connectionMode}>{isConnected ? "Synced just now" : "OAuth demo"}</span>
+                      <button type="button" onClick={() => openConnectionFlow(option.id)}>
+                        {isConnected ? "View flow" : "Connect"}
+                        <Icon name="arrowUpRight" />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className={styles.connectionExperience}>
+              <div className={styles.connectionExperienceCopy}>
+                <p className={styles.contentEyebrow}>HOW IT WORKS</p>
+                <h3>One secure handoff. A much clearer picture.</h3>
+                <ol>
+                  <li>
+                    <span>01</span>
+                    <div><strong>Choose a system</strong><small>Pick the source you want Albert to understand.</small></div>
+                  </li>
+                  <li>
+                    <span>02</span>
+                    <div><strong>Review the scope</strong><small>See exactly what the connection would make available.</small></div>
+                  </li>
+                  <li>
+                    <span>03</span>
+                    <div><strong>Start with context</strong><small>Albert can turn the signal into a useful next step.</small></div>
+                  </li>
+                </ol>
+              </div>
+
+              <div className={styles.connectionPreview} aria-label="Connection flow preview">
+                <div className={styles.connectionPreviewTopline}>
+                  <span>CONNECTION PREVIEW</span>
+                  <span><i aria-hidden="true" />UI ONLY</span>
+                </div>
+                <div className={styles.connectionPreviewFlow}>
+                  <div className={`${styles.connectionPreviewNode} ${styles.connectionPreviewAlbert}`}>
+                    <span>A</span>
+                    <div><strong>Albert</strong><small>asks for context</small></div>
+                  </div>
+                  <div className={styles.connectionPreviewLine} aria-hidden="true">
+                    <i /><span>secure OAuth</span><i />
+                  </div>
+                  <div className={`${styles.connectionPreviewNode} ${styles.connectionPreviewSystem}`}>
+                    <span>◎</span>
+                    <div><strong>Your system</strong><small>keeps access scoped</small></div>
+                  </div>
+                </div>
+                <p>Nothing is written back in this preview.</p>
+              </div>
+            </div>
+          </div>
         ) : (
           <div className={styles.contentBody}>
             <p className={styles.contentEyebrow}>ALBERT DASH</p>
@@ -569,6 +840,112 @@ export default function DashPage() {
           </div>
         )}
       </section>
+
+      {selectedConnectionOption ? (
+        <div
+          className={styles.connectionModalBackdrop}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeConnectionFlow();
+          }}
+        >
+          <section
+            className={styles.connectionModal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="connection-modal-title"
+            aria-describedby="connection-modal-description"
+          >
+            <button
+              className={styles.connectionModalClose}
+              type="button"
+              aria-label="Close connection flow"
+              onClick={closeConnectionFlow}
+            >
+              <Icon name="close" />
+            </button>
+
+            <div className={styles.connectionModalHeader}>
+              <span className={`${styles.connectionMark} ${styles[`connectionMark${selectedConnectionOption.accent}`]}`}>
+                {selectedConnectionOption.mark}
+              </span>
+              <div>
+                <p>CONNECTION PREVIEW</p>
+                <h2 id="connection-modal-title">Connect {selectedConnectionOption.name}</h2>
+              </div>
+            </div>
+
+            <div className={styles.connectionProgress} aria-label="Connection setup progress">
+              {connectionStepLabels.map((label, index) => (
+                <div
+                  className={`${styles.connectionProgressStep} ${index <= connectionStepIndex ? styles.connectionProgressStepActive : ""}`}
+                  key={label}
+                >
+                  <span>{index < connectionStepIndex ? "✓" : index + 1}</span>
+                  <small>{label}</small>
+                </div>
+              ))}
+              <i
+                className={styles.connectionProgressLine}
+                style={{ "--connection-progress": `${connectionStepIndex * 50}%` } as CSSProperties}
+                aria-hidden="true"
+              />
+            </div>
+
+            <div id="connection-modal-description" className={styles.connectionModalBody} aria-live="polite">
+              {connectionStep === "review" ? (
+                <>
+                  <div className={styles.connectionReviewBanner}>
+                    <span className={styles.connectionReviewIcon} aria-hidden="true">↗</span>
+                    <div><strong>Ready for a secure handoff</strong><small>This is a visual preview. No account access is requested.</small></div>
+                  </div>
+                  <p className={styles.connectionModalLead}>
+                    In the real flow, Albert would open {selectedConnectionOption.name} in a new window so you can review and approve access there.
+                  </p>
+                  <ul className={styles.connectionScopeList}>
+                    {selectedConnectionOption.detail.split(" · ").map((scope) => (
+                      <li key={scope}><span aria-hidden="true">✓</span>{scope}</li>
+                    ))}
+                  </ul>
+                  <div className={styles.connectionModalActions}>
+                    <button className={styles.connectionModalSecondary} type="button" onClick={closeConnectionFlow}>Not now</button>
+                    <button className={styles.connectionModalPrimary} type="button" onClick={startConnectionFlow}>
+                      Continue to {selectedConnectionOption.name}
+                      <Icon name="arrowUpRight" />
+                    </button>
+                  </div>
+                </>
+              ) : connectionStep === "authorising" ? (
+                <div className={styles.connectionAuthorising}>
+                  <div className={`${styles.connectionLoader} ${styles[`connectionLoader${selectedConnectionOption.accent}`]}`} aria-hidden="true">
+                    <span>{selectedConnectionOption.mark}</span>
+                    <i /><i /><i />
+                  </div>
+                  <p className={styles.connectionModalEyebrow}>OPENING SECURE HANDOFF</p>
+                  <h3>Waiting for {selectedConnectionOption.name}…</h3>
+                  <p>Preparing the approval screen you would see next.</p>
+                  <div className={styles.connectionHandoffStatus}>
+                    <span className={styles.connectionHandoffPulse} aria-hidden="true" />
+                    Simulating OAuth authorisation
+                  </div>
+                </div>
+              ) : (
+                <div className={styles.connectionSuccess}>
+                  <div className={styles.connectionSuccessMark} aria-hidden="true">✓</div>
+                  <p className={styles.connectionModalEyebrow}>CONNECTION READY</p>
+                  <h3>{selectedConnectionOption.name} is connected.</h3>
+                  <p>Albert now has a clear path to the signals that matter. You can change the scope at any time.</p>
+                  <div className={styles.connectionSuccessDetails}>
+                    <span><i aria-hidden="true" />Scoped access</span>
+                    <span><i aria-hidden="true" />Ready for Albert</span>
+                  </div>
+                  <button className={styles.connectionModalPrimary} type="button" onClick={closeConnectionFlow}>Done</button>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {albertPopupOpen ? (
         <div
