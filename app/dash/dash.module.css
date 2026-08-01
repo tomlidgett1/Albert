@@ -550,7 +550,7 @@
 
 .pageHeader {
   border-bottom: 1px solid var(--dash-border-soft);
-  padding: 18px 48px 0;
+  padding: 18px clamp(24px, 4vw, 40px) 0;
 }
 
 .pageHeaderTop {
@@ -2543,8 +2543,8 @@
   }
 
   .pageHeader {
-    padding-right: 24px;
-    padding-left: 24px;
+    padding-right: 18px;
+    padding-left: 18px;
   }
 
   .pageHeaderTop {
@@ -3327,6 +3327,225 @@
   .filterMenu button,
   .filterMenu {
     animation: none;
+    transition: none;
+  }
+}
+
+.pageHeaderSimple {
+  padding-bottom: 18px;
+}
+
+.simpleConnectionsWorkspace {
+  min-height: calc(100dvh - 86px);
+  padding: clamp(32px, 7vw, 78px) clamp(24px, 7vw, 92px);
+}
+
+.simpleConnectionsList {
+  width: min(100%, 680px);
+  border-top: 1px solid var(--dash-border-soft);
+}
+
+.simpleConnectionRow {
+  display: flex;
+  min-height: 94px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+
+.simpleConnectionIdentity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.simpleConnectionLogo {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--dash-surface-muted);
+  color: var(--dash-text-heading);
+  font-size: calc(19px * var(--text-scale));
+  font-weight: 760;
+  letter-spacing: -0.08em;
+}
+
+.simpleConnectionLogo[data-provider="lightspeed"] {
+  background: var(--dash-accent);
+  color: #171c11;
+}
+
+.simpleConnectionLogo[data-provider="xero"] {
+  background: #4d82f3;
+  color: #ffffff;
+}
+
+.simpleConnectionIdentity h2 {
+  margin: 0;
+  color: var(--dash-text-heading);
+  font-size: calc(18px * var(--text-scale));
+  font-weight: 590;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+}
+
+.simpleConnectionAction {
+  display: flex;
+  width: 188px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.simpleConnectionButton {
+  display: inline-flex;
+  height: 38px;
+  min-width: 92px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dash-border-focus);
+  border-radius: 11px;
+  background: var(--dash-surface);
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 620;
+  letter-spacing: -0.025em;
+  padding: 0 14px;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.simpleConnectionButton:hover {
+  border-color: var(--dash-text-muted);
+  background: var(--dash-surface-hover);
+  box-shadow: 0 6px 16px rgba(20, 21, 23, 0.1);
+  transform: translateY(-1px);
+}
+
+.simpleConnectionButton:focus-visible,
+.simpleConnectionStatus:focus-visible,
+.simpleConnectionSyncing:focus-visible,
+.simpleConnectionStatusConnected:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 3px;
+}
+
+.simpleConnectionStatus,
+.simpleConnectionStatusConnected {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dash-text-muted);
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 560;
+  letter-spacing: -0.025em;
+}
+
+.simpleConnectionSpinner {
+  display: inline-block;
+  width: 17px;
+  height: 17px;
+  border: 2px solid var(--dash-border-soft);
+  border-top-color: var(--dash-text-heading);
+  border-radius: 50%;
+  animation: simpleConnectionSpin 720ms linear infinite;
+}
+
+.simpleConnectionSyncing {
+  width: 188px;
+}
+
+.simpleConnectionProgressLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--dash-text-muted);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.015em;
+}
+
+.simpleConnectionProgressLabel strong {
+  color: var(--dash-text-heading);
+  font-weight: 650;
+}
+
+.simpleConnectionProgress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--dash-surface-muted);
+}
+
+.simpleConnectionProgress > span {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--dash-accent);
+  box-shadow: 0 0 10px rgba(210, 255, 101, 0.35);
+  transition: width 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: width;
+}
+
+.simpleConnectionStatusConnected {
+  color: var(--dash-success-text);
+}
+
+.simpleConnectionStatusConnected > span:first-child {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--dash-success-surface);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@keyframes simpleConnectionSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 620px) {
+  .pageHeaderSimple {
+    padding-bottom: 16px;
+  }
+
+  .simpleConnectionsWorkspace {
+    min-height: calc(100dvh - 122px);
+    padding: 26px 18px 24px;
+  }
+
+  .simpleConnectionRow {
+    min-height: 82px;
+    gap: 14px;
+  }
+
+  .simpleConnectionAction,
+  .simpleConnectionSyncing {
+    width: 145px;
+  }
+
+  .simpleConnectionLogo {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .simpleConnectionSpinner {
+    animation: none;
+  }
+
+  .simpleConnectionButton,
+  .simpleConnectionProgress > span {
     transition: none;
   }
 }

@@ -6,7 +6,7 @@
   min-height: 100vh;
   background: #f4f3f0;
   color: var(--lab-ink);
-  padding: 28px clamp(20px, 5vw, 72px) 80px;
+  padding: 28px clamp(16px, 4vw, 56px) 80px;
 }
 
 .labHeader,
@@ -28,7 +28,7 @@
 .backLink,
 .jumpNav a {
   color: #5d6066;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 560;
   letter-spacing: -0.025em;
   transition: color 160ms ease;
@@ -53,7 +53,7 @@
 .filterHead,
 .miniSidebar > p {
   color: #8a8b90;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.14em;
   line-height: 1.2;
@@ -65,7 +65,7 @@
 
 .headerCopy h1 {
   margin: 0;
-  font-size: clamp(42px, 6vw, 78px);
+  font-size: clamp(calc(42px * var(--text-scale)), calc(6vw * var(--text-scale)), calc(78px * var(--text-scale)));
   font-weight: 650;
   letter-spacing: -0.085em;
   line-height: 0.92;
@@ -75,7 +75,7 @@
   max-width: 500px;
   margin: 20px 0 0;
   color: var(--lab-muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   letter-spacing: -0.025em;
   line-height: 1.5;
 }
@@ -91,7 +91,7 @@
 .headerStats strong {
   margin-right: 5px;
   color: var(--lab-ink);
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
   letter-spacing: -0.06em;
 }
 
@@ -156,7 +156,7 @@
 
 .demoHeader h2 {
   margin: 0;
-  font-size: 19px;
+  font-size: calc(19px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.045em;
 }
@@ -165,7 +165,7 @@
   max-width: 580px;
   margin: 5px 0 0;
   color: var(--lab-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.4;
 }
@@ -271,7 +271,7 @@
 .contextCard strong,
 .tunedCard strong {
   display: block;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.035em;
 }
@@ -284,7 +284,7 @@
   display: block;
   margin-top: 4px;
   color: #898b90;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .segmented,
@@ -307,7 +307,7 @@
   border-radius: 8px;
   background: transparent;
   color: #77797e;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 7px 9px;
 }
 
@@ -362,13 +362,13 @@
 }
 
 .thinkingTrigger strong {
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
 }
 
 .thinkingTrigger small {
   margin-top: 4px;
   color: #898b90;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .spark,
@@ -382,13 +382,13 @@
   border-radius: 10px;
   background: #dfe6ff;
   color: #536fc8;
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
 }
 
 .disclosure,
 .toolSummary > b {
   color: #898b90;
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
 }
 
 .traceList {
@@ -398,7 +398,7 @@
   padding: 0 0 0 22px;
   border-left: 1px solid #d9d9d6;
   color: #63656a;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   list-style: none;
 }
 
@@ -434,7 +434,7 @@
   max-width: 720px;
   margin: 0;
   color: #f6f7fb;
-  font-size: clamp(20px, 3vw, 30px);
+  font-size: clamp(calc(20px * var(--text-scale)), calc(3vw * var(--text-scale)), calc(30px * var(--text-scale)));
   letter-spacing: -0.055em;
   line-height: 1.13;
 }
@@ -460,7 +460,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   color: #eceef7;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 8px 11px;
 }
 
@@ -472,7 +472,7 @@
 
 .sourceRow {
   color: #9fa3b6;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .sourceRow span {
@@ -481,7 +481,7 @@
 
 .followUpRow {
   color: #9fa3b6;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .approvalCard {
@@ -505,14 +505,14 @@
 
 .approvalHeading small {
   color: #8a8b90;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.1em;
 }
 
 .approvalHeading strong {
   margin-top: 5px;
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.035em;
 }
@@ -521,7 +521,7 @@
 .insightTop button {
   background: transparent;
   color: #898b90;
-  font-size: 19px;
+  font-size: calc(19px * var(--text-scale));
   padding: 1px 4px;
 }
 
@@ -541,7 +541,7 @@
   border-radius: 10px;
   background: #ffffff;
   color: #4d4f54;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   padding: 10px 11px;
   text-align: left;
 }
@@ -574,7 +574,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   padding: 10px 11px;
 }
 
@@ -587,7 +587,7 @@
   border-radius: 8px;
   background: #eeeeec;
   color: #56585d;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 8px 10px;
 }
 
@@ -640,7 +640,7 @@
   padding-left: 14px;
   border-left: 1px solid #dededb;
   color: #66686d;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .toolList i {
@@ -678,7 +678,7 @@
   border-radius: 7px;
   background: #e8e9ff;
   color: #5a66aa;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   font-weight: 650;
 }
 
@@ -690,7 +690,7 @@
 .taskStatus,
 .health {
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   font-weight: 600;
   padding: 5px 8px;
 }
@@ -714,7 +714,7 @@
 .taskProgress {
   width: 45px;
   color: #86888d;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   text-align: right;
 }
 
@@ -757,7 +757,7 @@
   align-items: center;
   gap: 8px;
   color: #4f61a1;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 650;
 }
 
@@ -769,7 +769,7 @@
 .agentBubble p,
 .userBubble {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.45;
 }
@@ -784,7 +784,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.75);
   color: #636b89;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   padding: 4px 6px;
 }
 
@@ -801,7 +801,7 @@
   border-radius: 8px;
   background: #242528;
   color: #ffffff;
-  font-size: 17px;
+  font-size: calc(17px * var(--text-scale));
 }
 
 .inlineComposer button:disabled {
@@ -811,14 +811,14 @@
 
 .recommendationCard h3 {
   margin: 22px 0 0;
-  font-size: 22px;
+  font-size: calc(22px * var(--text-scale));
   letter-spacing: -0.06em;
 }
 
 .recommendationCard > p {
   margin: 9px 0 0;
   color: #686a70;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   line-height: 1.5;
 }
 
@@ -831,7 +831,7 @@
   border-radius: 999px;
   background: #e5f5e9;
   color: #3d7a57;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 5px 8px;
 }
 
@@ -848,7 +848,7 @@
   border-radius: 9px;
   background: #ffffff;
   color: #5c5e63;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 8px 10px;
 }
 
@@ -895,7 +895,7 @@
 
 .acceptedState small {
   color: #898b90;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .contextList {
@@ -911,7 +911,7 @@
   display: flex;
   justify-content: space-between;
   color: #6673a3;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.1em;
 }
@@ -929,7 +929,7 @@
 .contextCard p {
   margin: 7px 0 0;
   color: #686a70;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   line-height: 1.45;
 }
 
@@ -947,7 +947,7 @@
 }
 
 .tableTitle strong {
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.03em;
 }
@@ -958,7 +958,7 @@
   min-width: 620px;
   border-collapse: collapse;
   color: #66686d;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   text-align: left;
 }
 
@@ -973,7 +973,7 @@
 .diffTable th,
 .recordsTable th {
   color: #96979b;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1032,7 +1032,7 @@
   border-radius: 8px;
   background: #e7e8ff;
   color: #5967ac;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   font-weight: 700;
 }
 
@@ -1044,7 +1044,7 @@
 .recordTags i {
   background: #f0f0ed;
   color: #74767a;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
 }
 
 .recordSelected td {
@@ -1073,7 +1073,7 @@
   border-radius: 50%;
   background: #dededb;
   color: #77797e;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
 }
 
 .filterTabs .filterActive small {
@@ -1099,7 +1099,7 @@
 .filterRow {
   border-top: 1px solid #ededeb;
   color: #66686d;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .filterRow strong {
@@ -1152,16 +1152,16 @@
   border-radius: 9px;
   background: #242528;
   color: #ffffff;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 700;
 }
 
 .miniWorkspace strong {
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .miniWorkspace small {
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
 }
 
 .miniSidebar > input,
@@ -1175,7 +1175,7 @@
   border-radius: 9px;
   outline: 0;
   background: #ffffff;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 9px 10px;
 }
 
@@ -1185,7 +1185,7 @@
   border-radius: 9px;
   background: #242528;
   color: #ffffff;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 9px;
 }
 
@@ -1200,7 +1200,7 @@
   border-radius: 8px;
   background: transparent;
   color: #5c5e63;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 8px 9px;
   text-align: left;
 }
@@ -1219,7 +1219,7 @@
 
 .commandInput > span {
   color: #83858a;
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
 }
 
 .commandInput kbd {
@@ -1228,7 +1228,7 @@
   background: #eeeeec;
   color: #85868a;
   font-family: inherit;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   padding: 5px 7px;
 }
 
@@ -1245,7 +1245,7 @@
   border-radius: 8px;
   background: transparent;
   color: #55575c;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   padding: 9px;
   text-align: left;
 }
@@ -1261,13 +1261,13 @@
 .commandResults p {
   margin: 9px;
   color: #888a8f;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .insightTop {
   justify-content: space-between;
   color: #8a8b90;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -1279,7 +1279,7 @@
 
 .insightCard h3 {
   margin: 26px 0 0;
-  font-size: 22px;
+  font-size: calc(22px * var(--text-scale));
   letter-spacing: -0.06em;
 }
 
@@ -1287,7 +1287,7 @@
   max-width: 380px;
   margin: 8px 0 0;
   color: #686a70;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   line-height: 1.45;
 }
 
@@ -1299,13 +1299,13 @@
 }
 
 .insightMetric strong {
-  font-size: 29px;
+  font-size: calc(29px * var(--text-scale));
   letter-spacing: -0.07em;
 }
 
 .insightMetric span {
   color: #85878c;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .barChart {
@@ -1336,13 +1336,13 @@
   justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   color: #b8c0e4;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 12px 14px;
 }
 
 .codeBlock > div small {
   color: #838ba8;
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   letter-spacing: 0.1em;
 }
 
@@ -1354,7 +1354,9 @@
   animation: lab-fade-in 280ms both;
   animation-delay: calc(var(--line) * 45ms);
   color: #a1a8c7;
-  font: 12px/1.65 var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: calc(12px * var(--text-scale));
+  line-height: 1.65;
   padding: 0 14px;
 }
 
@@ -1411,7 +1413,7 @@
 
 .tunedCard > b {
   color: #3d7a57;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
 }
 
 .layoutStack {
@@ -1440,7 +1442,7 @@
 }
 
 .inspectorTitle strong {
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   letter-spacing: -0.045em;
 }
 
@@ -1453,7 +1455,7 @@
   grid-template-columns: 1fr auto;
   gap: 7px 10px;
   color: #686a70;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .inspectorControls output {
@@ -1514,8 +1516,8 @@
 
 @media (max-width: 560px) {
   .lab {
-    padding-right: 14px;
-    padding-left: 14px;
+    padding-right: 12px;
+    padding-left: 12px;
   }
 
   .labHeader {
@@ -1523,7 +1525,7 @@
   }
 
   .headerCopy h1 {
-    font-size: 50px;
+    font-size: calc(50px * var(--text-scale));
   }
 
   .jumpNav {
@@ -1566,7 +1568,7 @@
   }
 
   .streamAnswer {
-    font-size: 24px;
+    font-size: calc(24px * var(--text-scale));
   }
 }
 

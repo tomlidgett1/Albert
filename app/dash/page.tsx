@@ -52,15 +52,18 @@ const navItems: NavItem[] = [
 const pageTabs: Record<string, string[]> = {
   Chat: ["Playground", "Threads"],
   Agents: ["Overview", "Runs"],
-  Connections: ["Connected apps", "Add connection"],
+  Connections: ["Connected apps"],
 };
 
 const timeRanges = ["24h", "7d", "30d", "90d"];
 
-type LightspeedStatus = "idle" | "connecting" | "connected";
+type ConnectionId = "lightspeed" | "xero";
+type ConnectionStatus = "idle" | "connecting" | "syncing" | "connected";
 
-const connectionFilterOptions = ["Model", "Date", "Metadata", "Tool"] as const;
-type ConnectionFilter = (typeof connectionFilterOptions)[number];
+const connectionProviders: Array<{ id: ConnectionId; name: string }> = [
+  { id: "lightspeed", name: "Lightspeed" },
+  { id: "xero", name: "Xero" },
+];
 
 type Theme = "system" | "light" | "dark";
 
@@ -218,9 +221,14 @@ export default function DashPage() {
     getThemeSnapshot,
     getServerThemeSnapshot,
   );
-  const [lightspeedStatus, setLightspeedStatus] = useState<LightspeedStatus>("idle");
-  const [connectionFilterOpen, setConnectionFilterOpen] = useState(false);
-  const [connectionFilters, setConnectionFilters] = useState<ConnectionFilter[]>([]);
+  const [connectionStates, setConnectionStates] = useState<Record<ConnectionId, ConnectionStatus>>({
+    lightspeed: "idle",
+    xero: "idle",
+  });
+  const [connectionProgress, setConnectionProgress] = useState<Record<ConnectionId, number>>({
+    lightspeed: 0,
+    xero: 0,
+  });
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -234,25 +242,71 @@ export default function DashPage() {
   const tabBarRef = useRef<HTMLDivElement>(null);
   const rangeBarRef = useRef<HTMLDivElement>(null);
   const accountAreaRef = useRef<HTMLDivElement>(null);
-  const connectionFilterRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const albertPopupRef = useRef<HTMLElement>(null);
   const popupCloseButtonRef = useRef<HTMLButtonElement>(null);
   const popupPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const connectionAnimationFramesRef = useRef<Partial<Record<ConnectionId, number>>>({});
   const filteredItems = useMemo(
     () => navItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
     [query],
   );
   const tabs = pageTabs[activeItem] ?? ["Overview"];
   useEffect(() => {
-    if (lightspeedStatus !== "connecting") return;
+    const connectionTimers = connectionProviders
+      .filter(({ id }) => connectionStates[id] === "connecting")
+      .map(({ id }) => window.setTimeout(() => {
+        setConnectionStates((states) => (
+          states[id] === "connecting" ? { ...states, [id]: "syncing" } : states
+        ));
+      }, 900));
 
-    const connectionTimer = window.setTimeout(() => {
-      setLightspeedStatus("connected");
-    }, 1700);
+    return () => connectionTimers.forEach((timer) => window.clearTimeout(timer));
+  }, [connectionStates]);
 
-    return () => window.clearTimeout(connectionTimer);
-  }, [lightspeedStatus]);
+  useEffect(() => {
+    connectionProviders.forEach(({ id }) => {
+      const isSyncing = connectionStates[id] === "syncing";
+      const activeFrame = connectionAnimationFramesRef.current[id];
+
+      if (!isSyncing) {
+        if (activeFrame !== undefined) {
+          window.cancelAnimationFrame(activeFrame);
+          delete connectionAnimationFramesRef.current[id];
+        }
+        return;
+      }
+
+      if (activeFrame !== undefined) return;
+
+      const startedAt = performance.now();
+      const animateProgress = (now: number) => {
+        const linearProgress = Math.min((now - startedAt) / 1900, 1);
+        const easedProgress = 1 - Math.pow(1 - linearProgress, 5);
+        setConnectionProgress((progress) => ({
+          ...progress,
+          [id]: Math.round(easedProgress * 100),
+        }));
+
+        if (linearProgress < 1) {
+          connectionAnimationFramesRef.current[id] = window.requestAnimationFrame(animateProgress);
+        } else {
+          delete connectionAnimationFramesRef.current[id];
+          setConnectionStates((states) => (
+            states[id] === "syncing" ? { ...states, [id]: "connected" } : states
+          ));
+        }
+      };
+
+      connectionAnimationFramesRef.current[id] = window.requestAnimationFrame(animateProgress);
+    });
+  }, [connectionStates]);
+
+  useEffect(() => () => {
+    Object.values(connectionAnimationFramesRef.current).forEach((frame) => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    });
+  }, []);
 
   useLayoutEffect(() => {
     const updateIndicator = (
@@ -299,26 +353,6 @@ export default function DashPage() {
       document.removeEventListener("keydown", closeMenuOnEscape);
     };
   }, [accountOpen]);
-
-  useEffect(() => {
-    if (!connectionFilterOpen) return;
-
-    const closeFilterOnOutsidePress = (event: PointerEvent) => {
-      if (!connectionFilterRef.current?.contains(event.target as Node)) {
-        setConnectionFilterOpen(false);
-      }
-    };
-    const closeFilterOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setConnectionFilterOpen(false);
-    };
-
-    document.addEventListener("pointerdown", closeFilterOnOutsidePress);
-    document.addEventListener("keydown", closeFilterOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeFilterOnOutsidePress);
-      document.removeEventListener("keydown", closeFilterOnEscape);
-    };
-  }, [connectionFilterOpen]);
 
   useEffect(() => {
     if (!albertPopupOpen) {
@@ -394,14 +428,10 @@ export default function DashPage() {
     setAlbertPopupOpen(true);
   };
 
-  const startLightspeedConnection = () => {
-    if (lightspeedStatus === "idle") setLightspeedStatus("connecting");
-  };
-
-  const toggleConnectionFilter = (filter: ConnectionFilter) => {
-    setConnectionFilters((filters) => (
-      filters.includes(filter) ? filters.filter((item) => item !== filter) : [...filters, filter]
-    ));
+  const startConnection = (id: ConnectionId) => {
+    if (connectionStates[id] !== "idle") return;
+    setConnectionProgress((progress) => ({ ...progress, [id]: 0 }));
+    setConnectionStates((states) => ({ ...states, [id]: "connecting" }));
   };
 
   return (
@@ -532,11 +562,12 @@ export default function DashPage() {
       </aside>
 
       <section className={styles.content} aria-labelledby="dash-title" inert={albertPopupOpen}>
-        <header className={styles.pageHeader}>
+        <header className={`${styles.pageHeader} ${activeItem === "Connections" ? styles.pageHeaderSimple : ""}`}>
           <div className={styles.pageHeaderTop}>
             <h1 id="dash-title">{activeItem}</h1>
           </div>
-          <div className={styles.headerSubnav}>
+          {activeItem !== "Connections" ? (
+            <div className={styles.headerSubnav}>
             <div className={styles.tabBar} ref={tabBarRef} role="tablist" aria-label={`${activeItem} views`}>
               {tabs.map((tab) => (
                 <button
@@ -589,7 +620,8 @@ export default function DashPage() {
                 />
               </div>
             </div>
-          </div>
+            </div>
+          ) : null}
         </header>
         {activeItem === "Chat" ? (
           <div className={styles.chatWorkspace}>
@@ -677,117 +709,59 @@ export default function DashPage() {
             <p className={styles.chatHint}>Albert can make mistakes. Check important information.</p>
           </div>
         ) : activeItem === "Connections" ? (
-          <div className={styles.connectionsWorkspace}>
-            <div className={styles.connectionsFilterRow}>
-              <div className={styles.filterControl} ref={connectionFilterRef}>
-                <button
-                  className={styles.filterTrigger}
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={connectionFilterOpen}
-                  onClick={() => setConnectionFilterOpen((open) => !open)}
-                >
-                  <Icon name="plus" />
-                  <span>Add filter</span>
-                </button>
-                {connectionFilterOpen ? (
-                  <div className={styles.filterMenu} role="menu" aria-label="Filter connections">
-                    {connectionFilterOptions.map((filter) => {
-                      const isSelected = connectionFilters.includes(filter);
-                      return (
+          <div className={styles.simpleConnectionsWorkspace}>
+            <div className={styles.simpleConnectionsList} role="list" aria-label="Available connections">
+              {connectionProviders.map((provider) => {
+                const status = connectionStates[provider.id];
+                const progress = connectionProgress[provider.id];
+
+                return (
+                  <article className={styles.simpleConnectionRow} key={provider.id} role="listitem">
+                    <div className={styles.simpleConnectionIdentity}>
+                      <span className={styles.simpleConnectionLogo} data-provider={provider.id} aria-hidden="true">
+                        {provider.id === "lightspeed" ? "L" : "X"}
+                      </span>
+                      <h2>{provider.name}</h2>
+                    </div>
+
+                    <div className={styles.simpleConnectionAction}>
+                      {status === "idle" ? (
                         <button
-                          key={filter}
+                          className={styles.simpleConnectionButton}
                           type="button"
-                          role="menuitemcheckbox"
-                          aria-checked={isSelected}
-                          onClick={() => toggleConnectionFilter(filter)}
+                          onClick={() => startConnection(provider.id)}
                         >
-                          <span>{filter}</span>
-                          <span className={styles.filterOptionCheck} aria-hidden="true">
-                            {isSelected ? "✓" : ""}
-                          </span>
+                          Connect
                         </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-
-              {connectionFilters.map((filter) => (
-                <span className={styles.activeFilterChip} key={filter}>
-                  {filter}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${filter} filter`}
-                    onClick={() => toggleConnectionFilter(filter)}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </span>
-              ))}
-              <span className={styles.filterResultCount}>3 results</span>
+                      ) : null}
+                      {status === "connecting" ? (
+                        <div className={styles.simpleConnectionStatus} role="status" aria-label={`Connecting to ${provider.name}`}>
+                          <span className={styles.simpleConnectionSpinner} aria-hidden="true" />
+                          <span>Connecting</span>
+                        </div>
+                      ) : null}
+                      {status === "syncing" ? (
+                        <div className={styles.simpleConnectionSyncing} role="status" aria-label={`Syncing ${provider.name}, ${progress}% complete`}>
+                          <div className={styles.simpleConnectionProgressLabel}>
+                            <span>Syncing</span>
+                            <strong>{progress}%</strong>
+                          </div>
+                          <div className={styles.simpleConnectionProgress} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+                            <span style={{ width: `${progress}%` }} />
+                          </div>
+                        </div>
+                      ) : null}
+                      {status === "connected" ? (
+                        <div className={styles.simpleConnectionStatusConnected} role="status">
+                          <span aria-hidden="true">✓</span>
+                          <span>Connected</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
-
-            <article
-              className={`${styles.connectionFocusCard} ${lightspeedStatus === "connecting" ? styles.connectionFocusCardConnecting : ""} ${lightspeedStatus === "connected" ? styles.connectionFocusCardConnected : ""}`}
-            >
-              <div className={styles.connectionFocusGlow} aria-hidden="true" />
-              <div className={styles.connectionFocusHeader}>
-                <span className={styles.connectionFocusMark}>L</span>
-                <div>
-                  <p className={styles.contentEyebrow}>RETAIL OS</p>
-                  <h2>Lightspeed</h2>
-                </div>
-                <span className={styles.connectionFocusPill}>
-                  {lightspeedStatus === "connected" ? "CONNECTED" : "UI PREVIEW"}
-                </span>
-              </div>
-
-              <p className={styles.connectionFocusLead}>
-                Connect Lightspeed and let Albert see the signal behind your sales, products, and stores.
-              </p>
-
-              <div
-                className={styles.connectionFocusAnimation}
-                aria-live="polite"
-                aria-label={lightspeedStatus === "connecting" ? "Connecting to Lightspeed" : undefined}
-              >
-                <div className={styles.connectionFocusOrbit} aria-hidden="true">
-                  <span>L</span>
-                  <i className={styles.connectionFocusSatelliteOne} />
-                  <i className={styles.connectionFocusSatelliteTwo} />
-                  <i className={styles.connectionFocusSatelliteThree} />
-                </div>
-                <div className={styles.connectionFocusBeam} aria-hidden="true"><i /><i /><i /></div>
-                <div className={styles.connectionFocusState}>
-                  {lightspeedStatus === "idle" ? "Ready when you are" : null}
-                  {lightspeedStatus === "connecting" ? "Connecting securely…" : null}
-                  {lightspeedStatus === "connected" ? "Lightspeed is connected" : null}
-                </div>
-              </div>
-
-              <div className={styles.connectionFocusFooter}>
-                <div className={styles.connectionFocusScope}>
-                  <span>Sales</span>
-                  <span>Inventory</span>
-                  <span>Products</span>
-                </div>
-                <button
-                  className={styles.connectionFocusButton}
-                  type="button"
-                  disabled={lightspeedStatus !== "idle"}
-                  onClick={startLightspeedConnection}
-                >
-                  {lightspeedStatus === "idle" ? "Connect Lightspeed" : null}
-                  {lightspeedStatus === "connecting" ? "Connecting" : null}
-                  {lightspeedStatus === "connected" ? "Connected" : null}
-                  {lightspeedStatus === "connecting" ? <span className={styles.connectionButtonDots} aria-hidden="true">...</span> : null}
-                  {lightspeedStatus === "connected" ? <span className={styles.connectionButtonCheck} aria-hidden="true">✓</span> : null}
-                  {lightspeedStatus === "idle" ? <Icon name="arrowUpRight" /> : null}
-                </button>
-              </div>
-              <p className={styles.connectionFocusNote}>UI ONLY · NO CREDENTIALS STORED</p>
-            </article>
           </div>
         ) : (
           <div className={styles.contentBody}>
