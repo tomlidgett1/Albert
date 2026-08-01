@@ -297,6 +297,25 @@ export default function DashPage() {
     return () => window.clearTimeout(connectionTimer);
   }, [connectionStep, selectedConnection]);
 
+  useEffect(() => {
+    if (!selectedConnection) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedConnection(null);
+        setConnectionStep("review");
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [selectedConnection]);
+
   useLayoutEffect(() => {
     const updateIndicator = (
       container: HTMLDivElement | null,
@@ -438,10 +457,9 @@ export default function DashPage() {
     >
       <aside className={styles.sidebar} inert={albertPopupOpen}>
         <div className={styles.sidebarHeader}>
-          <button className={styles.projectButton} type="button" aria-label="Switch project">
-            <span className={styles.projectName}>Default project</span>
-            <Icon className={styles.chevrons} name="chevrons" />
-          </button>
+          <div className={styles.projectBrand}>
+            <span className={styles.projectName}>Albert</span>
+          </div>
           <button
             className={styles.collapseButton}
             type="button"
