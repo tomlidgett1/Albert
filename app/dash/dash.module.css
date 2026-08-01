@@ -86,7 +86,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 5px 9px 22px 14px;
+  padding: 5px 9px 18px 14px;
 }
 
 .projectBrand {
@@ -99,10 +99,10 @@
 
 .projectName {
   overflow: hidden;
-  font-size: 16px;
-  font-weight: 650;
-  letter-spacing: -0.035em;
-  line-height: 1.2;
+  font-size: calc(19px * var(--text-scale));
+  font-weight: 680;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -170,7 +170,7 @@
   outline: 0;
   background: transparent;
   color: var(--dash-text-body);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.03em;
 }
 
@@ -190,7 +190,7 @@
   background: var(--dash-control);
   color: var(--dash-text-soft);
   font-family: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   letter-spacing: -0.04em;
   padding: 0 7px;
 }
@@ -198,22 +198,22 @@
 .navigation {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-top: 22px;
+  gap: 1px;
+  margin-top: 18px;
 }
 
 .navItem {
   display: flex;
   width: 100%;
-  min-height: 42px;
+  min-height: 36px;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   border: 1px solid transparent;
-  border-radius: 16px;
+  border-radius: 12px;
   background: transparent;
   color: var(--dash-text);
   cursor: pointer;
-  padding: 0 12px;
+  padding: 0 11px;
   text-align: left;
   transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
@@ -249,14 +249,14 @@
 }
 
 .navItem svg {
-  width: 24px;
-  height: 24px;
+  width: 21px;
+  height: 21px;
   flex: 0 0 auto;
 }
 
 .navLabel {
   overflow: hidden;
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   font-weight: 450;
   letter-spacing: -0.035em;
   line-height: 1.1;
@@ -267,7 +267,7 @@
 .noResults {
   margin: 12px 14px;
   color: var(--dash-text-soft);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
 }
 
 .accountArea {
@@ -306,7 +306,7 @@
   border-radius: 50%;
   background: var(--dash-contrast);
   color: var(--dash-on-contrast);
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
   font-weight: 500;
   letter-spacing: -0.04em;
 }
@@ -321,7 +321,7 @@
 .accountWorkspaceCopy strong {
   overflow: hidden;
   color: var(--dash-text-body);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   font-weight: 520;
   letter-spacing: -0.035em;
   line-height: 1.05;
@@ -331,7 +331,7 @@
 
 .accountWorkspaceCopy small {
   color: var(--dash-text-subtle);
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   letter-spacing: -0.025em;
   line-height: 1.05;
 }
@@ -366,7 +366,7 @@
 .accountEmail {
   margin: 14px 14px 11px;
   color: var(--dash-text-faint);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   letter-spacing: -0.035em;
 }
 
@@ -475,7 +475,7 @@
 
 .accountLinks span,
 .logoutButton span {
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.035em;
 }
 
@@ -546,7 +546,7 @@
 
 .pageHeader {
   border-bottom: 1px solid var(--dash-border-soft);
-  padding: 22px 48px 0;
+  padding: 18px 48px 0;
 }
 
 .pageHeaderTop {
@@ -574,7 +574,7 @@
 .pageHeader h1 {
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: 26px;
+  font-size: calc(26px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.05em;
   line-height: 1.15;
@@ -586,9 +586,9 @@
   min-width: 0;
   flex: 1;
   align-items: flex-end;
-  gap: 28px;
-  height: 45px;
-  margin-top: 12px;
+  gap: 24px;
+  height: 35px;
+  margin-top: 8px;
 }
 
 .tabButton {
@@ -603,11 +603,11 @@
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
-  font-size: 17px;
+  font-size: calc(16px * var(--text-scale));
   font-weight: 450;
   letter-spacing: -0.03em;
   line-height: 1;
-  padding: 0 0 6px;
+  padding: 0 0 7px;
   white-space: nowrap;
   transition: color 180ms ease;
 }
@@ -656,7 +656,7 @@
   background: var(--dash-contrast);
   color: var(--dash-on-contrast);
   cursor: pointer;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   font-weight: 590;
   letter-spacing: -0.035em;
   line-height: 1;
@@ -690,7 +690,7 @@
   background: transparent;
   color: var(--dash-control-text);
   cursor: pointer;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   font-weight: 450;
   letter-spacing: -0.035em;
   padding: 0 10px;
@@ -727,7 +727,7 @@
 .contentEyebrow {
   margin: 0 0 12px;
   color: var(--dash-text-subtle);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 650;
   letter-spacing: 0.1em;
 }
@@ -735,7 +735,7 @@
 .contentBody h2 {
   margin: 0;
   color: var(--dash-text-strong);
-  font-size: clamp(36px, 4vw, 48px);
+  font-size: clamp(calc(36px * var(--text-scale)), calc(4vw * var(--text-scale)), calc(48px * var(--text-scale)));
   font-weight: 620;
   letter-spacing: -0.06em;
   line-height: 1;
@@ -745,7 +745,7 @@
   max-width: 390px;
   margin: 14px 0 0;
   color: var(--dash-text-muted);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.5;
 }
@@ -770,7 +770,7 @@
 .chatEmptyState h2 {
   margin: 0;
   color: var(--dash-text-strong);
-  font-size: clamp(30px, 3vw, 40px);
+  font-size: clamp(calc(30px * var(--text-scale)), calc(3vw * var(--text-scale)), calc(40px * var(--text-scale)));
   font-weight: 620;
   letter-spacing: -0.06em;
   line-height: 1.05;
@@ -779,7 +779,7 @@
 .chatEmptyState > p:not(.contentEyebrow) {
   margin: 12px 0 0;
   color: var(--dash-text-muted);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.45;
 }
@@ -806,7 +806,7 @@
 
 .chatMessage p {
   margin: 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -820,7 +820,7 @@
   border-radius: 7px;
   background: var(--dash-surface-active);
   color: var(--dash-text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 550;
   letter-spacing: -0.02em;
   padding: 5px 7px;
@@ -853,7 +853,7 @@
   resize: none;
   background: transparent;
   color: var(--dash-text-body);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   letter-spacing: -0.03em;
   line-height: 1.45;
   padding: 0 2px;
@@ -912,7 +912,7 @@
 .composerModel {
   margin-left: 8px;
   color: var(--dash-text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 560;
   letter-spacing: -0.025em;
 }
@@ -951,7 +951,7 @@
   border-radius: 8px;
   background: var(--dash-chat-surface);
   color: var(--dash-text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 550;
   letter-spacing: -0.02em;
   padding: 0 5px 0 8px;
@@ -974,7 +974,7 @@
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
   font-weight: 400;
   line-height: 1;
   padding: 0;
@@ -990,7 +990,7 @@
   align-self: center;
   margin: 8px 0 0;
   color: var(--dash-text-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   letter-spacing: -0.015em;
   line-height: 1.3;
   text-align: center;
@@ -1018,7 +1018,7 @@
   max-width: 610px;
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: clamp(35px, 4.6vw, 59px);
+  font-size: clamp(calc(35px * var(--text-scale)), calc(4.6vw * var(--text-scale)), calc(59px * var(--text-scale)));
   font-weight: 620;
   letter-spacing: -0.075em;
   line-height: 0.98;
@@ -1028,7 +1028,7 @@
   max-width: 520px;
   margin: 17px 0 0;
   color: var(--dash-text-muted);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.025em;
   line-height: 1.5;
 }
@@ -1096,7 +1096,7 @@
   border-radius: 11px;
   background: var(--dash-contrast);
   color: var(--dash-on-contrast);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 700;
   box-shadow: 0 4px 12px rgba(30, 31, 34, 0.16);
 }
@@ -1124,14 +1124,14 @@
 
 .connectionSummaryCard strong {
   color: var(--dash-text-heading);
-  font-size: 24px;
+  font-size: calc(24px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.07em;
 }
 
 .connectionSummaryCard > div:last-of-type span {
   color: var(--dash-text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .connectionSummaryCard small {
@@ -1139,7 +1139,7 @@
   z-index: 1;
   grid-column: 1 / -1;
   color: var(--dash-text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   letter-spacing: -0.015em;
 }
 
@@ -1159,14 +1159,14 @@
 .connectionsSectionHeader h3 {
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: 21px;
+  font-size: calc(21px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.05em;
 }
 
 .connectionsSectionMeta {
   color: var(--dash-text-faint);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   letter-spacing: -0.02em;
   white-space: nowrap;
 }
@@ -1248,7 +1248,7 @@
   height: 43px;
   place-items: center;
   border-radius: 14px;
-  font-size: 20px;
+  font-size: calc(20px * var(--text-scale));
   font-weight: 720;
   letter-spacing: -0.08em;
   box-shadow: 0 7px 16px rgba(30, 31, 34, 0.12);
@@ -1272,7 +1272,7 @@
 .connectionStatus {
   gap: 6px;
   color: var(--dash-text-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   letter-spacing: -0.025em;
 }
 
@@ -1303,7 +1303,7 @@
 .connectionCardCopy > p {
   margin: 0 0 8px;
   color: var(--dash-text-subtle);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.14em;
 }
@@ -1311,7 +1311,7 @@
 .connectionCardCopy h3 {
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: 28px;
+  font-size: calc(28px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.07em;
 }
@@ -1321,7 +1321,7 @@
   max-width: 240px;
   margin-top: 9px;
   color: var(--dash-text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   letter-spacing: -0.025em;
   line-height: 1.42;
 }
@@ -1331,7 +1331,7 @@
   margin-top: auto;
   padding-top: 24px;
   color: var(--dash-text-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   letter-spacing: -0.02em;
 }
 
@@ -1350,7 +1350,7 @@
 
 .connectionMode {
   color: var(--dash-text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   letter-spacing: -0.015em;
 }
 
@@ -1363,7 +1363,7 @@
   background: var(--dash-contrast);
   color: var(--dash-on-contrast);
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.03em;
   padding: 8px 10px 8px 12px;
@@ -1403,7 +1403,7 @@
   max-width: 320px;
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: 25px;
+  font-size: calc(25px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.065em;
   line-height: 1.05;
@@ -1431,7 +1431,7 @@
 .connectionExperienceCopy li > span {
   color: var(--dash-text-faint);
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   line-height: 1.5;
 }
 
@@ -1442,7 +1442,7 @@
 
 .connectionExperienceCopy li strong {
   color: var(--dash-text-body);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.025em;
 }
@@ -1451,7 +1451,7 @@
   max-width: 280px;
   margin-top: 4px;
   color: var(--dash-text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.4;
 }
@@ -1482,7 +1482,7 @@
   align-items: center;
   justify-content: space-between;
   color: var(--dash-text-faint);
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.13em;
 }
@@ -1528,7 +1528,7 @@
   border-radius: 10px;
   background: var(--dash-contrast);
   color: var(--dash-accent);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 720;
 }
 
@@ -1547,14 +1547,14 @@
 
 .connectionPreviewNode strong {
   color: var(--dash-text-body);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 620;
 }
 
 .connectionPreviewNode small {
   margin-top: 4px;
   color: var(--dash-text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
 }
 
 .connectionPreviewLine {
@@ -1562,7 +1562,7 @@
   align-items: center;
   gap: 6px;
   color: var(--dash-preview-text);
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   letter-spacing: -0.02em;
   white-space: nowrap;
 }
@@ -1593,7 +1593,7 @@
   z-index: 1;
   margin: 40px 0 0;
   color: var(--dash-text-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   letter-spacing: -0.02em;
 }
 
@@ -1675,7 +1675,7 @@
 .connectionModalEyebrow {
   margin: 0;
   color: var(--dash-text-muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.13em;
 }
@@ -1683,7 +1683,7 @@
 .connectionModalHeader h2 {
   margin: 6px 0 0;
   color: var(--dash-popup-text);
-  font-size: 28px;
+  font-size: calc(28px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.065em;
   line-height: 1;
@@ -1733,14 +1733,14 @@
   border-radius: 50%;
   background: var(--dash-popup-surface);
   color: var(--dash-text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 700;
   transition: background 220ms ease, border-color 220ms ease, color 220ms ease;
 }
 
 .connectionProgressStep small {
   color: var(--dash-text-faint);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   letter-spacing: -0.02em;
 }
 
@@ -1777,7 +1777,7 @@
   border-radius: 10px;
   background: var(--dash-contrast);
   color: var(--dash-accent);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   font-weight: 700;
 }
 
@@ -1788,20 +1788,20 @@
 
 .connectionReviewBanner strong {
   color: var(--dash-text-body);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-weight: 650;
 }
 
 .connectionReviewBanner small {
   margin-top: 4px;
   color: var(--dash-text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 .connectionModalLead {
   margin: 17px 0 0;
   color: var(--dash-popup-muted);
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   letter-spacing: -0.025em;
   line-height: 1.48;
 }
@@ -1822,7 +1822,7 @@
   border-radius: 999px;
   background: var(--dash-surface-inset);
   color: var(--dash-text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 7px 9px;
 }
 
@@ -1846,7 +1846,7 @@
   justify-content: center;
   border-radius: 11px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 600;
   letter-spacing: -0.03em;
   padding: 0 13px;
@@ -1937,7 +1937,7 @@
   height: 38px;
   place-items: center;
   border-radius: 13px;
-  font-size: 17px;
+  font-size: calc(17px * var(--text-scale));
   font-weight: 720;
   box-shadow: 0 8px 20px rgba(30, 31, 34, 0.13);
 }
@@ -1950,7 +1950,7 @@
 .connectionSuccess h3 {
   margin: 8px 0 0;
   color: var(--dash-popup-text);
-  font-size: 26px;
+  font-size: calc(26px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.065em;
 }
@@ -1960,7 +1960,7 @@
   max-width: 355px;
   margin: 10px 0 0;
   color: var(--dash-popup-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   line-height: 1.45;
 }
 
@@ -1972,7 +1972,7 @@
   border-radius: 999px;
   background: var(--dash-surface-inset);
   color: var(--dash-text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 8px 10px;
 }
 
@@ -1990,7 +1990,7 @@
   border-radius: 18px;
   background: var(--dash-success-surface);
   color: var(--dash-success-text);
-  font-size: 25px;
+  font-size: calc(25px * var(--text-scale));
   font-weight: 700;
   animation: connectionSuccessIn 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -2010,7 +2010,7 @@
   border-radius: 999px;
   background: var(--dash-success-surface);
   color: var(--dash-success-text);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 7px 9px;
 }
 
@@ -2261,7 +2261,7 @@
 
 .popupEyebrow {
   color: var(--dash-text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.14em;
   line-height: 1;
@@ -2271,7 +2271,7 @@
   max-width: 410px;
   margin: 23px 0 0;
   color: var(--dash-popup-text);
-  font-size: clamp(32px, 4.7vw, 42px);
+  font-size: clamp(calc(32px * var(--text-scale)), calc(4.7vw * var(--text-scale)), calc(42px * var(--text-scale)));
   font-weight: 620;
   letter-spacing: -0.066em;
   line-height: 0.99;
@@ -2281,7 +2281,7 @@
   max-width: 435px;
   margin: 15px 0 0;
   color: var(--dash-popup-muted);
-  font-size: 15px;
+  font-size: calc(15px * var(--text-scale));
   letter-spacing: -0.026em;
   line-height: 1.5;
 }
@@ -2318,7 +2318,7 @@
   display: flex;
   justify-content: space-between;
   color: var(--dash-text-faint);
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   font-weight: 700;
   letter-spacing: 0.1em;
   line-height: 1;
@@ -2357,7 +2357,7 @@
 .popupInsight p,
 .popupInsightReply p {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 520;
   letter-spacing: -0.025em;
   line-height: 1.25;
@@ -2377,7 +2377,7 @@
   display: block;
   margin-bottom: 4px;
   color: var(--dash-text-subtle);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 650;
   letter-spacing: -0.01em;
   line-height: 1;
@@ -2399,7 +2399,7 @@
   justify-content: center;
   border-radius: 12px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: calc(14px * var(--text-scale));
   font-weight: 590;
   letter-spacing: -0.03em;
   padding: 0 14px;
@@ -2560,13 +2560,13 @@
 
   .tabBar {
     gap: 20px;
-    height: 44px;
-    margin-top: 12px;
+    height: 35px;
+    margin-top: 8px;
   }
 
   .tabButton {
-    font-size: 15px;
-    padding-bottom: 5px;
+    font-size: calc(15px * var(--text-scale));
+    padding-bottom: 7px;
   }
 
   .rangeBar {
@@ -2577,7 +2577,7 @@
   .rangeButton {
     height: 28px;
     min-width: 38px;
-    font-size: 13px;
+    font-size: calc(13px * var(--text-scale));
     padding-right: 9px;
     padding-left: 9px;
   }
@@ -2596,7 +2596,7 @@
   }
 
   .chatEmptyState h2 {
-    font-size: 30px;
+    font-size: calc(30px * var(--text-scale));
   }
 
   .chatComposer {
@@ -2615,7 +2615,7 @@
 
   .albertPopup h2 {
     max-width: 350px;
-    font-size: 34px;
+    font-size: calc(34px * var(--text-scale));
   }
 
   .popupActions {
@@ -2720,7 +2720,7 @@
   background: #d2ff65;
   box-shadow: 0 9px 20px rgba(125, 160, 53, 0.22);
   color: #171c11;
-  font-size: 25px;
+  font-size: calc(25px * var(--text-scale));
   font-weight: 750;
   letter-spacing: -0.1em;
 }
@@ -2732,7 +2732,7 @@
 .connectionFocusHeader h2 {
   margin: 0;
   color: var(--dash-text-heading);
-  font-size: 28px;
+  font-size: calc(28px * var(--text-scale));
   font-weight: 620;
   letter-spacing: -0.07em;
   line-height: 1;
@@ -2743,7 +2743,7 @@
   border: 1px solid var(--dash-border-soft);
   border-radius: 999px;
   color: var(--dash-text-faint);
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.12em;
   padding: 7px 9px;
@@ -2759,7 +2759,7 @@
   max-width: 510px;
   margin: 25px 0 0;
   color: var(--dash-text-muted);
-  font-size: 16px;
+  font-size: calc(16px * var(--text-scale));
   letter-spacing: -0.035em;
   line-height: 1.45;
 }
@@ -2832,7 +2832,7 @@
   border-radius: 14px;
   background: #d2ff65;
   color: #171c11;
-  font-size: 20px;
+  font-size: calc(20px * var(--text-scale));
   font-weight: 750;
   letter-spacing: -0.1em;
 }
@@ -2878,7 +2878,7 @@
   bottom: 16px;
   left: 0;
   color: var(--dash-text-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   letter-spacing: -0.02em;
   text-align: center;
 }
@@ -2963,7 +2963,7 @@
   border-radius: 999px;
   background: var(--dash-surface-muted);
   color: var(--dash-text-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   padding: 7px 9px;
 }
 
@@ -2979,7 +2979,7 @@
   background: var(--dash-contrast);
   color: var(--dash-on-contrast);
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
   font-weight: 650;
   letter-spacing: -0.03em;
   padding: 0 14px;
@@ -3030,13 +3030,13 @@
   border-radius: 50%;
   background: var(--dash-success-text);
   color: var(--dash-success-surface);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .connectionFocusNote {
   margin: 18px 0 0;
   color: var(--dash-text-faint);
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
   font-weight: 720;
   letter-spacing: 0.13em;
   text-align: center;
@@ -3097,7 +3097,7 @@
   }
 
   .connectionFocusHeader h2 {
-    font-size: 25px;
+    font-size: calc(25px * var(--text-scale));
   }
 
   .connectionFocusMark {
@@ -3107,12 +3107,12 @@
   }
 
   .connectionFocusPill {
-    font-size: 8px;
+    font-size: calc(8px * var(--text-scale));
     padding: 6px 7px;
   }
 
   .connectionFocusLead {
-    font-size: 15px;
+    font-size: calc(15px * var(--text-scale));
   }
 
   .connectionFocusAnimation {
@@ -3152,6 +3152,170 @@
   }
 
   .connectionFocusButton {
+    transition: none;
+  }
+}
+
+.headerFilterGroup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.filterControl {
+  position: relative;
+}
+
+.filterTrigger {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--dash-border-focus);
+  border-radius: 999px;
+  background: var(--dash-surface);
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font-size: calc(15px * var(--text-scale));
+  font-weight: 520;
+  letter-spacing: -0.035em;
+  padding: 0 16px 0 12px;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.filterTrigger:hover,
+.filterTrigger[aria-expanded="true"] {
+  border-color: var(--dash-text-muted);
+  background: var(--dash-surface-hover);
+  box-shadow: 0 4px 13px rgba(31, 32, 35, 0.08);
+}
+
+.filterTrigger:active {
+  transform: scale(0.985);
+}
+
+.filterTrigger svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.1;
+}
+
+.filterResultCount {
+  color: var(--dash-text-muted);
+  font-size: calc(15px * var(--text-scale));
+  letter-spacing: -0.035em;
+  white-space: nowrap;
+}
+
+.activeFilterChip {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 999px;
+  background: var(--dash-surface-inset);
+  color: var(--dash-text-body);
+  font-size: calc(13px * var(--text-scale));
+  letter-spacing: -0.025em;
+  padding: 0 6px 0 11px;
+}
+
+.activeFilterChip button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.activeFilterChip button:hover {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.activeFilterChip svg {
+  width: 13px;
+  height: 13px;
+}
+
+.filterMenu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 9px);
+  left: 0;
+  width: min(360px, calc(100vw - 48px));
+  overflow: hidden;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 21px;
+  background: var(--dash-surface);
+  box-shadow: 0 17px 38px rgba(26, 27, 30, 0.14), 0 2px 7px rgba(26, 27, 30, 0.06);
+  padding: 8px;
+  animation: filterMenuIn 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.filterMenu button {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(16px * var(--text-scale));
+  letter-spacing: -0.035em;
+  padding: 0 14px;
+  text-align: left;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.filterMenu button:hover,
+.filterMenu button[aria-checked="true"] {
+  background: var(--dash-surface-hover);
+}
+
+.filterOptionCheck {
+  width: 18px;
+  color: var(--dash-text-muted);
+  font-size: calc(14px * var(--text-scale));
+  text-align: right;
+}
+
+@keyframes filterMenuIn {
+  from { opacity: 0; transform: translateY(-5px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 620px) {
+  .headerFilterGroup {
+    gap: 6px;
+  }
+
+  .headerFilterGroup .filterResultCount {
+    display: none;
+  }
+
+  .filterMenu {
+    width: min(340px, calc(100vw - 36px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filterTrigger,
+  .filterMenu button,
+  .filterMenu {
+    animation: none;
     transition: none;
   }
 }
