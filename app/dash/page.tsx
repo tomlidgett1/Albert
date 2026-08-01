@@ -247,6 +247,7 @@ export default function DashPage() {
   const popupCloseButtonRef = useRef<HTMLButtonElement>(null);
   const popupPreviousFocusRef = useRef<HTMLElement | null>(null);
   const connectionAnimationFramesRef = useRef<Partial<Record<ConnectionId, number>>>({});
+  const connectionCompletionTimersRef = useRef<Partial<Record<ConnectionId, number>>>({});
   const filteredItems = useMemo(
     () => navItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
     [query],
@@ -282,7 +283,9 @@ export default function DashPage() {
       const startedAt = performance.now();
       const animateProgress = (now: number) => {
         const linearProgress = Math.min((now - startedAt) / 1900, 1);
-        const easedProgress = 1 - Math.pow(1 - linearProgress, 5);
+        const easedProgress = linearProgress < 0.5
+          ? 4 * Math.pow(linearProgress, 3)
+          : 1 - Math.pow(-2 * linearProgress + 2, 3) / 2;
         setConnectionProgress((progress) => ({
           ...progress,
           [id]: Math.round(easedProgress * 100),
@@ -292,9 +295,12 @@ export default function DashPage() {
           connectionAnimationFramesRef.current[id] = window.requestAnimationFrame(animateProgress);
         } else {
           delete connectionAnimationFramesRef.current[id];
-          setConnectionStates((states) => (
-            states[id] === "syncing" ? { ...states, [id]: "connected" } : states
-          ));
+          connectionCompletionTimersRef.current[id] = window.setTimeout(() => {
+            delete connectionCompletionTimersRef.current[id];
+            setConnectionStates((states) => (
+              states[id] === "syncing" ? { ...states, [id]: "connected" } : states
+            ));
+          }, 420);
         }
       };
 
@@ -305,6 +311,9 @@ export default function DashPage() {
   useEffect(() => () => {
     Object.values(connectionAnimationFramesRef.current).forEach((frame) => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+    });
+    Object.values(connectionCompletionTimersRef.current).forEach((timer) => {
+      if (timer !== undefined) window.clearTimeout(timer);
     });
   }, []);
 
@@ -624,14 +633,10 @@ export default function DashPage() {
           ) : null}
         </header>
         {activeItem === "Chat" ? (
-          <div className={styles.chatWorkspace}>
-            {chatMessages.length === 0 ? (
-              <div className={styles.chatEmptyState}>
-                <p className={styles.contentEyebrow}>ALBERT CHAT</p>
-                <h2>How can Albert help?</h2>
-                <p>Ask about your business, systems, or what to do next.</p>
-              </div>
-            ) : (
+          <div
+            className={`${styles.chatWorkspace} ${chatMessages.length === 0 ? styles.chatWorkspaceEmpty : ""}`}
+          >
+            {chatMessages.length > 0 ? (
               <div className={styles.chatMessages} aria-live="polite">
                 {chatMessages.map((message) => (
                   <article className={styles.chatMessage} key={message.id}>
@@ -640,7 +645,7 @@ export default function DashPage() {
                   </article>
                 ))}
               </div>
-            )}
+            ) : null}
 
             <form
               className={styles.chatComposer}
@@ -662,8 +667,8 @@ export default function DashPage() {
                 </div>
               ) : null}
               <textarea
-                aria-label="Message Albert"
-                placeholder="Message Albert"
+                aria-label="Search or ask a question"
+                placeholder="Search or ask anything"
                 rows={1}
                 value={chatDraft}
                 onChange={(event) => setChatDraft(event.target.value)}
@@ -695,7 +700,6 @@ export default function DashPage() {
                 >
                   <Icon name="plus" />
                 </button>
-                <span className={styles.composerModel}>Albert</span>
                 <button
                   className={styles.chatSendButton}
                   type="submit"
@@ -706,7 +710,6 @@ export default function DashPage() {
                 </button>
               </div>
             </form>
-            <p className={styles.chatHint}>Albert can make mistakes. Check important information.</p>
           </div>
         ) : activeItem === "Connections" ? (
           <div className={styles.simpleConnectionsWorkspace}>
@@ -716,7 +719,7 @@ export default function DashPage() {
                 const progress = connectionProgress[provider.id];
 
                 return (
-                  <article className={styles.simpleConnectionRow} key={provider.id} role="listitem">
+                  <article className={styles.simpleConnectionRow} data-provider={provider.id} key={provider.id} role="listitem">
                     <div className={styles.simpleConnectionIdentity}>
                       <span className={styles.simpleConnectionLogo} data-provider={provider.id} aria-hidden="true">
                         {provider.id === "lightspeed" ? "L" : "X"}
@@ -753,7 +756,7 @@ export default function DashPage() {
                       ) : null}
                       {status === "connected" ? (
                         <div className={styles.simpleConnectionStatusConnected} role="status">
-                          <span aria-hidden="true">✓</span>
+                          <span className={styles.simpleConnectionConnectedMark} aria-hidden="true">✓</span>
                           <span>Connected</span>
                         </div>
                       ) : null}
