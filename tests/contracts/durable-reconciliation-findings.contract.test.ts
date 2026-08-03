@@ -60,6 +60,15 @@ test("finding lifecycle is lookup-backed, resolvable, and mutation-fenced", asyn
   );
 });
 
+test("the all-tenant lifecycle backfill crosses forced RLS only inside the atomic migration", async () => {
+  const sql = await readFile(migrationUrl, "utf8");
+  assert.match(
+    sql,
+    /ALTER TABLE quality\.finding NO FORCE ROW LEVEL SECURITY;[\s\S]*?UPDATE quality\.finding[\s\S]*?ALTER TABLE quality\.finding FORCE ROW LEVEL SECURITY;/u,
+  );
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\s*$/u);
+});
+
 test("record_check preserves the hardened stock-continuity computation", async () => {
   const sql = await readFile(migrationUrl, "utf8");
   assert.match(sql, /DECLARE stock record;/u);

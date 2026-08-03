@@ -98,13 +98,26 @@ export async function provisionVendorConnectionAttestor(): Promise<void> {
       role.rolcreatedb || role.rolreplication || role.rolbypassrls) {
       throw new Error("Vendor attestor NOLOGIN group is missing or unsafe; apply administrator upgrade 0010.");
     }
-    const existing = await client.query("select 1 from pg_catalog.pg_roles where rolname=$1", [LOGIN]);
-    if (!existing.rowCount) {
+    const existing = await client.query<{
+      rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean;
+      rolreplication: boolean; rolbypassrls: boolean;
+    }>(`select rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls
+          from pg_catalog.pg_roles where rolname=$1`, [LOGIN]);
+    const existingLogin = existing.rows[0];
+    if (existingLogin && (existingLogin.rolsuper || existingLogin.rolcreaterole ||
+      existingLogin.rolcreatedb || existingLogin.rolreplication || existingLogin.rolbypassrls)) {
+      throw new Error(
+        "Existing vendor attestor runtime login has unsafe role attributes; protected postgres will not rewrite a privileged role.",
+      );
+    }
+    if (!existingLogin) {
       await client.query(`create role ${LOGIN} nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls`);
     }
+    // Managed Supabase postgres may change ordinary role properties but its
+    // supautils hook rejects restating privileged attributes. The guard above
+    // fails closed before this ordinary-property mutation.
     await client.query(
-      `alter role ${identifier(LOGIN)} with nologin noinherit nosuperuser nocreatedb ` +
-      "nocreaterole noreplication nobypassrls connection limit 4",
+      `alter role ${identifier(LOGIN)} with nologin noinherit connection limit 4`,
     );
     const memberships = await client.query<{ role_name: string }>(
       `select parent.rolname as role_name from pg_catalog.pg_auth_members membership

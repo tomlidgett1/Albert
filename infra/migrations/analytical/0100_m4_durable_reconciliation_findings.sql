@@ -40,9 +40,16 @@ ALTER TABLE quality.finding
   ADD COLUMN IF NOT EXISTS last_observed_at timestamptz,
   ADD COLUMN IF NOT EXISTS resolved_at timestamptz,
   ADD COLUMN IF NOT EXISTS resolution_run_id text;
+-- The migration owner is also the table owner, but FORCE RLS deliberately
+-- subjects it to the tenant policy. This one-time, all-tenant lifecycle
+-- backfill therefore runs with FORCE disabled inside the migration's atomic
+-- transaction. RLS remains enabled for every non-owner role throughout, and
+-- FORCE is restored before the DDL can become visible to another session.
+ALTER TABLE quality.finding NO FORCE ROW LEVEL SECURITY;
 UPDATE quality.finding
    SET last_observed_run_id=coalesce(last_observed_run_id,run_id),
        last_observed_at=coalesce(last_observed_at,created_at);
+ALTER TABLE quality.finding FORCE ROW LEVEL SECURITY;
 ALTER TABLE quality.finding
   ALTER COLUMN last_observed_run_id SET NOT NULL,
   ALTER COLUMN last_observed_at SET NOT NULL;

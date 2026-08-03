@@ -5,6 +5,7 @@ BEGIN;
 -- trusted-tooling environment; this group has no password and is unavailable
 -- to every Albert runtime.
 DO $$
+DECLARE role_attributes record;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles
@@ -14,11 +15,24 @@ BEGIN
       NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
       NOREPLICATION NOBYPASSRLS;
   END IF;
+
+  SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls
+    INTO STRICT role_attributes
+    FROM pg_catalog.pg_roles
+   WHERE rolname='albert_vendor_connection_attestor';
+  IF role_attributes.rolsuper OR role_attributes.rolcreatedb
+     OR role_attributes.rolcreaterole OR role_attributes.rolreplication
+     OR role_attributes.rolbypassrls THEN
+    RAISE EXCEPTION 'existing vendor connection attestor role has unsafe attributes';
+  END IF;
 END;
 $$;
 
-ALTER ROLE albert_vendor_connection_attestor NOLOGIN NOINHERIT NOSUPERUSER
-  NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+-- Supabase's managed postgres identity has CREATEROLE but is not a true
+-- superuser. Its supautils hook rejects ALTER ROLE statements that restate
+-- privileged attributes, even as false. The guard above fails closed on those
+-- attributes, so this statement changes only properties it may safely manage.
+ALTER ROLE albert_vendor_connection_attestor NOLOGIN NOINHERIT;
 DO $$
 BEGIN
   EXECUTE format(
