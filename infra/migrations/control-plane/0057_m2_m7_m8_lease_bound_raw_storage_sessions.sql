@@ -642,10 +642,10 @@ GRANT EXECUTE ON FUNCTION control_plane.assert_raw_storage_session_authority_rea
 TO albert_sync_control,albert_webhook_control,albert_deletion_control;
 
 -- The administrator upgrade was deliberately closed until all grant tables
--- existed. Verify the final cross-schema policy graph once, then seal the
--- verifier so it cannot become a runtime oracle.
+-- existed. Verify the final cross-schema policy graph once. The
+-- SECURITY DEFINER verifier revokes this migration role's one-use EXECUTE
+-- grant from inside the successful call, so the non-owner migration must not
+-- attempt a second REVOKE afterward.
 SELECT extensions.albert_verify_lease_bound_raw_storage_authority();
-REVOKE ALL ON FUNCTION extensions.albert_verify_lease_bound_raw_storage_authority()
-FROM albert_control_migration_owner;
 
 COMMIT;
