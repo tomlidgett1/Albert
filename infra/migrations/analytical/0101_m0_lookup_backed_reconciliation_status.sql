@@ -23,10 +23,15 @@ ALTER TABLE quality.reconciliation_snapshot
   FOREIGN KEY (status)
   REFERENCES quality.reconciliation_snapshot_status_lookup(value)
   NOT VALID;
+-- Validation is an all-tenant table scan. The migration-owner bypass is
+-- transaction-local; RLS stays enabled for non-owner roles and FORCE is
+-- restored before this migration commits.
+ALTER TABLE quality.reconciliation_snapshot NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE quality.reconciliation_snapshot
   VALIDATE CONSTRAINT reconciliation_snapshot_status_fkey;
 ALTER TABLE quality.reconciliation_snapshot
   DROP CONSTRAINT IF EXISTS reconciliation_snapshot_status_check;
+ALTER TABLE quality.reconciliation_snapshot FORCE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE quality.reconciliation_snapshot_status_lookup
   FROM PUBLIC,ingest_rw,semantic_ro,semantic_meta_rw,deletion_rw;

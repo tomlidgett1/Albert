@@ -22,8 +22,15 @@ ALTER TABLE semantic_internal.pipeline_table_stats_projection_outbox
       AND snapshot_inventory_hash IS NOT NULL
       AND snapshot_inventory_hash ~ '^[0-9a-f]{64}$')
   ) NOT VALID;
+-- Validation scans every tenant's historical outbox rows. Cross that forced
+-- owner boundary only inside this atomic migration, with RLS still enabled for
+-- all runtime roles, then restore FORCE before commit.
+ALTER TABLE semantic_internal.pipeline_table_stats_projection_outbox
+  NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE semantic_internal.pipeline_table_stats_projection_outbox
   VALIDATE CONSTRAINT pipeline_table_stats_quality_attestation_valid;
+ALTER TABLE semantic_internal.pipeline_table_stats_projection_outbox
+  FORCE ROW LEVEL SECURITY;
 
 -- transform_rw intentionally has no access to the extensions schema. Expose
 -- only the one content-addressing primitive this attestation needs instead of

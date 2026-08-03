@@ -73,7 +73,7 @@ SELECT '01H00000000000000000005401',seed.connection_id,1,seed.stream,
           THEN ARRAY['recent','thirteen_months','full_history']::text[]
           ELSE ARRAY['recent']::text[]
         END
-      ) WITH ORDINALITY
+      ) WITH ORDINALITY AS expanded(value,ordinality)
   ) phase;
 
 INSERT INTO control_plane.sync_runs(

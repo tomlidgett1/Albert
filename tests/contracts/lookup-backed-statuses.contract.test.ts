@@ -161,6 +161,10 @@ test("analytical reconciliation snapshot status is a dedicated lookup lifecycle"
     legacyCheck: "reconciliation_snapshot_status_check",
     statuses: ["running", "complete", "failed"],
   });
+  assert.match(
+    sql,
+    /ALTER TABLE quality\.reconciliation_snapshot NO FORCE ROW LEVEL SECURITY;[\s\S]*?VALIDATE CONSTRAINT reconciliation_snapshot_status_fkey;[\s\S]*?ALTER TABLE quality\.reconciliation_snapshot FORCE ROW LEVEL SECURITY;/u,
+  );
 });
 
 test("both database pipelines execute final-schema catalogue proofs", async () => {

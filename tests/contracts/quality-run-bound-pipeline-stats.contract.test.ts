@@ -50,6 +50,10 @@ test("candidate pipeline snapshots require one exact quality run", async () => {
     sql,
     /SET quality_run_id=p_quality_run_id,[\s\S]*?quality_checked_at=run_checked_at,[\s\S]*?snapshot_table_count=projected_table_count,[\s\S]*?snapshot_inventory_hash=projected_inventory_hash/u,
   );
+  assert.match(
+    sql,
+    /pipeline_table_stats_projection_outbox[\s\S]*?NO FORCE ROW LEVEL SECURITY;[\s\S]*?VALIDATE CONSTRAINT pipeline_table_stats_quality_attestation_valid;[\s\S]*?pipeline_table_stats_projection_outbox[\s\S]*?FORCE ROW LEVEL SECURITY;/u,
+  );
 });
 
 test("the worker attests transform snapshots but leaves maintenance unattested", async () => {
