@@ -90,10 +90,14 @@ test("raw Storage provisioning uses Auth Admin only outside runtime and binds ex
 });
 
 test("customer raw authority is lease-bound and exercised by exact runtime logins", async () => {
-  const [migration, administratorUpgrade, ci, syncRuntime, webhookRuntime,
+  const [migration, deadlineHardening, administratorUpgrade, ci, syncRuntime, webhookRuntime,
     deletionRuntime, s3Proof, authoritySql] = await Promise.all([
     readFile(new URL(
       "../../infra/migrations/control-plane/0057_m2_m7_m8_lease_bound_raw_storage_sessions.sql",
+      import.meta.url,
+    ), "utf8"),
+    readFile(new URL(
+      "../../infra/migrations/control-plane/0060_m2_precise_raw_storage_session_deadlines.sql",
       import.meta.url,
     ), "utf8"),
     readFile(new URL(
@@ -145,19 +149,45 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   );
   assert.match(migration, /require_active_sync_job_lease/u);
   assert.doesNotMatch(migration, /require_sync_job_lease/u);
+  assert.equal(
+    (deadlineHardening.match(/CREATE OR REPLACE FUNCTION control_plane\.issue_raw_storage_(?:sync|webhook|deletion)_session/gu) ?? []).length,
+    3,
+    "all three issuer identities must be replaced additively",
+  );
+  assert.equal(
+    (deadlineHardening.match(/p_auth_token_expires_at IS NULL/gu) ?? []).length,
+    3,
+    "every issuer must reject an absent Auth-token deadline",
+  );
+  assert.equal(
+    (deadlineHardening.match(/FOR UPDATE SKIP LOCKED/gu) ?? []).length,
+    3,
+    "bounded expiry reaping must not block new grant issuance",
+  );
+  assert.equal(
+    (deadlineHardening.match(/grant_issued_at,deadline/gu) ?? []).length,
+    3,
+    "every issuer must persist its single anchored issuance/deadline pair",
+  );
 
   assert.match(syncRuntime, /SET LOCAL ROLE albert_sync_control/u);
   assert.match(syncRuntime, /claim_sync_jobs/u);
   assert.match(syncRuntime, /acquire_sync_write_permit/u);
   assert.match(syncRuntime, /issue_raw_storage_sync_session/u);
   assert.match(syncRuntime, /revoke_raw_storage_sync_session/u);
+  assert.match(syncRuntime, /sync issuer accepted a NULL Auth-token expiry/u);
+  assert.match(syncRuntime, /inside the five-minute cap/u);
   assert.match(webhookRuntime, /SET LOCAL ROLE albert_webhook_control/u);
   assert.match(webhookRuntime, /issue_raw_storage_webhook_session/u);
   assert.match(webhookRuntime, /revoke_raw_storage_webhook_session/u);
+  assert.match(webhookRuntime, /webhook issuer accepted a NULL Auth-token expiry/u);
+  assert.match(webhookRuntime, /inside the two-minute cap/u);
   assert.match(deletionRuntime, /SET LOCAL ROLE albert_deletion_control/u);
   assert.match(deletionRuntime, /claim_deletion_jobs/u);
   assert.match(deletionRuntime, /issue_raw_storage_deletion_session/u);
   assert.match(deletionRuntime, /revoke_raw_storage_deletion_session/u);
+  assert.match(deletionRuntime, /deletion issuer accepted a NULL Auth-token expiry/u);
+  assert.match(deletionRuntime, /inside the five-minute cap/u);
 
   assert.ok(ci.indexOf("provision:runtime-logins -- --target=control-plane") <
     ci.indexOf("control-plane-raw-storage-sync-runtime.sql"));
@@ -187,6 +217,16 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
     authoritySql,
     /UPDATE control_plane\.(?:sync_job_attempts|deletion_job_attempts)/u,
     "authority tests must preserve append-only attempt evidence",
+  );
+  assert.doesNotMatch(
+    authoritySql,
+    /clock_timestamp\(\)\+interval '(?:2|5) minutes'/u,
+    "exact-bound grant fixtures must use one statement-stable clock",
+  );
+  assert.equal(
+    (authoritySql.match(/statement_timestamp\(\),statement_timestamp\(\)\+interval '(?:2|5) minutes'/gu) ?? []).length,
+    6,
+    "all six direct grants must exercise a deterministic exact TTL boundary",
   );
   assert.match(authoritySql, /'01J90000000000000000000009',2,'raw-sync-worker-redelivery'/u);
   assert.match(authoritySql, /'01J9000000000000000000000H',2,'raw-deletion-worker-redelivery'/u);

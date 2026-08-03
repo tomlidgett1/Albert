@@ -72,6 +72,84 @@ SELECT pg_temp.assert_true(
   AND NOT has_table_privilege('albert_deletion_control','control_plane.raw_storage_deletion_session_grants','SELECT'),
   'runtime roles must not receive direct session-grant table authority'
 );
+SELECT pg_temp.assert_true(
+  has_function_privilege(
+    'albert_sync_control',
+    'control_plane.issue_raw_storage_sync_session(text,text,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_sync_control',
+    'control_plane.issue_raw_storage_webhook_session(text,text,text,text,text,text,bigint,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_sync_control',
+    'control_plane.issue_raw_storage_deletion_session(bigint,text,text,integer,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND has_function_privilege(
+    'albert_webhook_control',
+    'control_plane.issue_raw_storage_webhook_session(text,text,text,text,text,text,bigint,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_webhook_control',
+    'control_plane.issue_raw_storage_sync_session(text,text,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_webhook_control',
+    'control_plane.issue_raw_storage_deletion_session(bigint,text,text,integer,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND has_function_privilege(
+    'albert_deletion_control',
+    'control_plane.issue_raw_storage_deletion_session(bigint,text,text,integer,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_deletion_control',
+    'control_plane.issue_raw_storage_sync_session(text,text,text,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  )
+  AND NOT has_function_privilege(
+    'albert_deletion_control',
+    'control_plane.issue_raw_storage_webhook_session(text,text,text,text,text,text,bigint,uuid,uuid,timestamptz)',
+    'EXECUTE'
+  ),
+  'each runtime purpose must execute only its matching session issuer'
+);
+SELECT pg_temp.assert_true(
+  NOT EXISTS (
+    SELECT 1
+      FROM unnest(ARRAY[
+        'anon','authenticated','service_role','albert_transform_control',
+        'albert_semantic_control','albert_operator_diagnostic_control'
+      ]) AS denied(role_name)
+      CROSS JOIN unnest(ARRAY[
+        'control_plane.issue_raw_storage_sync_session(text,text,text,uuid,uuid,timestamptz)',
+        'control_plane.issue_raw_storage_webhook_session(text,text,text,text,text,text,bigint,uuid,uuid,timestamptz)',
+        'control_plane.issue_raw_storage_deletion_session(bigint,text,text,integer,text,uuid,uuid,timestamptz)'
+      ]) AS issuer(signature)
+     WHERE has_function_privilege(denied.role_name,issuer.signature,'EXECUTE')
+  )
+  AND NOT EXISTS (
+    SELECT 1
+      FROM pg_proc AS procedure
+      JOIN pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
+      CROSS JOIN LATERAL aclexplode(coalesce(procedure.proacl,acldefault('f',procedure.proowner))) AS acl
+     WHERE namespace.nspname='control_plane'
+       AND procedure.proname IN (
+         'issue_raw_storage_sync_session',
+         'issue_raw_storage_webhook_session',
+         'issue_raw_storage_deletion_session'
+       )
+       AND acl.grantee=0
+       AND acl.privilege_type='EXECUTE'
+  ),
+  'PUBLIC and every non-purpose role must not execute a raw session issuer'
+);
 
 -- Two connections make foreign-scope leakage observable without relying on
 -- unguessable identifiers.
@@ -205,18 +283,24 @@ RESET ROLE;
 
 INSERT INTO control_plane.raw_storage_sync_session_grants(
   tenant_id,grant_id,permit_id,worker_id,auth_user_id,auth_session_id,
-  object_key,expires_at
+  object_key,issued_at,expires_at
 ) VALUES
   ('01J90000000000000000000001','01J9000000000000000000000N',
    '01J9000000000000000000000D','raw-sync-worker',:'sync_user_id',
    '10000000-0000-4000-8000-000000000001',
    'tenant/01J90000000000000000000001/connection/01J90000000000000000000002/stream/employees/date/2026-08-03/batch-01J90000000000000000000008.jsonl.gz',
-   clock_timestamp()+interval '5 minutes'),
+   statement_timestamp(),statement_timestamp()+interval '5 minutes'),
   ('01J90000000000000000000001','01J9000000000000000000000P',
    '01J9000000000000000000000E','raw-sync-worker',:'sync_user_id',
    '10000000-0000-4000-8000-000000000001',
    'tenant/01J90000000000000000000001/connection/01J90000000000000000000002/stream/timesheets/date/2026-08-03/batch-01J9000000000000000000000A.jsonl.gz',
-   clock_timestamp()+interval '5 minutes');
+   statement_timestamp(),statement_timestamp()+interval '5 minutes');
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2 AND bool_and(expires_at-issued_at=interval '5 minutes')
+     FROM control_plane.raw_storage_sync_session_grants
+    WHERE grant_id IN ('01J9000000000000000000000N','01J9000000000000000000000P')),
+  'sync fixture grants must exercise the exact five-minute TTL boundary'
+);
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'sync_user_id',true);
@@ -289,20 +373,26 @@ RESET ROLE;
 
 INSERT INTO control_plane.raw_storage_webhook_session_grants(
   tenant_id,grant_id,connection_id,webhook_receipt_id,connector_key,
-  verification_reference,auth_user_id,auth_session_id,object_key,expires_at
+  verification_reference,auth_user_id,auth_session_id,object_key,issued_at,expires_at
 ) VALUES
   ('01J90000000000000000000001','01J9000000000000000000000Q',
    '01J90000000000000000000002','01J9000000000000000000000F','deputy',
    '01J90000000000000000000004',:'webhook_user_id',
    '20000000-0000-4000-8000-000000000001',
    'tenant/01J90000000000000000000001/connection/01J90000000000000000000002/stream/webhook_deputy/date/2026-08-03/batch-01J9000000000000000000000F.json.gz',
-   clock_timestamp()+interval '2 minutes'),
+   statement_timestamp(),statement_timestamp()+interval '2 minutes'),
   ('01J90000000000000000000001','01J9000000000000000000000R',
    '01J90000000000000000000002','01J9000000000000000000000G','deputy',
    '01J90000000000000000000004',:'webhook_user_id',
    '20000000-0000-4000-8000-000000000001',
    'tenant/01J90000000000000000000001/connection/01J90000000000000000000002/stream/webhook_deputy/date/2026-08-03/batch-01J9000000000000000000000G.json.gz',
-   clock_timestamp()+interval '2 minutes');
+   statement_timestamp(),statement_timestamp()+interval '2 minutes');
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2 AND bool_and(expires_at-issued_at=interval '2 minutes')
+     FROM control_plane.raw_storage_webhook_session_grants
+    WHERE grant_id IN ('01J9000000000000000000000Q','01J9000000000000000000000R')),
+  'webhook fixture grants must exercise the exact two-minute TTL boundary'
+);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'webhook_user_id',true);
 SELECT set_config('request.jwt.claims',jsonb_build_object(
@@ -355,12 +445,19 @@ SELECT pg_temp.assert_true(
 RESET ROLE;
 INSERT INTO control_plane.raw_storage_deletion_session_grants(
   tenant_id,grant_id,deletion_request_id,attempt_number,worker_id,message_id,
-  auth_user_id,auth_session_id,operation,scope,connection_id,expires_at
+  auth_user_id,auth_session_id,operation,scope,connection_id,issued_at,expires_at
 ) VALUES (
   '01J90000000000000000000001','01J9000000000000000000000S',
   '01J9000000000000000000000H',1,'raw-deletion-worker',8101,
   :'deletion_user_id','30000000-0000-4000-8000-000000000001',
-  'purge','connection','01J90000000000000000000003',clock_timestamp()+interval '5 minutes'
+  'purge','connection','01J90000000000000000000003',
+  statement_timestamp(),statement_timestamp()+interval '5 minutes'
+);
+SELECT pg_temp.assert_true(
+  (SELECT expires_at-issued_at=interval '5 minutes'
+     FROM control_plane.raw_storage_deletion_session_grants
+    WHERE grant_id='01J9000000000000000000000S'),
+  'deletion purge fixture must exercise the exact five-minute TTL boundary'
 );
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'deletion_user_id',true);
@@ -419,12 +516,19 @@ UPDATE control_plane.deletion_requests SET status='verifying'
  WHERE deletion_request_id='01J9000000000000000000000H';
 INSERT INTO control_plane.raw_storage_deletion_session_grants(
   tenant_id,grant_id,deletion_request_id,attempt_number,worker_id,message_id,
-  auth_user_id,auth_session_id,operation,scope,connection_id,expires_at
+  auth_user_id,auth_session_id,operation,scope,connection_id,issued_at,expires_at
 ) VALUES (
   '01J90000000000000000000001','01J9000000000000000000000T',
   '01J9000000000000000000000H',1,'raw-deletion-worker',8101,
   :'deletion_user_id','30000000-0000-4000-8000-000000000001',
-  'verify','connection','01J90000000000000000000003',clock_timestamp()+interval '5 minutes'
+  'verify','connection','01J90000000000000000000003',
+  statement_timestamp(),statement_timestamp()+interval '5 minutes'
+);
+SELECT pg_temp.assert_true(
+  (SELECT expires_at-issued_at=interval '5 minutes'
+     FROM control_plane.raw_storage_deletion_session_grants
+    WHERE grant_id='01J9000000000000000000000T'),
+  'deletion verify fixture must exercise the exact five-minute TTL boundary'
 );
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'deletion_user_id',true);
