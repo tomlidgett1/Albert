@@ -534,15 +534,15 @@ ROLLBACK TO SAVEPOINT optional_unavailable;
 
 SELECT pg_temp.assert_true(
   NOT pg_catalog.has_function_privilege(
-    'albert_operator_diagnostic_control_runtime',
+    'albert_operator_diagnostic_control',
     'control_plane.capture_protected_dogfood_acceptance_v1(text,text,text,jsonb,text,integer,text,text,text,text,text)',
     'EXECUTE'
   ) AND pg_catalog.has_function_privilege(
-    'albert_operator_diagnostic_control_runtime',
+    'albert_operator_diagnostic_control',
     'control_plane.capture_protected_dogfood_acceptance(text,text,text,jsonb,text,integer,text,text,text,text,text,text)',
     'EXECUTE'
   ),
-  'the runtime must only execute the hardened wrapper'
+  'the diagnostic runtime group must only execute the hardened wrapper'
 );
 
 ROLLBACK;
