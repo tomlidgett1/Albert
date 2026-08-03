@@ -164,6 +164,7 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   assert.match(ci, /-U albert_webhook_control_runtime/u);
   assert.match(ci, /-U albert_deletion_control_runtime/u);
   assert.match(s3Proof, /every issuer must reap crashed expired grants/u);
+  assert.match(s3Proof, /ambient deletion principal must not enumerate customer objects/u);
   assert.doesNotMatch(
     s3Proof,
     /clock_timestamp\(\)-interval '(?:6|9|10) minutes'/u,

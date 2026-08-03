@@ -399,9 +399,11 @@ export async function proveRawStorageS3Sessions(): Promise<void> {
       Body: new Uint8Array([31, 139, 8, 3]),
       ContentType: "application/gzip",
     })));
-    assert.deepEqual(await visibleKeys(deletionProbe, deletionConfig.bucket, deletionPrefix), [
-      deletionKey,
-    ]);
+    assert.deepEqual(
+      await visibleKeys(deletionProbe, deletionConfig.bucket, deletionPrefix),
+      [],
+      "the ambient deletion principal must not enumerate customer objects",
+    );
     assert.deepEqual(await visibleKeys(deletionProbe, deletionConfig.bucket, crossScopePrefix), []);
     const page = await deletion.listPrefix(deletionPrefix);
     assert.deepEqual(page.keys, [deletionKey]);
