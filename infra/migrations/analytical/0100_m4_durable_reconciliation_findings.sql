@@ -49,7 +49,6 @@ ALTER TABLE quality.finding NO FORCE ROW LEVEL SECURITY;
 UPDATE quality.finding
    SET last_observed_run_id=coalesce(last_observed_run_id,run_id),
        last_observed_at=coalesce(last_observed_at,created_at);
-ALTER TABLE quality.finding FORCE ROW LEVEL SECURITY;
 ALTER TABLE quality.finding
   ALTER COLUMN last_observed_run_id SET NOT NULL,
   ALTER COLUMN last_observed_at SET NOT NULL;
@@ -76,6 +75,9 @@ ALTER TABLE quality.finding
 CREATE INDEX IF NOT EXISTS quality_finding_open_check_idx
   ON quality.finding(tenant_id,check_id,entity_type,entity_id)
   WHERE status='open';
+-- Constraint validation and index construction also scan the whole table.
+-- Restore FORCE only after every all-tenant migration operation is complete.
+ALTER TABLE quality.finding FORCE ROW LEVEL SECURITY;
 
 -- Only the migration-owned materialiser calls this function. The identifier
 -- excludes run_id so the same day/location exception is reopened or refreshed,
