@@ -65,3 +65,30 @@ test("validated wrappers preserve grants while implementations stay private",asy
   assert.match(sqlTest,/free-text failure evidence[\s\S]*unknown failure code[\s\S]*SQLSTATE '55000'/iu);
   assert.match(ci,/control-plane-code-only-worker-failure-evidence\.sql/iu);
 });
+
+test("worker failure wrappers fail closed without schema-qualified COALESCE",async()=>{
+  const correction=await source(
+    "infra/migrations/control-plane/0059_m2_worker_failure_coalesce_runtime.sql",
+  );
+
+  for(const wrapper of [
+    "retry_or_fail_sync_job",
+    "defer_sync_job",
+    "block_reconciliation_phase",
+    "fail_identity_decision_projection",
+    "retry_or_fail_canonical_transform_job",
+    "mark_sync_stream_phase_unavailable",
+  ]){
+    assert.match(
+      correction,
+      new RegExp(`CREATE OR REPLACE FUNCTION control_plane\\.${wrapper}\\(`,"u"),
+      `runtime correction is missing ${wrapper}`,
+    );
+  }
+  assert.equal(
+    correction.match(/IS DISTINCT FROM true/gu)?.length,
+    10,
+    "all nullable validation predicates must fail closed",
+  );
+  assert.doesNotMatch(correction,/pg_catalog\.coalesce/iu);
+});
