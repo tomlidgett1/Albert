@@ -263,8 +263,14 @@ SELECT pg_temp.assert_true(
   'a different Auth session must not inherit another session grant'
 );
 RESET ROLE;
-UPDATE control_plane.sync_job_attempts SET visibility_deadline=clock_timestamp()-interval '1 second'
- WHERE job_request_id='01J90000000000000000000009';
+INSERT INTO control_plane.sync_job_attempts(
+  tenant_id,job_attempt_id,job_request_id,attempt_number,worker_id,
+  visibility_deadline,started_at
+) VALUES (
+  '01J90000000000000000000001','01J9000000000000000000000V',
+  '01J90000000000000000000009',2,'raw-sync-worker-redelivery',
+  clock_timestamp()+interval '10 minutes',clock_timestamp()
+);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'sync_user_id',true);
 SELECT set_config('request.jwt.claims',jsonb_build_object(
@@ -277,7 +283,7 @@ SELECT set_config('request.jwt.claims',jsonb_build_object(
 SELECT pg_temp.assert_true(
   (SELECT count(*)=0 FROM storage.objects
     WHERE bucket_id='raw-payloads' AND name LIKE 'tenant/01J90000000000000000000001/%'),
-  'an expired sync attempt must immediately close its still-unexpired grant'
+  'a superseded sync attempt must immediately close its still-unexpired grant'
 );
 RESET ROLE;
 
@@ -440,9 +446,14 @@ SELECT pg_temp.assert_true(
   'verification grants must be read-only'
 );
 RESET ROLE;
-UPDATE control_plane.deletion_job_attempts
-   SET visibility_deadline=clock_timestamp()-interval '1 second'
- WHERE deletion_request_id='01J9000000000000000000000H';
+INSERT INTO control_plane.deletion_job_attempts(
+  tenant_id,deletion_attempt_id,deletion_request_id,attempt_number,worker_id,
+  visibility_deadline
+) VALUES (
+  '01J90000000000000000000001','01J9000000000000000000000W',
+  '01J9000000000000000000000H',2,'raw-deletion-worker-redelivery',
+  clock_timestamp()+interval '10 minutes'
+);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub',:'deletion_user_id',true);
 SELECT set_config('request.jwt.claims',jsonb_build_object(
@@ -455,7 +466,7 @@ SELECT set_config('request.jwt.claims',jsonb_build_object(
 SELECT pg_temp.assert_true(
   (SELECT count(*)=0 FROM storage.objects
     WHERE bucket_id='raw-payloads' AND name LIKE 'tenant/01J90000000000000000000001/%'),
-  'stale deletion attempt must immediately close its still-unexpired grant'
+  'a superseded deletion attempt must immediately close its still-unexpired grant'
 );
 RESET ROLE;
 

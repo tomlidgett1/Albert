@@ -91,7 +91,7 @@ test("raw Storage provisioning uses Auth Admin only outside runtime and binds ex
 
 test("customer raw authority is lease-bound and exercised by exact runtime logins", async () => {
   const [migration, administratorUpgrade, ci, syncRuntime, webhookRuntime,
-    deletionRuntime, s3Proof] = await Promise.all([
+    deletionRuntime, s3Proof, authoritySql] = await Promise.all([
     readFile(new URL(
       "../../infra/migrations/control-plane/0057_m2_m7_m8_lease_bound_raw_storage_sessions.sql",
       import.meta.url,
@@ -105,6 +105,7 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
     readFile(new URL("../sql/control-plane-raw-storage-webhook-runtime.sql", import.meta.url), "utf8"),
     readFile(new URL("../sql/control-plane-raw-storage-deletion-runtime.sql", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/test-raw-storage-s3-session.ts", import.meta.url), "utf8"),
+    readFile(new URL("../sql/control-plane-raw-storage-authority.sql", import.meta.url), "utf8"),
   ]);
 
   for (const purpose of ["sync", "webhook", "deletion"] as const) {
@@ -178,4 +179,11 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   assert.match(s3Proof, /sessionPool: syncPool/u);
   assert.match(s3Proof, /sessionPool: webhookPool/u);
   assert.match(s3Proof, /sessionPool: deletionPool/u);
+  assert.doesNotMatch(
+    authoritySql,
+    /UPDATE control_plane\.(?:sync_job_attempts|deletion_job_attempts)/u,
+    "authority tests must preserve append-only attempt evidence",
+  );
+  assert.match(authoritySql, /'01J90000000000000000000009',2,'raw-sync-worker-redelivery'/u);
+  assert.match(authoritySql, /'01J9000000000000000000000H',2,'raw-deletion-worker-redelivery'/u);
 });
