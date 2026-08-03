@@ -9,6 +9,13 @@ const migration = await readFile(
   ),
   "utf8",
 );
+const replayVariableHardening = await readFile(
+  new URL(
+    "../../infra/migrations/analytical/0098_m4_lightspeed_replay_variable_disambiguation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const pipeline = await readFile(
   new URL("../../services/sync-workers/src/canonical-pipeline.ts", import.meta.url),
   "utf8",
@@ -43,6 +50,22 @@ test("Lightspeed supplier replay evidence is exact and generation scoped", () =>
   assert.doesNotMatch(signature, /command_count|applied_count|integer/iu);
   assert.match(recorder, /count\(DISTINCT expected\.source_record_id\)/u);
   assert.match(recorder, /materialized_line_count<>expected_line_count/u);
+  assert.match(
+    replayVariableHardening,
+    /CREATE OR REPLACE FUNCTION semantic_internal\.record_lightspeed_order_dependency_replay/u,
+  );
+  assert.match(
+    replayVariableHardening,
+    /fact\.supplier_id=resolved_supplier_id/u,
+  );
+  assert.doesNotMatch(
+    replayVariableHardening,
+    /fact\.supplier_id=supplier_id/u,
+  );
+  assert.match(
+    replayVariableHardening,
+    /GRANT EXECUTE ON FUNCTION semantic_internal\.record_lightspeed_order_dependency_replay\([\s\S]*?\) TO transform_rw/u,
+  );
 });
 
 test("Every Lightspeed replay gate mutation serializes before reading state", () => {
