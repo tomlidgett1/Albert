@@ -15,8 +15,19 @@ import type { ConnectorRegistry } from "./worker.js";
 
 type Provider = SyncJob["connectorId"];
 
+export type OAuthConnectorConfig = Pick<
+  SyncWorkerConfig,
+  | "lightspeedClientId"
+  | "lightspeedClientSecret"
+  | "xeroClientId"
+  | "xeroEnableAdvancedJournals"
+  | "deputyClientId"
+  | "deputyClientSecret"
+  | "deputyRedirectUri"
+>;
+
 export class ProductionConnectorFactory implements OAuthConnectorFactory {
-  constructor(private readonly config: SyncWorkerConfig) {}
+  constructor(private readonly config: OAuthConnectorConfig) {}
 
   create(provider: Provider, vault: WorkerCredentialVault): OAuthConnectorPack {
     if (provider === "lightspeed-r") {
