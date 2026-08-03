@@ -408,14 +408,15 @@ export class LightspeedRConnector implements OAuthConnectorPack {
   ): Promise<readonly ConnectorCapability[]> {
     const credential = await this.readCredential(context);
     const scopes = new Set(credential.secret.scopes);
-    const has = (...requiredScopes: string[]) => requiredScopes.every((scope) => scopes.has(scope));
+    const hasScope = (scope: string) => scopes.has("employee:all") || scopes.has(scope);
+    const has = (...requiredScopes: string[]) => requiredScopes.every(hasScope);
     const scopeCapability = (
       id: ConnectorCapability["id"],
       requiredScopes: readonly string[],
     ): ConnectorCapability => ({
       id,
-      support: requiredScopes.every((scope) => scopes.has(scope)) ? "full" : "unavailable",
-      reasonCode: requiredScopes.every((scope) => scopes.has(scope))
+      support: requiredScopes.every(hasScope) ? "full" : "unavailable",
+      reasonCode: requiredScopes.every(hasScope)
         ? "required_scopes_granted"
         : "required_scope_missing",
       requiredScopes,

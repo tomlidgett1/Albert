@@ -11,16 +11,7 @@ import {
 } from "./documented-fields.js";
 
 export const LIGHTSPEED_R_DEFAULT_SCOPES = [
-  "employee:register_read",
-  "employee:inventory_read",
-  "employee:customers_read",
-  "employee:product_cost",
-  "employee:admin_employees",
-  "employee:admin_shops",
-  "employee:categories",
-  "employee:vendors",
-  "employee:purchase_orders",
-  "employee:admin_purchases",
+  "employee:all",
 ] as const;
 
 const coverage = (
@@ -102,7 +93,7 @@ export const lightspeedRManifest: ConnectorManifest = {
   oauth: {
     scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
     leastPrivilegeNotes: [
-      "R-Series does not publish read-only variants for employees, shops, categories, vendors, purchase orders, payment types, or tax categories. Albert requests the narrowest documented scopes and contains no source write methods.",
+      "Albert requests Lightspeed R-Series employee:all so one consent grant covers every V1 extraction domain. The connector still contains no source write methods and issues GET requests only.",
     ],
     refreshTokenRotation: true,
     remoteRevocation: "supported",

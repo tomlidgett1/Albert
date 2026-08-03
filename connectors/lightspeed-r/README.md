@@ -16,9 +16,9 @@ discovery is the variant check; X-Series uses different identity and API hosts.
 The merchant still needs to confirm the open product decision that their live
 shop is R-Series before M3 live-account acceptance can pass.
 
-Albert only issues GET requests to the R-Series data API. Some resources have
-no documented read-only scope, so the narrowest resource scopes are requested
-and the absence of write methods is enforced in code. The authorization-code
+Albert only issues GET requests to the R-Series data API. Albert requests the
+documented `employee:all` scope so one consent grant covers every V1 extraction
+domain; the absence of write methods remains enforced in code. The authorization-code
 flow is state-bound and uses S256 PKCE. R-Series' documented confidential-client
 exchange binds the same registered redirect URI, client secret, short-lived code
 and one-use PKCE verifier used by the authorization request.
@@ -30,10 +30,10 @@ does not publish a webhook contract, so
 scheduled incremental polling and nightly reconciliation recover changes and
 deletes.
 
-Pack 1.1.0 adds the documented `employee:vendors` grant. Connections created
-with an earlier consent set expose `inventory.purchase_orders` as unavailable
-until an owner re-consents; Albert does not attempt Order materialisation while
-the Vendor dependency is incomplete.
+Connections created with an earlier granular consent set continue to be
+evaluated against their individual grants. New connections request
+`employee:all`; existing connections must re-consent to receive that broader
+grant.
 
 Every paged response follows vendor-provided `next` URLs after validating the
 origin and account path. Timestamp-sortable resources use inclusive watermarks;

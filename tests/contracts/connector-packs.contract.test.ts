@@ -387,7 +387,7 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(lightspeed.searchParams.get("code_challenge"), "challenge-ls");
   assert.equal(lightspeed.searchParams.get("code_challenge_method"), "S256");
   assert.equal(lightspeed.searchParams.get("redirect_uri"), "https://albert.example/oauth/lightspeed-r/callback");
-  assert.ok(lightspeed.searchParams.get("scope")?.split(" ").includes("employee:vendors"));
+  assert.deepEqual(lightspeed.searchParams.get("scope")?.split(" "), ["employee:all"]);
   assert.equal(lightspeed.toString().includes("secret"), false);
 
   const xero = new URL(buildXeroAuthorizationUrl({
@@ -707,6 +707,29 @@ test("connector capability manifests never silently promote gated sources", asyn
     .find((item) => item.id === "inventory.purchase_orders");
   assert.equal(purchaseOrders?.support, "full");
   assert.deepEqual(purchaseOrders?.requiredScopes, ["employee:vendors", "employee:purchase_orders"]);
+
+  const lightspeedWithAll = new LightspeedRConnector({
+    clientId: "client",
+    clientSecret: "secret",
+    vault: new MemoryVault({
+      provider: "lightspeed-r",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["employee:all"],
+      metadata: {},
+    }),
+  });
+  const allScopeCapabilities = await lightspeedWithAll.describe_capabilities(context);
+  assert.equal(
+    allScopeCapabilities.find((item) => item.id === "inventory.purchase_orders")?.support,
+    "full",
+  );
+  assert.equal(
+    allScopeCapabilities.find((item) => item.id === "commerce.orders.customer")?.support,
+    "full",
+  );
 });
 
 test("connector workers execute typed, read-only extraction pages against vendor-shaped recordings", async () => {
