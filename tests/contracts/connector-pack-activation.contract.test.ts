@@ -147,6 +147,10 @@ test("migration and runtime use staged evidence, atomic views, stale-write fence
     "../../infra/migrations/analytical/0095_m5_atomic_connector_pack_activation.sql",
     import.meta.url,
   ),"utf8");
+  const activationVariableHardening=readFileSync(new URL(
+    "../../infra/migrations/analytical/0099_m5_connector_pack_activation_variable_disambiguation.sql",
+    import.meta.url,
+  ),"utf8");
   assert.doesNotMatch(migration,/ALTER TABLE semantic_internal\.tenant_capability\s+DROP CONSTRAINT/u);
   assert.doesNotMatch(migration,/ALTER TABLE semantic_internal\.source_field_allowlist\s+DROP CONSTRAINT/u);
   assert.match(migration,/CREATE TABLE semantic_internal\.connector_pack_tenant_capability_snapshot/u);
@@ -168,6 +172,22 @@ test("migration and runtime use staged evidence, atomic views, stale-write fence
   assert.match(migration,/connector_pack_connection_retirement_mutation/u);
   assert.match(migration,/deletion_internal\.mutation_authorized\(\)/u);
   assert.match(migration,/purge_connection_before_connector_pack_retirement/u);
+  assert.match(
+    activationVariableHardening,
+    /CREATE OR REPLACE FUNCTION semantic_internal\.activate_connector_pack/u,
+  );
+  assert.match(
+    activationVariableHardening,
+    /retired_at=activation_time[\s\S]*activated_at=activation_time/u,
+  );
+  assert.doesNotMatch(
+    activationVariableHardening,
+    /retired_at=activated_at/u,
+  );
+  assert.match(
+    activationVariableHardening,
+    /GRANT EXECUTE ON FUNCTION semantic_internal\.activate_connector_pack\(text,text,text\)[\s\S]*TO albert_migration_owner/u,
+  );
 
   const semantic=readFileSync(new URL(
     "../../services/semantic-query/src/postgres-adapters.ts",import.meta.url,
