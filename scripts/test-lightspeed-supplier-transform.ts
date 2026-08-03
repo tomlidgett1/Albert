@@ -468,8 +468,8 @@ async function run(): Promise<void> {
         false,
         false,
       ),
-      /canonical_dependency_replay_line_identity_duplicate:811/u,
-      "Duplicate source line identities must fail before compatibility projection writes.",
+      /canonical_dependency_replay_command_duplicate:811/u,
+      "Duplicate canonical replay commands must fail before compatibility projection writes.",
     );
     assert.equal(
       await scalarCount(

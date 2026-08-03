@@ -539,7 +539,7 @@ SELECT pg_temp.assert_true(
     'EXECUTE'
   ) AND pg_catalog.has_function_privilege(
     'albert_operator_diagnostic_control_runtime',
-    'control_plane.capture_protected_dogfood_acceptance(text,text,text,jsonb,text,integer,text,text,text,text,text)',
+    'control_plane.capture_protected_dogfood_acceptance(text,text,text,jsonb,text,integer,text,text,text,text,text,text)',
     'EXECUTE'
   ),
   'the runtime must only execute the hardened wrapper'
