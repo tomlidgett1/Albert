@@ -114,7 +114,7 @@ BEGIN
   BEGIN
     PERFORM quality.snapshot_all_pipeline_stats(
       '01J0000000000000000000QATT',clock_timestamp(),ARRAY['canonical']::text[],
-      '{}'::jsonb,'01J0000000000000000000MISS'
+      '{}'::jsonb,'01J0000000000000000000M1SS'
     );
     RAISE EXCEPTION 'an incomplete quality run produced an attested snapshot';
   EXCEPTION WHEN SQLSTATE '55000' THEN
