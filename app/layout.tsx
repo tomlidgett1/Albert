@@ -12,12 +12,48 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const metadataBase = new URL(
+  process.env.ALBERT_PUBLIC_ORIGIN ?? "http://localhost:3000",
+);
+
+const description =
+  "Ask questions in plain English and get governed answers grounded in your business data.";
+
 export const metadata: Metadata = {
-  title: "Albert",
-  description: "Albert is a conversational analytics platform for the whole business.",
+  metadataBase,
+  applicationName: "Albert",
+  title: {
+    default: "Albert — Natural-language analytics",
+    template: "%s · Albert",
+  },
+  description,
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Albert",
+    title: "Albert — Natural-language analytics",
+    description,
+    images: [
+      {
+        url: "/og.png",
+        width: 1731,
+        height: 909,
+        alt: "A conversational reasoning trace resolving into a governed table and chart",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Albert — Natural-language analytics",
+    description,
+    images: ["/og.png"],
+  },
+  robots: {
+    index: false,
+    follow: false,
   },
 };
 

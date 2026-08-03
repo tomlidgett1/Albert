@@ -2,6 +2,7 @@
 
 import {
   useId,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -61,11 +62,12 @@ export interface DomainReadiness {
 
 export interface ConnectionProviderData {
   id: ConnectionProviderId;
+  connectionId?: string;
   name: string;
   description: string;
   logo: string;
   auth: ConnectionAuthHealth;
-  domains: DomainReadiness[];
+  domains: readonly DomainReadiness[];
 }
 
 export interface DossierFact {
@@ -96,7 +98,7 @@ export interface BlockingQuestion {
 
 export interface IdentityMatch {
   id: string;
-  kind: "worker" | "location";
+  kind: "worker" | "location" | "product_variant" | "customer_account" | "supplier";
   title: string;
   first: {
     provider: ConnectionProviderId;
@@ -111,30 +113,52 @@ export interface IdentityMatch {
   evidence: string;
   confidence: "High" | "Medium";
   decision: MatchDecision;
+  projectionStatus: "pending" | "applied" | "failed";
 }
+
+const identityKindLabels: Readonly<Record<IdentityMatch["kind"], string>> = Object.freeze({
+  worker: "Worker match",
+  location: "Location match",
+  product_variant: "Product match",
+  customer_account: "Customer match",
+  supplier: "Supplier match",
+});
 
 export interface ConnectionsWorkspaceData {
   tenantName: string;
   timezone: string;
-  providers: ConnectionProviderData[];
+  providers: readonly ConnectionProviderData[];
   syncSummary: {
     progress: number;
     detail: string;
-    latestActivityAt: string;
+    latestActivityAt?: string;
   };
-  dossier: DossierFact[];
-  blockingQuestions: BlockingQuestion[];
-  identityMatches: IdentityMatch[];
+  dossier: readonly DossierFact[];
+  blockingQuestions: readonly BlockingQuestion[];
+  identityMatches: readonly IdentityMatch[];
+  oauthSelections?: readonly Readonly<{
+    oauthSessionId: string;
+    provider: ConnectionProviderId;
+    providerLabel: string;
+    expiresAt: string;
+    accounts: readonly Readonly<{ id: string; label: string; detail?: string }>[];
+  }>[];
 }
 
 export interface ConnectionsWorkspaceProps {
   data?: ConnectionsWorkspaceData;
+  status?: Readonly<{
+    kind: "loading" | "error" | "ready";
+    message?: string;
+  }>;
   initialView?: ConnectionViewId;
   onViewChange?: (view: ConnectionViewId) => void;
   onConnect?: (providerId: ConnectionProviderId) => void;
   onManage?: (providerId: ConnectionProviderId) => void;
   onAnswerBlockingQuestion?: (questionId: string, optionId: string) => void;
-  onMatchDecision?: (matchId: string, decision: MatchDecision) => void;
+  onMatchDecision?: (matchId: string, decision: MatchDecision) => boolean | void | Promise<boolean | void>;
+  onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
+  onDisconnect?: (connectionId: string) => void;
 }
 
 export const readinessStateLabels: Record<ReadinessState, string> = {
@@ -337,7 +361,7 @@ export const albertConnectionsFixture: ConnectionsWorkspaceData = {
       options: [
         { id: "net-sales", label: "Net sales" },
         { id: "gross-profit", label: "Gross profit" },
-        { id: "profit-per-hour", label: "Gross profit per worked hour" },
+        { id: "profit-per-hour", label: "Sales per worked hour" },
       ],
     },
   ],
@@ -359,6 +383,7 @@ export const albertConnectionsFixture: ConnectionsWorkspaceData = {
       evidence: "Exact work email and the same Fitzroy location",
       confidence: "High",
       decision: "proposed",
+      projectionStatus: "applied",
     },
     {
       id: "location-brunswick",
@@ -377,9 +402,62 @@ export const albertConnectionsFixture: ConnectionsWorkspaceData = {
       evidence: "Normalised street address matches exactly",
       confidence: "High",
       decision: "proposed",
+      projectionStatus: "applied",
     },
   ],
 };
+
+/** Truthful zero state used before the authenticated control plane responds. */
+export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze({
+  tenantName: "Your organisation",
+  timezone: "Australia/Melbourne",
+  syncSummary: Object.freeze({
+    progress: 0,
+    detail: "Connect a source to begin the recent-first sync.",
+  }),
+  providers: Object.freeze([
+    Object.freeze({
+      id: "lightspeed" as const,
+      name: "Lightspeed",
+      description: "Sales, inventory, customers, and store activity.",
+      logo: "/logos/lightspeed.png",
+      auth: Object.freeze({
+        state: "not_connected" as const,
+        label: "Not connected",
+        detail: "Connect a Lightspeed Retail R-Series account.",
+      }),
+      domains: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "xero" as const,
+      name: "Xero",
+      description: "Accounting, invoices, journals, and bank activity.",
+      logo: "/logos/xero.svg",
+      auth: Object.freeze({
+        state: "not_connected" as const,
+        label: "Not connected",
+        detail: "Connect a Xero organisation.",
+      }),
+      domains: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "deputy" as const,
+      name: "Deputy",
+      description: "Rosters, timesheets, leave, and workforce activity.",
+      logo: "/logos/deputy.png",
+      auth: Object.freeze({
+        state: "not_connected" as const,
+        label: "Not connected",
+        detail: "Connect a Deputy installation.",
+      }),
+      domains: Object.freeze([]),
+    }),
+  ]),
+  dossier: Object.freeze([]),
+  blockingQuestions: Object.freeze([]),
+  identityMatches: Object.freeze([]),
+  oauthSelections: Object.freeze([]),
+});
 
 const viewLabels: Record<ConnectionViewId, string> = {
   apps: "Apps",
@@ -447,14 +525,26 @@ function ProviderLogo({ provider }: { provider: ConnectionProviderData }) {
   );
 }
 
-export default function ConnectionsWorkspace({
-  data = albertConnectionsFixture,
+export default function ConnectionsWorkspace(props: ConnectionsWorkspaceProps) {
+  const data=props.data??emptyConnectionsWorkspace;
+  const stateKey=[
+    ...data.blockingQuestions.map((question)=>`q:${question.id}:${question.selectedOptionId??""}`),
+    ...data.identityMatches.map((match)=>`m:${match.id}:${match.decision}:${match.projectionStatus}`),
+  ].join("|");
+  return <ConnectionsWorkspaceStateful key={stateKey} {...props} data={data} />;
+}
+
+function ConnectionsWorkspaceStateful({
+  data = emptyConnectionsWorkspace,
+  status = { kind: "ready" },
   initialView = "apps",
   onViewChange,
   onConnect,
   onManage,
   onAnswerBlockingQuestion,
   onMatchDecision,
+  onSelectOAuthAccount,
+  onDisconnect,
 }: ConnectionsWorkspaceProps) {
   const [activeView, setActiveView] = useState<ConnectionViewId>(initialView);
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
@@ -470,6 +560,14 @@ export default function ConnectionsWorkspace({
   const [matchDecisions, setMatchDecisions] = useState<Record<string, MatchDecision>>(() =>
     Object.fromEntries(data.identityMatches.map((match) => [match.id, match.decision])),
   );
+  const [matchProjectionStatuses, setMatchProjectionStatuses] = useState<Record<string, IdentityMatch["projectionStatus"]>>(() =>
+    Object.fromEntries(data.identityMatches.map((match) => [match.id, match.projectionStatus])),
+  );
+  const [managedProviderId, setManagedProviderId] = useState<ConnectionProviderId | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const manageDialogRef = useRef<HTMLElement>(null);
+  const managePreviousFocusRef = useRef<HTMLElement | null>(null);
+  const managedProvider = data.providers.find(({ id }) => id === managedProviderId);
 
   const allDomains = useMemo(
     () => data.providers.flatMap((provider) => provider.domains),
@@ -513,6 +611,42 @@ export default function ConnectionsWorkspace({
     };
   }, [activeView]);
 
+  useEffect(() => {
+    if (!managedProviderId) return;
+    managePreviousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const dialog = manageDialogRef.current;
+    dialog?.querySelector<HTMLElement>("button")?.focus();
+
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setManagedProviderId(null);
+        setConfirmDisconnect(false);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled)")];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      managePreviousFocusRef.current?.focus();
+    };
+  }, [managedProviderId]);
+
   const selectView = (view: ConnectionViewId, focus = false) => {
     setActiveView(view);
     onViewChange?.(view);
@@ -548,9 +682,25 @@ export default function ConnectionsWorkspace({
     onAnswerBlockingQuestion?.(questionId, optionId);
   };
 
-  const decideMatch = (matchId: string, decision: MatchDecision) => {
+  const decideMatch = async (matchId: string, decision: MatchDecision) => {
+    const previousDecision = matchDecisions[matchId] ?? "proposed";
+    const previousProjectionStatus = matchProjectionStatuses[matchId] ?? "applied";
     setMatchDecisions((current) => ({ ...current, [matchId]: decision }));
-    onMatchDecision?.(matchId, decision);
+    setMatchProjectionStatuses((current) => ({ ...current, [matchId]: "pending" }));
+    if (!onMatchDecision) {
+      setMatchProjectionStatuses((current) => ({ ...current, [matchId]: "applied" }));
+      return;
+    }
+    try {
+      const saved = await onMatchDecision(matchId, decision);
+      if (saved === false) {
+        setMatchDecisions((current) => ({ ...current, [matchId]: previousDecision }));
+        setMatchProjectionStatuses((current) => ({ ...current, [matchId]: previousProjectionStatus }));
+      }
+    } catch {
+      setMatchDecisions((current) => ({ ...current, [matchId]: previousDecision }));
+      setMatchProjectionStatuses((current) => ({ ...current, [matchId]: previousProjectionStatus }));
+    }
   };
 
   return (
@@ -569,10 +719,13 @@ export default function ConnectionsWorkspace({
         </div>
       </div>
 
-      {!onConnect && !onManage ? (
-        <div className={styles.connectionsPreviewNotice} role="note">
+      {status.kind !== "ready" ? (
+        <div className={styles.connectionsPreviewNotice} data-status={status.kind} role="status">
           <span aria-hidden="true">✦</span>
-          <p><strong>Preview data</strong> · OAuth actions unlock when the connector registrations are configured.</p>
+          <p>
+            <strong>{status.kind === "loading" ? "Loading your connections" : "Connection status unavailable"}</strong>
+            {status.message ? ` · ${status.message}` : ""}
+          </p>
         </div>
       ) : null}
 
@@ -632,7 +785,9 @@ export default function ConnectionsWorkspace({
               <div>
                 <strong>{clampProgress(data.syncSummary.progress)}%</strong>
                 <span>
-                  Updated {formatLocalTime(data.syncSummary.latestActivityAt, data.timezone)}
+                  {data.syncSummary.latestActivityAt
+                    ? `Updated ${formatLocalTime(data.syncSummary.latestActivityAt, data.timezone)}`
+                    : "Waiting for the first sync"}
                 </span>
               </div>
               <ProgressBar
@@ -642,6 +797,29 @@ export default function ConnectionsWorkspace({
               />
             </div>
           </section>
+
+          {data.oauthSelections?.map((selection) => (
+            <section className={styles.connectionsAccountSelection} key={selection.oauthSessionId} aria-labelledby={`${componentId}-${selection.oauthSessionId}-title`}>
+              <div>
+                <p className={styles.connectionsSectionEyebrow}>ACCOUNT SELECTION</p>
+                <h3 id={`${componentId}-${selection.oauthSessionId}-title`}>Choose the {selection.providerLabel} account to connect</h3>
+                <p>Albert found more than one account. Nothing will sync until you choose one.</p>
+              </div>
+              <div role="group" aria-label={`Available ${selection.providerLabel} accounts`}>
+                {selection.accounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    disabled={!onSelectOAuthAccount}
+                    onClick={() => onSelectOAuthAccount?.(selection.oauthSessionId, account.id)}
+                  >
+                    <strong>{account.label}</strong>
+                    {account.detail ? <span>{account.detail}</span> : null}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
 
           <div className={styles.connectionsProviderList} role="list" aria-label="Connected apps">
             {data.providers.map((provider) => {
@@ -683,9 +861,14 @@ export default function ConnectionsWorkspace({
                       <button
                         className={styles.connectionsProviderActionSecondary}
                         type="button"
-                        disabled={!onManage}
-                        title={!onManage ? "Connection management is not configured in this preview" : undefined}
-                        onClick={() => onManage?.(provider.id)}
+                        disabled={!onManage && !onDisconnect}
+                        onClick={() => {
+                          if (onManage) onManage(provider.id);
+                          else {
+                            setManagedProviderId(provider.id);
+                            setConfirmDisconnect(false);
+                          }
+                        }}
                       >
                         Manage
                       </button>
@@ -877,15 +1060,25 @@ export default function ConnectionsWorkspace({
             <div className={styles.connectionsMatchList}>
               {data.identityMatches.map((match) => {
                 const decision = matchDecisions[match.id] ?? match.decision;
+                const projectionStatus = matchProjectionStatuses[match.id] ?? match.projectionStatus;
                 return (
-                  <article className={styles.connectionsMatchCard} data-decision={decision} key={match.id}>
+                  <article
+                    className={styles.connectionsMatchCard}
+                    data-decision={decision}
+                    data-projection-status={projectionStatus}
+                    key={match.id}
+                  >
                     <div className={styles.connectionsMatchHeader}>
                       <div>
-                        <span>{match.kind === "worker" ? "Worker match" : "Location match"}</span>
+                        <span>{identityKindLabels[match.kind]}</span>
                         <h4>{match.title}</h4>
                       </div>
                       <span className={styles.connectionsMatchDecision} data-decision={decision} role="status">
-                        {decision === "accepted"
+                        {projectionStatus === "pending"
+                          ? "Applying…"
+                          : projectionStatus === "failed"
+                            ? "Projection failed"
+                            : decision === "accepted"
                           ? "Matched"
                           : decision === "rejected"
                             ? "Kept separate"
@@ -908,28 +1101,49 @@ export default function ConnectionsWorkspace({
                     </div>
 
                     <div className={styles.connectionsMatchActions}>
-                      {decision === "proposed" ? (
+                      {projectionStatus === "pending" ? (
+                        <button className={styles.connectionsMatchSecondary} type="button" disabled>
+                          Applying decision…
+                        </button>
+                      ) : decision === "proposed" ? (
                         <>
                           <button
                             className={styles.connectionsMatchSecondary}
                             type="button"
-                            onClick={() => decideMatch(match.id, "rejected")}
+                            onClick={() => void decideMatch(match.id, "rejected")}
                           >
                             Keep separate
                           </button>
                           <button
                             className={styles.connectionsMatchPrimary}
                             type="button"
-                            onClick={() => decideMatch(match.id, "accepted")}
+                            onClick={() => void decideMatch(match.id, "accepted")}
                           >
                             Confirm match
+                          </button>
+                        </>
+                      ) : projectionStatus === "failed" ? (
+                        <>
+                          <button
+                            className={styles.connectionsMatchSecondary}
+                            type="button"
+                            onClick={() => void decideMatch(match.id, "proposed")}
+                          >
+                            Undo decision
+                          </button>
+                          <button
+                            className={styles.connectionsMatchPrimary}
+                            type="button"
+                            onClick={() => void decideMatch(match.id, decision)}
+                          >
+                            Retry change
                           </button>
                         </>
                       ) : (
                         <button
                           className={styles.connectionsMatchSecondary}
                           type="button"
-                          onClick={() => decideMatch(match.id, "proposed")}
+                          onClick={() => void decideMatch(match.id, "proposed")}
                         >
                           Undo decision
                         </button>
@@ -939,6 +1153,78 @@ export default function ConnectionsWorkspace({
                 );
               })}
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {managedProvider ? (
+        <div
+          className={styles.connectionsManageBackdrop}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setManagedProviderId(null);
+              setConfirmDisconnect(false);
+            }
+          }}
+        >
+          <section
+            className={styles.connectionsManageDialog}
+            ref={manageDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`${componentId}-manage-title`}
+          >
+            <button
+              className={styles.connectionsManageClose}
+              type="button"
+              aria-label="Close connection settings"
+              onClick={() => {
+                setManagedProviderId(null);
+                setConfirmDisconnect(false);
+              }}
+            >
+              ×
+            </button>
+            <div className={styles.connectionsManageIdentity}>
+              <ProviderLogo provider={managedProvider} />
+              <div>
+                <span>CONNECTED APP</span>
+                <h3 id={`${componentId}-manage-title`}>{managedProvider.name}</h3>
+                <p>{managedProvider.auth.accountName || managedProvider.auth.detail}</p>
+              </div>
+            </div>
+            {confirmDisconnect ? (
+              <div className={styles.connectionsDisconnectConfirm}>
+                <strong>Disconnect {managedProvider.name}?</strong>
+                <p>Syncing stops immediately. Credentials are revoked or destroyed, and tenant data enters the audited deletion workflow.</p>
+                <div>
+                  <button type="button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button>
+                  <button
+                    type="button"
+                    disabled={!managedProvider.connectionId || !onDisconnect}
+                    onClick={() => {
+                      if (managedProvider.connectionId) onDisconnect?.(managedProvider.connectionId);
+                      setManagedProviderId(null);
+                      setConfirmDisconnect(false);
+                    }}
+                  >
+                    Confirm disconnect
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.connectionsManageActions}>
+                <button type="button" onClick={() => onConnect?.(managedProvider.id)}>
+                  <strong>Reauthorize connection</strong>
+                  <span>Run the provider’s OAuth flow again without changing historical lineage.</span>
+                </button>
+                <button type="button" onClick={() => setConfirmDisconnect(true)}>
+                  <strong>Disconnect and delete</strong>
+                  <span>Stop syncs, destroy credentials, and schedule the scoped purge.</span>
+                </button>
+              </div>
+            )}
           </section>
         </div>
       ) : null}

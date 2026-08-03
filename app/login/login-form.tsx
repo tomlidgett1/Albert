@@ -1,18 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
+import {
+  getServerThemePreference,
+  getThemePreference,
+  subscribeToThemePreference,
+} from "@/app/theme-preference";
 import styles from "./login.module.css";
 
-type Theme = "system" | "light" | "dark";
 type AuthMode = "sign-in" | "sign-up";
-
-const themeStorageKey = "albert-theme";
-
-function isTheme(value: string | null): value is Theme {
-  return value === "system" || value === "light" || value === "dark";
-}
 
 function getRedirectPath() {
   const requestedPath = new URLSearchParams(window.location.search).get("next");
@@ -29,31 +27,23 @@ function getRedirectPath() {
   return requestedPath;
 }
 
-export default function LoginForm() {
+export default function LoginForm({ authError = false }: Readonly<{ authError?: boolean }>) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
-  const [theme, setTheme] = useState<Theme>("system");
+  const theme = useSyncExternalStore(
+    subscribeToThemePreference,
+    getThemePreference,
+    getServerThemePreference,
+  );
   const [mode, setMode] = useState<AuthMode>("sign-in");
   const [email, setEmail] = useState("");
+  const [organisationName, setOrganisationName] = useState("");
   const [password, setPassword] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState(
+    authError ? "That sign-in link is invalid or expired. Please try again." : "",
+  );
   const [confirmationEmail, setConfirmationEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    const syncTheme = () => {
-      try {
-        const storedTheme = window.localStorage.getItem(themeStorageKey);
-        setTheme(isTheme(storedTheme) ? storedTheme : "system");
-      } catch {
-        setTheme("system");
-      }
-    };
-
-    syncTheme();
-    window.addEventListener("storage", syncTheme);
-    return () => window.removeEventListener("storage", syncTheme);
-  }, []);
 
   useEffect(() => {
     const {
@@ -78,14 +68,18 @@ export default function LoginForm() {
         email: normalizedEmail,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/login`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dash`,
+          data: {
+            organisation_name: organisationName.trim(),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne",
+          },
         },
       });
 
       if (error) {
         setErrorMessage(
           error.code === "weak_password"
-            ? "Use a stronger password with at least 6 characters."
+            ? "Use at least 12 characters with upper and lower case letters and a number."
             : "We couldn’t create your account. Please try again.",
         );
         setIsSubmitting(false);
@@ -188,6 +182,24 @@ export default function LoginForm() {
               />
             </label>
 
+            {isSignUp ? (
+              <label className={styles.field}>
+                <span>Organisation name</span>
+                <input
+                  type="text"
+                  name="organisation-name"
+                  value={organisationName}
+                  onChange={(event) => setOrganisationName(event.target.value)}
+                  autoComplete="organization"
+                  placeholder="Your business name"
+                  minLength={1}
+                  maxLength={100}
+                  required
+                  disabled={isSubmitting}
+                />
+              </label>
+            ) : null}
+
             <label className={styles.field}>
               <span>Password</span>
               <input
@@ -199,7 +211,9 @@ export default function LoginForm() {
                 placeholder={
                   isSignUp ? "Create a password" : "Enter your password"
                 }
-                minLength={isSignUp ? 6 : undefined}
+                minLength={isSignUp ? 12 : undefined}
+                pattern={isSignUp ? "(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{12,}" : undefined}
+                title={isSignUp ? "At least 12 characters with upper and lower case letters and a number" : undefined}
                 required
                 disabled={isSubmitting}
               />
@@ -239,16 +253,19 @@ export default function LoginForm() {
         )}
 
         {!confirmationEmail ? (
-          <p className={styles.modeSwitch}>
-            <span>{isSignUp ? "Already have an account?" : "New to Albert?"}</span>{" "}
-            <button
-              type="button"
-              onClick={() => changeMode(isSignUp ? "sign-in" : "sign-up")}
-              disabled={isSubmitting}
-            >
-              {isSignUp ? "Sign in" : "Create account"}
-            </button>
-          </p>
+          <div className={styles.modeSwitch}>
+            <p>
+              <span>{isSignUp ? "Already have an account?" : "New to Albert?"}</span>{" "}
+              <button
+                type="button"
+                onClick={() => changeMode(isSignUp ? "sign-in" : "sign-up")}
+                disabled={isSubmitting}
+              >
+                {isSignUp ? "Sign in" : "Create account"}
+              </button>
+            </p>
+            {!isSignUp ? <a href="/reset-password">Forgot password?</a> : null}
+          </div>
         ) : null}
       </section>
     </main>

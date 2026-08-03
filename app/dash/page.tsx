@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   DEFAULT_AGENT_PREFERENCES,
+  normalizeAgentPreferences,
   type AgentRunPreferences,
   type TraceEvent,
 } from "@/packages/shared/src";
 import { createClient } from "@/utils/supabase/client";
 import AnalyticalTrace from "./components/AnalyticalTrace";
-import ConnectionsWorkspace from "./components/ConnectionsWorkspace";
+import AdminWorkspace from "./components/AdminWorkspace";
+import ConnectionsWorkspace, {
+  emptyConnectionsWorkspace,
+  type ConnectionsWorkspaceData,
+  type ConnectionProviderId,
+  type MatchDecision,
+} from "./components/ConnectionsWorkspace";
 import { ModelRunControls } from "./components/ModelRunControls";
 import styles from "./dash.module.css";
 
@@ -57,14 +64,12 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", icon: "home" },
   { label: "Chat", icon: "chat" },
-  { label: "Agents", icon: "agents" },
   { label: "Connections", icon: "connections" },
 ];
 
 const pageTabs: Record<string, string[]> = {
-  Chat: ["Playground", "Agent"],
+  Chat: ["Playground"],
   Agents: ["Overview", "Runs"],
   Connections: ["Connected apps"],
 };
@@ -342,13 +347,6 @@ type AgentScheduleFrequency = (typeof agentScheduleFrequencies)[number];
 
 const agentScheduleTimes = ["06:00", "09:00", "12:00", "17:00", "21:00"];
 const agentScheduleDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const recentConversations = [
-  { title: "Lightspeed connection setup", meta: "Today · 3 messages" },
-  { title: "Weekly sales summary", meta: "Yesterday · 8 messages" },
-  { title: "Prepare a customer follow-up", meta: "Monday · 5 messages" },
-  { title: "Q3 planning notes", meta: "July 28 · 12 messages" },
-];
 
 const timeRanges = ["24h", "7d", "30d", "90d"];
 
@@ -764,7 +762,6 @@ type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   text: string;
-  attachment?: string;
   isStreaming?: boolean;
   events?: TraceEvent[];
   runtime?: "fixture" | "openai";
@@ -776,6 +773,14 @@ type ChatClarification = {
   question: string;
   options: [string, string];
 };
+
+type ConversationSummary = Readonly<{
+  conversationId: string;
+  title: string;
+  status: string;
+  updatedAt: string;
+  lastMessage: string;
+}>;
 
 const traceEventTypes = new Set([
   "progress",
@@ -804,12 +809,72 @@ function parseTraceEvent(value: unknown): TraceEvent | null {
   return candidate as unknown as TraceEvent;
 }
 
+function parseConnectionsWorkspace(value: unknown): ConnectionsWorkspaceData | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.tenantName !== "string" ||
+    typeof candidate.timezone !== "string" ||
+    !candidate.syncSummary ||
+    !Array.isArray(candidate.providers) ||
+    !Array.isArray(candidate.dossier) ||
+    !Array.isArray(candidate.blockingQuestions) ||
+    !Array.isArray(candidate.identityMatches)
+  ) {
+    return null;
+  }
+  return candidate as unknown as ConnectionsWorkspaceData;
+}
+
+function parseConversationSummaries(value: unknown): readonly ConversationSummary[] | null {
+  if (!Array.isArray(value)) return null;
+  const summaries: ConversationSummary[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const candidate = item as Record<string, unknown>;
+    const lastTurn = candidate.last_turn;
+    if (
+      typeof candidate.conversation_id !== "string"
+      || typeof candidate.status !== "string"
+      || typeof candidate.updated_at !== "string"
+      || (candidate.title !== null && typeof candidate.title !== "string")
+      || (lastTurn !== null && (typeof lastTurn !== "object" || Array.isArray(lastTurn)))
+    ) return null;
+    const lastMessage = lastTurn && typeof (lastTurn as Record<string, unknown>).user_message === "string"
+      ? String((lastTurn as Record<string, unknown>).user_message)
+      : "New conversation";
+    summaries.push({
+      conversationId: candidate.conversation_id,
+      title: candidate.title?.toString().trim() || lastMessage,
+      status: candidate.status,
+      updatedAt: candidate.updated_at,
+      lastMessage,
+    });
+  }
+  return summaries;
+}
+
+function conversationTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return "Saved conversation";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 export default function DashPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [accountEmail, setAccountEmail] = useState("");
+  const [isInternalOperator, setIsInternalOperator] = useState(false);
+  const [connectionsData, setConnectionsData] = useState<ConnectionsWorkspaceData>(emptyConnectionsWorkspace);
+  const [connectionsStatus, setConnectionsStatus] = useState<{
+    kind: "loading" | "error" | "ready";
+    message?: string;
+  }>({ kind: "loading" });
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [activeItem, setActiveItem] = useState("Dashboard");
+  const [activeItem, setActiveItem] = useState("Chat");
   const [activeTab, setActiveTab] = useState(pageTabs.Chat[0]);
   const [dashboardList, setDashboardList] = useState<DashboardView[]>(starterDashboards);
   const [activeDashboard, setActiveDashboard] = useState(starterDashboards[0].id);
@@ -828,14 +893,18 @@ export default function DashPage() {
   const [albertPopupClosing, setAlbertPopupClosing] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  const [conversationSummaries, setConversationSummaries] = useState<readonly ConversationSummary[]>([]);
+  const [conversationHistoryStatus, setConversationHistoryStatus] = useState<{
+    kind: "idle" | "loading" | "ready" | "error";
+    message?: string;
+  }>({ kind: "idle" });
   const [chatClarification, setChatClarification] = useState<ChatClarification | null>(null);
   const [clarifyDraft, setClarifyDraft] = useState("");
-  const [liveTalkOpen, setLiveTalkOpen] = useState(false);
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [attachmentName, setAttachmentName] = useState("");
   const [agentName, setAgentName] = useState("");
   const [agentInstructions, setAgentInstructions] = useState("");
   const [agentFrequency, setAgentFrequency] = useState<AgentScheduleFrequency>("Daily");
@@ -856,8 +925,6 @@ export default function DashPage() {
   const dashboardTabBarRef = useRef<HTMLDivElement>(null);
   const frequencyBarRef = useRef<HTMLDivElement>(null);
   const accountAreaRef = useRef<HTMLDivElement>(null);
-  const liveTalkAreaRef = useRef<HTMLDivElement>(null);
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatSpacerRef = useRef<HTMLDivElement>(null);
   const chatComposerRef = useRef<HTMLFormElement>(null);
@@ -871,12 +938,16 @@ export default function DashPage() {
   const albertPopupRef = useRef<HTMLElement>(null);
   const popupCloseButtonRef = useRef<HTMLButtonElement>(null);
   const popupPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const visibleNavItems = useMemo<readonly NavItem[]>(
+    () => isInternalOperator ? [...navItems, { label: "Admin", icon: "logs" }] : navItems,
+    [isInternalOperator],
+  );
   const filteredItems = useMemo(
-    () => navItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
-    [query],
+    () => visibleNavItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
+    [query, visibleNavItems],
   );
   const tabs = pageTabs[activeItem] ?? ["Overview"];
-  const showHeaderTabs = activeItem !== "Connections" && activeItem !== "Dashboard";
+  const showHeaderTabs = !["Chat", "Connections", "Dashboard", "Admin"].includes(activeItem);
   const activeDashboardView = dashboardList.find((dashboard) => dashboard.id === activeDashboard) ?? dashboardList[0];
   const agentPanelOpen = activeItem === "Chat" && activeTab === "Agent";
   const chatComposerHero = activeItem === "Chat" && !agentPanelOpen && chatMessages.length === 0;
@@ -900,6 +971,221 @@ export default function DashPage() {
       isMounted = false;
     };
   }, [supabase]);
+
+  useEffect(() => {
+    const requestedView = new URLSearchParams(window.location.search).get("view");
+    if (requestedView !== "Connections") return;
+    const task = window.setTimeout(() => setActiveItem("Connections"), 0);
+    return () => window.clearTimeout(task);
+  }, []);
+
+  const loadConnections = useCallback(async () => {
+    setConnectionsStatus({ kind: "loading" });
+    try {
+      const sessionResponse = await fetch("/api/session", { cache: "no-store" });
+      const sessionPayload = await sessionResponse.json() as {
+        error?: string;
+        needsBootstrap?: boolean;
+        internalOperator?: boolean;
+        user?: {
+          email?: string | null;
+          suggestedOrganisationName?: string | null;
+          timezone?: string | null;
+        };
+      };
+      if (!sessionResponse.ok) throw new Error(sessionPayload.error || "Your organisation could not be loaded.");
+      setIsInternalOperator(sessionPayload.internalOperator === true);
+
+      if (sessionPayload.needsBootstrap) {
+        const fallbackName = sessionPayload.user?.email?.split("@")[0]?.trim()
+          ? `${sessionPayload.user.email.split("@")[0]}'s organisation`
+          : "Personal Organisation";
+        const bootstrapResponse = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName: sessionPayload.user?.suggestedOrganisationName?.trim() || fallbackName,
+            timezone: sessionPayload.user?.timezone || "Australia/Melbourne",
+          }),
+        });
+        const bootstrapPayload = await bootstrapResponse.json().catch(() => null) as { error?: string } | null;
+        if (!bootstrapResponse.ok) throw new Error(bootstrapPayload?.error || "Your organisation could not be created.");
+      }
+
+      const response = await fetch("/api/connections", { cache: "no-store" });
+      const payload = await response.json() as { workspace?: unknown; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Connection status could not be loaded.");
+      const parsed = parseConnectionsWorkspace(payload.workspace);
+      if (!parsed) throw new Error("The connection service returned an invalid response.");
+      setConnectionsData(parsed);
+      setConnectionsStatus({ kind: "ready" });
+    } catch (error) {
+      setConnectionsData(emptyConnectionsWorkspace);
+      setConnectionsStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Please try again.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const task = window.setTimeout(() => {
+      void loadConnections();
+    }, 0);
+    return () => window.clearTimeout(task);
+  }, [loadConnections]);
+
+  const connectProvider = (providerId: ConnectionProviderId) => {
+    window.location.assign(`/api/oauth/${providerId}/start`);
+  };
+
+  const answerConnectionQuestion = async (questionId: string, optionId: string) => {
+    const response = await fetch("/api/connections/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "answer_blocking_question", questionId, optionId }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      setConnectionsStatus({ kind: "error", message: payload?.error || "The answer was not saved." });
+      return;
+    }
+    void loadConnections();
+  };
+
+  const decideConnectionMatch = async (taskId: string, decision: MatchDecision) => {
+    const response = await fetch("/api/connections/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "identity_decision", taskId, decision }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      setConnectionsStatus({ kind: "error", message: payload?.error || "The match decision was not saved." });
+      return false;
+    }
+    await loadConnections();
+    for (const delay of [1_500, 4_000, 10_000]) {
+      window.setTimeout(() => void loadConnections(), delay);
+    }
+    return true;
+  };
+
+  const selectOAuthAccount = async (oauthSessionId: string, externalAccountId: string) => {
+    setConnectionsStatus({ kind: "loading", message: "Finishing the connection and starting the first sync." });
+    const response = await fetch("/api/oauth/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ oauthSessionId, externalAccountId }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      setConnectionsStatus({ kind: "error", message: payload?.error || "The account could not be connected." });
+      return;
+    }
+    void loadConnections();
+  };
+
+  const disconnectConnection = async (connectionId: string) => {
+    setConnectionsStatus({ kind: "loading", message: "Destroying credentials and scheduling the scoped data purge." });
+    const response = await fetch("/api/oauth/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connectionId }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      setConnectionsStatus({ kind: "error", message: payload?.error || "The connection could not be disconnected." });
+      return;
+    }
+    void loadConnections();
+  };
+
+  const loadConversationSummaries = useCallback(async () => {
+    setConversationHistoryStatus({ kind: "loading" });
+    try {
+      const response = await fetch("/api/conversations?limit=30", { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as {
+        conversations?: unknown;
+        error?: string;
+      } | null;
+      if (!response.ok) throw new Error(payload?.error || "Conversation history could not be loaded.");
+      const parsed = parseConversationSummaries(payload?.conversations);
+      if (!parsed) throw new Error("Conversation history returned an invalid response.");
+      setConversationSummaries(parsed);
+      setConversationHistoryStatus({ kind: "ready" });
+    } catch (error) {
+      setConversationSummaries([]);
+      setConversationHistoryStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Conversation history could not be loaded.",
+      });
+    }
+  }, []);
+
+  const openSavedConversation = async (conversationId: string) => {
+    if (isChatResponding) return;
+    setConversationHistoryStatus({ kind: "loading", message: "Opening conversation…" });
+    try {
+      const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null) as {
+        history?: unknown;
+        error?: string;
+      } | null;
+      if (!response.ok) throw new Error(payload?.error || "The conversation could not be opened.");
+      if (!payload?.history || typeof payload.history !== "object" || Array.isArray(payload.history)) {
+        throw new Error("The conversation returned an invalid response.");
+      }
+      const history = payload.history as Record<string, unknown>;
+      if (history.conversation_id !== conversationId || !Array.isArray(history.turns)) {
+        throw new Error("The conversation returned invalid state.");
+      }
+
+      const restored: ChatMessage[] = [];
+      let messageId = 0;
+      let restoredPreferences = agentPreferences;
+      for (const rawTurn of history.turns) {
+        if (!rawTurn || typeof rawTurn !== "object" || Array.isArray(rawTurn)) continue;
+        const turn = rawTurn as Record<string, unknown>;
+        if (typeof turn.user_message !== "string" || !Array.isArray(turn.events)) continue;
+        messageId += 1;
+        restored.push({ id: messageId, role: "user", text: turn.user_message, suppressEnter: true });
+        const events = turn.events
+          .map(parseTraceEvent)
+          .filter((event): event is TraceEvent => event !== null)
+          .sort((left, right) => left.sequence - right.sequence);
+        messageId += 1;
+        restored.push({
+          id: messageId,
+          role: "assistant",
+          text: "",
+          events,
+          isStreaming: turn.status === "running",
+          runtime: "openai",
+          suppressEnter: true,
+        });
+        restoredPreferences = normalizeAgentPreferences(turn.runtime_profile);
+      }
+      if (restored.length === 0) throw new Error("This conversation does not contain any persisted turns yet.");
+
+      chatRequestAbortRef.current?.abort();
+      chatRequestAbortRef.current = null;
+      chatMessageSequenceRef.current = messageId;
+      setActiveConversationId(conversationId);
+      setAgentPreferences(restoredPreferences);
+      setChatMessages(restored);
+      setComposerExpanded(true);
+      setChatHistoryOpen(false);
+      setConversationHistoryStatus({ kind: "ready" });
+    } catch (error) {
+      setConversationHistoryStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "The conversation could not be opened.",
+      });
+    }
+  };
 
   const createDashboard = () => {
     const nextDashboard = createBlankDashboard(dashboardList.length + 1);
@@ -1161,27 +1447,6 @@ export default function DashPage() {
   }, [accountOpen]);
 
   useEffect(() => {
-    if (!liveTalkOpen) return;
-
-    const closeOnOutsidePress = (event: PointerEvent) => {
-      if (!liveTalkAreaRef.current?.contains(event.target as Node)) {
-        setLiveTalkOpen(false);
-      }
-    };
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLiveTalkOpen(false);
-    };
-
-    document.addEventListener("pointerdown", closeOnOutsidePress);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePress);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [liveTalkOpen]);
-
-  useEffect(() => {
     if (!albertPopupOpen) {
       popupPreviousFocusRef.current?.focus();
       return;
@@ -1232,10 +1497,12 @@ export default function DashPage() {
     return () => window.clearTimeout(closeTimer);
   }, [albertPopupClosing]);
 
-  const sendChatMessage = async (suggestedText?: string) => {
+  const sendChatMessage = async (
+    suggestedText?: string,
+    confirmedChoice?: Readonly<{ question: string; value: string }>,
+  ) => {
     const text = (suggestedText ?? chatDraft).trim();
-    const attachment = suggestedText ? "" : attachmentName;
-    if ((!text && !attachment) || isChatResponding) return;
+    if (!text || isChatResponding) return;
 
     chatMessageSequenceRef.current += 2;
     const userId = chatMessageSequenceRef.current - 1;
@@ -1249,7 +1516,7 @@ export default function DashPage() {
 
     setChatMessages((messages) => [
       ...messages,
-      { id: userId, role: "user", text, attachment: attachment || undefined, suppressEnter: firstFlight },
+      { id: userId, role: "user", text, suppressEnter: firstFlight },
       { id: assistantId, role: "assistant", text: "", isStreaming: true, events: [], suppressEnter: firstFlight },
     ]);
     if (firstFlight) {
@@ -1266,7 +1533,6 @@ export default function DashPage() {
       }
     }
     setChatDraft("");
-    setAttachmentName("");
     setChatHistoryOpen(false);
     setChatClarification(null);
     setClarifyDraft("");
@@ -1287,7 +1553,12 @@ export default function DashPage() {
       const response = await fetch("/api/conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, preferences: agentPreferences }),
+        body: JSON.stringify({
+          message: text,
+          preferences: agentPreferences,
+          conversationId: activeConversationId,
+          confirmedChoice,
+        }),
         signal: controller.signal,
       });
 
@@ -1296,7 +1567,9 @@ export default function DashPage() {
         throw new Error(payload?.error || "Albert could not start this analysis.");
       }
 
-      const runtime = response.headers.get("X-Albert-Runtime") === "openai" ? "openai" : "fixture";
+      const runtime = response.headers.get("X-Albert-Runtime") === "fixture" ? "fixture" : "openai";
+      const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
+      if (responseConversationId) setActiveConversationId(responseConversationId);
       updateAssistant({ runtime });
 
       if (!response.body) throw new Error("The conversation stream was unavailable.");
@@ -1354,12 +1627,12 @@ export default function DashPage() {
     }
   };
 
-  const answerClarification = (answer: string) => {
+  const answerClarification = (answer: string, question?: string) => {
     const text = answer.trim();
     if (!text || isChatResponding) return;
     setChatClarification(null);
     setClarifyDraft("");
-    void sendChatMessage(text);
+    void sendChatMessage(text, question ? { question, value: text } : undefined);
   };
 
   const openAlbertChat = () => {
@@ -1390,11 +1663,10 @@ export default function DashPage() {
       composerExpandTimerRef.current = undefined;
     }
     setChatMessages([]);
+    setActiveConversationId(undefined);
     setChatDraft("");
-    setAttachmentName("");
     setIsChatResponding(false);
     setChatHistoryOpen(false);
-    setLiveTalkOpen(false);
     setComposerExpanded(false);
     setChatClarification(null);
     setClarifyDraft("");
@@ -1835,10 +2107,7 @@ export default function DashPage() {
                         ) : null}
                       </>
                     ) : (
-                      <>
-                        {message.text ? <p>{message.text}</p> : null}
-                        {message.attachment ? <span>{message.attachment}</span> : null}
-                      </>
+                      message.text ? <p>{message.text}</p> : null
                     )}
                   </motion.article>
                   );
@@ -1866,17 +2135,28 @@ export default function DashPage() {
                   </button>
                 </div>
                 <div className={styles.chatHistoryList}>
-                  {recentConversations.map((conversation, index) => (
+                  {conversationHistoryStatus.kind === "loading" ? (
+                    <p className={styles.chatHistoryState} role="status">
+                      {conversationHistoryStatus.message || "Loading saved conversations…"}
+                    </p>
+                  ) : conversationHistoryStatus.kind === "error" ? (
+                    <div className={styles.chatHistoryState} role="alert">
+                      <p>{conversationHistoryStatus.message}</p>
+                      <button type="button" onClick={() => void loadConversationSummaries()}>Try again</button>
+                    </div>
+                  ) : conversationSummaries.length === 0 ? (
+                    <p className={styles.chatHistoryState}>Your governed conversations will appear here after the first question.</p>
+                  ) : conversationSummaries.map((conversation) => (
                     <button
-                      className={`${styles.chatHistoryItem} ${index === 0 ? styles.chatHistoryItemActive : ""}`}
+                      className={`${styles.chatHistoryItem} ${conversation.conversationId === activeConversationId ? styles.chatHistoryItemActive : ""}`}
                       type="button"
-                      key={conversation.title}
-                      onClick={() => setChatHistoryOpen(false)}
+                      key={conversation.conversationId}
+                      onClick={() => void openSavedConversation(conversation.conversationId)}
                     >
                       <span className={styles.chatHistoryItemIcon}><Icon name="chat" /></span>
                       <span className={styles.chatHistoryItemCopy}>
-                        <strong>{conversation.title}</strong>
-                        <small>{conversation.meta}</small>
+                        <strong>{conversation.title.slice(0, 80)}</strong>
+                        <small>{conversationTimestamp(conversation.updatedAt)} · {conversation.status}</small>
                       </span>
                     </button>
                   ))}
@@ -1986,18 +2266,6 @@ export default function DashPage() {
                 void sendChatMessage();
               }}
             >
-              {!agentPanelOpen && !chatComposerCompact && attachmentName ? (
-                <div className={styles.attachmentRow}>
-                  <span>{attachmentName}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${attachmentName}`}
-                    onClick={() => setAttachmentName("")}
-                  >
-                    ×
-                  </button>
-                </div>
-              ) : null}
               <div className={styles.chatComposerInputRow}>
                 <textarea
                   aria-label={agentPanelOpen ? "Design your agent" : "Ask me anything"}
@@ -2045,18 +2313,6 @@ export default function DashPage() {
                 </div>
               ) : (
                 <>
-                  <input
-                    ref={attachmentInputRef}
-                    className={styles.fileInput}
-                    type="file"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    onChange={(event) => {
-                      const file = event.currentTarget.files?.[0];
-                      if (file) setAttachmentName(file.name);
-                      event.currentTarget.value = "";
-                    }}
-                  />
                   <motion.div
                     className={styles.chatComposerFooter}
                     initial={false}
@@ -2091,7 +2347,11 @@ export default function DashPage() {
                         tabIndex={chatComposerCompact ? -1 : undefined}
                         aria-expanded={chatHistoryOpen}
                         aria-controls="conversation-history"
-                        onClick={() => setChatHistoryOpen((open) => !open)}
+                        onClick={() => {
+                          const nextOpen = !chatHistoryOpen;
+                          setChatHistoryOpen(nextOpen);
+                          if (nextOpen) void loadConversationSummaries();
+                        }}
                       >
                         <Icon name="panel" />
                         <span>History</span>
@@ -2102,89 +2362,6 @@ export default function DashPage() {
                         runActive={isChatResponding}
                         compact
                       />
-                      <button
-                        className={styles.composerIconButton}
-                        type="button"
-                        tabIndex={chatComposerCompact ? -1 : undefined}
-                        aria-label="Add attachment"
-                        onClick={() => attachmentInputRef.current?.click()}
-                      >
-                        <Icon name="plus" />
-                      </button>
-                      <div className={styles.composerLiveTalk} ref={liveTalkAreaRef}>
-                        <AnimatePresence>
-                          {liveTalkOpen ? (
-                            <motion.div
-                              key="composer-live-talk"
-                              className={styles.liveTalkPanel}
-                              role="dialog"
-                              aria-label="Live talk"
-                              initial={reduceMotion ? false : { opacity: 0, y: 14, scale: 0.88 }}
-                              animate={{ opacity: 1, y: 0, scale: 1 }}
-                              exit={reduceMotion ? undefined : { opacity: 0, y: 10, scale: 0.94 }}
-                              transition={{
-                                duration: reduceMotion ? 0 : 0.42,
-                                ease: [0.34, 1.56, 0.64, 1],
-                              }}
-                            >
-                              <div className={styles.liveTalkPanelHeader}>
-                                <div className={styles.liveTalkPanelCopy}>
-                                  <p className={styles.liveTalkPanelEyebrow}>
-                                    <span className={styles.liveTalkLiveDot} aria-hidden="true" />
-                                    Live
-                                  </p>
-                                  <h2>Talk with Albert</h2>
-                                  <p className={styles.liveTalkPanelHint}>Listening for your next thought</p>
-                                </div>
-                                <button
-                                  className={styles.liveTalkPanelClose}
-                                  type="button"
-                                  aria-label="Close live talk"
-                                  onClick={() => setLiveTalkOpen(false)}
-                                >
-                                  <Icon name="close" />
-                                </button>
-                              </div>
-
-                              <div className={styles.liveTalkWave} aria-hidden="true">
-                                {Array.from({ length: 18 }, (_, index) => (
-                                  <span
-                                    key={index}
-                                    className={styles.liveTalkBar}
-                                    style={{ animationDelay: `${(index % 9) * 0.08}s` }}
-                                  />
-                                ))}
-                              </div>
-
-                              <div className={styles.liveTalkActions}>
-                                <button
-                                  className={styles.liveTalkEnd}
-                                  type="button"
-                                  onClick={() => setLiveTalkOpen(false)}
-                                >
-                                  End talk
-                                </button>
-                              </div>
-                            </motion.div>
-                          ) : null}
-                        </AnimatePresence>
-
-                        <button
-                          className={`${styles.composerLiveTalkButton} ${liveTalkOpen ? styles.composerLiveTalkButtonActive : ""}`}
-                          type="button"
-                          tabIndex={chatComposerCompact ? -1 : undefined}
-                          aria-label="Live talk"
-                          aria-expanded={liveTalkOpen}
-                          aria-haspopup="dialog"
-                          onClick={() => {
-                            setChatHistoryOpen(false);
-                            setLiveTalkOpen((open) => !open);
-                          }}
-                        >
-                          <Icon name="mic" />
-                          <span className={styles.liveTalkPulse} aria-hidden="true" />
-                        </button>
-                      </div>
                     </div>
                   </motion.div>
                   <motion.button
@@ -2198,7 +2375,7 @@ export default function DashPage() {
                       },
                     }}
                     aria-label={isChatResponding ? "Albert is responding" : "Send message"}
-                    disabled={isChatResponding || (!chatDraft.trim() && !attachmentName)}
+                    disabled={isChatResponding || !chatDraft.trim()}
                   >
                     <Icon name="arrowUp" />
                   </motion.button>
@@ -2590,7 +2767,17 @@ export default function DashPage() {
             </aside>
           </div>
         ) : activeItem === "Connections" ? (
-          <ConnectionsWorkspace />
+          <ConnectionsWorkspace
+            data={connectionsData}
+            status={connectionsStatus}
+            onConnect={connectionsStatus.kind === "ready" ? connectProvider : undefined}
+            onAnswerBlockingQuestion={answerConnectionQuestion}
+            onMatchDecision={decideConnectionMatch}
+            onSelectOAuthAccount={selectOAuthAccount}
+            onDisconnect={disconnectConnection}
+          />
+        ) : activeItem === "Admin" && isInternalOperator ? (
+          <AdminWorkspace />
         ) : (
           <div className={styles.contentBody}>
             <p className={styles.contentEyebrow}>ALBERT DASH</p>

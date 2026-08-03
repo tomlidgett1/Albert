@@ -17,12 +17,19 @@ export type ReadinessState =
 
 export type SyncJobType = "InitialBackfill" | "IncrementalSync" | "ReconciliationSweep";
 
+/** Durable, cross-replica request coordination for one vendor connection. */
+export interface VendorRateBudget {
+  beforeRequest(signal?: AbortSignal): Promise<void>;
+  observeResponse(response: Response): Promise<void>;
+}
+
 export type ConnectorContext = Readonly<{
   tenantId: string;
   connectionId: string;
   /** An opaque vault reference. Connector code never receives browser credentials. */
   credentialRef: string;
   abortSignal?: AbortSignal;
+  vendorRateBudget?: VendorRateBudget;
 }>;
 
 export type ConnectorStream = Readonly<{
@@ -30,12 +37,15 @@ export type ConnectorStream = Readonly<{
   label: string;
   domains: readonly string[];
   cursorKind: "high_water_mark" | "offset" | "page" | "none";
+  /** Lower values are pulled first during a progressive initial backfill. */
+  priority?: number;
 }>;
 
 export type ConnectorCapability = Readonly<{
   id: string;
   support: "full" | "partial" | "unavailable" | "unknown";
   notes?: string;
+  requiredScopes?: readonly string[];
 }>;
 
 export type AuthorizationRequest = Readonly<{
@@ -71,8 +81,42 @@ export type RawSourceRecord = Readonly<{
   sourceObjectType: string;
   sourceRecordId: string;
   sourceUpdatedAt?: string;
+  /** Exact vendor payload. This value is written to immutable raw storage. */
   payload: unknown;
+  /** Typed staging projection. Raw values remain available in `payload`. */
+  normalized?: SourceRecordProjection;
+  /**
+   * Validation findings are always persisted with the immutable raw payload.
+   * `schema_invalid` and `normalization_invalid` block staging. Additive
+   * `schema_drift` is fail-visible but may retain a projection containing only
+   * fields with an explicit manifest disposition.
+   */
+  validationIssues?: readonly Readonly<{
+    code: "schema_invalid" | "schema_drift" | "normalization_invalid";
+    path: string;
+    message: string;
+  }>[];
   payloadHash: string;
+}>;
+
+export type NormalizedDecimal = Readonly<{
+  raw: string | number | null;
+  /** A base-10 representation safe for Postgres numeric(19,4), or null. */
+  exact: string | null;
+  currency: string | null;
+}>;
+
+export type NormalizedTimestamp = Readonly<{
+  raw: string | number | null;
+  utc: string | null;
+}>;
+
+export type SourceRecordProjection = Readonly<{
+  schemaVersion: string;
+  fields: Readonly<Record<string, unknown>>;
+  money?: Readonly<Record<string, NormalizedDecimal>>;
+  timestamps?: Readonly<Record<string, NormalizedTimestamp>>;
+  tombstone?: boolean;
 }>;
 
 export type SyncPage = Readonly<{
@@ -93,6 +137,8 @@ export type WebhookDisposition = Readonly<{
   accepted: boolean;
   dedupeKey?: string;
   streams: readonly string[];
+  externalAccountIds?: readonly string[];
+  reason?: string;
 }>;
 
 /**
@@ -141,3 +187,11 @@ export function makeNamespacedSourceKey(
   }
   return parts.map((part) => encodeURIComponent(part)).join(":");
 }
+
+export * from "./contract.js";
+export * from "./cursor.js";
+export * from "./errors.js";
+export * from "./http.js";
+export * from "./normalization.js";
+export * from "./oauth.js";
+export * from "./staging.js";

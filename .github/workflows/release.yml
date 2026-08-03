@@ -1,0 +1,176 @@
+name: Release production cells
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected GitHub environment to release
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: albert-release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  migrate:
+    needs: verify
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - name: Apply immutable control and analytical migrations
+        run: npm run migrate
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_DATABASE_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+          CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
+          ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+
+  publish-semantic-registry:
+    needs: migrate
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - name: Publish the content-addressed catalogue and embeddings
+        run: npm run registry:publish
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ALBERT_SEMANTIC_PUBLISH_ROLE: albert_control_migration_owner
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://au.api.openai.com/v1' }}
+
+  deploy-services:
+    needs:
+      - verify
+      - publish-semantic-registry
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: semantic-query
+            config: deploy/fly/semantic-query.toml
+            app_variable: FLY_SEMANTIC_APP
+            token_secret: FLY_SEMANTIC_API_TOKEN
+            exposure: public
+          - service: sync-worker
+            config: deploy/fly/sync-worker.toml
+            app_variable: FLY_SYNC_APP
+            token_secret: FLY_SYNC_API_TOKEN
+            exposure: public
+          - service: transform-worker
+            config: deploy/fly/transform-worker.toml
+            app_variable: FLY_TRANSFORM_APP
+            token_secret: FLY_TRANSFORM_API_TOKEN
+            exposure: private
+          - service: webhook-gateway
+            config: deploy/fly/webhook-gateway.toml
+            app_variable: FLY_WEBHOOK_APP
+            token_secret: FLY_WEBHOOK_API_TOKEN
+            exposure: public
+          - service: deletion-worker
+            config: deploy/fly/deletion-worker.toml
+            app_variable: FLY_DELETION_APP
+            token_secret: FLY_DELETION_API_TOKEN
+            exposure: private
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Require a protected app target and app-scoped deploy token
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$FLY_API_TOKEN"
+      - name: Validate the Fly manifest against the target app
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: flyctl config validate --strict --app "$APP_NAME" --config "${{ matrix.config }}"
+      - name: Deploy ${{ matrix.service }}
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: >-
+          flyctl deploy .
+          --app "$APP_NAME"
+          --config "${{ matrix.config }}"
+          --remote-only
+          --strategy rolling
+          --wait-timeout 10m
+          --env "ALBERT_SERVICE_VERSION=${GITHUB_SHA}"
+          --env "ALBERT_DEPLOYMENT_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Maintain two production Machines
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: flyctl scale count 2 --app "$APP_NAME" --yes
+      - name: Verify private workers have no public IP
+        if: matrix.exposure == 'private'
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: flyctl ips list --app "$APP_NAME" --json | jq -e 'length == 0'
+      - name: Capture release and health status
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: |
+          flyctl status --app "$APP_NAME"
+          flyctl checks list --app "$APP_NAME"
+
+  smoke-public-services:
+    needs: deploy-services
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        url_variable:
+          - SEMANTIC_QUERY_SERVICE_URL
+          - SYNC_WORKER_INTERNAL_URL
+          - WEBHOOK_GATEWAY_PUBLIC_URL
+    steps:
+      - name: Require HTTPS and wait for readiness
+        env:
+          SERVICE_URL: ${{ vars[matrix.url_variable] }}
+        run: |
+          test -n "$SERVICE_URL"
+          case "$SERVICE_URL" in https://*) ;; *) exit 1 ;; esac
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${SERVICE_URL%/}/readyz"

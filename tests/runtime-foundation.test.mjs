@@ -176,6 +176,27 @@ test("direct OpenAI Agents SDK adapter instantiates the selected current model",
   });
 });
 
+test("live agent uses local bounded conversation state and disables provider storage", () => {
+  const preferences = {
+    model: "gpt-5.6-sol",
+    reasoningEffort: "medium",
+    fastMode: false,
+  };
+  const runtimeAgent = conversation.createLiveAlbertAgent(preferences, "privacy-safe-user-id");
+  assert.equal(runtimeAgent.modelSettings.store, false);
+  assert.equal(runtimeAgent.modelSettings.providerData.safety_identifier, "privacy-safe-user-id");
+  const input = conversation.buildBoundedModelInput([
+    { role: "user", text: "How were sales?" },
+    { role: "assistant", text: "Sales were supported by the governed result." },
+    { role: "user", text: "Break that down by location." },
+  ], "Break that down by location.");
+  assert.deepEqual(input.map(({ role }) => role), ["user", "assistant", "user"]);
+  assert.throws(
+    () => conversation.buildBoundedModelInput([{ role: "assistant", text: "stale" }], "new"),
+    /does not end with the current user message/,
+  );
+});
+
 test("deterministic fixture emits ordered governed table, chart, and provenance", () => {
   const first = conversation.createDeterministicFixtureTrace();
   const second = conversation.createDeterministicFixtureTrace();

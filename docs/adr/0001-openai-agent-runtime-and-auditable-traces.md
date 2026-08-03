@@ -21,7 +21,7 @@ The UI must be transparent without exposing private chain-of-thought. Free-form 
 - Pin an explicit model per run. Do not depend on an SDK default.
 - Keep the model provider behind an Albert-owned runtime interface so regional inference and future provider changes do not affect the semantic layer.
 - Use one primary analytical agent initially. Add specialists only when an evaluation shows a clear quality or latency benefit.
-- Continue a conversation with one consistent state strategy. Persist Albert's auditable turn artefacts independently of provider-managed continuation state.
+- Continue conversations from a bounded, tenant-scoped context rebuilt from Albert's own completed narrative artefacts. Send Responses requests with `store: false`; provider response IDs are audit correlation only, never the source of conversational continuity.
 
 ### Model catalogue and user controls
 
@@ -44,6 +44,7 @@ Expose a server-owned catalogue and persist the resolved selection on every turn
 - The agent can emit only validated semantic IR or a controlled single-source exploration specification.
 - The agent never receives a SQL tool and never supplies tenant scope.
 - Trusted backend code injects tenant identity, validates capabilities/budgets/permissions, compiles SQL deterministically, and executes only as `semantic_ro`.
+- Control-plane reads run as the constrained `albert_semantic_control` role. It can read the active registry and tenant overlay, and append explicitly confirmed overlay/audit changes; it has no privilege on OAuth token references or encrypted credential envelopes.
 - Tables and charts are rendered only from semantic-query result artefacts. The model may choose presentation, but it never invents or recalculates values.
 
 ### User-visible execution trace
@@ -66,10 +67,11 @@ Provider/SDK traces are operator observability only. The product trace is saniti
 
 ### Observability and privacy
 
-- Use OpenAI trace identifiers for operational debugging while retaining Albert's own provider-neutral artefact log.
+- Keep Albert's provider-neutral artefact log enabled for every turn. OpenAI SDK tracing excludes sensitive data and is disabled by default; an MAM-approved project may opt in explicitly with `ALBERT_OPENAI_TRACING_ENABLED=true`.
 - Send a stable privacy-preserving safety identifier for end-user runs.
 - Minimise personal data in prompts, prefer aggregate tool results, treat source text as untrusted data, and use source data for neither model nor platform training.
-- The AU-region inference endpoint remains an explicit deployment decision. No production traffic is enabled until it is resolved.
+- Use `https://au.api.openai.com/v1` for production API traffic so eligible API state is stored in Australia. As of this ADR date, OpenAI documents **regional storage but not regional processing** for Australia and requires Modified Abuse Monitoring or Zero Data Retention eligibility. Production readiness therefore requires the OpenAI project to be approved for MAM or ZDR, trace payload collection to exclude sensitive data, and prompts to contain the minimum aggregate data needed for the answer.
+- Keep `OPENAI_BASE_URL` explicit and fail-fast. Albert does not silently fall back from the AU endpoint to the global endpoint.
 
 ## Consequences
 
@@ -85,7 +87,8 @@ Provider/SDK traces are operator observability only. The product trace is saniti
 - Model combinations multiply the eval matrix; representative golden questions must run across supported profiles.
 - Fast and high-effort options can materially change latency and cost, so the UI must show the resolved profile and metering.
 - Provider traces are not a substitute for Albert's audit log and may have different retention/residency characteristics.
-- A missing regional endpoint decision blocks production model traffic but not the local typed runtime, fixture trace, or UI.
+- Rebuilding bounded narrative context consumes more input tokens than provider-managed continuation, but avoids coupling product continuity to provider retention and supports stricter ZDR operation.
+- Australian storage does not mean Australian processing. APP 8 assessment, customer disclosure, and contractual safeguards remain operational requirements, and the deployment smoke test must confirm the configured OpenAI project can use the AU domain.
 
 ## Alternatives considered
 
@@ -102,3 +105,4 @@ Provider/SDK traces are operator observability only. The product trace is saniti
 - [GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 - [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)
 - [OpenAI reasoning models](https://developers.openai.com/api/docs/guides/reasoning)
+- [OpenAI data controls and regional support](https://developers.openai.com/api/docs/guides/your-data#support-by-region)

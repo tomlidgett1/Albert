@@ -35,6 +35,7 @@ export const FIXTURE_PROVENANCE: TraceProvenance = Object.freeze({
     }),
   ]),
   semanticBundleHash: "sha256:fixture-albert-v1-category-sales-2026-07",
+  identityGraph: Object.freeze({ version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" }),
   coverage: Object.freeze([
     Object.freeze({
       label: "Category assignment coverage",

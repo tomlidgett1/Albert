@@ -1,0 +1,34 @@
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "Dockerfile.services"
+
+[env]
+  DELETION_WORKER_PORT = "8083"
+  NODE_ENV = "production"
+
+[processes]
+  app = "node --enable-source-maps services/deletion-worker.js"
+
+[checks]
+  [checks.readiness]
+    grace_period = "45s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8083
+    timeout = "8s"
+    type = "http"
+    processes = ["app"]
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+  processes = ["app"]

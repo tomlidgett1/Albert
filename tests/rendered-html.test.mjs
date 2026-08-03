@@ -23,17 +23,10 @@ async function render(pathname = "/") {
   );
 }
 
-test("server-renders Albert's conversational analytics landing page", async () => {
+test("public root enters the authenticated product instead of a demo surface", async () => {
   const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>Albert<\/title>/i);
-  assert.match(html, /CONVERSATIONAL ANALYTICS/);
-  assert.match(html, /How can I help you today\?/);
-  assert.match(html, /One conversation\. Whole business\./i);
-  assert.doesNotMatch(html, /Your site is taking shape|Building your site/i);
+  assert.ok([303, 307, 308].includes(response.status));
+  assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/login");
 });
 
 test("dash ships governed traces, run controls, connections, themes, and reduced motion", async () => {

@@ -56,3 +56,61 @@ export function createTraceSseResponse(
     },
   });
 }
+
+export type LiveTraceSseOptions = Readonly<{
+  conversationId: string;
+  signal?: AbortSignal;
+  run: (emit: (event: TraceEvent) => void, signal: AbortSignal) => Promise<void>;
+}>;
+
+/** Streams product trace events as they are persisted by the live runtime. */
+export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Response {
+  const runAbort = new AbortController();
+  const abortRun = () => runAbort.abort(options.signal?.reason);
+  options.signal?.addEventListener("abort", abortRun, { once: true });
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        controller.close();
+      };
+      const heartbeat = setInterval(() => {
+        if (!closed && !runAbort.signal.aborted) controller.enqueue(encoder.encode(": keepalive\n\n"));
+      }, 15_000);
+      const abort = () => close();
+      runAbort.signal.addEventListener("abort", abort, { once: true });
+
+      void options.run((event) => {
+        if (!closed && !runAbort.signal.aborted) {
+          controller.enqueue(encoder.encode(encodeTraceSseEvent(event)));
+        }
+      }, runAbort.signal).then(close).catch((error) => {
+        if (!closed) {
+          closed = true;
+          controller.error(error);
+        }
+      }).finally(() => {
+        clearInterval(heartbeat);
+        runAbort.signal.removeEventListener("abort", abort);
+        options.signal?.removeEventListener("abort", abortRun);
+      });
+    },
+    cancel(reason) {
+      runAbort.abort(reason);
+      options.signal?.removeEventListener("abort", abortRun);
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "X-Accel-Buffering": "no",
+      "X-Albert-Conversation-Id": options.conversationId,
+    },
+  });
+}

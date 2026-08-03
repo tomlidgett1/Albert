@@ -124,6 +124,7 @@ export type TraceProvenance = Readonly<{
     definition: string;
   }>[];
   semanticBundleHash: string;
+  identityGraph: Readonly<{ version: number; hash: string }>;
   coverage?: readonly Readonly<{
     label: string;
     value: number;

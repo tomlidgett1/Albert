@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   description: "Sign in or create your Albert account.",
 };
 
-export default function LoginPage() {
-  return <LoginForm />;
+export default async function LoginPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  const query = await searchParams;
+  return <LoginForm authError={typeof query.auth_error === "string"} />;
 }

@@ -15,7 +15,7 @@ type AnalyticalTraceProps = {
   streaming?: boolean;
   runtime?: "fixture" | "openai";
   onFollowUp?: (prompt: string) => void;
-  onClarification?: (value: string) => void;
+  onClarification?: (value: string, question: string) => void;
 };
 
 type ExplainSelection = {
@@ -157,7 +157,7 @@ function ProvenancePanel({
         <div>
           <dt>Semantic bundle</dt>
           <dd className={styles.traceHash}>{provenance.semanticBundleHash}</dd>
-          <small>Version used for this answer</small>
+          <small>Identity graph v{provenance.identityGraph.version} · {provenance.identityGraph.hash.slice(0, 10)}</small>
         </div>
       </dl>
 
@@ -342,7 +342,7 @@ function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTa
 export default function AnalyticalTrace({
   events,
   streaming = false,
-  runtime = "fixture",
+  runtime = "openai",
   onFollowUp,
   onClarification,
 }: AnalyticalTraceProps) {
@@ -443,7 +443,7 @@ export default function AnalyticalTrace({
                   <span>ONE DETAIL NEEDED</span>
                   <h4>{event.question}</h4>
                   <div role="group" aria-label={event.question}>
-                    {event.options.map((option) => <button key={option.id} type="button" onClick={() => onClarification?.(option.value)}>{option.label}</button>)}
+                    {event.options.map((option) => <button key={option.id} type="button" onClick={() => onClarification?.(option.value, event.question)}>{option.label}</button>)}
                   </div>
                 </div>
               ) : null}

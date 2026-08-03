@@ -1,0 +1,34 @@
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "Dockerfile.services"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[processes]
+  app = "node --enable-source-maps services/transform-worker.js"
+
+[checks]
+  [checks.readiness]
+    grace_period = "45s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8080
+    timeout = "8s"
+    type = "http"
+    processes = ["app"]
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+  processes = ["app"]
