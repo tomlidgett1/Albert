@@ -170,7 +170,7 @@ SET search_path=pg_catalog
 AS $$
 DECLARE
   permit control_plane.sync_write_permits%ROWTYPE;
-  request control_plane.sync_job_requests%ROWTYPE;
+  request_payload jsonb;
   attempt_deadline timestamptz;
   deadline timestamptz;
   generated_id text;
@@ -197,7 +197,7 @@ BEGIN
     permit.queue_name,permit.message_id,permit.job_request_id,
     permit.worker_id,permit.read_count
   );
-  SELECT job,attempt.visibility_deadline INTO request,attempt_deadline
+  SELECT job.payload,attempt.visibility_deadline INTO request_payload,attempt_deadline
     FROM control_plane.sync_job_requests AS job
     JOIN control_plane.sync_job_attempts AS attempt
       ON attempt.tenant_id=job.tenant_id
@@ -247,9 +247,9 @@ BEGIN
   BEGIN
     expected_key:=concat_ws(
       '/','tenant',permit.tenant_id,'connection',permit.connection_id,'stream',
-      request.payload->>'stream','date',
-      to_char((request.payload->>'requestedAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD'),
-      'batch-'||(request.payload->>'batchId')||'.jsonl.gz'
+      request_payload->>'stream','date',
+      to_char((request_payload->>'requestedAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD'),
+      'batch-'||(request_payload->>'batchId')||'.jsonl.gz'
     );
   EXCEPTION WHEN OTHERS THEN
     RAISE EXCEPTION 'sync job raw object identity is invalid' USING ERRCODE='22023';

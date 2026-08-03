@@ -126,6 +126,14 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   assert.match(administratorUpgrade, /auth_session_id=\$2/u);
   assert.match(administratorUpgrade, /grant_row\.object_key=\$3/u);
   assert.match(administratorUpgrade, /grant_row\.operation='purge'/u);
+  assert.match(
+    migration,
+    /SELECT job\.payload,attempt\.visibility_deadline INTO request_payload,attempt_deadline/u,
+  );
+  assert.doesNotMatch(
+    migration,
+    /SELECT job,attempt\.visibility_deadline INTO request,attempt_deadline/u,
+  );
 
   assert.match(syncRuntime, /SET LOCAL ROLE albert_sync_control/u);
   assert.match(syncRuntime, /claim_sync_jobs/u);
