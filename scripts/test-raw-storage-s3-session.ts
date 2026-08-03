@@ -253,8 +253,8 @@ export async function proveRawStorageS3Sessions(): Promise<void> {
           tenant_id,grant_id,permit_id,worker_id,auth_user_id,auth_session_id,
           object_key,issued_at,expires_at
         ) values($1,'01JA000000000000000000000B',$2,$3,$4,$5,$6,
-                 clock_timestamp()-interval '10 minutes',
-                 clock_timestamp()-interval '5 minutes')
+                 statement_timestamp()-interval '10 minutes',
+                 statement_timestamp()-interval '6 minutes')
       `, [tenantId, syncPermitId, syncWorkerId, identity.userId, identity.sessionId, syncKey]);
     }
     const issued = await syncDatabase.query<GrantRow>(`
@@ -280,8 +280,8 @@ export async function proveRawStorageS3Sessions(): Promise<void> {
           verification_reference,auth_user_id,auth_session_id,object_key,
           issued_at,expires_at
         ) values($1,'01JA000000000000000000000C',$2,$3,'deputy',$4,$5,$6,$7,
-                 clock_timestamp()-interval '10 minutes',
-                 clock_timestamp()-interval '8 minutes')
+                 statement_timestamp()-interval '10 minutes',
+                 statement_timestamp()-interval '9 minutes')
       `, [tenantId, connectionId, webhookReceiptId, webhookMaterialId,
         identity.userId, identity.sessionId, webhookKey]);
     }
@@ -309,8 +309,8 @@ export async function proveRawStorageS3Sessions(): Promise<void> {
           tenant_id,grant_id,deletion_request_id,attempt_number,worker_id,message_id,
           auth_user_id,auth_session_id,operation,scope,connection_id,issued_at,expires_at
         ) values($1,'01JA000000000000000000000D',$2,$3,$4,$5,$6,$7,'purge',
-                 'connection',$8,clock_timestamp()-interval '10 minutes',
-                 clock_timestamp()-interval '5 minutes')
+                 'connection',$8,statement_timestamp()-interval '10 minutes',
+                 statement_timestamp()-interval '6 minutes')
       `, [tenantId, deletionRequestId, deletionAttempt, deletionWorkerId,
         deletionMessageId, identity.userId, identity.sessionId, deletionConnectionId]);
     }

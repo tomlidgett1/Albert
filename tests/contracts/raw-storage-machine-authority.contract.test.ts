@@ -164,6 +164,16 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   assert.match(ci, /-U albert_webhook_control_runtime/u);
   assert.match(ci, /-U albert_deletion_control_runtime/u);
   assert.match(s3Proof, /every issuer must reap crashed expired grants/u);
+  assert.doesNotMatch(
+    s3Proof,
+    /clock_timestamp\(\)-interval '(?:6|9|10) minutes'/u,
+    "crashed-grant boundary fixtures must use one statement-stable timestamp",
+  );
+  assert.equal(
+    (s3Proof.match(/statement_timestamp\(\)-interval '(?:6|9|10) minutes'/gu) ?? []).length,
+    6,
+    "every crashed grant must use a stable timestamp and an interior lifetime",
+  );
   assert.match(s3Proof, /sessionPool: syncPool/u);
   assert.match(s3Proof, /sessionPool: webhookPool/u);
   assert.match(s3Proof, /sessionPool: deletionPool/u);
