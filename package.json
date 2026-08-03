@@ -17,6 +17,7 @@
     "test:service-build": "npm run build:services && npm run build:capacity-attestor && node scripts/check-service-boundaries.mjs && node --check .albert-build/services/sync-worker.js && node --check .albert-build/services/transform-worker.js && node --check .albert-build/services/transform-capacity-harness.js && node --check .albert-build/services/deletion-worker.js && node --check .albert-build/services/webhook-gateway.js && node --check .albert-build/services/semantic-query.js && node --check .albert-build/services/operator-diagnostic.js && node --check .albert-build/capacity-attestor/main.js",
     "test:deployment": "node scripts/validate-deployment.mjs",
     "test:analytical-capability-boundary": "tsx scripts/test-analytical-capability-boundary.ts",
+    "test:lightspeed-supplier-transform": "tsx scripts/test-lightspeed-supplier-transform.ts",
     "test:raw-storage-s3-session": "tsx scripts/test-raw-storage-s3-session.ts",
     "release:preflight": "node scripts/release-preflight.mjs",
     "capacity:transform": "tsx scripts/transform-capacity-harness.ts",
@@ -30,6 +31,8 @@
     "provision:webhook-attestation-key": "tsx scripts/provision-webhook-attestation-key.ts",
     "provision:raw-storage-machine-users": "tsx scripts/provision-raw-storage-machine-users.ts",
     "generate:connector-staging": "tsx scripts/generate-connector-staging.ts",
+    "connector-pack:activate": "tsx scripts/activate-connector-pack.ts",
+    "connector-pack:retire-connection": "tsx scripts/retire-connector-pack-connection.ts",
     "registry:check": "tsx scripts/registry.ts check",
     "registry:write": "tsx scripts/registry.ts write",
     "registry:publish": "tsx scripts/registry.ts publish"

@@ -208,6 +208,7 @@ test("connector stream authority mapping is explicit and rejects drift", () => {
   assert.equal(sourceAuthorityForField("deputy", "timesheets", "source_deputy.timesheets.exported"), "worked_hours");
   assert.equal(sourceAuthorityForField("lightspeed-r", "customers", "source_lightspeed.customers.credit_limit"), "customer_master");
   assert.equal(sourceAuthorityForField("lightspeed-r", "item_shops", "source_lightspeed.item_shops.reorder_point"), "stock");
+  assert.equal(sourceAuthorityForField("lightspeed-r", "vendors", "source_lightspeed.vendors.account_number"), "stock");
   assert.throws(() => sourceAuthorityForField("xero", "unknown", "source_xero.unknown.value"), /source_authority_unmapped/u);
   assert.throws(() => sourceAuthorityForField("xero", "journals", "source_deputy.journals.value"), /target_mismatch/u);
 });
@@ -227,7 +228,7 @@ function field(overrides: Partial<SourceField>): SourceField {
     piiClass: "none",
     authorityConcept: "product_master",
     definition: "Governed connector extension.",
-    packVersion: "1.0.0",
+    packVersion: "1.1.0",
     ...overrides,
   };
 }

@@ -109,6 +109,23 @@ export const lightspeedCustomerSchema = z.object({
   Contact: z.unknown().optional(),
 }).passthrough();
 
+export const lightspeedVendorSchema = z.object({
+  vendorID: id,
+  name: z.string(),
+  archived: scalar.optional(),
+  accountNumber: scalar.optional(),
+  priceLevel: scalar.optional(),
+  updatePrice: scalar.optional(),
+  updateCost: scalar.optional(),
+  updateDescription: scalar.optional(),
+  shareSellThrough: scalar.optional(),
+  timeStamp: timestamp,
+  b2bSellerUID: scalar.optional(),
+  Contact: z.unknown().optional(),
+  Reps: z.unknown().optional(),
+  purchasingCurrency: z.unknown().optional(),
+}).passthrough();
+
 export const lightspeedOrderSchema = z.object({
   orderID: id,
   shopID: nullableId,
@@ -173,6 +190,7 @@ export const lightspeedSchemas = {
   item_shops: lightspeedItemShopSchema,
   sales: lightspeedSaleSchema,
   customers: lightspeedCustomerSchema,
+  vendors: lightspeedVendorSchema,
   orders: lightspeedOrderSchema,
   order_lines: lightspeedOrderLineSchema,
   payment_types: lightspeedPaymentTypeSchema,

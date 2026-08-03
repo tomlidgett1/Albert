@@ -49,7 +49,7 @@ const sourceField: SourceField = {
   piiClass: "business",
   authorityConcept: "operational_sales",
   definition: "The source-recorded reason associated with a discount.",
-  packVersion: "1.0.0",
+  packVersion: "1.1.0",
 };
 
 test("every remote agent tool traverses canonical schema, signed HTTP, service and trace adapters", async () => {
@@ -72,7 +72,7 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
           identityGraphHash: "d41d8cd98f00b204e9800998ecf8427e",
           defaults: { "sales.default_metric": "commerce.net_sales_ex_gst" },
           dossier: { industry: "Retail" },
-          packVersions: { "lightspeed-r": "1.0.0" },
+          packVersions: { "lightspeed-r": "1.1.0" },
           sourceWatermarks: { [sourceField.connectionId]: "2026-03-15T11:30:00.000Z" },
           sourceDetails: [{ connectorId: "lightspeed-r", connectionId: sourceField.connectionId, label: "Lightspeed", dataThrough: "2026-03-15T11:30:00.000Z" }],
           authorityByConcept: { operational_sales: sourceField.connectionId },

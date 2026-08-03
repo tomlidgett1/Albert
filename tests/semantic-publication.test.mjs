@@ -21,11 +21,11 @@ test("semantic publication is deterministic and carries generated counts", () =>
   const left = createSemanticPublicationPlan(registry, {
     xero: "1.0.0",
     deputy: "1.0.0",
-    "lightspeed-r": "1.0.0",
+    "lightspeed-r": "1.1.0",
   });
   const right = createSemanticPublicationPlan(registry, {
     deputy: "1.0.0",
-    "lightspeed-r": "1.0.0",
+    "lightspeed-r": "1.1.0",
     xero: "1.0.0",
   });
 

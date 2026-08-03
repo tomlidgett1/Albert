@@ -82,7 +82,7 @@ Lightspeed R-Series account, one Xero tenant, and one Deputy installation;
 answer at least four blocking questions and publish the overlay. Run the
 flagship and category conversations through the real agent and record their
 finalized artifact ids. Execute a real Lightspeed or Xero disconnect and a
-separate three-provider tenant deletion after migrations 0054 and 0092 are
+separate three-provider tenant deletion after migrations 0054 and 0094 are
 deployed; older proofs lack mandatory evidence.
 
 ## Produce and promote

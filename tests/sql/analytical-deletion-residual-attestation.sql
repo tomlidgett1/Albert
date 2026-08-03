@@ -63,6 +63,15 @@ INSERT INTO semantic_internal.deletion_attestation_other_test
 VALUES ('01H00000000000000000000701','01H00000000000000000000702');
 INSERT INTO mart.deletion_attestation_retained_test
 VALUES ('01H00000000000000000000701');
+INSERT INTO semantic_internal.connector_pack_connection_retirement(
+  tenant_id,connection_id,connector_id,predecessor_pack_version,
+  candidate_pack_version,retirement_reason,control_plane_audit_id,
+  control_plane_evidence_sha256,retired_by
+) VALUES (
+  '01H00000000000000000000701','01H00000000000000000000702',
+  'lightspeed-r','1.0.0','1.1.0','disconnected',
+  '01H00000000000000000000703',repeat('b',64),'residual-attestation-test'
+);
 
 DO $$
 DECLARE
@@ -76,7 +85,7 @@ BEGIN
      OR (SELECT count(*) FROM jsonb_object_keys(connection_evidence))<>5
      OR (SELECT count(*) FROM jsonb_object_keys(connection_evidence->'residuals'))<>7
      OR (connection_evidence->>'verified')::boolean
-     OR (connection_evidence->>'remainingRows')::bigint<>7
+     OR (connection_evidence->>'remainingRows')::bigint<>8
      OR connection_evidence->'residuals'<>jsonb_build_object(
        'stagingRows',1,
        'canonicalRows',1,
@@ -84,7 +93,7 @@ BEGIN
        'linkRows',1,
        'embeddingRows',1,
        'cacheRows',1,
-       'otherAnalyticalRows',1
+       'otherAnalyticalRows',2
      ) THEN
     RAISE EXCEPTION 'connection residual attestation was not measured: %',
       connection_evidence;
@@ -97,7 +106,7 @@ BEGIN
      OR (SELECT count(*) FROM jsonb_object_keys(tenant_evidence))<>5
      OR (SELECT count(*) FROM jsonb_object_keys(tenant_evidence->'residuals'))<>7
      OR (tenant_evidence->>'verified')::boolean
-     OR (tenant_evidence->>'remainingRows')::bigint<>8
+     OR (tenant_evidence->>'remainingRows')::bigint<>9
      OR tenant_evidence->'residuals'<>jsonb_build_object(
        'stagingRows',1,
        'canonicalRows',1,
@@ -105,7 +114,7 @@ BEGIN
        'linkRows',1,
        'embeddingRows',1,
        'cacheRows',1,
-       'otherAnalyticalRows',1
+       'otherAnalyticalRows',2
      ) THEN
     RAISE EXCEPTION 'tenant residual attestation was not measured: %',
       tenant_evidence;
@@ -122,6 +131,13 @@ TRUNCATE TABLE
   semantic_internal.deletion_attestation_cache_test,
   semantic_internal.deletion_attestation_other_test,
   mart.deletion_attestation_retained_test;
+
+SET LOCAL ROLE albert_migration_owner;
+SELECT set_config('albert.deletion_authorized','on',true);
+DELETE FROM semantic_internal.connector_pack_connection_retirement
+ WHERE tenant_id='01H00000000000000000000701'
+   AND connection_id='01H00000000000000000000702';
+RESET ROLE;
 
 DO $$
 DECLARE

@@ -72,6 +72,9 @@ jobs:
       - run: npm run migrate -- --target=analytical
       - run: npm run provision:runtime-logins -- --target=analytical
       - run: npm run provision:analytical-capability-key -- --target=analytical
+      - run: npm run test:lightspeed-supplier-transform
+        env:
+          ALBERT_LIGHTSPEED_SUPPLIER_TEST_MODE: ci
       - run: npm run test:analytical-capability-boundary
         env:
           ALBERT_CAPABILITY_TEST_MODE: ci
@@ -84,6 +87,7 @@ jobs:
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-multi-account-authority.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-reconciliation-lifecycle.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-capability-scoped-health.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-connector-pack-activation.sql
 
   control-plane-database:
     runs-on: ubuntu-latest

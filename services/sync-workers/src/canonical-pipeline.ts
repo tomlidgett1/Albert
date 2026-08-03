@@ -45,6 +45,7 @@ const sourceAuthorityByStream = Object.freeze({
     item_shops: "stock",
     sales: "operational_sales",
     customers: "customer_master",
+    vendors: "stock",
     orders: "stock",
     order_lines: "stock",
     payment_types: "operational_sales",
@@ -387,6 +388,8 @@ export class CanonicalTransformPipeline {
         }
       }
 
+      const commandCount=commands.length;
+
       // Healing happens only after every projection command for the accepted
       // rows has succeeded in this transaction. A later failure rolls back the
       // canonical writes and leaves the prior dead-letter record open.
@@ -435,13 +438,13 @@ export class CanonicalTransformPipeline {
            data_ready_through,completed_at
          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())`,
         [job.tenantId,job.batchId,job.syncRunId,job.connectionId,job.connectorId,stream,
-          this.mappingVersion,rows.length,isolated.rejected.length,commands.length,
+          this.mappingVersion,rows.length,isolated.rejected.length,commandCount,
           canonicalRows,metadataRows,qualityStatus,qualityStatuses.partial,
           qualityStatuses.complete,readyThrough],
       );
       return {
         batchId:job.batchId,replayed:false,stagedRows:rows.length,
-        quarantinedRows:isolated.rejected.length,commandCount:commands.length,
+        quarantinedRows:isolated.rejected.length,commandCount,
         canonicalRows,metadataRows,qualityStatus,
         partialQualityStatus:qualityStatuses.partial,
         completeQualityStatus:qualityStatuses.complete,
@@ -449,11 +452,75 @@ export class CanonicalTransformPipeline {
       } satisfies CanonicalTransformResult;
     }));
 
+    await this.drainLegacyLightspeedOrderDependencies(
+      job,stream,mapper,mappingContext,authorization,
+    );
+
     if(publishControl){
       await this.publishPendingControlProjections(job.tenantId, job.batchId,authorization);
       await this.refreshDossier(job.tenantId,authorization);
     }
     return result;
+  }
+
+  /**
+   * Compatibility projection is deliberately outside the terminal page's
+   * transform transaction. Each bounded chunk commits its exact audit
+   * progress, so a worker crash or lease hand-off resumes from the first
+   * unaudited Order instead of restarting an unbounded historical scan.
+   */
+  private async drainLegacyLightspeedOrderDependencies(
+    job:CanonicalTransformBatch,
+    stream:string,
+    mapper:CanonicalStreamMapper,
+    context:CanonicalMappingContext,
+    authorization:TransformCapabilityEvidence|undefined,
+  ):Promise<void>{
+    if(job.connectorId!=="lightspeed-r"||!['vendors','orders'].includes(stream))return;
+    for(;;){
+      const done=await this.withTransformAuthorization(authorization,(capability)=>
+        this.analytical.transaction(async(client)=>{
+          await establishTransformScope(client,job.tenantId,capability);
+          await client.query(
+            "select pg_advisory_xact_lock(hashtextextended($1, 0))",
+            [`canonical:${job.tenantId}`],
+          );
+          const progress=await replayLegacyLightspeedOrderDependencyChunk(
+            client,job,stream,mapper,context,
+          );
+          const dateBounds=canonicalDateBounds(
+            progress.appliedCommands,progress.previousDates,
+          );
+          if(dateBounds){
+            await ensureCalendarDays(client,dateBounds);
+            await refreshMarts(client,job.tenantId,dateBounds);
+            await client.query(
+              "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
+              [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
+            );
+            await client.query(
+              "select quality.run_all_invariants($1,$2)",
+              [job.tenantId,job.syncRunId],
+            );
+          }
+          if(!progress.eligible)return true;
+          if(progress.pending)return false;
+          const finalized=await client.query<{result:unknown}>(
+            `select semantic_internal.finalize_lightspeed_supplier_replay_gate(
+               $1::text,$2::text,$3::text
+             ) as result`,
+            [job.tenantId,job.connectionId,job.batchId],
+          );
+          const gate=finalized.rows[0]?.result;
+          if(!gate||typeof gate!=="object"||Array.isArray(gate)
+            ||(gate as {ready?:unknown}).ready!==true){
+            throw new Error("canonical_dependency_replay_gate_not_ready");
+          }
+          return true;
+        })
+      );
+      if(done)return;
+    }
   }
 
   async publishPendingControlProjections(
@@ -1215,6 +1282,211 @@ async function loadStagingRows(client:PostgresQueryClient,contract:StagingStream
   return [...result.rows];
 }
 
+const LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT=100;
+const LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT=500;
+
+type LegacyLightspeedDependencyReplayChunk = Readonly<{
+  eligible:boolean;
+  pending:boolean;
+  commandCount:number;
+  canonicalRows:number;
+  appliedCommands:readonly CanonicalProjectionCommand[];
+  previousDates:readonly string[];
+}>;
+
+const noLegacyLightspeedDependencyReplay:LegacyLightspeedDependencyReplayChunk=Object.freeze({
+  eligible:false,pending:false,commandCount:0,canonicalRows:0,
+  appliedCommands:Object.freeze([]),previousDates:Object.freeze([]),
+});
+
+/**
+ * Pack 1.0 Orders that failed solely because Vendor did not exist cannot be
+ * claimed again after OAuth re-consent fences their old transform generation.
+ * Pack 1.1 therefore has one bounded compatibility lane. The database opens
+ * it only after current-generation Vendor and Order backfill plus deletion
+ * reconciliation are complete, and it returns only exact, unchanged legacy
+ * typed projections with immutable pack-1.0 origin evidence.
+ */
+async function replayLegacyLightspeedOrderDependencyChunk(
+  client:PostgresQueryClient,
+  repairJob:CanonicalTransformBatch,
+  repairStream:string,
+  mapper:CanonicalStreamMapper,
+  context:CanonicalMappingContext,
+):Promise<LegacyLightspeedDependencyReplayChunk>{
+  if(repairJob.connectorId!=="lightspeed-r"||!['vendors','orders'].includes(repairStream)){
+    return noLegacyLightspeedDependencyReplay;
+  }
+  const eligibility=await client.query<{connection_generation:number|string|null}>(
+    `select semantic_internal.lightspeed_supplier_replay_generation(
+       $1::text,$2::text,$3::text
+     ) as connection_generation`,
+    [repairJob.tenantId,repairJob.connectionId,repairJob.batchId],
+  );
+  const generation=eligibility.rows[0]?.connection_generation;
+  if(generation===null||generation===undefined)return noLegacyLightspeedDependencyReplay;
+  const parsedGeneration=Number(generation);
+  if(!Number.isSafeInteger(parsedGeneration)||parsedGeneration<1){
+    throw new Error("canonical_dependency_replay_generation_invalid");
+  }
+
+  const candidates=await client.query<CanonicalStagingRow>(
+    `select staged.*,origin.source_object_type
+       from source_lightspeed.orders staged
+       join ingestion.source_records origin
+         on origin.tenant_id=staged.tenant_id
+        and origin.namespaced_source_key=staged.namespaced_source_key
+        and origin.connection_id=staged.connection_id
+        and origin.connector_key='lightspeed-r' and origin.stream='orders'
+        and origin.source_object_type='Order'
+        and origin.source_record_id=staged.source_record_id
+        and origin.payload_hash=staged.payload_hash
+        and origin.normalized_schema_version='1.0.0'
+       join ingestion.batch_manifests origin_manifest
+         on origin_manifest.tenant_id=origin.tenant_id
+        and origin_manifest.batch_id=origin.payload_batch_id
+        and origin_manifest.connection_id=origin.connection_id
+        and origin_manifest.sync_run_id=origin.sync_run_id
+        and origin_manifest.connector_key='lightspeed-r'
+        and origin_manifest.connector_version='1.0.0'
+        and origin_manifest.stream='orders'
+       left join semantic_internal.lightspeed_order_dependency_replay_audit audit
+         on audit.tenant_id=staged.tenant_id
+        and audit.connection_id=staged.connection_id
+        and audit.connection_generation=$4::bigint
+        and audit.source_order_namespaced_key=staged.namespaced_source_key
+        and audit.source_order_payload_hash=staged.payload_hash
+        and audit.source_order_mapping_version=staged.mapping_version
+      where staged.tenant_id=$1 and staged.connection_id=$2
+        and staged.mapping_version=$3 and not staged.tombstone
+        and nullif(btrim(staged.vendor_id),'') is not null
+        and btrim(staged.vendor_id)<>'0'
+        and audit.tenant_id is null
+        and (
+          jsonb_typeof(staged.order_lines->'OrderLine')='object'
+          or (jsonb_typeof(staged.order_lines->'OrderLine')='array'
+              and jsonb_array_length(staged.order_lines->'OrderLine')>0)
+          or (jsonb_typeof(staged.order_lines)='array'
+              and jsonb_array_length(staged.order_lines)>0)
+        )
+      order by staged.namespaced_source_key
+      limit $5::integer`,
+    [repairJob.tenantId,repairJob.connectionId,repairJob.mappingVersion,parsedGeneration,
+      LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT],
+  );
+
+  let commandCount=0;
+  let canonicalRows=0;
+  let pending=candidates.rows.length===LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT;
+  const appliedCommands:CanonicalProjectionCommand[]=[];
+  const previousDates:string[]=[];
+  for(let candidateIndex=0;candidateIndex<candidates.rows.length;candidateIndex+=1){
+    const row=candidates.rows[candidateIndex]!;
+    assertLegacyLightspeedOrderReplayLineage(row,repairJob);
+    const vendorId=String(row.vendor_id??"").trim();
+    const mapped=mapper("orders",row,context);
+    if(!Array.isArray(mapped)||mapped.length===0){
+      throw new Error(`canonical_dependency_replay_mapper_empty:${row.source_record_id}`);
+    }
+    const lineIdentities=new Set<string>();
+    for(const command of mapped){
+      if(command.kind!=="fact"||command.table!=="purchase_order_line"){
+        throw new Error(`canonical_dependency_replay_command_unsupported:${command.kind}`);
+      }
+      if(command.sourceObjectType!=="OrderLine"||!command.sourceRecordId.trim()){
+        throw new Error(`canonical_dependency_replay_line_identity_invalid:${row.source_record_id}`);
+      }
+      const lineIdentity=`${command.sourceObjectType}\u001f${command.sourceRecordId}`;
+      if(lineIdentities.has(lineIdentity)){
+        throw new Error(`canonical_dependency_replay_line_identity_duplicate:${command.sourceRecordId}`);
+      }
+      lineIdentities.add(lineIdentity);
+      const supplier=command.values.supplier_id;
+      if(!isCanonicalSourceReference(supplier)
+        ||supplier.sourceRef.table!=="supplier"
+        ||supplier.sourceRef.sourceObjectType!=="Vendor"
+        ||supplier.sourceRef.sourceRecordId!==vendorId
+        ||supplier.sourceRef.connectionId!==row.connection_id){
+        throw new Error(`canonical_dependency_replay_supplier_scope_invalid:${row.source_record_id}`);
+      }
+    }
+    const materialized=await client.query<{source_record_id:string}>(
+      `select state.source_record_id
+         from semantic_internal.canonical_record_state state
+        where state.tenant_id=$1
+          and state.canonical_table='purchase_order_line'
+          and state.connection_id=$2
+          and state.batch_id=$3
+          and state.sync_run_id=$4
+          and state.payload_hash=$5
+          and state.mapping_version=$6
+          and state.source_object_type='OrderLine'`,
+      [repairJob.tenantId,repairJob.connectionId,row.payload_batch_id,row.sync_run_id,
+        row.payload_hash,row.mapping_version],
+    );
+    const materializedIds=new Set(materialized.rows.map((state)=>state.source_record_id));
+    const missing=mapped.filter((command)=>
+      !materializedIds.has((command as CanonicalUpsertCommand).sourceRecordId)
+    );
+    const remainingBudget=LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT-commandCount;
+    const selected=missing.slice(0,remainingBudget);
+    const sourceJob:CanonicalTransformBatch=Object.freeze({
+      ...repairJob,batchId:row.payload_batch_id,syncRunId:row.sync_run_id,
+    });
+    for(const command of selected){
+      const outcome=await executeUpsert(client,sourceJob,row,command as CanonicalUpsertCommand);
+      commandCount+=1;
+      if(outcome.applied){
+        canonicalRows+=1;
+        appliedCommands.push(command);
+        previousDates.push(...outcome.previousDates);
+      }
+    }
+    if(selected.length<missing.length){
+      pending=true;
+      break;
+    }
+    const audit=await client.query<{recorded:boolean}>(
+      `select semantic_internal.record_lightspeed_order_dependency_replay(
+         $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text
+       ) as recorded`,
+      [repairJob.tenantId,repairJob.connectionId,repairJob.batchId,repairJob.syncRunId,
+        row.namespaced_source_key,row.payload_hash,row.mapping_version],
+    );
+    if(audit.rows[0]?.recorded!==true){
+      throw new Error(`canonical_dependency_replay_audit_conflict:${row.source_record_id}`);
+    }
+    if(commandCount>=LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT
+      &&candidateIndex<candidates.rows.length-1){
+      pending=true;
+      break;
+    }
+  }
+  return Object.freeze({
+    eligible:true,pending,commandCount,canonicalRows,
+    appliedCommands:Object.freeze(appliedCommands),
+    previousDates:Object.freeze(previousDates),
+  });
+}
+
+function assertLegacyLightspeedOrderReplayLineage(
+  row:CanonicalStagingRow,
+  repairJob:CanonicalTransformBatch,
+):void{
+  if(row.tenant_id!==repairJob.tenantId
+    ||row.connection_id!==repairJob.connectionId
+    ||row.mapping_version!==repairJob.mappingVersion
+    ||row.source_object_type!=="Order"
+    ||row.tombstone!==false
+    ||!row.payload_batch_id.trim()
+    ||!row.sync_run_id.trim()
+    ||!row.namespaced_source_key.trim()
+    ||!row.source_record_id.trim()
+    ||!row.payload_hash.match(/^[a-f0-9]{64}$/u)){
+    throw new Error(`canonical_dependency_replay_lineage_invalid:${row.source_record_id}`);
+  }
+}
+
 async function recordCanonicalMappingQuarantine(
   client:PostgresQueryClient,
   job:CanonicalTransformBatch,
@@ -1458,7 +1730,7 @@ async function claimCanonicalRecordVersion(
      returning canonical_id`,
     [
       job.tenantId,table,canonicalRecordId,sourceUpdatedAt,row.source_version,row.payload_hash,
-      job.batchId,row.sync_run_id,job.connectionId,sourceObjectType,sourceRecordId,row.mapping_version,
+      row.payload_batch_id,row.sync_run_id,job.connectionId,sourceObjectType,sourceRecordId,row.mapping_version,
     ],
   );
   return Boolean(claimed.rows[0]);
@@ -1743,7 +2015,7 @@ async function publishCapabilities(client:PostgresQueryClient,job:CanonicalTrans
        on conflict (tenant_id,capability,source_key) do update set
          available=excluded.available,support=excluded.support,
          reason_code=excluded.reason_code,reason_detail=excluded.reason_detail,
-         coverage=excluded.coverage,pack_version=excluded.pack_version,
+         coverage=excluded.coverage,
          source_watermark=greatest(semantic_internal.tenant_capability.source_watermark,excluded.source_watermark),
          evaluated_at=now()`,
       [job.tenantId,capability,`${job.connectorId}:${job.connectionId}:canonical:${stream}`,job.connectionId,job.connectorId,available,support,reasonCode,declared.reason,JSON.stringify(coverage),manifest.packVersion,through],
@@ -1773,16 +2045,46 @@ function observedCapabilityValue(value:unknown,nonZero:boolean):boolean{
 
 export async function publishSourceAllowlist(client:PostgresQueryClient,job:CanonicalTransformBatch,manifest:ConnectorManifest,contract:StagingStreamContract):Promise<void>{
   const coverage=new Map(manifest.fieldCoverage.filter((field)=>field.stream===contract.stream).map((field)=>[field.field,field]));
-  // A pack publication is an exact snapshot, not an additive patch. Retire the
-  // previous stream set first so removed, unsupported or newly sensitive fields
-  // cannot survive under an older safe classification. This runs in the same
-  // canonical transaction as the governed reactivation below.
+  // Each pack version is an exact, independently staged snapshot. Retire only
+  // this version's prior stream set so a rolling candidate cannot mutate the
+  // predecessor snapshot that remains user-visible until atomic activation.
   await client.query(
     `update semantic_internal.source_field_allowlist
         set active=false,deactivated_at=now(),
-            deactivation_reason='pack_reclassified_or_removed',pack_version=$6
+            deactivation_reason='pack_reclassified_or_removed'
       where tenant_id=$1 and connection_id=$2 and connector_id=$3
-        and source_schema=$4 and source_table=$5 and active`,
+        and source_schema=$4 and source_table=$5 and pack_version=$6 and active`,
+    [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,manifest.packVersion],
+  );
+  await client.query(
+    `update semantic_internal.connector_pack_source_field_snapshot
+        set active=false,deactivated_at=now(),
+            deactivation_reason='pack_reclassified_or_removed'
+      where tenant_id=$1 and connection_id=$2 and connector_id=$3
+        and source_schema=$4 and source_table=$5 and pack_version=$6 and active`,
+    [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,manifest.packVersion],
+  );
+  // Materialise explicit candidate tombstones for predecessor fields before
+  // reactivating fields governed by this manifest. Activation can therefore
+  // prove that every predecessor field was deliberately retained or retired,
+  // while a reclassification to unsupported/PII remains safely invisible.
+  await client.query(
+    `insert into semantic_internal.source_field_allowlist (
+       tenant_id,connection_id,connector_id,source_schema,source_table,
+       source_field,field_type,disposition,pii_class,authority_concept,
+       documented_definition,pack_version,active,deactivated_at,deactivation_reason
+     )
+     select predecessor.tenant_id,predecessor.connection_id,predecessor.connector_id,
+            predecessor.source_schema,predecessor.source_table,predecessor.source_field,
+            predecessor.field_type,predecessor.disposition,predecessor.pii_class,
+            predecessor.authority_concept,predecessor.documented_definition,$6,
+            false,now(),'candidate_pack_reclassified_or_removed'
+       from semantic_internal.active_source_field_allowlist predecessor
+      where predecessor.tenant_id=$1 and predecessor.connection_id=$2
+        and predecessor.connector_id=$3 and predecessor.source_schema=$4
+        and predecessor.source_table=$5 and predecessor.pack_version<>$6
+     on conflict (tenant_id,connection_id,source_table,source_field)
+     do nothing`,
     [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,manifest.packVersion],
   );
   for(const field of contract.fields){
@@ -1792,7 +2094,7 @@ export async function publishSourceAllowlist(client:PostgresQueryClient,job:Cano
     await client.query(
       `insert into semantic_internal.source_field_allowlist (tenant_id,connection_id,connector_id,source_schema,source_table,source_field,field_type,disposition,pii_class,authority_concept,documented_definition,pack_version,active,deactivated_at,deactivation_reason)
        values ($1,$2,$3,$4,$5,$6,$7,'governed_source_extension',$8,$9,$10,$11,true,null,null)
-       on conflict (tenant_id,connection_id,source_table,source_field) do update set connector_id=excluded.connector_id,source_schema=excluded.source_schema,field_type=excluded.field_type,pii_class=excluded.pii_class,authority_concept=excluded.authority_concept,documented_definition=excluded.documented_definition,pack_version=excluded.pack_version,active=true,deactivated_at=null,deactivation_reason=null`,
+       on conflict (tenant_id,connection_id,source_table,source_field) do update set connector_id=excluded.connector_id,source_schema=excluded.source_schema,field_type=excluded.field_type,pii_class=excluded.pii_class,authority_concept=excluded.authority_concept,documented_definition=excluded.documented_definition,active=true,deactivated_at=null,deactivation_reason=null`,
       [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,field.column,sourceFieldType(field),sourcePiiClass(field),sourceAuthorityForField(job.connectorId,contract.stream,target),`${manifest.displayName} ${contract.stream}.${field.sourceField}. ${target}.`,manifest.packVersion],
     );
   }

@@ -56,7 +56,7 @@ never-begun transition fails closed. The page landing and control-plane phase
 transition commit together from the worker's perspective, so a crash cannot
 advance one without durable replay evidence for the other.
 
-All thirty V1 streams participate in complete identity scans according to
+All thirty-one V1 streams participate in complete identity scans according to
 their policies. A page retains its complete identity evidence and exact replay
 contract. A snapshot fails if any page is incomplete, malformed, duplicated,
 quarantined, inconsistent with its source total, or replayed with changed

@@ -21,9 +21,11 @@ Two source grains also needed explicit ownership:
   employment episode is one continuous effective interval. Keying both by the
   Employee ID overwrote termination history when that person was rehired.
 - Lightspeed exposes purchase-order lines both embedded on `Order` and through
-  `OrderLine`. Only the embedded relation carries the order's supplier, shop,
-  lifecycle dates, status, and currency. Letting both projections replace the
-  same fact made the final row depend on stream arrival order.
+  `OrderLine`. Only the parent Order carries its supplier reference, shop,
+  lifecycle dates, status, and currency. The referenced supplier is a separate
+  `Vendor` resource. Letting both line projections replace the same fact made
+  the final row depend on stream arrival order; omitting Vendor ingestion made
+  a valid non-empty `vendorID` fail canonical reference resolution.
 
 ## Decision
 
@@ -73,6 +75,15 @@ verified tombstones emit a narrow update-only cancellation against the same
 native line identity. The final complete fact is therefore identical whether
 the active standalone row arrives before or after its parent order.
 
+`Vendor.json` is a required typed stream under the documented
+`employee:vendors` grant. It maps each source Vendor to `core.supplier` and
+records only connector-namespaced external identity plus a reviewable
+normalised-name hint. `orders` declares `vendors` as a dependency, so a
+purchase order can resolve its non-empty `vendorID` to the exact source-owned
+supplier before line facts materialise. The resolver remains fail-closed: a
+dangling vendor reference is quarantined as an integrity defect and is never
+silently rewritten to null.
+
 ## Consequences
 
 - One malformed business record no longer stalls valid peers or causes an
@@ -84,6 +95,8 @@ the active standalone row arrives before or after its parent order.
   interval.
 - Purchase-order facts retain supplier, location, dates, status, and currency
   deterministically across stream scheduling and retries.
+- Supplier attribution is backed by an independently ingested Vendor row;
+  archived Vendors remain historically resolvable but become inactive.
 - Systemic failures outside the mapper boundary (tenant lineage, authority,
   capabilities, database contracts, and transaction execution) still abort
   the batch and remain retry/fail-closed concerns.
@@ -100,3 +113,6 @@ the active standalone row arrives before or after its parent order.
   history instead of creating the required effective-dated grain.
 - Merge partial `OrderLine` fields into the fact: rejected because conflicting
   endpoint timestamps and absent header fields make arrival order observable.
+- Treat an unresolved nullable supplier reference as null: rejected because
+  `nullable` permits an absent source value, not the silent loss of a supplied
+  `vendorID`.

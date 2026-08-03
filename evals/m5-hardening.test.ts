@@ -179,7 +179,9 @@ test("ranked source catalogue hits are resolved through tenant, role and PII gat
   const reference={connectorId:"lightspeed-r",sourceTable:"sales",sourceField:"discount_reason"};
   const owner=await provider.resolveRankedFields({...baseContext,role:"owner",conversationId:"01J00000000000000000000002",turnId:"01J00000000000000000000003"},[reference],12);
   assert.equal(owner[0]?.sourceField,"discount_reason");
-  assert.match(requests[0]?.sql??"",/field\.tenant_id=\$1 AND field\.active/);
+  assert.match(requests[0]?.sql??"",/JOIN semantic_internal\.active_source_field_allowlist field/);
+  assert.match(requests[0]?.sql??"",/WHERE field\.tenant_id=\$1/);
+  assert.doesNotMatch(requests[0]?.sql??"",/JOIN semantic_internal\.source_field_allowlist field/);
   assert.match(requests[0]?.sql??"",/NOT IN \('customer_contact','payroll','sensitive_personal'\)/);
   assert.deepEqual(JSON.parse(String(requests[0]?.parameters[1])),[{connector_id:"lightspeed-r",source_table:"sales",source_field:"discount_reason",rank:1}]);
   await provider.resolveRankedFields({...baseContext,role:"bookkeeper",conversationId:"01J00000000000000000000002",turnId:"01J00000000000000000000003"},[reference],12);

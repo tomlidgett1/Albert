@@ -18,6 +18,7 @@ export const LIGHTSPEED_R_DEFAULT_SCOPES = [
   "employee:admin_employees",
   "employee:admin_shops",
   "employee:categories",
+  "employee:vendors",
   "employee:purchase_orders",
   "employee:admin_purchases",
 ] as const;
@@ -71,7 +72,7 @@ function unsupportedPii(
 export const lightspeedRManifest: ConnectorManifest = {
   id: "lightspeed-r",
   displayName: "Lightspeed Retail POS (R-Series)",
-  packVersion: "1.0.0",
+  packVersion: "1.1.0",
   apiVersion: `R-Series API V3; documentation build ${LIGHTSPEED_R_DOCUMENTATION_BUILD}`,
   releasedAt: "2026-08-03",
   documentation: [
@@ -91,6 +92,7 @@ export const lightspeedRManifest: ConnectorManifest = {
     "https://developers.lightspeedhq.com/retail/endpoints/SaleLine/",
     "https://developers.lightspeedhq.com/retail/endpoints/SalePayment/",
     "https://developers.lightspeedhq.com/retail/endpoints/Customer/",
+    "https://developers.lightspeedhq.com/retail/endpoints/Vendor/",
     "https://developers.lightspeedhq.com/retail/endpoints/Order/",
     "https://developers.lightspeedhq.com/retail/endpoints/OrderLine/",
     "https://developers.lightspeedhq.com/retail/endpoints/PaymentType/",
@@ -100,7 +102,7 @@ export const lightspeedRManifest: ConnectorManifest = {
   oauth: {
     scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
     leastPrivilegeNotes: [
-      "R-Series does not publish read-only variants for employees, shops, categories, purchase orders, payment types, or tax categories. Albert requests the narrowest documented scopes and contains no source write methods.",
+      "R-Series does not publish read-only variants for employees, shops, categories, vendors, purchase orders, payment types, or tax categories. Albert requests the narrowest documented scopes and contains no source write methods.",
     ],
     refreshTokenRotation: true,
     remoteRevocation: "supported",
@@ -113,7 +115,8 @@ export const lightspeedRManifest: ConnectorManifest = {
     { id: "item_shops", resource: "ItemShop", endpoint: "ItemShop.json", recordIdField: "itemShopID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "items"], productDomains: ["inventory"], canonicalTargets: ["inventory_balance_snapshot"] },
     { id: "sales", resource: "Sale", endpoint: "Sale.json", recordIdField: "saleID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "employees", "items", "customers", "payment_types", "tax_categories"], productDomains: ["sales", "customers"], canonicalTargets: ["commerce_order", "commerce_order_line", "commerce_payment", "commerce_refund_line"] },
     { id: "customers", resource: "Customer", endpoint: "Customer.json", recordIdField: "customerID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["customers"], canonicalTargets: ["customer_account"] },
-    { id: "orders", resource: "Order", endpoint: "Order.json", recordIdField: "orderID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "employees", "items"], productDomains: ["inventory"], canonicalTargets: ["purchase_order_line"] },
+    { id: "vendors", resource: "Vendor", endpoint: "Vendor.json", recordIdField: "vendorID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["inventory"], canonicalTargets: ["supplier"] },
+    { id: "orders", resource: "Order", endpoint: "Order.json", recordIdField: "orderID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "employees", "items", "vendors"], productDomains: ["inventory"], canonicalTargets: ["purchase_order_line"] },
     { id: "order_lines", resource: "OrderLine", endpoint: "OrderLine.json", recordIdField: "orderLineID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["orders", "items"], productDomains: ["inventory"], canonicalTargets: ["purchase_order_line"] },
     { id: "payment_types", resource: "PaymentType", endpoint: "PaymentType.json", recordIdField: "paymentTypeID", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["sales"], canonicalTargets: ["commerce_payment"] },
     { id: "tax_categories", resource: "TaxCategory", endpoint: "TaxCategory.json", recordIdField: "taxCategoryID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["sales"], canonicalTargets: ["tax_code"] },
@@ -180,6 +183,10 @@ export const lightspeedRManifest: ConnectorManifest = {
       support: "partial", streams: ["item_shops"], coverageFields: ["averageCost", "totalValueAvgCost"], requiresObservedCoverage: true,
       reason: "Inventory valuation is available where ItemShop cost or value fields are populated.",
     },
+    "inventory.purchase_orders": {
+      support: "full", streams: ["vendors", "orders"],
+      reason: "Vendor supplier identities and dependent Order lines jointly provide attributable purchase-order facts.",
+    },
     "inventory.movements": {
       support: "partial", streams: ["inventory_logs"],
       reason: "InventoryLog supplies movement observations when enabled for the account.",
@@ -196,11 +203,13 @@ export const lightspeedRManifest: ConnectorManifest = {
   identityRules: [
     "Employee work email exact within tenant, otherwise employee name plus shop is a deterministic suggestion requiring confirmation.",
     "Customer primary email exact within tenant is a deterministic suggestion for Xero contacts and never an automatic merge.",
+    "Supplier names may suggest a Xero supplier match but always require human confirmation; source vendor IDs are connector-namespaced.",
     "Item systemSku, UPC, EAN, or customSku may link variants only within this source in v1.",
   ],
   topology: [
     "Sales are authoritative for operational_sales; employeeID supplies worker attribution.",
     "ItemShop is authoritative for current stock by item and shop.",
+    "Vendor is authoritative for purchase-order supplier identity and is transformed before dependent Order records.",
     "Negative SaleLine quantities and refund sales are reversal observations, never additional positive sales.",
     "Order with loaded OrderLines is the sole complete purchase-order projection; standalone OrderLine is an identity and deletion-reconciliation stream.",
   ],
@@ -274,6 +283,15 @@ export const lightspeedRManifest: ConnectorManifest = {
     ], {
       firstName: "customer_contact", lastName: "customer_contact", company: "business_contact",
       dob: "customer_contact", Contact: "customer_contact",
+    }),
+    ...coverage("vendors", {
+      vendorID: "supplier.source_id", name: "supplier.name", archived: "supplier.inactive",
+      timeStamp: "supplier.source_updated_at",
+    }, [
+      "accountNumber", "priceLevel", "updatePrice", "updateCost", "updateDescription",
+      "shareSellThrough", "b2bSellerUID", "Contact", "purchasingCurrency",
+    ], {
+      accountNumber: "free_text_untrusted", Contact: "business_contact", Reps: "business_contact",
     }),
     ...coverage("orders", {
       orderID: "purchase_order_line.order_source_id", shopID: "location.source_id",

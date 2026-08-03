@@ -6,6 +6,7 @@ import { deputyManifest } from "../../connectors/deputy/manifest.js";
 import { lightspeedRManifest } from "../../connectors/lightspeed-r/manifest.js";
 import { xeroManifest } from "../../connectors/xero/manifest.js";
 import {
+  CAPABILITY_IDS,
   SEMANTIC_CAPABILITY_IDS,
   buildStagingContracts,
   type ConnectorManifest,
@@ -43,6 +44,17 @@ test("semantic consumers and connector producers share one exact capability voca
       assert.ok(producers.some((producer)=>producer.support!=="unavailable"),`${topic.id}:${capability}`);
     }
   }
+});
+
+test("the database accepts every runtime capability identifier and no stale aliases", () => {
+  const vocabularyMigrations = [
+    "infra/migrations/analytical/0073_m5_canonical_capability_vocabulary.sql",
+    "infra/migrations/analytical/0094_m5_lightspeed_purchase_order_capability.sql",
+  ].map((path) => readFileSync(path, "utf8")).join("\n");
+  const persisted = [...vocabularyMigrations.matchAll(
+    /\(\s*'([a-z][a-z0-9_.]*)'\s*,\s*(?:true|false)\s*,\s*'/gu,
+  )].map((match) => match[1]);
+  assert.deepEqual([...new Set(persisted)].sort(), [...CAPABILITY_IDS].sort());
 });
 
 test("a producer alias cannot pass the registry contract", () => {

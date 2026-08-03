@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ulid } from "ulid";
 import { deputyManifest } from "../../connectors/deputy/manifest.js";
@@ -14,6 +18,10 @@ import {
 } from "../../packages/connector-sdk/src/index.js";
 import type { SyncJob } from "../../packages/queue/src/index.js";
 import type { RawBatchManifest } from "../../packages/storage/src/index.js";
+import {
+  createConnectorStagingMigration,
+  parseConnectorStagingMigrationOptions,
+} from "../../scripts/generate-connector-staging.js";
 import { AnalyticalLandingStore } from "../../services/sync-workers/src/analytical-store.js";
 import type { TransactionalPostgres } from "../../services/sync-workers/src/database.js";
 
@@ -43,8 +51,8 @@ function fixtureRecords(
 
 test("typed staging migration is generated exactly from every connector field contract", () => {
   const contracts = buildStagingContracts(manifests);
-  assert.equal(contracts.length, 30);
-  assert.equal(manifests.reduce((count, manifest) => count + manifest.fieldCoverage.length, 0), 743);
+  assert.equal(contracts.length, 31);
+  assert.equal(manifests.reduce((count, manifest) => count + manifest.fieldCoverage.length, 0), 757);
   for (const manifest of manifests) {
     for (const stream of manifest.streams) {
       const contract = contracts.find(
@@ -59,17 +67,78 @@ test("typed staging migration is generated exactly from every connector field co
     }
   }
 
-  const generated = renderTypedStagingMigration(manifests);
-  const committed = readFileSync(
+  const baseline = readFileSync(
     new URL("../../infra/migrations/analytical/0005_m3_typed_connector_staging.sql", import.meta.url),
     "utf8",
   );
-  assert.equal(committed, generated, "Run npm run generate:connector-staging after manifest changes");
-  assert.equal(generated.match(/^CREATE TABLE IF NOT EXISTS/gmu)?.length, 30);
-  assert.equal(generated.match(/ENABLE ROW LEVEL SECURITY;/gu)?.length, 30);
-  assert.equal(generated.match(/^CREATE POLICY tenant_scope/gmu)?.length, 30);
-  assert.doesNotMatch(generated, /raw_payload|access_token|refresh_token/iu);
-  assert.doesNotMatch(generated, /dp_meta_data/iu, "unsupported fields remain in immutable raw storage only");
+  assert.equal(
+    createHash("sha256").update(baseline).digest("hex"),
+    "089c94db4e3f496db70670e54b13d34d754ed3341a6b3ba284cd9eb5c1aaca36",
+    "migration 0005 is an immutable applied baseline",
+  );
+  const vendorManifest: ConnectorManifest = {
+    ...lightspeedRManifest,
+    streams: lightspeedRManifest.streams.filter((stream) => stream.id === "vendors"),
+    fieldCoverage: lightspeedRManifest.fieldCoverage.filter((field) => field.stream === "vendors"),
+  };
+  const expectedVendorMigration = renderTypedStagingMigration([vendorManifest]);
+  const additive = readFileSync(
+    new URL("../../infra/migrations/analytical/0093_m3_lightspeed_vendor_staging.sql", import.meta.url),
+    "utf8",
+  );
+  assert.equal(
+    createHash("sha256").update(additive).digest("hex"),
+    "cbacd269f4141de553693476eddaefb5783fc52717b42712cd36b366a23ee0e9",
+    "migration 0093 is an immutable applied baseline",
+  );
+  assert.equal(
+    additive,
+    expectedVendorMigration,
+    "Vendor contract changed: create a new additive migration and extend this migration-set test; never rewrite migration 0093",
+  );
+  const migrationSet = `${baseline}\n${additive}`;
+  assert.equal(baseline.match(/^CREATE TABLE IF NOT EXISTS/gmu)?.length, 30);
+  assert.equal(additive.match(/^CREATE TABLE IF NOT EXISTS/gmu)?.length, 1);
+  assert.equal(migrationSet.match(/^CREATE TABLE IF NOT EXISTS/gmu)?.length, 31);
+  assert.equal(migrationSet.match(/ENABLE ROW LEVEL SECURITY;/gu)?.length, 31);
+  assert.equal(migrationSet.match(/^CREATE POLICY tenant_scope/gmu)?.length, 31);
+  assert.doesNotMatch(migrationSet, /raw_payload|access_token|refresh_token/iu);
+  assert.doesNotMatch(migrationSet, /dp_meta_data/iu, "unsupported fields remain in immutable raw storage only");
+});
+
+test("typed staging generator allocates a new migration and refuses to regenerate a stream", async (context) => {
+  const migrationsDirectory = await mkdtemp(join(tmpdir(), "albert-staging-generator-"));
+  context.after(async () => rm(migrationsDirectory, { recursive: true, force: true }));
+  const priorPath = join(migrationsDirectory, "0094_m5_existing.sql");
+  const priorSql = "BEGIN;\n-- immutable prior migration\nCOMMIT;\n";
+  await writeFile(priorPath, priorSql, "utf8");
+
+  const createdPath = await createConnectorStagingMigration({
+    connector: "lightspeed-r",
+    stream: "vendors",
+    name: "new_vendor_stream",
+    migrationsDirectory,
+  });
+  assert.equal(createdPath, join(migrationsDirectory, "0095_m3_new_vendor_stream.sql"));
+  assert.match(
+    await readFile(createdPath, "utf8"),
+    /CREATE TABLE IF NOT EXISTS "source_lightspeed"\."vendors"/u,
+  );
+  assert.equal(await readFile(priorPath, "utf8"), priorSql);
+
+  await assert.rejects(
+    createConnectorStagingMigration({
+      connector: "lightspeed-r",
+      stream: "vendors",
+      name: "duplicate_vendor_stream",
+      migrationsDirectory,
+    }),
+    /already exists.*never rewrite or regenerate an applied migration/iu,
+  );
+  assert.throws(
+    () => parseConnectorStagingMigrationOptions(["--connector", "lightspeed-r", "--stream", "vendors"]),
+    /Usage:/u,
+  );
 });
 
 test("all approved fields in sanitized vendor recordings project into typed columns", () => {
@@ -103,7 +172,7 @@ test("all approved fields in sanitized vendor recordings project into typed colu
       }
     }
   }
-  assert.equal(projectedRecords, 30);
+  assert.equal(projectedRecords, 31);
 });
 
 test("typed staging rejects drift, lossy decimals, invalid dates, and wrong JSON shapes", () => {
@@ -225,7 +294,7 @@ function jobAndManifest(): Readonly<{ job: SyncJob; manifest: RawBatchManifest }
 
 test("landing atomically writes the generic lineage seam and physical typed stream table", async () => {
   const db = new RecordingDatabase();
-  const store = new AnalyticalLandingStore(db, "lightspeed-r/1.0.0");
+  const store = new AnalyticalLandingStore(db, "lightspeed-r/1.1.0");
   const { job, manifest } = jobAndManifest();
   const result = await store.land(job, manifest, [{
     sourceObjectType: "Sale",
@@ -260,7 +329,7 @@ test("landing atomically writes the generic lineage seam and physical typed stre
 
 test("malformed normalized rows are quarantined before either staging table is written", async () => {
   const db = new RecordingDatabase();
-  const store = new AnalyticalLandingStore(db, "lightspeed-r/1.0.0");
+  const store = new AnalyticalLandingStore(db, "lightspeed-r/1.1.0");
   const { job, manifest } = jobAndManifest();
   const result = await store.land(job, manifest, [{
     sourceObjectType: "Sale",
@@ -284,7 +353,7 @@ test("malformed normalized rows are quarantined before either staging table is w
 
 test("a corrected valid replay resolves its prior analytical quarantine identity", async () => {
   const db = new RecordingDatabase(false,true);
-  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.0.0");
+  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.1.0");
   const {job,manifest}=jobAndManifest();
   const result = await store.land(job,manifest,[{
     sourceObjectType:"Sale",
@@ -311,7 +380,7 @@ test("a corrected valid replay resolves its prior analytical quarantine identity
 
 test("a duplicate identity with any invalid replay row cannot resolve quarantine", async () => {
   const db = new RecordingDatabase(false,true);
-  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.0.0");
+  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.1.0");
   const {job,manifest}=jobAndManifest();
   const valid = {
     sourceObjectType:"Sale",
@@ -379,7 +448,7 @@ test("reconciliation tombstones compare-and-swap the selected source version bef
   };
 
   const matched = new RecordingDatabase(true);
-  await new AnalyticalLandingStore(matched,"lightspeed-r/1.0.0").land(
+  await new AnalyticalLandingStore(matched,"lightspeed-r/1.1.0").land(
     job,manifest,[record],
   );
   const fenceIndex = matched.calls.findIndex((call) =>
@@ -393,7 +462,7 @@ test("reconciliation tombstones compare-and-swap the selected source version bef
 
   const changed = new RecordingDatabase(false);
   await assert.rejects(
-    new AnalyticalLandingStore(changed,"lightspeed-r/1.0.0").land(job,manifest,[record]),
+    new AnalyticalLandingStore(changed,"lightspeed-r/1.1.0").land(job,manifest,[record]),
     /reconciliation_source_version_changed/iu,
   );
   assert.equal(changed.calls.some((call) =>

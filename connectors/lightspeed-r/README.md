@@ -8,6 +8,7 @@ Pinned against the official documentation retrieved **2026-08-03**:
 - [Leaky-bucket and burst limits](https://developers.lightspeedhq.com/retail/introduction/ratelimits/)
 - [Relations](https://developers.lightspeedhq.com/retail/introduction/relations/)
 - [Query parameters and timestamp operators](https://developers.lightspeedhq.com/retail/introduction/parameters/)
+- [Vendor endpoint](https://developers.lightspeedhq.com/retail/endpoints/Vendor/)
 - [Official R-Series authentication collection](https://www.postman.com/lightspeedhq/r-series-api/documentation/j3gxxum/r-series-authentication)
 
 The pack is deliberately R-Series-only. Successful `GET /API/V3/Account.json`
@@ -29,6 +30,11 @@ does not publish a webhook contract, so
 scheduled incremental polling and nightly reconciliation recover changes and
 deletes.
 
+Pack 1.1.0 adds the documented `employee:vendors` grant. Connections created
+with an earlier consent set expose `inventory.purchase_orders` as unavailable
+until an owner re-consents; Albert does not attempt Order materialisation while
+the Vendor dependency is incomplete.
+
 Every paged response follows vendor-provided `next` URLs after validating the
 origin and account path. Timestamp-sortable resources use inclusive watermarks;
 InventoryLog uses its sortable numeric ID while retaining `createTime` as the
@@ -41,8 +47,9 @@ drift finding, and are excluded from the approved staging projection. Malformed
 required fields or invalid decimals remain quarantined and cannot enter staging.
 
 Purchase-order truth is materialised only from `Order.json` with the requested
-`OrderLines` relation. That parent response carries supplier, shop, lifecycle
-dates, status, and currency. The standalone `OrderLine` stream is retained for
+`OrderLines` relation. `Vendor.json` is ingested and transformed first so the
+parent order's `vendorID` resolves to a real canonical supplier; the parent also
+carries the shop, lifecycle dates, status, and currency. The standalone `OrderLine` stream is retained for
 typed identity scans and verified deletion tombstones, but active standalone
 rows cannot overwrite complete canonical lines with absent header fields. The
 result is deterministic whichever stream is scheduled first.

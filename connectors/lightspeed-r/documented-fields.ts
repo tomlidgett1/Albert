@@ -59,6 +59,11 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "CreditAccount", "CustomerType", "Discount", "Note", "TaxCategory",
     "CustomFieldValues",
   ]),
+  vendors: Object.freeze([
+    "vendorID", "name", "archived", "accountNumber", "priceLevel", "updatePrice",
+    "updateCost", "updateDescription", "shareSellThrough", "timeStamp", "b2bSellerUID",
+    "Contact", "Reps", "purchasingCurrency",
+  ]),
   orders: Object.freeze([
     "orderID", "orderedDate", "receivedDate", "arrivalDate", "refNum",
     "shipInstructions", "stockInstructions", "shipCost", "shipVendorCost", "otherCost",

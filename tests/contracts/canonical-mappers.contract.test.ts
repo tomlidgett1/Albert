@@ -26,6 +26,7 @@ import type {
   CanonicalStreamMapper,
   CanonicalTransformBatch,
 } from "../../services/sync-workers/src/canonical-contract.js";
+import { isCanonicalSourceReference } from "../../services/sync-workers/src/canonical-contract.js";
 import { isolateCanonicalMappings } from "../../services/sync-workers/src/canonical-pipeline.js";
 
 type Fixture = Readonly<{ responses: Readonly<Record<string, unknown>> }>;
@@ -49,7 +50,7 @@ const context: CanonicalMappingContext = {
   tradingDayCutoff: "04:00",
 };
 
-test("all 30 connector streams produce non-empty, schema-bounded canonical commands", () => {
+test("all 31 connector streams produce non-empty, schema-bounded canonical commands", () => {
   let streamCount = 0;
   for (const manifest of manifests) {
     const fixture = fixtureByConnector.get(manifest.id);
@@ -68,7 +69,7 @@ test("all 30 connector streams produce non-empty, schema-bounded canonical comma
       streamCount += 1;
     }
   }
-  assert.equal(streamCount, 30);
+  assert.equal(streamCount, 31);
 });
 
 test("email-less Deputy and Lightspeed workers retain resolvable location references", () => {
@@ -353,13 +354,32 @@ test("Lightspeed current balances become date-grained observations even when unc
 });
 
 test("Lightspeed purchase orders have one complete arrival-order-independent projection", () => {
+  const vendor=mapLightspeedCanonical("vendors",fixtureRow("lightspeed-r","vendors"),context);
   const embedded=mapLightspeedCanonical("orders",fixtureRow("lightspeed-r","orders"),context);
   const standalone=mapLightspeedCanonical("order_lines",fixtureRow("lightspeed-r","order_lines"),context);
+  const supplier=upsert(vendor,"supplier");
   const embeddedLine=upsert(embedded,"purchase_order_line");
 
+  assert.equal(supplier.sourceObjectType,"Vendor");
+  assert.equal(supplier.sourceRecordId,"802");
+  assert.deepEqual(supplier.values,{
+    name:"Example Cycle Supply",abn:null,active:true,
+  });
+  const supplierHint=vendor.find((command)=>command.kind==="identity_hint");
+  assert.ok(supplierHint?.kind==="identity_hint");
+  assert.equal(supplierHint.entityType,"supplier");
+  assert.equal(supplierHint.normalizedName,"example cycle supply");
   assert.equal(upserts(standalone,"purchase_order_line").length,0);
   assert.equal(standalone[0]?.kind,"metadata");
-  assert.notEqual(embeddedLine.values.supplier_id,null);
+  assert.ok(isCanonicalSourceReference(embeddedLine.values.supplier_id));
+  assert.deepEqual(embeddedLine.values.supplier_id.sourceRef,{
+    table:"supplier",
+    sourceObjectType:supplier.sourceObjectType,
+    sourceRecordId:supplier.sourceRecordId,
+    connectionId:"connection-lightspeed-r",
+    entityType:"supplier",
+    nullable:true,
+  });
   assert.notEqual(embeddedLine.values.stock_location_id,null);
   assert.notEqual(embeddedLine.values.ordered_at,null);
   assert.ok("expected_at" in embeddedLine.values);

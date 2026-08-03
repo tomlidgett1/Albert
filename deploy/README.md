@@ -134,7 +134,15 @@ Register webhook destinations:
 - Xero: `https://<webhook-host>/v1/webhooks/xero`
 - Deputy: optional per-connection endpoints are installed explicitly by an owner/operator in Deputy after preparing connection-bound verification material. OAuth never creates or updates them, and one connection's secret is never reused for another.
 
-Request only the connector scopes declared in each pack manifest. Some Lightspeed R-Series APIs do not offer read-only scope variants; document that residual vendor capability and keep Albert source operations read-only. Complete Xero's connection-limit/certification process before onboarding more than the approved account count.
+Request only the connector scopes declared in each pack manifest. Lightspeed
+pack 1.1.0 requires both `employee:vendors` and `employee:purchase_orders` for
+attributable purchase-order ingestion. A pre-1.1 connection without the Vendor
+grant must report `inventory.purchase_orders` unavailable and be re-consented
+by an owner before Vendor backfill and Order replay; never bypass the capability
+failure. Some Lightspeed R-Series APIs do not offer read-only scope variants;
+document that residual vendor capability and keep Albert source operations
+read-only. Complete Xero's connection-limit/certification process before
+onboarding more than the approved account count.
 
 Perform one vendor sandbox or test-account OAuth cycle before production credentials are installed. Register Xero with the **Auth Code with PKCE** grant type used by this V1 build; the worker intentionally rejects confidential-client configuration and never accepts a Xero client secret.
 
@@ -330,12 +338,57 @@ Run the `Release production cells` workflow for staging, then production. It per
 8. Strict platform validation and rolling deploy of all services, including the independently signed operator diagnostic boundary.
 9. Two Machines per service, private-worker IP verification, platform checks,
    and exact-SHA public readiness smoke tests.
-10. A protected Sites promotion gate that waits for `/api/health` to report the
+10. Connector-pack parity and compatibility-replay preflight, followed by one
+    atomic database activation. An incomplete candidate stops promotion while
+    the predecessor remains query-visible; a fresh empty environment runs the
+    same gate and activation rather than receiving an implicit shortcut.
+11. A protected Sites promotion gate that waits for `/api/health` to report the
    compile-time workflow SHA, the exact deployment attempt, and matching
    readiness identities from every web dependency. The release workflow cannot
    finish green while an old, relabelled, mixed, or unhealthy revision serves.
 
 A failed migration, publication, health check, or private-IP assertion stops promotion. Do not bypass a failed job with a manual deploy.
+
+### Connector-pack activation and inactive connections
+
+Migration 0095 stages Lightspeed 1.1.0 beside active 1.0.0. Candidate workers
+must publish every predecessor capability and governed field, the required
+Vendor/Order evidence, and the migration-0096 compatibility replay gate before
+the release can switch query visibility. The protected workflow executes both
+commands after the new worker revision is healthy:
+
+```bash
+ANALYTICAL_MIGRATION_URL='postgresql://albert_analytical_deployer:...@.../analytics?sslmode=verify-full' \
+  npm run connector-pack:activate -- \
+  --connector=lightspeed-r --candidate=1.1.0 --expected-active=1.0.0 --check
+ANALYTICAL_MIGRATION_URL='postgresql://albert_analytical_deployer:...@.../analytics?sslmode=verify-full' \
+  npm run connector-pack:activate -- \
+  --connector=lightspeed-r --candidate=1.1.0 --expected-active=1.0.0
+```
+
+The first rollout may stop at this gate while existing accounts backfill. That
+is safe: pack 1.0.0 remains active and the newly deployed workers continue
+building isolated 1.1.0 evidence. Re-run the protected release after every
+eligible connection is complete. Repeating activation after success is
+idempotent and returns the original activation event.
+
+If a predecessor connection was durably disconnected, or its tenant has an
+approved deletion in progress, retire that exact connection from candidate
+parity with the dual-cell verifier:
+
+```bash
+CONTROL_PLANE_MIGRATION_URL='postgresql://albert_control_deployer:...@.../postgres?sslmode=verify-full' \
+ANALYTICAL_MIGRATION_URL='postgresql://albert_analytical_deployer:...@.../analytics?sslmode=verify-full' \
+  npm run connector-pack:retire-connection -- \
+  --tenant=01... --connection=01... --connector=lightspeed-r \
+  --candidate=1.1.0 --expected-active=1.0.0
+```
+
+Do not supply a reason, audit id, or digest. The command locks and verifies the
+exact control-plane lifecycle and append-only audit, derives and rechecks its
+own SHA-256 evidence while the control rows remain locked, and only then commits
+the analytical exception. An expired or broken live credential is not eligible;
+repair, re-consent, or durably disconnect it. See ADR 0042.
 
 ## 8. Configure and deploy Sites
 
@@ -392,7 +445,11 @@ Use a clean browser profile and a dedicated production-test organisation. Record
 
 1. Sign up, confirm email, log out/in, request password recovery, set a new password, and verify the session survives a refresh.
 2. Create the organisation and verify a second user cannot access it without membership.
-3. Connect Lightspeed R-Series. Confirm wrong-series detection fails closed, the intended account is selected, the initial backfill appears, cursors advance, and readiness becomes partial then complete.
+3. Connect Lightspeed R-Series. Confirm wrong-series detection fails closed,
+   the intended account is selected, the Vendor stream completes before its
+   dependent Order stream, and a real purchase order joins to the named
+   canonical supplier. Confirm initial backfill appears, cursors advance, and
+   readiness becomes partial then complete.
 4. Connect Xero. Exercise multi-organisation selection, confirm the chosen tenant only, deliver a signed webhook, and verify a durable incremental sync without duplicate facts.
 5. Connect Deputy. Confirm OAuth and complete recent-first ingestion succeed through polling without any Webhook-resource API call. Verify the UI reports optional owner/operator installation without degrading the connection. If the optional callback is manually installed, confirm a signed event advances only the bound connection and replay/cross-tenant attempts are rejected.
 6. Ask a governed cross-domain question. Change the model, reasoning effort, and Fast mode. Verify the UI streams ordered natural-language progress, table(s), chart(s), validation, provenance, and a final state; no hidden chain-of-thought or raw SQL appears.

@@ -79,6 +79,7 @@ const streamPriority: Readonly<Record<LightspeedStreamId, number>> = {
   sales: 40,
   item_shops: 50,
   customers: 60,
+  vendors: 61,
   payment_types: 70,
   tax_categories: 71,
   orders: 80,
@@ -438,6 +439,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       scopeCapability("commerce.order_lines.cost", ["employee:product_cost"]),
       scopeCapability("inventory.balances", ["employee:inventory_read"]),
       scopeCapability("inventory.cost", ["employee:inventory_read", "employee:product_cost"]),
+      scopeCapability("inventory.purchase_orders", ["employee:vendors", "employee:purchase_orders"]),
       {
         id: "inventory.movements",
         support: !has("employee:inventory_read", "employee:product_cost")
@@ -498,10 +500,10 @@ export class LightspeedRConnector implements OAuthConnectorPack {
           ? contract.recordIdField
           : contract.modifiedField ?? contract.recordIdField,
       );
-      if (["shops", "employees", "items", "sales", "customers", "orders", "payment_types"].includes(streamId)) {
+      if (["shops", "employees", "items", "sales", "customers", "vendors", "orders", "payment_types"].includes(streamId)) {
         url.searchParams.set("archived", "true");
       }
-      if (streamId === "shops" || streamId === "employees" || streamId === "customers") {
+      if (streamId === "shops" || streamId === "employees" || streamId === "customers" || streamId === "vendors") {
         url.searchParams.set("load_relations", JSON.stringify(["Contact"]));
       } else if (streamId === "items") {
         url.searchParams.set("load_relations", JSON.stringify(["ItemPrices"]));

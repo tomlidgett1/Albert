@@ -93,7 +93,7 @@ const jsonFields: Readonly<Record<ConnectorId, ReadonlySet<string>>> = {
     "Department", "ItemAttributes", "Manufacturer", "Note", "Season", "ItemShops",
     "ItemComponents", "ItemShelfLocations", "ItemVendorNums", "CustomFieldValues", "Prices",
     "Customer", "Discount", "Quote", "ShipTo", "TaxCategory", "Vendor", "Shop",
-    "TaxCategoryClasses",
+    "TaxCategoryClasses", "Reps", "purchasingCurrency",
   ]),
   xero: new Set([
     "Contact", "LineItems", "Invoice", "CreditNote", "Account", "BankAccount",
@@ -113,7 +113,8 @@ const booleanFields = new Set([
   "taxLabor", "labelMsrp", "zebraBrowserPrint", "discountable", "serialized", "publishToEcom",
   "enablePromotions", "isTaxInclusive", "tipEnabled", "complete", "hasShipments",
   "discountIsPercent", "costsModifiedAfterShipment", "requireCustomer", "internalReserved",
-  "automated", "causedNegative", "EnablePaymentsToAccount",
+  "automated", "causedNegative", "EnablePaymentsToAccount", "updatePrice", "updateCost",
+  "updateDescription", "shareSellThrough",
 ]);
 
 const numericFields = new Set(["JournalNumber", "nodeDepth", "RosterSortOrder"]);

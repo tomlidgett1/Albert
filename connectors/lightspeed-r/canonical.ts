@@ -45,6 +45,7 @@ export const mapLightspeedCanonical: CanonicalStreamMapper = (stream, row, conte
     case "item_shops": return mapItemShop(row, context);
     case "sales": return mapSale(row, context);
     case "customers": return mapCustomer(row);
+    case "vendors": return mapVendor(row);
     case "orders": return mapOrder(row, context);
     case "order_lines": return mapOrderLine(row);
     case "payment_types": return mapPaymentType(row);
@@ -420,6 +421,26 @@ function mapCustomer(row: CanonicalStagingRow): readonly CanonicalProjectionComm
     identityHint("customer_account", row.source_object_type, id, {
       externalId: id,
       deterministicKeys: { email },
+      normalizedName: normalizedName(name),
+    }),
+  ];
+}
+
+function mapVendor(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
+  const id = requiredIdentifier(row.vendor_id, "vendors.vendor_id");
+  const name = requiredText(row.name, "vendors.name");
+  const active = !truthy(row.archived) && !row.tombstone;
+  return [
+    dimension("supplier", row.source_object_type, id, {
+      name,
+      abn: null,
+      active,
+    }, row, "supplier"),
+    identityHint("supplier", row.source_object_type, id, {
+      // Source IDs are namespaced by connector and object type before identity
+      // persistence; supplier names only produce reviewable cross-source hints.
+      externalId: id,
+      deterministicKeys: {},
       normalizedName: normalizedName(name),
     }),
   ];

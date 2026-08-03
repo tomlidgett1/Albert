@@ -88,6 +88,12 @@ const SOURCE_TOTAL_STRATEGIES = new Set([
   "count_distinct_complete_scan",
 ]);
 
+const connectorPackVersionPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+
+export function isConnectorPackVersion(value:unknown):value is string{
+  return typeof value==="string"&&value.length<=120&&connectorPackVersionPattern.test(value);
+}
+
 export type RateLimitContract = Readonly<{
   algorithm: string;
   concurrency?: number;
@@ -157,6 +163,9 @@ export function assertFixtureFieldCoverage(
 
 /** Runtime registry guard: structural policy omissions must fail before any source request. */
 export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorManifest): void {
+  if (!isConnectorPackVersion(manifest.packVersion)) {
+    throw new Error(`${manifest.id} packVersion must be a release-grade semantic version.`);
+  }
   const ids = new Set<string>();
   for (const stream of manifest.streams) {
     if (ids.has(stream.id)) throw new Error(`${manifest.id} has duplicate stream ${stream.id}.`);

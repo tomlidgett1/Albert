@@ -695,8 +695,38 @@ jobs:
             "$SERVICE_URL" /readyz "$GITHUB_SHA" \
             "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-  verify-web-release:
+  activate-lightspeed-pack-1-1:
     needs: smoke-public-services
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Prove every pack 1.1 snapshot and compatibility replay is complete
+        run: >-
+          npm run connector-pack:activate --
+          --connector=lightspeed-r
+          --candidate=1.1.0
+          --expected-active=1.0.0
+          --check
+        env:
+          ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+      - name: Atomically activate the complete Lightspeed pack snapshot
+        run: >-
+          npm run connector-pack:activate --
+          --connector=lightspeed-r
+          --candidate=1.1.0
+          --expected-active=1.0.0
+        env:
+          ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+
+  verify-web-release:
+    needs: activate-lightspeed-pack-1-1
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 25

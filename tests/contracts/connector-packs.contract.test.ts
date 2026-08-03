@@ -210,9 +210,9 @@ test("lookup-only PaymentType coverage names only emitted metadata evidence", ()
   ));
 });
 
-test("all thirty V1 streams declare executable reconciliation policies", () => {
+test("all thirty-one V1 streams declare executable reconciliation policies", () => {
   const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
-  assert.equal(manifests.reduce((count, manifest) => count + manifest.streams.length, 0), 30);
+  assert.equal(manifests.reduce((count, manifest) => count + manifest.streams.length, 0), 31);
   for (const manifest of manifests) {
     assert.doesNotThrow(() => assertConnectorManifestReconciliationPolicy(manifest));
     for (const stream of manifest.streams) {
@@ -377,6 +377,7 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(lightspeed.searchParams.get("code_challenge"), "challenge-ls");
   assert.equal(lightspeed.searchParams.get("code_challenge_method"), "S256");
   assert.equal(lightspeed.searchParams.get("redirect_uri"), "https://albert.example/oauth/lightspeed-r/callback");
+  assert.ok(lightspeed.searchParams.get("scope")?.split(" ").includes("employee:vendors"));
   assert.equal(lightspeed.toString().includes("secret"), false);
 
   const xero = new URL(buildXeroAuthorizationUrl({
@@ -673,6 +674,29 @@ test("connector capability manifests never silently promote gated sources", asyn
     headers: {},
     body: new Uint8Array(),
   })).accepted, false);
+  assert.equal(
+    (await lightspeed.describe_capabilities(context)).find((item) =>
+      item.id === "inventory.purchase_orders")?.support,
+    "unavailable",
+  );
+
+  const lightspeedWithPurchaseOrders = new LightspeedRConnector({
+    clientId: "client",
+    clientSecret: "secret",
+    vault: new MemoryVault({
+      provider: "lightspeed-r",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["employee:vendors", "employee:purchase_orders"],
+      metadata: {},
+    }),
+  });
+  const purchaseOrders = (await lightspeedWithPurchaseOrders.describe_capabilities(context))
+    .find((item) => item.id === "inventory.purchase_orders");
+  assert.equal(purchaseOrders?.support, "full");
+  assert.deepEqual(purchaseOrders?.requiredScopes, ["employee:vendors", "employee:purchase_orders"]);
 });
 
 test("connector workers execute typed, read-only extraction pages against vendor-shaped recordings", async () => {
@@ -705,6 +729,9 @@ test("connector workers execute typed, read-only extraction pages against vendor
           },
         });
       }
+      if (url.pathname.endsWith("/Vendor.json")) {
+        return Response.json(lightspeedFixture.responses.vendors);
+      }
       return new Response(null, { status: 404 });
     },
   });
@@ -721,6 +748,26 @@ test("connector workers execute typed, read-only extraction pages against vendor
   const saleUrl = lightspeedRequests.find((url) => url.pathname.endsWith("/Sale.json"));
   assert.equal(saleUrl?.searchParams.get("load_relations"), '["SaleLines","SalePayments"]');
   assert.match(saleUrl?.searchParams.get("timeStamp") ?? "", /^><,/u);
+
+  const vendorStream = (await lightspeed.list_streams(context)).find((stream) => stream.id === "vendors");
+  assert.ok(vendorStream);
+  const vendorPage = await lightspeed.initial_sync(
+    context,
+    vendorStream,
+    { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+  );
+  assert.equal(vendorPage.records.length, 1);
+  assert.equal(vendorPage.records[0]?.sourceRecordId, "802");
+  assert.equal(vendorPage.records[0]?.normalized?.fields.name, "Example Cycle Supply");
+  assert.equal(vendorPage.records[0]?.validationIssues, undefined);
+  const vendorUrl = lightspeedRequests.find((url) => url.pathname.endsWith("/Vendor.json"));
+  assert.equal(vendorUrl?.searchParams.get("archived"), "true");
+  assert.equal(vendorUrl?.searchParams.get("load_relations"), '["Contact"]');
+  assert.equal(vendorUrl?.searchParams.get("sort"), "timeStamp");
+  assert.deepEqual(
+    lightspeedRManifest.streams.find((stream) => stream.id === "orders")?.dependencies,
+    ["shops", "employees", "items", "vendors"],
+  );
 
   const xeroFixture = fixture("../../connectors/xero/fixtures/sanitized-recording.json");
   const xeroRequests: URL[] = [];

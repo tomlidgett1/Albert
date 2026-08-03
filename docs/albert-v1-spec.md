@@ -330,11 +330,11 @@ Every connector implements one interface: authorize, check_connection, discover_
 **Verification first:** R-Series and X-Series are entirely different products with entirely different APIs (X-Series is the former Vend). Milestone 3 begins by confirming the shop's account is genuinely R-Series; if it is X-Series, this pack section is replaced, and nothing else in this specification changes.
 
 - Auth: OAuth2 with refresh tokens; account-scoped base URL (`.../API/V3/Account/{accountID}/`).
-- Streams: Sale (with SaleLines, SalePayments via load relations), Item, Category (R-Series has a real category tree), Customer, Employee, Shop (location), ItemShop (stock levels by shop), Order and OrderLine (supplier purchase orders), PaymentType, TaxCategory.
+- Streams: Sale (with SaleLines, SalePayments via load relations), Item, Category (R-Series has a real category tree), Customer, Employee, Shop (location), ItemShop (stock levels by shop), Vendor (supplier identity), Order and OrderLine (supplier purchase orders), PaymentType, TaxCategory.
 - Incremental: timestamp filters on modified time per stream; cursor is the high-water mark.
 - Rate limiting: leaky bucket with bucket-level and drip-rate response headers; the pack's rate policy honours headers, never fixed sleeps.
 - Notable semantics: Sale carries completed and voided flags and an employee reference, so **worker attribution is a full capability** on this stack; returns appear as negative-quantity lines or refund-flagged sales and map to commerce_refund_line with a reversal_of event link; archived items and customers are soft deletes; GST components per line.
-- Canonical targets: commerce_order, commerce_order_line, commerce_payment, commerce_refund_line, inventory_balance_snapshot (from ItemShop), inventory_movement (where exposed), purchase_order_line, product, product_variant, product_category, customer_account, worker (Employee), location (Shop), register.
+- Canonical targets: commerce_order, commerce_order_line, commerce_payment, commerce_refund_line, inventory_balance_snapshot (from ItemShop), inventory_movement (where exposed), purchase_order_line, supplier (Vendor), product, product_variant, product_category, customer_account, worker (Employee), location (Shop), register.
 - Capability manifest starter: commerce.order_lines full; commerce.order_lines.worker_attribution full; commerce.order_lines.unit_cost measure from data; inventory.current_stock full; inventory.historical_movements verify against API.
 
 ### 21.2 Xero

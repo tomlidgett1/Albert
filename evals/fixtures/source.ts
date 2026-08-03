@@ -13,7 +13,7 @@ export const sourceFixtureCatalogue: readonly SourceField[] = [
     piiClass: "business",
     authorityConcept: "operational_sales",
     definition: "The source-recorded R-Series reason associated with a sale discount.",
-    packVersion: "1.0.0",
+    packVersion: "1.1.0",
   },
 ] as const;
 

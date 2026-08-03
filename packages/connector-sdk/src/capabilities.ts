@@ -29,6 +29,7 @@ export const SEMANTIC_CAPABILITY_IDS = [
 
 export const OPERATIONAL_CAPABILITY_IDS = [
   "connector.variant.r_series",
+  "inventory.purchase_orders",
   "finance.settings",
   "finance.payments",
   "workforce.leave",

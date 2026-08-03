@@ -69,7 +69,7 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
       this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
         `SELECT capability,connection_id,connector_id,available,support,reason_code,
                 reason_detail,coverage,pack_version,source_watermark
-         FROM semantic_internal.tenant_capability
+         FROM semantic_internal.active_tenant_capability
          WHERE tenant_id=$1`}),
       this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
         `SELECT DISTINCT ON (domain) domain,source_watermarks
@@ -255,8 +255,8 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
       : "pii_class NOT IN ('customer_contact','payroll','sensitive_personal')";
     const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,connectionId,sourceTable,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
-       FROM semantic_internal.source_field_allowlist
-       WHERE tenant_id=$1 AND connection_id=$2 AND source_table=$3 AND active
+       FROM semantic_internal.active_source_field_allowlist
+       WHERE tenant_id=$1 AND connection_id=$2 AND source_table=$3
          AND authority_concept=ANY($4::text[]) AND ${piiPredicate}
        ORDER BY source_field`});
     return sourceFieldsFromRows(result.rows).filter((field)=>sourceFieldIsAccessible(field,context.role));
@@ -268,8 +268,8 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
       : "pii_class NOT IN ('customer_contact','payroll','sensitive_personal')";
     const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,pattern,boundedLimit,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
-       FROM semantic_internal.source_field_allowlist
-       WHERE tenant_id=$1 AND active
+       FROM semantic_internal.active_source_field_allowlist
+       WHERE tenant_id=$1
          AND authority_concept=ANY($4::text[]) AND ${piiPredicate}
          AND (source_field ILIKE $2 ESCAPE '\\' OR documented_definition ILIKE $2 ESCAPE '\\' OR source_table ILIKE $2 ESCAPE '\\')
        ORDER BY source_field,connection_id
@@ -301,11 +301,11 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
               field.source_field,field.field_type,field.pii_class,field.authority_concept,
               field.documented_definition,field.pack_version
        FROM ranked
-       JOIN semantic_internal.source_field_allowlist field
+       JOIN semantic_internal.active_source_field_allowlist field
          ON field.connector_id=ranked.connector_id
         AND field.source_table=ranked.source_table
         AND field.source_field=ranked.source_field
-       WHERE field.tenant_id=$1 AND field.active
+       WHERE field.tenant_id=$1
          AND field.authority_concept=ANY($4::text[]) AND ${piiPredicate}
        ORDER BY ranked.rank,field.connection_id
        LIMIT $3`});
@@ -315,8 +315,8 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
     const authorityConcepts=sourceAuthorityConceptsForRole(context.role);
     const metadata=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,fieldId,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
-       FROM semantic_internal.source_field_allowlist
-       WHERE tenant_id=$1 AND active
+       FROM semantic_internal.active_source_field_allowlist
+       WHERE tenant_id=$1
          AND authority_concept=ANY($3::text[])
          AND ('source:'||connection_id||':'||source_table||':'||source_field)=$2`});
     const fields=sourceFieldsFromRows(metadata.rows);if(fields.length!==1)throw new Error(`Source field ${fieldId} is unknown or ambiguous.`);

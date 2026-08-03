@@ -75,7 +75,7 @@ test("freshness, provenance and bundle identity include only contributing author
   const xero = "connection-xero";
   const deputy = "connection-deputy";
   const tenantWithIrrelevantSources = (xeroWatermark: string, xeroPackVersion: string): Partial<TenantSemanticContext> => ({
-    packVersions: { "lightspeed-r": "1.0.0",xero: xeroPackVersion,deputy: "1.0.0" },
+    packVersions: { "lightspeed-r": "1.1.0",xero: xeroPackVersion,deputy: "1.0.0" },
     sourceWatermarks: { [lightspeed]: now,[xero]: xeroWatermark,[deputy]: "2020-01-01T00:00:00.000Z" },
     sourceDetails: [
       { connectorId: "lightspeed-r",connectionId: lightspeed,label: "Lightspeed",dataThrough: now },
@@ -308,7 +308,7 @@ function serviceFor(
     identityGraphHash: "d41d8cd98f00b204e9800998ecf8427e",
     defaults: {},
     dossier: {},
-    packVersions: { "lightspeed-r": "1.0.0", xero: "1.0.0", deputy: "1.0.0" },
+    packVersions: { "lightspeed-r": "1.1.0", xero: "1.0.0", deputy: "1.0.0" },
     sourceWatermarks: watermarks,
     sourceDetails: [
       { connectorId: "lightspeed-r", connectionId: lightspeed, label: "Lightspeed", dataThrough: now },
