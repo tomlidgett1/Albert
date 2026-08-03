@@ -44,6 +44,11 @@ test("runtime tenant scope is signed, audience-bound, exact-login, and deletion 
   assert.match(control,/extensions\.hmac\(convert_to\(payload::text,'utf8'\),key_row\.secret,'sha256'\)/);
   assert.match(control,/session_user::name IS DISTINCT FROM p_login/);
   assert.match(control,/connection_generation=job\.connection_generation/);
+  assert.equal(
+    (control.match(/require_active_sync_job_lease/g)??[]).length,
+    2,
+  );
+  assert.doesNotMatch(control,/require_sync_job_lease/);
   assert.match(control,/assert_sync_write_permit_and_issue_capability[\s\S]*FOR SHARE OF request,attempt,run,connection,tenant/);
   assert.match(control,/issue_deletion_analytical_capability[\s\S]*require_active_deletion_lease/);
   assert.match(control,/p_scope NOT IN \('deletion_purge','deletion_verify'\)[\s\S]*issuance is fenced by tenant deletion/);

@@ -193,7 +193,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'sync write permit is not active' USING ERRCODE='55000';
   END IF;
-  PERFORM control_plane.require_sync_job_lease(
+  PERFORM control_plane.require_active_sync_job_lease(
     permit.queue_name,permit.message_id,permit.job_request_id,
     permit.worker_id,permit.read_count
   );

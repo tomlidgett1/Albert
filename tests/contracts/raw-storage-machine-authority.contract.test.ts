@@ -142,6 +142,8 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
     migration,
     /REVOKE ALL ON FUNCTION extensions\.albert_verify_lease_bound_raw_storage_authority/u,
   );
+  assert.match(migration, /require_active_sync_job_lease/u);
+  assert.doesNotMatch(migration, /require_sync_job_lease/u);
 
   assert.match(syncRuntime, /SET LOCAL ROLE albert_sync_control/u);
   assert.match(syncRuntime, /claim_sync_jobs/u);

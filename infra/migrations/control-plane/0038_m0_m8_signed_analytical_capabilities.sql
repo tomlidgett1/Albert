@@ -674,7 +674,7 @@ BEGIN
   PERFORM control_plane.require_exact_runtime_login(
     'albert_sync_control_runtime','albert_sync_control'
   );
-  lease_tenant:=control_plane.require_sync_job_lease(
+  lease_tenant:=control_plane.require_active_sync_job_lease(
     p_queue_name,p_message_id,p_job_request_id,p_worker_id,p_read_count
   );
   IF lease_tenant IS DISTINCT FROM p_tenant_id OR p_connection_generation<1
@@ -759,7 +759,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'sync write permit is not active' USING ERRCODE='55000';
   END IF;
-  lease_tenant:=control_plane.require_sync_job_lease(
+  lease_tenant:=control_plane.require_active_sync_job_lease(
     permit.queue_name,permit.message_id,permit.job_request_id,permit.worker_id,permit.read_count
   );
   SELECT attempt.visibility_deadline INTO attempt_deadline
