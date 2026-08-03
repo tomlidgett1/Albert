@@ -456,21 +456,36 @@ export async function proveRawStorageS3Sessions(): Promise<void> {
     await adminObject("POST", deletionConfig, deletionKey, new Uint8Array([31, 139, 8, 4]));
     assert.deepEqual(await visibleKeys(deletionProbe, deletionConfig.bucket, deletionPrefix), []);
   } finally {
-    await Promise.allSettled([
-      adminObject("DELETE", syncConfig, syncKey),
-      adminObject("DELETE", webhookConfig, webhookKey),
-      adminObject("DELETE", deletionConfig, deletionKey),
-    ]);
-    for (const store of [...stores, ...readiness]) store.destroy();
-    syncProbe.destroy();
-    webhookProbe.destroy();
-    deletionProbe.destroy();
-    await Promise.allSettled([
-      syncDatabase.close(),
-      webhookDatabase.close(),
-      deletionDatabase.close(),
-      administrator.close(),
-    ]);
+    try {
+      await Promise.allSettled([
+        adminObject("DELETE", syncConfig, syncKey),
+        adminObject("DELETE", webhookConfig, webhookKey),
+        adminObject("DELETE", deletionConfig, deletionKey),
+      ]);
+      await administrator.transaction(async (client) => {
+        // The seed must commit because three exact runtime logins and this S3
+        // process share it. Remove it under the same protected deletion boundary
+        // so later database suites always start from their own fixtures.
+        await client.query("set local role albert_control_migration_owner");
+        await client.query("select set_config('albert.deletion_authorized','on',true)");
+        await client.query(
+          "delete from control_plane.deletion_requests where tenant_id=$1",
+          [tenantId],
+        );
+        await client.query("delete from control_plane.tenants where tenant_id=$1", [tenantId]);
+      });
+    } finally {
+      for (const store of [...stores, ...readiness]) store.destroy();
+      syncProbe.destroy();
+      webhookProbe.destroy();
+      deletionProbe.destroy();
+      await Promise.allSettled([
+        syncDatabase.close(),
+        webhookDatabase.close(),
+        deletionDatabase.close(),
+        administrator.close(),
+      ]);
+    }
   }
 }
 

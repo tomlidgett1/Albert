@@ -179,6 +179,10 @@ test("customer raw authority is lease-bound and exercised by exact runtime login
   assert.match(s3Proof, /sessionPool: syncPool/u);
   assert.match(s3Proof, /sessionPool: webhookPool/u);
   assert.match(s3Proof, /sessionPool: deletionPool/u);
+  assert.match(
+    s3Proof,
+    /set local role albert_control_migration_owner[\s\S]*albert\.deletion_authorized[\s\S]*delete from control_plane\.tenants/u,
+  );
   assert.doesNotMatch(
     authoritySql,
     /UPDATE control_plane\.(?:sync_job_attempts|deletion_job_attempts)/u,
