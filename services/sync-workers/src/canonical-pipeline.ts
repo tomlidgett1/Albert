@@ -380,7 +380,17 @@ export class CanonicalTransformPipeline {
         "select quality.record_canonical_mapping_quality($1,$2,$3::bigint,$4::bigint)",
         [job.tenantId,job.syncRunId,rows.length,isolated.rejected.length],
       );
-      const snapshotAt = this.clock().toISOString();
+      // The quality evidence and its snapshot live in Postgres, so use the
+      // same clock for their causal ordering. An application-host timestamp
+      // can be ahead of the database or lose sub-millisecond precision and be
+      // rejected as either future-dated or older than the quality results.
+      const snapshotClock = await client.query<{snapshot_at:string}>(
+        "select clock_timestamp()::text as snapshot_at",
+      );
+      const snapshotAt=snapshotClock.rows[0]?.snapshot_at;
+      if(!snapshotAt||!Number.isFinite(Date.parse(snapshotAt))){
+        throw new Error("pipeline_snapshot_database_clock_invalid");
+      }
       await client.query(
         "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb,$5::text)",
         [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough }),job.syncRunId],

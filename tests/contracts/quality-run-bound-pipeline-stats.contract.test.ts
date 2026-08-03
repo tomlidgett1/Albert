@@ -67,7 +67,7 @@ test("the worker attests transform snapshots but leaves maintenance unattested",
   );
   assert.match(
     worker,
-    /refresh_connector_quality_rollup\(\$1,\$2\)[\s\S]{0,320}run_all_invariants\(\$1,\$2\)[\s\S]*?record_canonical_mapping_quality\(\$1,\$2,\$3::bigint,\$4::bigint\)[\s\S]{0,240}const snapshotAt = this\.clock\(\)\.toISOString\(\)/u,
+    /refresh_connector_quality_rollup\(\$1,\$2\)[\s\S]{0,320}run_all_invariants\(\$1,\$2\)[\s\S]*?record_canonical_mapping_quality\(\$1,\$2,\$3::bigint,\$4::bigint\)[\s\S]*?select clock_timestamp\(\)::text as snapshot_at[\s\S]*?const snapshotAt=snapshotClock\.rows\[0\]\?\.snapshot_at/u,
     "candidate connector checks must be refreshed after the durable sync-run commit",
   );
   assert.match(
