@@ -120,6 +120,8 @@ export default function Home() {
                 key={tool.name}
                 title={tool.name}
               >
+                {/* Remote favicons are decorative and intentionally bypass image optimisation. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`https://www.google.com/s2/favicons?domain=${tool.domain}&sz=256`}
                   alt={`${tool.name} logo`}

@@ -1099,3 +1099,15 @@ h1 {
     padding: 1.7rem 1.2rem 2rem;
   }
 }
+
+/* Vinext dev error overlay: wider panel so stack traces stay readable */
+[data-testid="vinext-dev-error-overlay"] {
+  width: min(1100px, calc(100vw - 32px)) !important;
+}
+
+[data-testid="vinext-dev-error-message"],
+[data-testid="vinext-dev-error-stack"],
+[data-testid="vinext-dev-error-component-stack"] {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
