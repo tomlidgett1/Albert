@@ -87,19 +87,43 @@ export const deputyManifest: ConnectorManifest = {
     remoteRevocation: "not_documented",
   },
   streams: [
-    { id: "companies", resource: "Company", endpoint: "Company/QUERY", recordIdField: "Id", modifiedField: "Modified", queryJoins: ["AddressObject"], pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["workforce"], canonicalTargets: ["location"] },
-    { id: "operational_units", resource: "OperationalUnit", endpoint: "OperationalUnit/QUERY", recordIdField: "Id", modifiedField: "Modified", queryJoins: ["AddressObject"], pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies"], productDomains: ["workforce"], canonicalTargets: ["location"] },
-    { id: "employees", resource: "Employee", endpoint: "Employee/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units"], productDomains: ["workforce"], canonicalTargets: ["worker", "employment_episode"] },
-    { id: "rosters", resource: "Roster", endpoint: "Roster/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_shift"] },
-    { id: "timesheets", resource: "Timesheet", endpoint: "Timesheet/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_time_entry"] },
-    { id: "leave", resource: "Leave", endpoint: "Leave/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_leave"] },
-    { id: "contacts", resource: "Contact", endpoint: "Contact/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", availability: "optional", dependencies: [], productDomains: ["workforce"], canonicalTargets: ["person"] },
+    { id: "companies", resource: "Company", endpoint: "Company/QUERY", recordIdField: "Id", modifiedField: "Modified", queryJoins: ["AddressObject"], pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["workforce"], canonicalTargets: ["location", "identity_hint", "metadata"], authorityConcept: "planned_shifts" },
+    { id: "operational_units", resource: "OperationalUnit", endpoint: "OperationalUnit/QUERY", recordIdField: "Id", modifiedField: "Modified", queryJoins: ["AddressObject"], pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies"], productDomains: ["workforce"], canonicalTargets: ["location", "identity_hint"], authorityConcept: "planned_shifts" },
+    { id: "employees", resource: "Employee", endpoint: "Employee/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units"], productDomains: ["workforce"], canonicalTargets: ["person", "worker", "employment_episode", "identity_hint"], authorityConcept: "worked_hours" },
+    { id: "rosters", resource: "Roster", endpoint: "Roster/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_shift", "metadata"], authorityConcept: "planned_shifts" },
+    { id: "timesheets", resource: "Timesheet", endpoint: "Timesheet/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_time_entry", "event_link"], authorityConcept: "worked_hours" },
+    { id: "leave", resource: "Leave", endpoint: "Leave/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["companies", "operational_units", "employees"], productDomains: ["workforce"], canonicalTargets: ["workforce_leave"], authorityConcept: "worked_hours" },
+    { id: "contacts", resource: "Contact", endpoint: "Contact/QUERY", recordIdField: "Id", modifiedField: "Modified", pagination: "resource_id_keyset", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", availability: "optional", dependencies: [], productDomains: ["workforce"], canonicalTargets: ["identity_hint", "metadata"], authorityConcept: "worked_hours" },
   ],
+  sourceAuthority: {
+    defaults: [{
+      concepts: ["planned_shifts", "worked_hours"],
+      scope: { kind: "connection_account" },
+    }],
+  },
   rateLimit: {
     algorithm: "Retry-After when supplied plus bounded full-jitter exponential backoff",
     concurrency: 4,
     budgets: { resourceQueryMaxRecords: 500 },
-    responseHeaders: ["Retry-After"],
+    responseHeaders: [
+      "Retry-After",
+      "X-Rate-Limit-Problem",
+      "X-RateLimit-Limit",
+      "X-RateLimit-Remaining",
+      "X-RateLimit-Reset",
+    ],
+    reservations: [{
+      key: "deputy.api",
+      burstCapacity: 2,
+      interval: { kind: "fixed", milliseconds: 1_000 },
+    }],
+  },
+  webhook: {
+    verifiedTombstones: {
+      jobReason: "webhook",
+      requireReceipt: true,
+      payloadSignalType: "verified_deputy_webhook_tombstone",
+    },
   },
   capabilities: {
     "workforce.shifts": {

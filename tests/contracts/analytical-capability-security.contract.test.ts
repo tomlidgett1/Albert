@@ -77,11 +77,11 @@ test("runtime tenant scope is signed, audience-bound, exact-login, and deletion 
 });
 
 test("release installs security state after migration and before any service deployment",async()=>{
-  const release=await readFile(new URL("../../.github/workflows/release.yml",import.meta.url),"utf8");
-  const bootstrap=release.indexOf("\n  upgrade-control-bootstrap:");
-  const migrate=release.indexOf("\n  migrate:");
-  const provision=release.indexOf("\n  provision-runtime-security:");
-  const registry=release.indexOf("\n  publish-semantic-registry:");
+  const release=await readFile(new URL("../../.github/workflows/release-authority.yml",import.meta.url),"utf8");
+  const bootstrap=release.indexOf("\n  schema:");
+  const migrate=release.indexOf("Apply immutable migrations with deployer identities");
+  const provision=release.indexOf("\n  runtime-security:");
+  const registry=release.indexOf("\n  publish-registry:");
   const deploy=release.indexOf("\n  deploy-services:");
   assert.ok(bootstrap>-1&&migrate>bootstrap&&provision>migrate&&registry>provision&&deploy>registry);
   assert.match(release,/provision:runtime-logins[\s\S]*provision:analytical-capability-key[\s\S]*provision:webhook-attestation-key/);

@@ -4,7 +4,7 @@ const encodedUnsafePathCharacters = /%(?:00|01|02|03|04|05|06|07|08|09|0a|0b|0c|
 
 /**
  * Resolve the post-auth destination against the browser origin and retain only
- * the one public dashboard deep link Albert supports. Returning a relative path
+ * Albert's reviewed dashboard deep links. Returning a relative path
  * also prevents a later router implementation from reinterpreting credentials,
  * a network-path reference, or a browser-normalized backslash as another origin.
  */
@@ -27,11 +27,22 @@ export function safeDashboardRedirect(value: string | null | undefined, origin: 
       || candidate.origin !== trustedOrigin.origin
       || candidate.username
       || candidate.password
-      || candidate.pathname !== "/dash"
       || candidate.hash
     ) {
       return fallbackRedirect;
     }
+
+    if (candidate.pathname === "/dash/acceptance") {
+      if ([...candidate.searchParams.keys()].some((key) => key !== "journey")) {
+        return fallbackRedirect;
+      }
+      const journeys = candidate.searchParams.getAll("journey");
+      return journeys.length === 1 && /^[0-9A-HJKMNP-TV-Z]{26}$/u.test(journeys[0] ?? "")
+        ? `/dash/acceptance?journey=${journeys[0]}`
+        : fallbackRedirect;
+    }
+
+    if (candidate.pathname !== "/dash") return fallbackRedirect;
 
     if ([...candidate.searchParams.keys()].some((key) => key !== "view")) {
       return fallbackRedirect;

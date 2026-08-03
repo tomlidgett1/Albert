@@ -66,7 +66,10 @@ test("Xero OAuth is pinned to the documented public-client PKCE exchange", async
     codeVerifier: "v".repeat(64),
   });
 
-  assert.equal(authorization, "");
+  assert.equal(
+    authorization,
+    `Basic ${Buffer.from("xero-client:", "utf8").toString("base64")}`,
+  );
   assert.match(body, /client_id=xero-client/u);
   assert.match(body, /code_verifier=/u);
   assert.doesNotMatch(`${authorization}${body}`, /client-secret/iu);

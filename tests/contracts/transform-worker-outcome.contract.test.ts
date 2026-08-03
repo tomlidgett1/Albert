@@ -23,6 +23,7 @@ const claim:ClaimedCanonicalTransformJob=Object.freeze({
     batchId:"01J00000000000000000000004",
     syncRunId:"01J00000000000000000000005",
     connectionId:"01J00000000000000000000006",
+    connectionGeneration:1,
     connectorId:"xero",
     stream:"invoices",
     domains:Object.freeze(["accounting"]),
@@ -133,6 +134,50 @@ test("canonical queue preserves terminal transitions with a database-valid delay
     retryable:false,
   });
   assert.equal(transition.values[5],1);
+});
+
+test("bounded replay continuation requires durable non-zero progress",async()=>{
+  let touchedDatabase=false;
+  const queue=new PostgresCanonicalTransformQueue({
+    async transaction(){touchedDatabase=true;throw new Error("database_must_not_be_called");},
+  } as never);
+  await assert.rejects(
+    queue.continueReplay(claim,{
+      kind:"compatibility_replay",pending:true,candidates:0,commands:0,
+      progressToken:"a".repeat(64),
+    },1),
+    /canonical_queue_invalid_continuation/u,
+  );
+  assert.equal(touchedDatabase,false);
+});
+
+test("processor durably continues replay instead of completing the transform job",async()=>{
+  let completed=false;
+  let progress:unknown;
+  const queue={
+    async complete(){completed=true;},
+    async continueReplay(_claim:ClaimedCanonicalTransformJob,value:unknown){
+      progress=value;return 37;
+    },
+    async retryOrFail(){return "failed" as const;},
+  } as unknown as DurableCanonicalTransformQueue;
+  const pipeline={
+    async transformBatch(){
+      return{
+        compatibilityReplayPending:true,
+        compatibilityReplayCandidates:1,
+        compatibilityReplayCommands:500,
+        compatibilityReplayProgressToken:"b".repeat(64),
+      };
+    },
+  } as unknown as CanonicalTransformPipeline;
+  const outcome=await new CanonicalTransformProcessor(queue,pipeline).process(claim);
+  assert.deepEqual(outcome,{status:"continuation_scheduled",continuationCount:37});
+  assert.equal(completed,false);
+  assert.deepEqual(progress,{
+    kind:"compatibility_replay",pending:true,candidates:1,commands:500,
+    progressToken:"b".repeat(64),
+  });
 });
 
 async function waitUntil(predicate:()=>boolean,timeoutMs=2_000):Promise<void>{

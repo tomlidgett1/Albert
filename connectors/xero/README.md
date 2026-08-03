@@ -13,7 +13,11 @@ Pinned against official Xero documentation retrieved **2026-08-03**:
 
 Albert V1 supports only Xero's public **Auth Code with PKCE** grant. Registering
 a confidential client or supplying a client secret is rejected rather than
-silently changing the OAuth boundary. Refresh tokens rotate on every refresh
+silently changing the OAuth boundary. Xero's PKCE token, refresh, and revocation
+contracts authenticate the public client with
+`Authorization: Basic base64(client_id + ":")`; the trailing colon is required
+and no client secret is sent. Token and refresh bodies also carry the documented
+`client_id`. Refresh tokens rotate on every refresh
 and the encrypted credential vault must compare-and-swap the new pair;
 Xero's documented 30-minute old-token grace window is only a recovery window,
 not normal operation. Disconnect deletes the selected Xero connection by its

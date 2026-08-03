@@ -1,0 +1,85 @@
+name: Issue protected dogfood onboarding journey
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full SHA already deployed to the protected staging cell
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: albert-dogfood-onboarding-${{ inputs.candidate_sha }}
+  cancel-in-progress: false
+
+jobs:
+  issue:
+    name: Issue one candidate-bound human journey
+    if: github.run_attempt == 1
+    environment: dogfood-staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify trusted issuer and candidate identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_TOOLING_SHA: ${{ vars.ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA }}
+          PROTECTED_WORKFLOW_REF: ${{ vars.ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF }}
+          EXPECTED_SIGNER_EMAIL: ${{ vars.ALBERT_RELEASE_AUTHORITY_SIGNER_EMAIL }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          test "$GITHUB_REPOSITORY" = tomlidgett1/Albert
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF_TYPE" = tag
+          test "$(git rev-parse HEAD)" = "$TRUSTED_TOOLING_SHA"
+          test "$GITHUB_SHA" = "$TRUSTED_TOOLING_SHA"
+          test "$GITHUB_REF" = "$PROTECTED_WORKFLOW_REF"
+          [[ "$GITHUB_REF" =~ ^refs/tags/albert-release-authority-v[1-9][0-9]*(\.[0-9]+){0,2}$ ]]
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/dogfood-onboarding-journey.yml@$PROTECTED_WORKFLOW_REF"
+          test "${#TRUSTED_TOOLING_SHA}" -eq 40
+          test "${#CANDIDATE_SHA}" -eq 40
+          case "$TRUSTED_TOOLING_SHA$CANDIDATE_SHA" in *[!0-9a-f]*) exit 1 ;; esac
+          test -n "$EXPECTED_SIGNER_EMAIL"
+          tag_name="${GITHUB_REF#refs/tags/}"
+          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag_name")"
+          tag_object_sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = tag
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$tag_name"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = true
+          test "$(jq -r '.verification.reason' <<<"$tag_json")" = valid
+          test "$(jq -r '.tagger.email' <<<"$tag_json")" = "$EXPECTED_SIGNER_EMAIL"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Issue and encrypt the human journey
+        run: |
+          umask 077
+          node scripts/issue-dogfood-onboarding-journey.mjs \
+            "$RUNNER_TEMP/protected-onboarding-journey.encrypted.json"
+          test "$(stat -c '%a' "$RUNNER_TEMP/protected-onboarding-journey.encrypted.json")" = 600
+        env:
+          ALBERT_DOGFOOD_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ALBERT_DOGFOOD_DEPLOYMENT_ID: ${{ vars.ALBERT_DOGFOOD_DEPLOYMENT_ID }}
+          ALBERT_DOGFOOD_CONTROL_DATABASE_URL: ${{ secrets.ALBERT_DOGFOOD_CONTROL_DATABASE_URL }}
+          ALBERT_DOGFOOD_PUBLIC_ORIGIN: ${{ vars.ALBERT_DOGFOOD_PUBLIC_ORIGIN }}
+          ALBERT_DOGFOOD_ONBOARDING_RECIPIENT_RSA_PUBLIC_KEY_BASE64URL: ${{ vars.ALBERT_DOGFOOD_ONBOARDING_RECIPIENT_RSA_PUBLIC_KEY_BASE64URL }}
+      - name: Publish only the recipient-encrypted one-use envelope
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dogfood-onboarding-journey-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/protected-onboarding-journey.encrypted.json
+          if-no-files-found: error
+          retention-days: 1

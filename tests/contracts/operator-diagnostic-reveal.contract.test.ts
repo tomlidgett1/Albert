@@ -175,7 +175,7 @@ test("operator reveal architecture keeps browser, model, and arbitrary SQL outsi
     readFile("app/dash/components/AdminWorkspace.tsx", "utf8"),
     readFile("app/dash/dash.module.css", "utf8"),
     readFile("deploy/runtime-contract.json", "utf8"),
-    readFile(".github/workflows/release.yml", "utf8"),
+    readFile(".github/workflows/release-authority.yml", "utf8"),
   ]);
   assert.match(migration, /control_plane\.pipeline_stats/u);
   assert.match(migration, /operator\.row_sample_reveal_requested/u);

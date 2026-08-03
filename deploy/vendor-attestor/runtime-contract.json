@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "runtime": "vendor-connection-attestor",
+  "trustDomain": "independent-trusted-tooling",
+  "platform": "fly",
+  "manifest": "deploy/vendor-attestor/vendor-connection-attestor.reference.toml",
+  "dockerfile": "Dockerfile.vendor-connection-attestor",
+  "artifact": ".albert-build/vendor-connection-attestor/main.js",
+  "exposure": "private-mtls-only",
+  "servicePort": 8791,
+  "healthPort": 8792,
+  "requiredSecretNames": [
+    "ALBERT_VENDOR_ATTESTOR_DATABASE_URL",
+    "ALBERT_VENDOR_ATTESTOR_ED25519_PRIVATE_KEY_BASE64",
+    "ALBERT_VENDOR_ATTESTOR_ADMISSION_HMAC_KEY_BASE64",
+    "ALBERT_VENDOR_ATTESTOR_TLS_KEY_BASE64",
+    "ALBERT_VENDOR_ATTESTOR_TLS_CERT_BASE64",
+    "ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_CA_BASE64"
+  ],
+  "requiredPinnedValues": [
+    "ALBERT_VENDOR_ATTESTOR_KEY_ID",
+    "ALBERT_VENDOR_ATTESTOR_TOOL_REF",
+    "ALBERT_VENDOR_ATTESTOR_BUILD_DIGEST",
+    "ALBERT_VENDOR_ATTESTOR_SYNC_CLIENT_SHA256"
+  ],
+  "forbiddenValues": [
+    "CONTROL_PLANE_ADMIN_DATABASE_URL",
+    "CONTROL_PLANE_MIGRATION_URL",
+    "TOKEN_ENCRYPTION_KEY",
+    "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
+    "LIGHTSPEED_CLIENT_SECRET",
+    "DEPUTY_CLIENT_SECRET",
+    "OPENAI_API_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY"
+  ]
+}

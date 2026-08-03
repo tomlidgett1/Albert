@@ -26,12 +26,37 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  browser-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+
+      - run: npm ci
+      - name: Install the lockfile-pinned Chromium runtime
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-browser-evidence
+          path: .playwright
+          if-no-files-found: ignore
+          retention-days: 14
+
   analytical-database:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
         env:
           POSTGRES_DB: albert_ci
           POSTGRES_PASSWORD: albert-ci-only
@@ -86,6 +111,9 @@ jobs:
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-canonical-record-hardening.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-multi-account-authority.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-reconciliation-lifecycle.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-durable-reconciliation-findings.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-lookup-backed-statuses.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-run-bound-pipeline-stats.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-capability-scoped-health.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-connector-pack-activation.sql
 
@@ -112,6 +140,7 @@ jobs:
       ALBERT_RAW_STORAGE_SYNC_PASSWORD: ci-sync-raw-storage-password-000000001
       ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: ci-webhook-raw-storage-password-00001
       ALBERT_RAW_STORAGE_DELETION_PASSWORD: ci-deletion-raw-storage-password-0001
+      ALBERT_VENDOR_ATTESTOR_DB_PASSWORD: ci-vendor-attestor-password-000000001
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,6 +167,36 @@ jobs:
       - run: npm run migrate -- --target=control-plane --bootstrap
       - run: npm run migrate -- --target=control-plane
       - run: npm run provision:runtime-logins -- --target=control-plane
+      - name: Generate ephemeral independent vendor-attestor verifier material
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from "node:fs";
+          import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
+          const { publicKey } = generateKeyPairSync("ed25519");
+          const publicKeyDer = Buffer.from(publicKey.export({ format: "der", type: "spki" }));
+          const authoritySha = "7".repeat(40);
+          const values = {
+            ALBERT_VENDOR_ATTESTOR_ED25519_PUBLIC_KEY_BASE64: publicKeyDer.toString("base64"),
+            ALBERT_VENDOR_ATTESTOR_KEY_ID: `ed25519:${createHash("sha256").update(publicKeyDer).digest("hex")}`,
+            ALBERT_VENDOR_ATTESTOR_ADMISSION_HMAC_KEY_BASE64: randomBytes(32).toString("base64"),
+            ALBERT_VENDOR_ATTESTOR_TOOL_REF: `ci/albert@${authoritySha}`,
+            ALBERT_VENDOR_ATTESTOR_BUILD_DIGEST: `sha256:${"8".repeat(64)}`,
+          };
+          appendFileSync(process.env.GITHUB_ENV, Object.entries(values)
+            .map(([name, value]) => `${name}=${value}\n`).join(""), { mode: 0o600 });
+          NODE
+      - name: Exercise protected vendor-attestor login and verifier provisioning
+        run: npm run provision:vendor-connection-attestor
+      - run: >-
+          psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1
+          -f tests/sql/control-plane-live-vendor-attestation-boundary.sql
+      - name: Exercise the isolated vendor-attestor runtime role
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_vendor_attestor_runtime
+          -d postgres -v ON_ERROR_STOP=1
+          -f tests/sql/control-plane-live-vendor-attestation-runtime.sql
+        env:
+          PGPASSWORD: ci-vendor-attestor-password-000000001
       - name: Provision and exercise real RLS-scoped raw Storage S3 sessions
         run: |
           set -a
@@ -211,6 +270,8 @@ jobs:
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-webhook-attestation.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-answer-lineage.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-clarification-confirmations.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-blocking-question-contract.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-m6-lineage.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-model-usage-durability.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-conversation-leases.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-operator-console.sql
@@ -259,7 +320,9 @@ jobs:
           -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-worker-forgery.sql
         env:
           PGPASSWORD: ci-control-sync-password-00000000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-human-onboarding.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-seed.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-manifest-quality.sql
       - run: >-
           psql -h 127.0.0.1 -p 54322 -U albert_operator_diagnostic_control_runtime
           -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-runtime.sql
@@ -269,6 +332,7 @@ jobs:
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-sync-lifecycle.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-progressive-dependency-barriers.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-reconciliation-lifecycle.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-lookup-backed-statuses.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-code-only-worker-failure-evidence.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-multi-account-authority.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-owner-concurrency.sql

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import {
+  ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST,
+} from "../contracts/blocking-questions.mjs";
+import {
+  assertSupabaseAuthProductionPolicy,
+  fetchSupabaseAuthConfig,
+} from "./supabase-auth-production-policy.mjs";
 import { verifyTransformFleetCapacityAttestation } from "./transform-fleet-capacity-attestation.mjs";
 
 const SYDNEY_REGION = "ap-southeast-2";
@@ -32,6 +39,13 @@ function decodedPublicKey(source) {
   return value;
 }
 
+function immutableServicesImageDigest(source) {
+  const value = required(source, "ALBERT_RELEASE_SERVICES_IMAGE");
+  const match = /^ghcr\.io\/[a-z0-9][a-z0-9._/-]{1,200}@(sha256:[a-f0-9]{64})$/u.exec(value);
+  assert.ok(match, "ALBERT_RELEASE_SERVICES_IMAGE must be an immutable GHCR digest reference.");
+  return match[1];
+}
+
 function requireTrustedFleetCapacityEvidence(source, releaseEnvironment, commitSha) {
   if (releaseEnvironment !== "production") return null;
   const encoded = required(source, "ALBERT_TRANSFORM_FLEET_CAPACITY_ATTESTATION_BASE64");
@@ -41,13 +55,23 @@ function requireTrustedFleetCapacityEvidence(source, releaseEnvironment, commitS
   } catch {
     assert.fail("Production requires a valid protected transform fleet capacity attestation envelope.");
   }
+  const authoritySha = required(source, "ALBERT_RELEASE_AUTHORITY_TOOLING_SHA");
+  const workflowRef = required(source, "ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF");
+  assert.equal(authoritySha, required(source, "GITHUB_SHA"),
+    "Release authority SHA differs from the executing workflow.");
+  assert.equal(workflowRef, required(source, "GITHUB_WORKFLOW_REF"),
+    "Release authority workflow ref differs from the executing workflow.");
   return verifyTransformFleetCapacityAttestation(envelope, {
     publicKey: decodedPublicKey(source),
+    authoritySha,
+    authorityRef: required(source, "GITHUB_REF"),
     candidateSha: commitSha,
+    candidateTransformImageDigest: immutableServicesImageDigest(source),
+    releasePlanDigest: required(source, "ALBERT_RELEASE_PLAN_DIGEST"),
     repository: required(source, "GITHUB_REPOSITORY"),
     workflowRunId: required(source, "GITHUB_RUN_ID"),
     workflowRunAttempt: Number(required(source, "GITHUB_RUN_ATTEMPT")),
-    workflowRef: required(source, "GITHUB_WORKFLOW_REF"),
+    workflowRef,
     stagingCellId: required(source, "ALBERT_CAPACITY_STAGING_CELL_ID"),
     corpusFingerprint: required(source, "ALBERT_CAPACITY_CORPUS_FINGERPRINT"),
     producerToolRef: required(source, "ALBERT_CAPACITY_ATTESTOR_TOOL_REF"),
@@ -107,11 +131,18 @@ function postgresTarget(value, name, expectedLogin, expectedProjectRef) {
     (poolerProjectRef ? `#${poolerProjectRef}` : "");
 }
 
-export function validateReleaseEnvironment(source, project) {
+export function validateReleaseEnvironment(source, project, authConfig = null) {
   const releaseEnvironment = required(source, "ALBERT_RELEASE_ENVIRONMENT");
   assert.ok(["staging", "production"].includes(releaseEnvironment), "ALBERT_RELEASE_ENVIRONMENT is invalid.");
   const commitSha = required(source, "ALBERT_RELEASE_COMMIT_SHA");
   assert.match(commitSha, /^[a-f0-9]{40}$/u, "ALBERT_RELEASE_COMMIT_SHA must be a full Git commit SHA.");
+  if (releaseEnvironment === "production") {
+    assert.equal(
+      required(source, "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"),
+      ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST,
+      "The protected blocking-question approval digest does not match the code-owned contract.",
+    );
+  }
 
   const projectRef = required(source, "ALBERT_CONTROL_PLANE_PROJECT_REF");
   assert.match(projectRef, /^[a-z0-9]{20}$/u, "ALBERT_CONTROL_PLANE_PROJECT_REF is invalid.");
@@ -155,14 +186,20 @@ export function validateReleaseEnvironment(source, project) {
   assert.equal(project.region, SYDNEY_REGION, "The selected Supabase project is not in Sydney.");
   assert.equal(project.status, "ACTIVE_HEALTHY", "The selected Supabase project is not healthy and active.");
 
+  const publicOrigin = cleanHttpsOrigin(required(source, "ALBERT_PUBLIC_ORIGIN"), "ALBERT_PUBLIC_ORIGIN");
   const origins = [
-    cleanHttpsOrigin(required(source, "ALBERT_PUBLIC_ORIGIN"), "ALBERT_PUBLIC_ORIGIN"),
+    publicOrigin,
     cleanHttpsOrigin(required(source, "SEMANTIC_QUERY_SERVICE_URL"), "SEMANTIC_QUERY_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "OPERATOR_DIAGNOSTIC_SERVICE_URL"), "OPERATOR_DIAGNOSTIC_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "SYNC_WORKER_INTERNAL_URL"), "SYNC_WORKER_INTERNAL_URL"),
     cleanHttpsOrigin(required(source, "WEBHOOK_GATEWAY_PUBLIC_URL"), "WEBHOOK_GATEWAY_PUBLIC_URL"),
   ];
   assert.equal(new Set(origins).size, origins.length, "Public and service origins must be distinct.");
+  if (releaseEnvironment === "production") {
+    assert.ok(authConfig && typeof authConfig === "object" && !Array.isArray(authConfig),
+      "Production requires live Supabase Auth configuration metadata.");
+    assertSupabaseAuthProductionPolicy(authConfig, publicOrigin);
+  }
 
   const controlTarget = postgresTarget(
     required(source, "CONTROL_PLANE_MIGRATION_URL"),
@@ -220,20 +257,26 @@ export function validateReleaseEnvironment(source, project) {
   });
 }
 
-async function fetchSupabaseProject(source) {
+export async function fetchSupabaseReleaseMetadata(source, fetchImpl = fetch) {
   const projectRef = required(source, "ALBERT_CONTROL_PLANE_PROJECT_REF");
   const token = required(source, "SUPABASE_MANAGEMENT_TOKEN");
-  const response = await fetch(`https://api.supabase.com/v1/projects/${projectRef}`, {
+  const projectRequest = fetchImpl(`https://api.supabase.com/v1/projects/${projectRef}`, {
+    method: "GET",
     headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
+  const authRequest = source.ALBERT_RELEASE_ENVIRONMENT?.trim() === "production"
+    ? fetchSupabaseAuthConfig({ projectRef, token, fetchImpl })
+    : Promise.resolve(null);
+  const [response, authConfig] = await Promise.all([projectRequest, authRequest]);
   assert.equal(response.ok, true, `Supabase project verification failed with status ${response.status}.`);
-  return response.json();
+  return Object.freeze({ project: await response.json(), authConfig });
 }
 
 async function main() {
-  const project = await fetchSupabaseProject(process.env);
-  const result = validateReleaseEnvironment(process.env, project);
+  const { project, authConfig } = await fetchSupabaseReleaseMetadata(process.env);
+  const result = validateReleaseEnvironment(process.env, project, authConfig);
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(process.env.GITHUB_OUTPUT, [
       `transform_machine_floor=${result.transformMachineFloor}`,

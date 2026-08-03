@@ -9,7 +9,11 @@ type AttestationKey = Readonly<{
   repository: string;
   workflowRunId: string;
   workflowRunAttempt: number;
+  authoritySha: string;
+  authorityRef: string;
   candidateSha: string;
+  candidateTransformImageDigest: string;
+  releasePlanDigest: string;
 }>;
 
 export type CapacityReservation =
@@ -61,21 +65,33 @@ export class PostgresCapacityAttestationStore {
     return this.transaction(async (client) => {
       await client.query(`
         insert into capacity_trust.transform_attestations(
-          repository,workflow_run_id,workflow_run_attempt,candidate_sha,
-          request_digest,token_jti,status,lease_token,lease_expires_at
-        ) values($1,$2,$3,$4,$5,$6,'running',$7,
-                 clock_timestamp()+make_interval(secs=>$8::double precision))
+          protocol_version,repository,workflow_run_id,workflow_run_attempt,
+          authority_sha,authority_ref,candidate_sha,candidate_image_digest,
+          release_plan_digest,request_digest,token_jti,status,lease_token,
+          lease_expires_at
+        ) values(2,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'running',$11,
+                 clock_timestamp()+make_interval(secs=>$12::double precision))
         on conflict(repository,workflow_run_id,workflow_run_attempt) do nothing`, [
-        key.repository, key.workflowRunId, key.workflowRunAttempt, key.candidateSha,
+        key.repository, key.workflowRunId, key.workflowRunAttempt,
+        key.authoritySha, key.authorityRef, key.candidateSha,
+        key.candidateTransformImageDigest, key.releasePlanDigest,
         requestDigest, tokenJti, leaseToken, CAPACITY_ATTESTATION_LEASE_SECONDS,
       ]);
       const locked = await client.query(`
-        select candidate_sha,request_digest,status,lease_expires_at,envelope,checkpoint
+        select protocol_version,authority_sha,authority_ref,candidate_sha,
+               candidate_image_digest,release_plan_digest,request_digest,status,
+               lease_expires_at,envelope,checkpoint
           from capacity_trust.transform_attestations
          where repository=$1 and workflow_run_id=$2 and workflow_run_attempt=$3
          for update`, [key.repository, key.workflowRunId, key.workflowRunAttempt]);
       const row = locked.rows[0];
-      if (!row || row.candidate_sha !== key.candidateSha || row.request_digest !== requestDigest) {
+      if (!row || row.protocol_version !== 2 ||
+          row.authority_sha !== key.authoritySha ||
+          row.authority_ref !== key.authorityRef ||
+          row.candidate_sha !== key.candidateSha ||
+          row.candidate_image_digest !== key.candidateTransformImageDigest ||
+          row.release_plan_digest !== key.releasePlanDigest ||
+          row.request_digest !== requestDigest) {
         throw new Error("Capacity attestation run identity was already reserved with different inputs.");
       }
       if (row.status === "completed") {
@@ -126,13 +142,17 @@ export class PostgresCapacityAttestationStore {
     try {
       const result = await client.query(`
         update capacity_trust.transform_attestations
-           set checkpoint=$5::jsonb,
-               lease_expires_at=clock_timestamp()+make_interval(secs=>$6::double precision),
+           set checkpoint=$9::jsonb,
+               lease_expires_at=clock_timestamp()+make_interval(secs=>$10::double precision),
                updated_at=clock_timestamp()
          where repository=$1 and workflow_run_id=$2 and workflow_run_attempt=$3
-           and candidate_sha=$4 and status='running' and lease_token=$7
+           and protocol_version=2 and authority_sha=$4 and authority_ref=$5
+           and candidate_sha=$6 and candidate_image_digest=$7
+           and release_plan_digest=$8 and status='running' and lease_token=$11
        returning 1 as checkpointed`, [
-      key.repository, key.workflowRunId, key.workflowRunAttempt, key.candidateSha,
+      key.repository, key.workflowRunId, key.workflowRunAttempt,
+      key.authoritySha, key.authorityRef, key.candidateSha,
+      key.candidateTransformImageDigest, key.releasePlanDigest,
       encoded, CAPACITY_ATTESTATION_LEASE_SECONDS, leaseToken,
     ]);
       if (result.rows[0]?.checkpointed !== 1) {
@@ -152,13 +172,17 @@ export class PostgresCapacityAttestationStore {
     try {
       const result = await client.query(`
         update capacity_trust.transform_attestations
-           set status='completed',envelope=$5::jsonb,lease_token=null,
+           set status='completed',envelope=$9::jsonb,lease_token=null,
                lease_expires_at=null,checkpoint=null,
                completed_at=clock_timestamp(),updated_at=clock_timestamp()
          where repository=$1 and workflow_run_id=$2 and workflow_run_attempt=$3
-           and candidate_sha=$4 and status='running' and lease_token=$6
+           and protocol_version=2 and authority_sha=$4 and authority_ref=$5
+           and candidate_sha=$6 and candidate_image_digest=$7
+           and release_plan_digest=$8 and status='running' and lease_token=$10
        returning 1 as completed`, [
-      key.repository, key.workflowRunId, key.workflowRunAttempt, key.candidateSha,
+      key.repository, key.workflowRunId, key.workflowRunAttempt,
+      key.authoritySha, key.authorityRef, key.candidateSha,
+      key.candidateTransformImageDigest, key.releasePlanDigest,
       JSON.stringify(envelope), leaseToken,
     ]);
       if (result.rows[0]?.completed !== 1) throw new Error("Capacity attestation lease was lost before completion.");
@@ -172,11 +196,15 @@ export class PostgresCapacityAttestationStore {
     try {
       await client.query(`
         update capacity_trust.transform_attestations
-           set status='failed',error_code=$5,lease_token=null,lease_expires_at=null,
+           set status='failed',error_code=$9,lease_token=null,lease_expires_at=null,
                checkpoint=null,updated_at=clock_timestamp()
          where repository=$1 and workflow_run_id=$2 and workflow_run_attempt=$3
-           and candidate_sha=$4 and status='running' and lease_token=$6`, [
-      key.repository, key.workflowRunId, key.workflowRunAttempt, key.candidateSha,
+           and protocol_version=2 and authority_sha=$4 and authority_ref=$5
+           and candidate_sha=$6 and candidate_image_digest=$7
+           and release_plan_digest=$8 and status='running' and lease_token=$10`, [
+      key.repository, key.workflowRunId, key.workflowRunAttempt,
+      key.authoritySha, key.authorityRef, key.candidateSha,
+      key.candidateTransformImageDigest, key.releasePlanDigest,
       errorCode.slice(0, 80), leaseToken,
     ]);
     } finally {

@@ -124,6 +124,8 @@ export class CanonicalTransformWorkerService{
         if(outcome.status==="completed"){
           this.lastCompletionAt=new Date().toISOString();
           this.lastErrorCode=null;
+        }else if(outcome.status==="continuation_scheduled"){
+          this.lastErrorCode=null;
         }else{
           this.lastErrorCode=outcome.failure.code;
         }

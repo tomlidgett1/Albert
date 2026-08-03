@@ -173,6 +173,7 @@ export interface ConnectionsWorkspaceProps {
   onMatchDecision?: (matchId: string, decision: MatchDecision) => boolean | void | Promise<boolean | void>;
   onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
   onDisconnect?: (connectionId: string) => void;
+  onRetry?: () => void;
 }
 
 export const readinessStateLabels: Record<ReadinessState, string> = {
@@ -325,6 +326,7 @@ function ConnectionsWorkspaceStateful({
   onMatchDecision,
   onSelectOAuthAccount,
   onDisconnect,
+  onRetry,
 }: ConnectionsWorkspaceProps) {
   const [activeView, setActiveView] = useState<ConnectionViewId>(initialView);
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
@@ -348,6 +350,7 @@ function ConnectionsWorkspaceStateful({
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const manageDialogRef = useRef<HTMLElement>(null);
   const managePreviousFocusRef = useRef<HTMLElement | null>(null);
+  const disconnectCancelRef = useRef<HTMLButtonElement>(null);
   const managedConnection = useMemo(() => {
     if (!managedConnectionId) return undefined;
     for (const provider of data.providers) {
@@ -444,6 +447,12 @@ function ConnectionsWorkspaceStateful({
       managePreviousFocusRef.current?.focus();
     };
   }, [managedConnectionId]);
+
+  useEffect(() => {
+    if (!managedConnectionId || !confirmDisconnect) return;
+    const focusFrame = window.requestAnimationFrame(() => disconnectCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [confirmDisconnect, managedConnectionId]);
 
   const selectView = (view: ConnectionViewId, focus = false) => {
     setActiveView(view);
@@ -543,6 +552,9 @@ function ConnectionsWorkspaceStateful({
             <strong>{status.kind === "loading" ? "Loading your connections" : "Connection status unavailable"}</strong>
             {status.message ? ` · ${status.message}` : ""}
           </p>
+          {status.kind === "error" && onRetry ? (
+            <button type="button" onClick={onRetry}>Try again</button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1146,7 +1158,7 @@ function ConnectionsWorkspaceStateful({
                 </strong>
                 <p>Only this connection stops syncing. Its credentials are revoked or destroyed, and its tenant data enters the audited deletion workflow.</p>
                 <div>
-                  <button type="button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button>
+                  <button ref={disconnectCancelRef} type="button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button>
                   <button
                     type="button"
                     disabled={!mutationsEnabled || !onDisconnect}

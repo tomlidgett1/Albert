@@ -9,6 +9,7 @@ kill_timeout = 30
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_OPERATOR_DIAGNOSTIC_HOST = "0.0.0.0"
+  ALBERT_RUNTIME_IDENTITY = "operator-diagnostic"
   ALBERT_OPERATOR_DIAGNOSTIC_PORT = "8790"
   NODE_ENV = "production"
 
@@ -34,6 +35,17 @@ kill_timeout = 30
     method = "GET"
     path = "/readyz"
     timeout = "3s"
+
+[checks]
+  [checks.readiness]
+    grace_period = "15s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8790
+    timeout = "3s"
+    type = "http"
+    processes = ["app"]
 
   [[http_service.checks]]
     grace_period = "10s"

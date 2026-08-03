@@ -47,7 +47,7 @@ test("raw Storage provisioning uses Auth Admin only outside runtime and binds ex
     readFile(new URL("../../scripts/provision-raw-storage-machine-users.ts", import.meta.url), "utf8"),
     readFile(new URL("../../packages/storage/src/session-credentials.ts", import.meta.url), "utf8"),
     readFile(new URL("../../deploy/runtime-contract.json", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/release-authority.yml", import.meta.url), "utf8"),
   ]);
   assert.match(provisioner, /auth\.admin/u);
   assert.match(provisioner, /pg_advisory_xact_lock/u);
@@ -83,7 +83,7 @@ test("raw Storage provisioning uses Auth Admin only outside runtime and binds ex
     ),
     ["ALBERT_RAW_STORAGE_DELETION_PASSWORD"],
   );
-  assert.match(release, /stage-raw-storage-session-secrets/u);
+  assert.match(release, /stage-raw-storage-sessions/u);
   assert.match(release, /SUPABASE_STORAGE_S3_LEGACY_ANON_KEY/u);
   assert.match(release, /provision:raw-storage-machine-users/u);
   assert.match(release, /SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY/u);

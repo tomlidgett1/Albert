@@ -7,19 +7,36 @@ import {
 } from "../../scripts/transform-fleet-capacity-attestation.mjs";
 
 const candidateSha = "a".repeat(40);
+const authoritySha = "b".repeat(40);
 const repository = "tomlidgett1/Albert";
 const workflowRunId = "123456789";
 const workflowRunAttempt = 2;
-const workflowRef = `${repository}/.github/workflows/release.yml@refs/heads/main`;
+const authorityRef = "refs/tags/albert-release-authority-v1";
+const workflowRef = `${repository}/.github/workflows/release-authority.yml@${authorityRef}`;
+const candidateTransformImageDigest = `sha256:${"9".repeat(64)}`;
+const releasePlanDigest = "7".repeat(64);
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 
 export function validCapacityPayload() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "albert_transform_fleet_capacity",
     stagingEnvironment: "staging",
     stagingCellId: "sydney-capacity-01",
-    candidateSha,
+    authority: {
+      repository,
+      sha: authoritySha,
+      ref: authorityRef,
+      runId: workflowRunId,
+      runAttempt: workflowRunAttempt,
+      job: "attest-transform-fleet-capacity",
+      workflowRef,
+    },
+    candidate: {
+      sha: candidateSha,
+      transformImageDigest: candidateTransformImageDigest,
+      releasePlanDigest,
+    },
     nonce: "b".repeat(64),
     startedAt: "2026-08-03T00:10:00.000Z",
     completedAt: "2026-08-03T00:30:00.000Z",
@@ -29,13 +46,6 @@ export function validCapacityPayload() {
     producer: {
       toolRef: `tomlidgett1/albert-release-trust@${"d".repeat(40)}`,
       buildDigest: `sha256:${"e".repeat(64)}`,
-    },
-    workflow: {
-      repository,
-      runId: workflowRunId,
-      runAttempt: workflowRunAttempt,
-      job: "attest-transform-fleet-capacity",
-      workflowRef,
     },
     workload: {
       designTenants: 20_000,
@@ -105,7 +115,7 @@ export function validCapacityPayload() {
     },
     stagingDeployment: {
       appName: "albert-transform-capacity",
-      imageDigest: `sha256:${"9".repeat(64)}`,
+      imageDigest: candidateTransformImageDigest,
       releaseSha: candidateSha,
       appliedFloor: 4,
       verifiedRunningMachines: 4,
@@ -118,7 +128,11 @@ export function validCapacityPayload() {
 function expected(overrides = {}) {
   return {
     publicKey,
+    authoritySha,
+    authorityRef,
     candidateSha,
+    candidateTransformImageDigest,
+    releasePlanDigest,
     repository,
     workflowRunId,
     workflowRunAttempt,
@@ -135,6 +149,7 @@ function expected(overrides = {}) {
 test("a protected Ed25519 envelope binds a passing fleet run to the exact promotion", () => {
   const envelope = createTransformFleetCapacityAttestation(validCapacityPayload(), privateKey);
   const result = verifyTransformFleetCapacityAttestation(envelope, expected());
+  assert.equal(result.authoritySha, authoritySha);
   assert.equal(result.candidateSha, candidateSha);
   assert.equal(result.recommendedProductionFloor, 4);
   assert.equal(result.workflowRunId, workflowRunId);
@@ -158,6 +173,15 @@ test("tampering, cross-run replay, expiry, and an unmeasured floor fail closed",
   /pinned independent build/u);
   assert.throws(() => verifyTransformFleetCapacityAttestation(envelope,
     expected({ corpusFingerprint: "1".repeat(64) })), /approved staging corpus/u);
+  assert.throws(() => verifyTransformFleetCapacityAttestation(envelope,
+    expected({ authoritySha: candidateSha })), /authority SHA/u);
+  assert.throws(() => verifyTransformFleetCapacityAttestation(envelope,
+    expected({ candidateSha: authoritySha })), /candidate SHA/u);
+  assert.throws(() => verifyTransformFleetCapacityAttestation(envelope,
+    expected({ candidateTransformImageDigest: `sha256:${"8".repeat(64)}` })),
+  /approved candidate image/u);
+  assert.throws(() => verifyTransformFleetCapacityAttestation(envelope,
+    expected({ releasePlanDigest: "6".repeat(64) })), /approved release plan/u);
   const wrongFloor = validCapacityPayload();
   wrongFloor.recommendedProductionFloor = 5;
   assert.throws(() => createTransformFleetCapacityAttestation(wrongFloor, privateKey), /was not measured/u);

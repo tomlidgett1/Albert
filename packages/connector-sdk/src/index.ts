@@ -220,7 +220,8 @@ export type WebhookDisposition = Readonly<{
 
 /**
  * The pack boundary mirrors the v1 specification. Cross-system matching and
- * authority logic are deliberately absent from this interface.
+ * tenant-specific authority resolution remain outside this interface; reviewed
+ * source concepts and default authority scopes are declared by the manifest.
  */
 export interface ConnectorPack {
   readonly id: ConnectorId;

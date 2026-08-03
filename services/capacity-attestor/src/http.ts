@@ -53,7 +53,11 @@ export function createCapacityAttestorHttpHandler(options: Readonly<{
       repository: input.repository,
       workflowRunId: input.workflowRunId,
       workflowRunAttempt: input.workflowRunAttempt,
+      authoritySha: input.authoritySha,
+      authorityRef: input.authorityRef,
       candidateSha: input.candidateSha,
+      candidateTransformImageDigest: input.candidateTransformImageDigest,
+      releasePlanDigest: input.releasePlanDigest,
     };
     const requestDigest = createHash("sha256").update(canonicalJson(input)).digest("hex");
     let reservation;
@@ -98,7 +102,7 @@ function pending(
     requestDigest,
   })).digest("hex");
   return new Response(JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: "pending",
     attestationId,
     pollAfterSeconds: CAPACITY_ATTESTATION_POLL_AFTER_SECONDS,

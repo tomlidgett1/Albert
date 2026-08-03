@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   ALBERT_MODELS,
   REASONING_EFFORTS,
@@ -35,9 +42,11 @@ export function ModelRunControls({
   compact = false,
 }: ModelRunControlsProps) {
   const [open, setOpen] = useState(false);
+  const popoverId = useId().replaceAll(":", "");
   const areaRef = useRef<HTMLDivElement>(null);
+  const modelListRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const firstModelRef = useRef<HTMLButtonElement>(null);
+  const selectedModelRef = useRef<HTMLButtonElement>(null);
 
   const selectedModel = useMemo(
     () => ALBERT_MODELS.find((model) => model.id === value.model) ?? ALBERT_MODELS[0],
@@ -62,7 +71,7 @@ export function ModelRunControls({
 
     document.addEventListener("pointerdown", closeOnOutsidePress);
     document.addEventListener("keydown", closeOnEscape);
-    const focusTimer = window.requestAnimationFrame(() => firstModelRef.current?.focus());
+    const focusTimer = window.requestAnimationFrame(() => selectedModelRef.current?.focus());
 
     return () => {
       document.removeEventListener("pointerdown", closeOnOutsidePress);
@@ -79,6 +88,30 @@ export function ModelRunControls({
     onChange({ ...value, reasoningEffort });
   };
 
+  const moveModelFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (currentIndex + 1) % ALBERT_MODELS.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + ALBERT_MODELS.length) % ALBERT_MODELS.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = ALBERT_MODELS.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const nextModel = ALBERT_MODELS[nextIndex] ?? ALBERT_MODELS[0];
+    updateModel(nextModel.id);
+    window.requestAnimationFrame(() => {
+      modelListRef.current
+        ?.querySelector<HTMLButtonElement>(`[data-model-id="${nextModel.id}"]`)
+        ?.focus();
+    });
+  };
+
   return (
     <div className={styles.modelControls} ref={areaRef}>
       <button
@@ -88,6 +121,7 @@ export function ModelRunControls({
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-controls={popoverId}
         aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning`}
         data-testid="model-run-controls-trigger"
         onClick={() => setOpen((current) => !current)}
@@ -105,6 +139,7 @@ export function ModelRunControls({
       </button>
 
       <div
+        id={popoverId}
         className={`${styles.modelControlsPopover} ${open ? styles.modelControlsPopoverOpen : ""}`}
         role="dialog"
         aria-label="Model and run settings"
@@ -121,19 +156,21 @@ export function ModelRunControls({
 
         <fieldset className={styles.modelControlsFieldset}>
           <legend>Model</legend>
-          <div className={styles.modelControlsModelList} role="radiogroup" aria-label="OpenAI model">
+          <div ref={modelListRef} className={styles.modelControlsModelList} role="radiogroup" aria-label="OpenAI model">
             {ALBERT_MODELS.map((model, index) => {
               const selected = model.id === value.model;
               return (
                 <button
-                  ref={index === 0 ? firstModelRef : undefined}
+                  ref={selected ? selectedModelRef : undefined}
                   className={`${styles.modelControlsModelRow} ${selected ? styles.modelControlsModelRowActive : ""}`}
                   key={model.id}
                   type="button"
                   role="radio"
+                  tabIndex={selected ? 0 : -1}
                   aria-checked={selected}
                   data-model-id={model.id}
                   onClick={() => updateModel(model.id)}
+                  onKeyDown={(event) => moveModelFocus(event, index)}
                 >
                   <span className={styles.modelControlsModelMark} aria-hidden="true">
                     {model.label.slice(0, 1)}

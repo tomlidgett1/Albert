@@ -9,6 +9,7 @@ export type TransformFailureEvidence=Readonly<{
 
 export type TransformProcessOutcome=
   | Readonly<{status:"completed"}>
+  | Readonly<{status:"continuation_scheduled";continuationCount:number}>
   | Readonly<{
       status:"retry_scheduled"|"failed";
       failure:Readonly<{code:string;retryable:boolean}>;
@@ -79,6 +80,19 @@ export class CanonicalTransformProcessor{
           leaseToken:claim.leaseToken,
         },
       );
+      if(result.compatibilityReplayPending){
+        if(!result.compatibilityReplayProgressToken){
+          throw new Error("canonical_dependency_replay_no_progress");
+        }
+        const continuationCount=await this.queue.continueReplay(claim,Object.freeze({
+          kind:"compatibility_replay",
+          pending:true,
+          candidates:result.compatibilityReplayCandidates,
+          commands:result.compatibilityReplayCommands,
+          progressToken:result.compatibilityReplayProgressToken,
+        }),1);
+        return Object.freeze({status:"continuation_scheduled",continuationCount});
+      }
       await this.queue.complete(claim,{...result,mappingVersion:claim.job.mappingVersion});
       return Object.freeze({status:"completed"});
     }catch(error){

@@ -1,5 +1,13 @@
-import type { ConnectorId } from "./index.js";
+import {
+  DIMENSION_IDS,
+  FACT_IDS,
+  SOURCE_AUTHORITY_CONCEPTS,
+  type DimensionId,
+  type FactId,
+  type SourceAuthorityConcept,
+} from "../../canonical-schema/src/index.js";
 import type { CapabilityId, CapabilitySupport } from "./capabilities.js";
+import type { ConnectorId } from "./index.js";
 
 export type FieldDisposition = "canonical" | "governed_extension" | "unsupported";
 export type StagingFieldType =
@@ -26,6 +34,28 @@ export type FieldCoverage = Readonly<{
   reason?: string;
   pii: PiiClass;
 }>;
+
+/**
+ * Every durable output a connector mapper can emit. This is deliberately a
+ * closed data-plane vocabulary: product domains are readiness metadata and
+ * must never be accepted as canonical write authority.
+ */
+export const CONNECTOR_EMITTED_TARGETS = Object.freeze([
+  ...DIMENSION_IDS.filter((target) => target !== "calendar_day"),
+  ...FACT_IDS,
+  "category_assignment",
+  "event_link",
+  "identity_hint",
+  "metadata",
+] as const satisfies readonly ConnectorEmittedTarget[]);
+
+export type ConnectorEmittedTarget =
+  | Exclude<DimensionId,"calendar_day">
+  | FactId
+  | "category_assignment"
+  | "event_link"
+  | "identity_hint"
+  | "metadata";
 
 export type StreamContract = Readonly<{
   id: string;
@@ -69,7 +99,14 @@ export type StreamContract = Readonly<{
   dependencies: readonly string[];
   /** Product-facing readiness domains; canonicalTargets remain data-plane tables. */
   productDomains: readonly ("sales" | "inventory" | "customers" | "products" | "accounting" | "workforce")[];
-  canonicalTargets: readonly string[];
+  canonicalTargets: readonly ConnectorEmittedTarget[];
+  /** Concept governing this stream's canonical and governed-extension observations. */
+  authorityConcept: SourceAuthorityConcept;
+  /**
+   * Re-land an unchanged projection when a new immutable batch is itself a
+   * meaningful observation (for example a point-in-time balance snapshot).
+   */
+  reprocessIdenticalPayloadOnNewBatch?: boolean;
 }>;
 
 const LATE_EDIT_STRATEGIES = new Set([
@@ -87,6 +124,8 @@ const SOURCE_TOTAL_STRATEGIES = new Set([
   "provider_reported",
   "count_distinct_complete_scan",
 ]);
+const SOURCE_AUTHORITY_CONCEPT_SET = new Set<string>(SOURCE_AUTHORITY_CONCEPTS);
+const CONNECTOR_EMITTED_TARGET_SET = new Set<string>(CONNECTOR_EMITTED_TARGETS);
 
 const connectorPackVersionPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
@@ -94,11 +133,53 @@ export function isConnectorPackVersion(value:unknown):value is string{
   return typeof value==="string"&&value.length<=120&&connectorPackVersionPattern.test(value);
 }
 
+export type RateLimitReservationPolicy = Readonly<{
+  key: string;
+  burstCapacity: number;
+  interval:
+    | Readonly<{ kind: "fixed"; milliseconds: number }>
+    | Readonly<{
+      kind: "window_budget";
+      windowMilliseconds: number;
+      option: string;
+      defaultLimit: number;
+      allowedLimits: readonly number[];
+    }>;
+}>;
+
+export type RateLimitResponseCooldownPolicy = Readonly<{
+  kind: "token_bucket_headers";
+  levelHeader: string;
+  dripRateHeader: string;
+  headroom: number;
+}>;
+
 export type RateLimitContract = Readonly<{
   algorithm: string;
   concurrency?: number;
   budgets?: Readonly<Record<string, number | string>>;
   responseHeaders: readonly string[];
+  /** Durable GCRA reservations evaluated before every source request. */
+  reservations: readonly RateLimitReservationPolicy[];
+  /** Declarative vendor-header cooldowns evaluated after each response. */
+  cooldowns?: readonly RateLimitResponseCooldownPolicy[];
+}>;
+
+export type SourceAuthorityDefaultPolicy = Readonly<{
+  concepts: readonly SourceAuthorityConcept[];
+  scope:
+    | Readonly<{ kind: "connection_account" }>
+    | Readonly<{
+      kind: "canonical_dimension";
+      table: string;
+      scopeType: "legal_entity" | "location";
+    }>;
+}>;
+
+export type VerifiedWebhookTombstonePolicy = Readonly<{
+  jobReason: "webhook";
+  requireReceipt: boolean;
+  payloadSignalType: string;
 }>;
 
 export type ConnectorManifest = Readonly<{
@@ -119,7 +200,13 @@ export type ConnectorManifest = Readonly<{
     remoteRevocation: "supported" | "not_documented";
   }>;
   streams: readonly StreamContract[];
+  sourceAuthority: Readonly<{
+    defaults: readonly SourceAuthorityDefaultPolicy[];
+  }>;
   rateLimit: RateLimitContract;
+  webhook?: Readonly<{
+    verifiedTombstones?: VerifiedWebhookTombstonePolicy;
+  }>;
   capabilities: Readonly<Partial<Record<CapabilityId, Readonly<{
     support: CapabilitySupport;
     /** Streams whose successful extraction can publish this capability. */
@@ -179,6 +266,9 @@ export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorM
     if (!SOURCE_TOTAL_STRATEGIES.has(stream.sourceTotalStrategy)) {
       throw new Error(`${manifest.id}.${stream.id} is missing a valid sourceTotalStrategy.`);
     }
+    if (!SOURCE_AUTHORITY_CONCEPT_SET.has(stream.authorityConcept)) {
+      throw new Error(`${manifest.id}.${stream.id} is missing a valid authorityConcept.`);
+    }
     if (stream.lateEditStrategy === "modified_field" && !stream.modifiedField) {
       throw new Error(`${manifest.id}.${stream.id} declares modified_field without modifiedField.`);
     }
@@ -190,6 +280,11 @@ export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorM
     }
     if (!stream.productDomains.length || new Set(stream.productDomains).size !== stream.productDomains.length) {
       throw new Error(`${manifest.id}.${stream.id} must declare unique product readiness domains.`);
+    }
+    if (!stream.canonicalTargets.length ||
+        new Set(stream.canonicalTargets).size !== stream.canonicalTargets.length ||
+        stream.canonicalTargets.some((target) => !CONNECTOR_EMITTED_TARGET_SET.has(target))) {
+      throw new Error(`${manifest.id}.${stream.id} must declare unique, known canonical targets.`);
     }
     if (new Set(stream.dependencies).size !== stream.dependencies.length || stream.dependencies.includes(stream.id)) {
       throw new Error(`${manifest.id}.${stream.id} has invalid stream dependencies.`);
@@ -213,4 +308,87 @@ export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorM
     visited.add(streamId);
   };
   for (const stream of manifest.streams) visit(stream.id);
+
+  const defaultConcepts = new Set<string>();
+  if (manifest.sourceAuthority.defaults.length === 0) {
+    throw new Error(`${manifest.id} must declare source-authority defaults.`);
+  }
+  for (const policy of manifest.sourceAuthority.defaults) {
+    if (policy.concepts.length === 0) {
+      throw new Error(`${manifest.id} source-authority defaults cannot be empty.`);
+    }
+    if (policy.scope.kind === "canonical_dimension") {
+      const canonicalTable = policy.scope.table;
+      if (!/^[a-z_][a-z0-9_]*$/u.test(canonicalTable) ||
+          !manifest.streams.some((stream) =>
+            stream.canonicalTargets.some((target) => target === canonicalTable))) {
+        throw new Error(`${manifest.id} source-authority canonical dimension is invalid.`);
+      }
+    }
+    for (const concept of policy.concepts) {
+      if (!SOURCE_AUTHORITY_CONCEPT_SET.has(concept) || defaultConcepts.has(concept)) {
+        throw new Error(`${manifest.id} source-authority default ${concept} is invalid or duplicated.`);
+      }
+      defaultConcepts.add(concept);
+    }
+  }
+  const streamConcepts = new Set(manifest.streams.map((stream) => stream.authorityConcept));
+  for (const concept of streamConcepts) {
+    if (!defaultConcepts.has(concept)) {
+      throw new Error(`${manifest.id} stream authority ${concept} has no default policy.`);
+    }
+  }
+
+  const reservationKeys = new Set<string>();
+  if (manifest.rateLimit.reservations.length === 0) {
+    throw new Error(`${manifest.id} must declare at least one rate-limit reservation.`);
+  }
+  for (const reservation of manifest.rateLimit.reservations) {
+    if (!/^[a-z0-9][a-z0-9._:-]{0,119}$/u.test(reservation.key) ||
+        reservationKeys.has(reservation.key) ||
+        !Number.isSafeInteger(reservation.burstCapacity) || reservation.burstCapacity < 1) {
+      throw new Error(`${manifest.id} has an invalid rate-limit reservation.`);
+    }
+    reservationKeys.add(reservation.key);
+    if (reservation.interval.kind === "fixed") {
+      if (!Number.isSafeInteger(reservation.interval.milliseconds) ||
+          reservation.interval.milliseconds < 1) {
+        throw new Error(`${manifest.id} has an invalid fixed rate-limit interval.`);
+      }
+      continue;
+    }
+    const { interval } = reservation;
+    if (!/^[a-z][A-Za-z0-9]{0,79}$/u.test(interval.option) ||
+        !Number.isSafeInteger(interval.windowMilliseconds) || interval.windowMilliseconds < 1 ||
+        !Number.isSafeInteger(interval.defaultLimit) || interval.defaultLimit < 1 ||
+        interval.allowedLimits.length === 0 ||
+        !interval.allowedLimits.includes(interval.defaultLimit) ||
+        new Set(interval.allowedLimits).size !== interval.allowedLimits.length ||
+        interval.allowedLimits.some((limit) => !Number.isSafeInteger(limit) || limit < 1)) {
+      throw new Error(`${manifest.id} has an invalid window rate-limit interval.`);
+    }
+  }
+  const responseHeaders = new Set(manifest.rateLimit.responseHeaders.map((header) =>
+    header.toLowerCase()
+  ));
+  if (manifest.rateLimit.responseHeaders.some((header) =>
+    !/^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/u.test(header)
+  )) {
+    throw new Error(`${manifest.id} has an invalid rate-limit response header.`);
+  }
+  for (const cooldown of manifest.rateLimit.cooldowns ?? []) {
+    if (cooldown.kind !== "token_bucket_headers" ||
+        !Number.isFinite(cooldown.headroom) || cooldown.headroom < 0 ||
+        !responseHeaders.has(cooldown.levelHeader.toLowerCase()) ||
+        !responseHeaders.has(cooldown.dripRateHeader.toLowerCase())) {
+      throw new Error(`${manifest.id} has an invalid response cooldown policy.`);
+    }
+  }
+  const tombstones = manifest.webhook?.verifiedTombstones;
+  if (tombstones && (
+    tombstones.jobReason !== "webhook" || !tombstones.requireReceipt ||
+    !/^[a-z][a-z0-9_]{2,119}$/u.test(tombstones.payloadSignalType)
+  )) {
+    throw new Error(`${manifest.id} has an invalid verified-webhook tombstone policy.`);
+  }
 }

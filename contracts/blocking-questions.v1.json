@@ -1,0 +1,204 @@
+{
+  "digestAlgorithm": "sha256",
+  "digest": "cbdd710ed6fae8bd811d646b00e5ae27345270d1a3375bcabb55ed9dc3796723",
+  "contract": {
+    "schemaVersion": 1,
+    "contractVersion": "albert-blocking-questions/1",
+    "questions": [
+      {
+        "id": "sales-lens",
+        "label": "Default sales lens",
+        "question": "When you say sales, which figure should Albert use by default?",
+        "connectorPrerequisites": [
+          "lightspeed-r"
+        ],
+        "options": [
+          {
+            "id": "ex-gst",
+            "label": "Excluding GST",
+            "overlayMutations": [
+              {
+                "path": [
+                  "tax_display_default"
+                ],
+                "value": "exclusive"
+              },
+              {
+                "path": [
+                  "remembered_preferences",
+                  "sales.default_metric"
+                ],
+                "value": "commerce.net_sales_ex_gst"
+              }
+            ]
+          },
+          {
+            "id": "inc-gst",
+            "label": "Including GST",
+            "overlayMutations": [
+              {
+                "path": [
+                  "tax_display_default"
+                ],
+                "value": "inclusive"
+              },
+              {
+                "path": [
+                  "remembered_preferences",
+                  "sales.default_metric"
+                ],
+                "value": "commerce.gross_takings_inc_gst"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "trading-day",
+        "label": "Trading-day cutoff",
+        "question": "When should a trading day end for overnight activity?",
+        "connectorPrerequisites": [
+          "lightspeed-r"
+        ],
+        "options": [
+          {
+            "id": "midnight",
+            "label": "Midnight",
+            "overlayMutations": [
+              {
+                "path": [
+                  "trading_day_cutoff"
+                ],
+                "value": "00:00"
+              }
+            ]
+          },
+          {
+            "id": "2am",
+            "label": "2 am",
+            "overlayMutations": [
+              {
+                "path": [
+                  "trading_day_cutoff"
+                ],
+                "value": "02:00"
+              }
+            ]
+          },
+          {
+            "id": "4am",
+            "label": "4 am",
+            "overlayMutations": [
+              {
+                "path": [
+                  "trading_day_cutoff"
+                ],
+                "value": "04:00"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "employee-performance",
+        "label": "Employee performance",
+        "question": "What should performed best mean by default?",
+        "connectorPrerequisites": [
+          "lightspeed-r",
+          "deputy"
+        ],
+        "options": [
+          {
+            "id": "net-sales",
+            "label": "Net sales",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "employee.performance_default"
+                ],
+                "value": "commerce.net_sales_ex_gst"
+              }
+            ]
+          },
+          {
+            "id": "gross-profit",
+            "label": "Gross profit",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "employee.performance_default"
+                ],
+                "value": "commerce.gross_margin"
+              }
+            ]
+          },
+          {
+            "id": "profit-per-hour",
+            "label": "Gross profit per worked hour",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "employee.performance_default"
+                ],
+                "value": "composites.gross_profit_per_labour_hour"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "pos-posting-topology",
+        "label": "Xero posting method",
+        "question": "How does your point of sale normally post takings into Xero?",
+        "connectorPrerequisites": [
+          "lightspeed-r",
+          "xero"
+        ],
+        "options": [
+          {
+            "id": "daily-summary",
+            "label": "Daily summary journals",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "reconciliation.pos_posting_topology"
+                ],
+                "value": "daily_summary_journals"
+              }
+            ]
+          },
+          {
+            "id": "line-by-line",
+            "label": "Individual transactions",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "reconciliation.pos_posting_topology"
+                ],
+                "value": "individual_transactions"
+              }
+            ]
+          },
+          {
+            "id": "not-sure",
+            "label": "I’m not sure",
+            "overlayMutations": [
+              {
+                "path": [
+                  "remembered_preferences",
+                  "reconciliation.pos_posting_topology"
+                ],
+                "value": "unknown"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

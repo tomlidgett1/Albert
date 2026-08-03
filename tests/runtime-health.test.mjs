@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST,
+} from "../contracts/blocking-questions.mjs";
+import {
   inspectRuntimeEnvironment,
   runtimeEnvironmentRequirementNames,
 } from "../packages/config/src/env.ts";
@@ -42,6 +45,7 @@ const productionWebEnvironment = Object.freeze({
   ALBERT_CONTROL_PLANE_REGION: "ap-southeast-2",
   ALBERT_MODEL_DATA_RESIDENCY_REGION: "au",
   ALBERT_MODEL_DATA_CONTROL_APPROVED: "true",
+  ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST: ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST,
   ALBERT_LIGHTSPEED_PRODUCT: "r-series",
   ALBERT_CONVERSATION_RUNTIME: "live",
   ALBERT_ALLOW_FIXTURE_RUNTIME: "false",
@@ -212,6 +216,19 @@ test("production web and semantic runtimes bind Sydney, AU data residency, live 
     assert.equal(result.ready, false);
     assert.ok(result.invalid.includes(name));
   }
+  const missingApproval = { ...productionWebEnvironment };
+  delete missingApproval.ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST;
+  const missingApprovalResult = inspectRuntimeEnvironment("web", missingApproval);
+  assert.equal(missingApprovalResult.ready, false);
+  assert.ok(missingApprovalResult.missing.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
+
+  const staleApprovalResult = inspectRuntimeEnvironment("web", {
+    ...productionWebEnvironment,
+    ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST: "0".repeat(64),
+  });
+  assert.equal(staleApprovalResult.ready, false);
+  assert.ok(staleApprovalResult.invalid.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
+
   const overprivilegedWeb = inspectRuntimeEnvironment("web", {
     ...productionWebEnvironment,
     CONTROL_PLANE_DATABASE_URL:

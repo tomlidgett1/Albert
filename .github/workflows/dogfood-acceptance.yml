@@ -7,6 +7,10 @@ on:
         description: Full SHA already deployed to the protected staging cell
         required: true
         type: string
+      onboarding_journey_id:
+        description: Non-secret ULID from the completed protected human onboarding journey
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,9 +22,10 @@ concurrency:
 jobs:
   collect-and-sign:
     name: Collect live M3-M8 acceptance evidence
+    if: github.run_attempt == 1
     environment: dogfood-staging
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       # This checkout is the independently reviewed collector, never the
       # candidate supplied above. The protected environment owns the pin.
@@ -30,19 +35,38 @@ jobs:
           persist-credentials: false
       - name: Verify trusted collector and candidate identities
         env:
+          GH_TOKEN: ${{ github.token }}
           TRUSTED_TOOLING_SHA: ${{ vars.ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA }}
           PROTECTED_WORKFLOW_REF: ${{ vars.ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF }}
+          EXPECTED_SIGNER_EMAIL: ${{ vars.ALBERT_RELEASE_AUTHORITY_SIGNER_EMAIL }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
+          test "$GITHUB_REPOSITORY" = tomlidgett1/Albert
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF_TYPE" = tag
           test "$(git rev-parse HEAD)" = "$TRUSTED_TOOLING_SHA"
           test "$GITHUB_SHA" = "$TRUSTED_TOOLING_SHA"
           test "$GITHUB_REF" = "$PROTECTED_WORKFLOW_REF"
-          case "$GITHUB_REF" in refs/tags/*) ;; *) exit 1 ;; esac
+          [[ "$GITHUB_REF" =~ ^refs/tags/albert-release-authority-v[1-9][0-9]*(\.[0-9]+){0,2}$ ]]
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/dogfood-acceptance.yml@$PROTECTED_WORKFLOW_REF"
           test "${#TRUSTED_TOOLING_SHA}" -eq 40
           test "${#CANDIDATE_SHA}" -eq 40
           case "$TRUSTED_TOOLING_SHA$CANDIDATE_SHA" in
             *[!0-9a-f]*) exit 1 ;;
           esac
+          test -n "$EXPECTED_SIGNER_EMAIL"
+          tag_name="${GITHUB_REF#refs/tags/}"
+          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag_name")"
+          tag_object_sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = tag
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$tag_name"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = true
+          test "$(jq -r '.verification.reason' <<<"$tag_json")" = valid
+          test "$(jq -r '.tagger.email' <<<"$tag_json")" = "$EXPECTED_SIGNER_EMAIL"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.23.1
@@ -51,11 +75,10 @@ jobs:
         with:
           version: 0.4.61
       - run: npm ci --ignore-scripts
-      - name: Capture live state, execute governed cases twice, and sign
+      - name: Capture live state, execute the exact V1 semantic suite twice, and sign
         run: node scripts/collect-dogfood-acceptance.mjs "$RUNNER_TEMP/dogfood-acceptance.json"
         env:
           ALBERT_DOGFOOD_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          ALBERT_DOGFOOD_DEPLOYMENT_ID: ${{ vars.ALBERT_DOGFOOD_DEPLOYMENT_ID }}
           ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF: ${{ vars.ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF }}
           ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA: ${{ vars.ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA }}
           ALBERT_DOGFOOD_CONTROL_DATABASE_URL: ${{ secrets.ALBERT_DOGFOOD_CONTROL_DATABASE_URL }}
@@ -64,16 +87,18 @@ jobs:
           ALBERT_DOGFOOD_XERO_CONNECTION_ID: ${{ secrets.ALBERT_DOGFOOD_XERO_CONNECTION_ID }}
           ALBERT_DOGFOOD_DEPUTY_CONNECTION_ID: ${{ secrets.ALBERT_DOGFOOD_DEPUTY_CONNECTION_ID }}
           ALBERT_DOGFOOD_ONBOARDING_TENANT_ID: ${{ secrets.ALBERT_DOGFOOD_ONBOARDING_TENANT_ID }}
+          ALBERT_DOGFOOD_ONBOARDING_JOURNEY_ID: ${{ inputs.onboarding_journey_id }}
           ALBERT_DOGFOOD_ONBOARDING_TARGET_MINUTES: ${{ vars.ALBERT_DOGFOOD_ONBOARDING_TARGET_MINUTES }}
           ALBERT_DOGFOOD_FLAGSHIP_ARTIFACT_ID: ${{ secrets.ALBERT_DOGFOOD_FLAGSHIP_ARTIFACT_ID }}
           ALBERT_DOGFOOD_CATEGORY_ARTIFACT_ID: ${{ secrets.ALBERT_DOGFOOD_CATEGORY_ARTIFACT_ID }}
           ALBERT_DOGFOOD_CATEGORY_TOPIC: ${{ vars.ALBERT_DOGFOOD_CATEGORY_TOPIC }}
           ALBERT_DOGFOOD_DISCONNECT_PROOF_ID: ${{ secrets.ALBERT_DOGFOOD_DISCONNECT_PROOF_ID }}
           ALBERT_DOGFOOD_TENANT_DELETION_PROOF_ID: ${{ secrets.ALBERT_DOGFOOD_TENANT_DELETION_PROOF_ID }}
-          ALBERT_DOGFOOD_SEMANTIC_QUERY_URL: ${{ vars.ALBERT_DOGFOOD_SEMANTIC_QUERY_URL }}
           ALBERT_DOGFOOD_SEMANTIC_SIGNING_SECRET: ${{ secrets.ALBERT_DOGFOOD_SEMANTIC_SIGNING_SECRET }}
-          ALBERT_DOGFOOD_SEMANTIC_CASE_PLAN_JSON: ${{ secrets.ALBERT_DOGFOOD_SEMANTIC_CASE_PLAN_JSON }}
-          ALBERT_DOGFOOD_RUNTIME_PROBES_JSON: ${{ vars.ALBERT_DOGFOOD_RUNTIME_PROBES_JSON }}
+          ALBERT_DOGFOOD_REFERENCE_PLAN_ENVELOPE_JSON: ${{ secrets.ALBERT_DOGFOOD_REFERENCE_PLAN_ENVELOPE_JSON }}
+          ALBERT_DOGFOOD_REFERENCE_PLAN_ED25519_PUBLIC_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_REFERENCE_PLAN_ED25519_PUBLIC_KEY_BASE64URL }}
+          ALBERT_DOGFOOD_SITES_PROVENANCE_ENVELOPE_JSON: ${{ secrets.ALBERT_DOGFOOD_SITES_PROVENANCE_ENVELOPE_JSON }}
+          ALBERT_DOGFOOD_SITES_PROVENANCE_ED25519_PUBLIC_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_SITES_PROVENANCE_ED25519_PUBLIC_KEY_BASE64URL }}
           ALBERT_DOGFOOD_FLY_READONLY_TOKEN: ${{ secrets.ALBERT_DOGFOOD_FLY_READONLY_TOKEN }}
           ALBERT_DOGFOOD_REFERENCE_HMAC_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_REFERENCE_HMAC_KEY_BASE64URL }}
           ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PRIVATE_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PRIVATE_KEY_BASE64URL }}

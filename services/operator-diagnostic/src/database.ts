@@ -1,9 +1,13 @@
 import {
   operatorDiagnosticGrantSchema,
   operatorDiagnosticSampleSchema,
+  protectedDogfoodOnboardingReceiptRequestSchema,
+  protectedDogfoodOnboardingReceiptSchema,
   targetMatchesStage,
   type OperatorDiagnosticGrant,
   type OperatorDiagnosticSample,
+  type ProtectedDogfoodOnboardingReceipt,
+  type ProtectedDogfoodOnboardingReceiptRequest,
 } from "./contracts.js";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -60,6 +64,27 @@ export class PostgresOperatorDiagnosticControlStore {
         "SELECT control_plane.complete_operator_diagnostic_reveal($1,$2,$3,$4)",
         [input.revealId, input.status, input.rowCount, input.errorCode ?? null],
       );
+    });
+  }
+
+  async completeOnboardingReceipt(
+    untrustedInput: ProtectedDogfoodOnboardingReceiptRequest,
+  ): Promise<ProtectedDogfoodOnboardingReceipt> {
+    const input = protectedDogfoodOnboardingReceiptRequestSchema.parse(untrustedInput);
+    return this.inRole(async (client) => {
+      const result = await client.query(
+        `SELECT control_plane.complete_protected_dogfood_onboarding_receipt(
+           $1::text,$2::uuid,$3::text,$4::text,$5::text
+         ) AS receipt`,
+        [
+          input.journeyId,
+          input.userId,
+          input.tenantId,
+          input.browserNonceHash,
+          input.userAgentHash,
+        ],
+      );
+      return protectedDogfoodOnboardingReceiptSchema.parse(result.rows[0]?.receipt);
     });
   }
 

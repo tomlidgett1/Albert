@@ -9,6 +9,7 @@ kill_timeout = 30
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_MODEL_DATA_RESIDENCY_REGION = "au"
+  ALBERT_RUNTIME_IDENTITY = "semantic-query"
   ALBERT_SEMANTIC_HOST = "0.0.0.0"
   ALBERT_SEMANTIC_PORT = "8788"
   ALBERT_SEMANTIC_RELAY_WORKER_ID = "semantic-promotion-relay"
@@ -40,6 +41,17 @@ kill_timeout = 30
     method = "GET"
     path = "/readyz"
     timeout = "5s"
+
+[checks]
+  [checks.readiness]
+    grace_period = "30s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8788
+    timeout = "5s"
+    type = "http"
+    processes = ["app"]
 
   [[http_service.checks]]
     grace_period = "15s"

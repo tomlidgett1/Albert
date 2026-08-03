@@ -10,6 +10,7 @@ kill_timeout = 120
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_METRICS_PORT = "9091"
   ALBERT_QUEUE_SLA_SECONDS = "300"
+  ALBERT_RUNTIME_IDENTITY = "sync-worker"
   ALBERT_WORKER_CONCURRENCY = "8"
   ALBERT_WORKER_ID = "sync-worker"
   NODE_ENV = "production"
@@ -49,6 +50,17 @@ kill_timeout = 120
     method = "GET"
     path = "/livez"
     timeout = "5s"
+
+[checks]
+  [checks.readiness]
+    grace_period = "45s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8080
+    timeout = "8s"
+    type = "http"
+    processes = ["app"]
 
 [[restart]]
   policy = "always"

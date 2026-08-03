@@ -622,14 +622,6 @@ export class OAuthSessionStore {
         ],
       );
       await client.query(
-        `update control_plane.oauth_sessions
-            set status = 'consumed', consumed_at = now(),
-                selected_account_reference = $3,
-                pkce_verifier_secret_reference = null
-          where tenant_id = $1 and oauth_session_id = $2`,
-        [input.context.tenantId, input.context.oauthSessionId, account.externalAccountId],
-      );
-      await client.query(
         `delete from control_plane.oauth_session_secret_envelopes
           where tenant_id = $1 and oauth_session_id = $2`,
         [input.context.tenantId, input.context.oauthSessionId],
@@ -662,21 +654,40 @@ export class OAuthSessionStore {
       if (!jobRequestId) throw new Error("oauth_initial_backfill_enqueue_failed");
       const completedSession = await client.query(
         `update control_plane.oauth_sessions
-            set completion_result = jsonb_build_object(
-              'connectionId',$3::text,'jobRequestId',$4::text
+            set status = 'consumed',
+                consumed_at = clock_timestamp(),
+                selected_account_reference = $6::text,
+                pkce_verifier_secret_reference = null,
+                completion_result = jsonb_build_object(
+              'connectionId',$3::text,
+              'jobRequestId',$4::text,
+              'oauthSessionId',$2::text,
+              'connectionGeneration',$5::bigint
             )
           where tenant_id = $1 and oauth_session_id = $2
-            and status = 'consumed'
+            and status = 'exchanging'
         returning oauth_session_id`,
-        [input.context.tenantId, input.context.oauthSessionId, connectionId, jobRequestId],
+        [
+          input.context.tenantId,
+          input.context.oauthSessionId,
+          connectionId,
+          jobRequestId,
+          connectionGeneration,
+          account.externalAccountId,
+        ],
       );
       if (!completedSession.rows[0]) throw new Error("oauth_session_finalize_conflict");
       await client.query(
         `insert into control_plane.audit_log (
-           tenant_id, audit_id, actor_user_id, actor_type, action,
-           resource_type, resource_id, audit_metadata
+         tenant_id, audit_id, actor_user_id, actor_type, action,
+           resource_type, resource_id, audit_metadata, occurred_at
          ) values ($1, $2, $3, 'service', 'oauth.connection_authorised',
-           'connection', $4, jsonb_build_object('provider', $5::text, 'account', $6::text))`,
+           'connection', $4, jsonb_build_object(
+             'provider', $5::text,
+             'account', $6::text,
+             'oauthSessionId', $7::text,
+             'connectionGeneration', $8::bigint
+           ), clock_timestamp())`,
         [
           input.context.tenantId,
           ulid(),
@@ -684,6 +695,8 @@ export class OAuthSessionStore {
           connectionId,
           input.context.provider,
           account.externalAccountId,
+          input.context.oauthSessionId,
+          connectionGeneration,
         ],
       );
       return { connectionId, jobRequestId, credentialRef };

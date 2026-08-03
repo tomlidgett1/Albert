@@ -202,7 +202,10 @@ test("OAuth browser state survives a transient callback-worker failure but is co
   const worker = readFileSync("services/sync-workers/src/oauth-http.ts", "utf8");
   assert.match(sessionStore, /session\.completion_result[\s\S]*status === "consumed"/iu);
   assert.match(sessionStore, /status === "selecting_account"[\s\S]*discovered_account_choices/iu);
-  assert.match(sessionStore, /set completion_result = jsonb_build_object/iu);
+  assert.match(
+    sessionStore,
+    /set status = 'consumed',[\s\S]*completion_result = jsonb_build_object[\s\S]*and status = 'exchanging'/iu,
+  );
   assert.match(worker, /loadCallbackReplay\(callbackIdentity\)[\s\S]*replay\.status === "selection_required"/iu);
   assert.match(worker, /loadSelectionReplay\(selectionIdentity\)/iu);
 });

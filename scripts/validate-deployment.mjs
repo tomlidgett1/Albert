@@ -213,6 +213,7 @@ assert.equal(web.artifact, "dist/server/index.js");
 assert.equal(web.healthPath, "/api/health");
 assert.deepEqual(web.requiredBuildValues, ["ALBERT_BUILD_SHA"]);
 assert.ok(web.requiredRuntimeValues.includes("ALBERT_ALLOW_FIXTURE_RUNTIME"));
+assert.ok(web.requiredRuntimeValues.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
 assert.ok(web.requiredRuntimeValues.includes("OPERATOR_DIAGNOSTIC_SERVICE_URL"));
 assert.ok(web.requiredRuntimeValues.includes("ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET"));
 assert.ok(web.requiredRuntimeValues.includes("ALBERT_SERVICE_VERSION"));
@@ -231,7 +232,7 @@ const [packageJson, buildServices, dockerfile, capacityDockerfile, nextConfig,
   readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/health/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../packages/config/src/health.ts", import.meta.url), "utf8"),
-  readFile(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"),
+  readFile(new URL("../.github/workflows/release-authority.yml", import.meta.url), "utf8"),
   readFile(new URL("../.github/workflows/dogfood-acceptance.yml", import.meta.url), "utf8"),
   readFile(new URL("./migrate.ts", import.meta.url), "utf8"),
   readFile(new URL("./registry.ts", import.meta.url), "utf8"),
@@ -297,7 +298,7 @@ assert.match(supabaseServer, /assertRuntimeEnvironment\("web"\)/u, "Server-side 
 
 const flyctlSetupRef = "superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1";
 const flyctlVersion = "0.4.61";
-function validateFlyctlPins(workflow, expectedSetups, name) {
+function validateFlyctlPins(workflow, expectedJobs, name) {
   const reviewedSetupCount = [...workflow.matchAll(
     new RegExp(escapeRegularExpression(flyctlSetupRef), "gu"),
   )].length;
@@ -311,7 +312,33 @@ function validateFlyctlPins(workflow, expectedSetups, name) {
       "gmu",
     ),
   )].map((match) => match[1]);
-  assert.equal(setupCount, expectedSetups, `${name} Fly CLI setup count drifted.`);
+  const jobsSource = workflow.slice(workflow.indexOf("\njobs:\n") + "\njobs:\n".length);
+  const jobHeaders = [...jobsSource.matchAll(/^  ([a-z][a-z0-9-]+):\s*$/gmu)];
+  const flyJobs = [];
+  for (const [index, header] of jobHeaders.entries()) {
+    const jobName = header[1];
+    const bodyStart = (header.index ?? 0) + header[0].length;
+    const bodyEnd = index + 1 < jobHeaders.length
+      ? (jobHeaders[index + 1].index ?? jobsSource.length)
+      : jobsSource.length;
+    const body = jobsSource.slice(bodyStart, bodyEnd);
+    const jobSetupCount = [...body.matchAll(
+      new RegExp(escapeRegularExpression(flyctlSetupRef), "gu"),
+    )].length;
+    if (!/(?:^|\s)flyctl\s/u.test(body) && jobSetupCount === 0) continue;
+    flyJobs.push(jobName);
+    const jobPinCount = [...body.matchAll(
+      new RegExp(
+        `${escapeRegularExpression(flyctlSetupRef)}\\s*\\n`
+        + `\\s+with:\\s*\\n\\s+version:\\s+${escapeRegularExpression(flyctlVersion)}\\s*$`,
+        "gmu",
+      ),
+    )].length;
+    assert.equal(jobSetupCount, 1, `${name} job ${jobName} must install Fly CLI exactly once.`);
+    assert.equal(jobPinCount, 1, `${name} job ${jobName} must use the reviewed Fly CLI version.`);
+  }
+  assert.deepEqual(flyJobs.sort(), [...expectedJobs].sort(), `${name} Fly CLI job inventory drifted.`);
+  assert.equal(setupCount, flyJobs.length, `${name} Fly CLI setup count drifted.`);
   assert.equal(
     reviewedSetupCount,
     setupCount,
@@ -326,48 +353,31 @@ function validateFlyctlPins(workflow, expectedSetups, name) {
     pinnedVersions.every((version) => version === flyctlVersion),
     `${name} Fly CLI versions must match the reviewed ${flyctlVersion} toolchain.`,
   );
-
-  const jobsSource = workflow.slice(workflow.indexOf("\njobs:\n") + "\njobs:\n".length);
-  const jobHeaders = [...jobsSource.matchAll(/^  ([a-z][a-z0-9-]+):\s*$/gmu)];
-  for (const [index, header] of jobHeaders.entries()) {
-    const jobName = header[1];
-    const bodyStart = (header.index ?? 0) + header[0].length;
-    const bodyEnd = index + 1 < jobHeaders.length
-      ? (jobHeaders[index + 1].index ?? jobsSource.length)
-      : jobsSource.length;
-    const body = jobsSource.slice(bodyStart, bodyEnd);
-    if (!/(?:^|\s)flyctl\s/u.test(body)) continue;
-    const jobSetupCount = [...body.matchAll(
-      new RegExp(escapeRegularExpression(flyctlSetupRef), "gu"),
-    )].length;
-    const jobPinCount = [...body.matchAll(
-      new RegExp(
-        `${escapeRegularExpression(flyctlSetupRef)}\\s*\\n`
-        + `\\s+with:\\s*\\n\\s+version:\\s+${escapeRegularExpression(flyctlVersion)}\\s*$`,
-        "gmu",
-      ),
-    )].length;
-    assert.equal(jobSetupCount, 1, `${name} job ${jobName} must install Fly CLI exactly once.`);
-    assert.equal(jobPinCount, 1, `${name} job ${jobName} must use the reviewed Fly CLI version.`);
-  }
 }
-validateFlyctlPins(releaseWorkflow, 5, "Release workflow");
-validateFlyctlPins(dogfoodWorkflow, 1, "Dogfood workflow");
+validateFlyctlPins(releaseWorkflow, [
+  "attest-transform-fleet-capacity",
+  "deploy-autoscalers",
+  "deploy-services",
+  "stage-raw-storage-sessions",
+  "stage-vendor-attestor-relay",
+], "Release authority workflow");
+validateFlyctlPins(dogfoodWorkflow, ["collect-and-sign"], "Dogfood workflow");
 
-const releasePreflightIndex = releaseWorkflow.indexOf("\n  preflight-release:");
+const releasePreflightIndex = releaseWorkflow.indexOf("\n  authorize:");
 const capacityAttestationIndex = releaseWorkflow.indexOf("\n  attest-transform-fleet-capacity:");
-const rawStorageStageIndex = releaseWorkflow.indexOf("\n  stage-raw-storage-session-secrets:");
-const preflightIndex = releaseWorkflow.indexOf("\n  preflight-service-targets:");
-const bootstrapUpgradeIndex = releaseWorkflow.indexOf("\n  upgrade-control-bootstrap:");
-const migrationIndex = releaseWorkflow.indexOf("\n  migrate:");
-const securityProvisionIndex = releaseWorkflow.indexOf("\n  provision-runtime-security:");
-const registryIndex = releaseWorkflow.indexOf("\n  publish-semantic-registry:");
+const bootstrapUpgradeIndex = releaseWorkflow.indexOf("\n  schema:");
+const migrationIndex = releaseWorkflow.indexOf("Apply immutable migrations with deployer identities");
+const securityProvisionIndex = releaseWorkflow.indexOf("\n  runtime-security:");
+const registryIndex = releaseWorkflow.indexOf("\n  publish-registry:");
+const rawStorageStageIndex = releaseWorkflow.indexOf("\n  stage-raw-storage-sessions:");
+const vendorRelayStageIndex = releaseWorkflow.indexOf("\n  stage-vendor-attestor-relay:");
+const deployServicesIndex = releaseWorkflow.indexOf("\n  deploy-services:");
 assert.ok(
   capacityAttestationIndex > -1 && releasePreflightIndex > capacityAttestationIndex &&
-  rawStorageStageIndex > releasePreflightIndex &&
-  preflightIndex > rawStorageStageIndex && bootstrapUpgradeIndex > preflightIndex &&
-  migrationIndex > bootstrapUpgradeIndex && securityProvisionIndex > migrationIndex &&
-  registryIndex > securityProvisionIndex,
+  bootstrapUpgradeIndex > releasePreflightIndex && migrationIndex > bootstrapUpgradeIndex &&
+  securityProvisionIndex > migrationIndex && registryIndex > securityProvisionIndex &&
+  rawStorageStageIndex > registryIndex && vendorRelayStageIndex > rawStorageStageIndex &&
+  deployServicesIndex > vendorRelayStageIndex,
   "Release security bootstrap, migrations, key provisioning, and publication are out of order.",
 );
 const capacityAttestationJob = releaseWorkflow.slice(capacityAttestationIndex, releasePreflightIndex);
@@ -391,7 +401,7 @@ assert.match(
 assert.match(releaseWorkflow, /id-token:\s*write/u,
   "Capacity attestation requests require GitHub OIDC.");
 assert.match(releaseWorkflow,
-  /request-independent-capacity-attestation\.mjs[\s\S]*ALBERT_CAPACITY_ATTESTOR_URL/u,
+  /ALBERT_CAPACITY_ATTESTOR_URL[\s\S]*request-independent-capacity-attestation\.mjs/u,
   "Candidate capacity work must be observed by an independent attestor.");
 const capacityRequestStepIndex = releaseWorkflow.indexOf("- name: Ask the independently pinned attestor to observe and sign the run");
 const capacityRequestStepEnd = releaseWorkflow.indexOf("\n      - name:", capacityRequestStepIndex + 1);
@@ -411,32 +421,33 @@ assert.match(releaseWorkflow,
   /ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST:\s*\$\{\{ vars\.ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST \}\}/u,
   "Production preflight must pin the independent attestor OCI build digest.");
 assert.match(releaseWorkflow,
-  /release:preflight[\s\S]*dogfood-acceptance-attestation\.mjs[\s\S]*stage-raw-storage-session-secrets:/u,
+  /release:preflight[\s\S]*dogfood-acceptance-attestation\.mjs[\s\S]*schema:/u,
   "One-use dogfood acceptance must be consumed before production mutation.");
 assert.match(releaseWorkflow, /flyctl secrets list[\s\S]*validate-runtime-secrets\.mjs/u);
-assert.match(releaseWorkflow, /stage-raw-storage-session-secrets:\s*\n\s+needs:\s+preflight-release/u);
+assert.match(releaseWorkflow, /stage-raw-storage-sessions:[\s\S]*runtime-security/u);
 assert.match(releaseWorkflow, /flyctl secrets set[\s\S]*--stage[\s\S]*SUPABASE_STORAGE_S3_LEGACY_ANON_KEY/u);
-assert.match(releaseWorkflow, /preflight-service-targets:[\s\S]*stage-raw-storage-session-secrets/u);
-assert.match(releaseWorkflow, /upgrade-control-bootstrap:\s*\n\s+needs:\s+preflight-service-targets/u);
+assert.match(releaseWorkflow,
+  /stage-vendor-attestor-relay:[\s\S]*ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED=true[\s\S]*ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64/u,
+  "Release authority must stage the complete private mTLS vendor-attestor relay before deploying sync.");
 assert.match(releaseWorkflow, /bootstrap:upgrade:control-plane[\s\S]*CONTROL_PLANE_ADMIN_DATABASE_URL/u);
-assert.match(releaseWorkflow, /deploy-worker-autoscalers:[\s\S]*FAS_PROMETHEUS_TOKEN/u);
+assert.match(releaseWorkflow, /deploy-autoscalers:[\s\S]*FAS_PROMETHEUS_TOKEN/u);
 assert.match(releaseWorkflow,
   /TARGET_FLOOR[\s\S]*running_count[\s\S]*-lt "\$TARGET_FLOOR"/u,
   "Worker deployment must apply the preflight-attested floor without scaling down.");
 assert.doesNotMatch(releaseWorkflow, /name:\s*Maintain two production Machines/u);
-assert.match(releaseWorkflow, /migrate:\s*\n\s+needs:\s+upgrade-control-bootstrap/u);
-assert.match(releaseWorkflow, /provision-runtime-security:\s*\n\s+needs:\s+migrate/u);
+assert.match(releaseWorkflow, /schema:[\s\S]*bootstrap:upgrade:control-plane[\s\S]*npm run migrate/u);
+assert.match(releaseWorkflow, /runtime-security:[\s\S]*schema/u);
 assert.match(releaseWorkflow, /provision:runtime-logins[\s\S]*provision:raw-storage-machine-users[\s\S]*provision:analytical-capability-key[\s\S]*provision:webhook-attestation-key/u);
 assert.match(releaseWorkflow, /provision:raw-storage-machine-users[\s\S]*SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY[\s\S]*ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION/u);
-assert.match(releaseWorkflow, /publish-semantic-registry:\s*\n\s+needs:\s+provision-runtime-security/u);
+assert.match(releaseWorkflow, /publish-registry:[\s\S]*runtime-security/u);
 assert.match(releaseWorkflow, /ALBERT_REQUIRE_DEPLOYER_LOGIN:\s*"true"/u);
-assert.match(releaseWorkflow, /--env "ALBERT_SERVICE_VERSION=\$\{GITHUB_SHA\}"/u);
-assert.match(releaseWorkflow, /--build-arg "ALBERT_BUILD_SHA=\$\{GITHUB_SHA\}"/u,
+assert.match(releaseWorkflow, /--env "ALBERT_SERVICE_VERSION=\$ALBERT_RELEASE_CANDIDATE_SHA"/u);
+assert.match(releaseWorkflow, /--build-arg "ALBERT_BUILD_SHA=\$ALBERT_RELEASE_CANDIDATE_SHA"/u,
   "Every production service deploy must compile the trusted checkout SHA into its image.");
-assert.match(releaseWorkflow, /--env "ALBERT_DEPLOYMENT_ID=\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}"/u);
+assert.match(releaseWorkflow, /--env "ALBERT_DEPLOYMENT_ID=\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u);
 assert.match(
   releaseWorkflow,
-  /verify-release-readiness\.mjs[\s\S]*"\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}"/u,
+  /verify-release-readiness\.mjs[\s\S]*"\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u,
   "Release readiness must bind the exact deployment attempt as well as SHA.",
 );
 assert.match(migrationRunner, /requestedRole !== target\.defaultRole/u, "Migration runner must reject every non-owner role.");

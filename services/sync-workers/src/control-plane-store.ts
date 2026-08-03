@@ -6,12 +6,16 @@ import {
   type SyncJob,
 } from "../../../packages/queue/src/index.js";
 import type {
+  ConnectorManifest,
   ConnectorStream,
   SyncPage,
 } from "../../../packages/connector-sdk/src/index.js";
 import type { ConnectionRuntimeRecord, TransactionalPostgres } from "./database.js";
 import type { MachineSessionIdentity } from "../../../packages/storage/src/session-credentials.js";
-import { PostgresVendorRateBudget } from "./vendor-rate-budget.js";
+import {
+  PostgresVendorRateBudget,
+  type VendorRateBudgetOptions,
+} from "./vendor-rate-budget.js";
 import type { BackfillPhasePlan } from "./sync-lifecycle.js";
 import type { RawStorageSyncGrant } from "./raw-storage.js";
 
@@ -31,10 +35,10 @@ export class ControlPlaneStore implements RawManifestRepository {
   vendorRateBudget(
     tenantId: string,
     connectionId: string,
-    connectorId: SyncJob["connectorId"],
-    options: Readonly<{ xeroDailyRequestLimit?: 1000 | 5000 }> = {},
+    manifest: ConnectorManifest,
+    options: VendorRateBudgetOptions = {},
   ): PostgresVendorRateBudget {
-    return new PostgresVendorRateBudget(this.db, tenantId, connectionId, connectorId, options);
+    return new PostgresVendorRateBudget(this.db, tenantId, connectionId, manifest, options);
   }
 
   async registerReconciliationPlan(
@@ -433,6 +437,7 @@ export class ControlPlaneStore implements RawManifestRepository {
     plans: readonly BackfillPhasePlan[],
   ): Promise<void> {
     if (job.stream) throw new Error("backfill_plan_requires_coordinator");
+    if (!job.jobRequestId) throw new Error("backfill_plan_requires_coordinator_job_request");
     await this.db.transaction(async (client) => {
       for (const plan of plans) {
         const sameStream = plans
@@ -442,7 +447,8 @@ export class ControlPlaneStore implements RawManifestRepository {
         const predecessor = index > 0 ? sameStream[index - 1]?.phase ?? null : null;
         await client.query(
           `select control_plane.register_sync_stream_phase(
-             $1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14,$15::jsonb
+             $1,$2,$3::bigint,$4,$5,$6,$7,$8,$9,$10::text[],$11::text[],$12,$13,$14,$15::jsonb,
+             $16,$17,$18
            )`,
           [
             job.tenantId,
@@ -460,6 +466,9 @@ export class ControlPlaneStore implements RawManifestRepository {
             plan.range.to,
             predecessor,
             json(plan.inheritedCoverage),
+            job.jobRequestId,
+            job.syncRunId,
+            job.batchId,
           ],
         );
       }

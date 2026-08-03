@@ -205,11 +205,11 @@ test("migration and runtime use staged evidence, atomic views, stale-write fence
   assert.doesNotMatch(pipeline,/on conflict \(tenant_id,connection_id,source_table,source_field,pack_version\)/u);
   assert.match(pipeline,/update semantic_internal\.connector_pack_source_field_snapshot/u);
 
-  const release=readFileSync(new URL("../../.github/workflows/release.yml",import.meta.url),"utf8");
-  const activation=release.indexOf("\n  activate-lightspeed-pack-1-1:");
-  const webGate=release.indexOf("\n  verify-web-release:");
-  assert.ok(activation>release.indexOf("\n  smoke-public-services:"));
-  assert.ok(webGate>activation);
+  const release=readFileSync(new URL("../../.github/workflows/release-authority.yml",import.meta.url),"utf8");
+  const finalGate=release.indexOf("\n  activate-and-smoke:");
+  const smoke=release.indexOf("Wait for every public runtime",finalGate);
+  const activation=release.indexOf("Verify and atomically activate complete Lightspeed pack 1.1",finalGate);
+  const webGate=release.indexOf("Require the hosted web release",finalGate);
+  assert.ok(finalGate>-1&&smoke>finalGate&&activation>smoke&&webGate>activation);
   assert.match(release.slice(activation,webGate),/--candidate=1\.1\.0[\s\S]*--check/u);
-  assert.match(release.slice(webGate),/needs: activate-lightspeed-pack-1-1/u);
 });

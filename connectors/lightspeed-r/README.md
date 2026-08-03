@@ -24,7 +24,7 @@ exchange binds the same registered redirect URI, client secret, short-lived code
 and one-use PKCE verifier used by the authorization request.
 Refresh tokens rotate and the new pair is committed with compare-and-swap before use;
 disconnect calls the documented
-`/auth/oauth/access_token` endpoint with `grant_type=revoke_refresh_token` and
+`/auth/oauth/revoke` endpoint with the current refresh token and
 destroys the local encrypted credential even if the remote call fails. R-Series
 does not publish a webhook contract, so
 scheduled incremental polling and nightly reconciliation recover changes and

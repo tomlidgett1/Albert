@@ -57,16 +57,21 @@ export class GitHubOidcVerifier {
     if (stringClaim(claims, "iss") !== ISSUER || !audienceIncludes(claims.aud, AUDIENCE)) {
       throw new Error("GitHub OIDC issuer or audience is invalid.");
     }
+    if (request.authoritySha !== policy.authoritySha ||
+        request.authorityRef !== policy.authorityRef ||
+        request.workflowRef !== policy.workflowRef) {
+      throw new Error("GitHub OIDC request authority is not protected-policy approved.");
+    }
     const expectedSubject = `repo:${policy.repository}:environment:${policy.stagingEnvironment}`;
     const required: ReadonlyArray<readonly [string, string, string]> = [
       [stringClaim(claims, "sub"), expectedSubject, "subject"],
       [stringClaim(claims, "repository"), request.repository, "repository"],
-      [stringClaim(claims, "sha"), request.candidateSha, "candidate SHA"],
+      [stringClaim(claims, "sha"), policy.authoritySha, "authority SHA"],
       [stringClaim(claims, "run_id"), request.workflowRunId, "workflow run"],
       [stringClaim(claims, "run_attempt"), String(request.workflowRunAttempt), "workflow attempt"],
-      [stringClaim(claims, "workflow_ref"), request.workflowRef, "workflow ref"],
-      [stringClaim(claims, "workflow_sha"), request.candidateSha, "workflow SHA"],
-      [stringClaim(claims, "ref"), policy.releaseRef, "release ref"],
+      [stringClaim(claims, "workflow_ref"), policy.workflowRef, "workflow ref"],
+      [stringClaim(claims, "workflow_sha"), policy.authoritySha, "workflow authority SHA"],
+      [stringClaim(claims, "ref"), policy.authorityRef, "authority ref"],
       [stringClaim(claims, "environment"), policy.stagingEnvironment, "protected environment"],
       [stringClaim(claims, "event_name"), "workflow_dispatch", "workflow event"],
       [stringClaim(claims, "runner_environment"), "github-hosted", "runner environment"],
@@ -79,8 +84,8 @@ export class GitHubOidcVerifier {
     return Object.freeze({
       jti,
       repository: request.repository,
-      ref: policy.releaseRef,
-      sha: request.candidateSha,
+      authorityRef: policy.authorityRef,
+      authoritySha: policy.authoritySha,
       runId: request.workflowRunId,
       runAttempt: request.workflowRunAttempt,
       workflowRef: request.workflowRef,

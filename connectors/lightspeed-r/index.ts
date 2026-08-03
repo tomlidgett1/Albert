@@ -44,7 +44,7 @@ import { buildLightspeedRAuthorizationUrl } from "./oauth-public";
 import { lightspeedSchemas, type LightspeedStreamId } from "./schemas";
 
 const TOKEN_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/token";
-const REVOCATION_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/access_token";
+const REVOCATION_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/revoke";
 const API_ORIGIN = "https://api.lightspeedapp.com";
 
 const tokenSchema = z.object({
@@ -391,7 +391,6 @@ export class LightspeedRConnector implements OAuthConnectorPack {
               client_id: this.config.clientId,
               client_secret: this.config.clientSecret,
               refresh_token: current.secret.refreshToken,
-              grant_type: "revoke_refresh_token",
             }),
             signal: context.abortSignal,
           },

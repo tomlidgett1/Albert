@@ -82,11 +82,12 @@ test("the OCI and release build path inject the trusted checkout SHA", async () 
   const [builder, dockerfile, workflow] = await Promise.all([
     readFile(new URL("../../scripts/build-services.mjs", import.meta.url), "utf8"),
     readFile(new URL("../../Dockerfile.services", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/release-authority.yml", import.meta.url), "utf8"),
   ]);
   assert.match(builder, /__ALBERT_SERVICE_BUILD_SHA__:\s*JSON\.stringify\(buildSha\)/u);
   assert.match(builder, /GITHUB_ACTIONS[\s\S]*GitHub Actions service builds require GITHUB_SHA/u);
   assert.match(dockerfile, /ARG ALBERT_BUILD_SHA=development[\s\S]*ENV ALBERT_BUILD_SHA=\$ALBERT_BUILD_SHA[\s\S]*npm run build:services/u);
   assert.match(dockerfile, /LABEL org\.opencontainers\.image\.revision=\$ALBERT_BUILD_SHA/u);
-  assert.match(workflow, /flyctl deploy[\s\S]*--build-arg "ALBERT_BUILD_SHA=\$\{?GITHUB_SHA\}?"/u);
+  assert.match(workflow, /docker buildx build candidate[\s\S]*--build-arg "ALBERT_BUILD_SHA=\$ALBERT_RELEASE_CANDIDATE_SHA"/u);
+  assert.match(workflow, /flyctl deploy[\s\S]*--image "\$SERVICES_IMAGE"/u);
 });

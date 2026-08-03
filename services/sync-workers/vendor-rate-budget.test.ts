@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { deputyManifest } from "../../connectors/deputy/manifest.js";
+import { lightspeedRManifest } from "../../connectors/lightspeed-r/manifest.js";
+import { xeroManifest } from "../../connectors/xero/manifest.js";
 import { ConnectorError } from "../../packages/connector-sdk/src/index.js";
 import type { TransactionalPostgres } from "./src/database.js";
 import { PostgresVendorRateBudget } from "./src/vendor-rate-budget.js";
@@ -14,7 +17,7 @@ test("durable vendor budgets turn a denied shared reservation into retryable cap
       return { rows: [{ allowed: false, retry_after_ms: "2500" }] };
     },
   } as unknown as TransactionalPostgres;
-  const budget = new PostgresVendorRateBudget(db, "tenant", "connection", "xero");
+  const budget = new PostgresVendorRateBudget(db, "tenant", "connection", xeroManifest);
 
   await assert.rejects(
     budget.beforeRequest(),
@@ -35,7 +38,7 @@ test("Retry-After observations create a shared database cooldown", async () => {
       return { rows: [] };
     },
   } as unknown as TransactionalPostgres;
-  const budget = new PostgresVendorRateBudget(db, "tenant", "connection", "deputy");
+  const budget = new PostgresVendorRateBudget(db, "tenant", "connection", deputyManifest);
 
   await budget.observeResponse(new Response(null, {
     status: 429,
@@ -60,8 +63,8 @@ test("Xero reserves both its minute gate and configured daily tier budget", asyn
     db,
     "tenant",
     "connection",
-    "xero",
-    { xeroDailyRequestLimit: 5000 },
+    xeroManifest,
+    { dailyRequestLimit: 5000 },
   );
 
   await budget.beforeRequest();
@@ -70,4 +73,48 @@ test("Xero reserves both its minute gate and configured daily tier budget", asyn
     ["tenant", "connection", "xero.api-minute", 1_000, 5],
     ["tenant", "connection", "xero.api-day", 17_280, 60],
   ]);
+});
+
+test("pack-declared token-bucket headers create provider cooldowns", async () => {
+  const calls: Array<Readonly<{ sql: string; values: readonly unknown[] }>> = [];
+  const db = {
+    async query(sql: string, values: readonly unknown[] = []) {
+      calls.push({ sql, values: [...values] });
+      return { rows: [] };
+    },
+  } as unknown as TransactionalPostgres;
+  const budget = new PostgresVendorRateBudget(
+    db,
+    "tenant",
+    "connection",
+    lightspeedRManifest,
+  );
+
+  await budget.observeResponse(new Response(null, {
+    headers: {
+      "x-ls-api-bucket-level": "89/90",
+      "x-ls-api-drip-rate": "1",
+    },
+  }));
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.values[3], 1_000);
+  assert.deepEqual(JSON.parse(String(calls[0]?.values[4])), {
+    "x-ls-api-bucket-level": "89/90",
+    "x-ls-api-drip-rate": "1",
+  });
+});
+
+test("window-budget overrides fail closed outside the pack allowlist", () => {
+  const db = { async query() { return { rows: [] }; } } as unknown as TransactionalPostgres;
+  assert.throws(
+    () => new PostgresVendorRateBudget(
+      db,
+      "tenant",
+      "connection",
+      xeroManifest,
+      { dailyRequestLimit: 2_000 },
+    ),
+    /vendor_rate_budget_option_invalid:xero:dailyRequestLimit/u,
+  );
 });

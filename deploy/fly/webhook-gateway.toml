@@ -7,6 +7,7 @@ kill_timeout = 120
 
 [env]
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_RUNTIME_IDENTITY = "webhook-gateway"
   NODE_ENV = "production"
   WEBHOOK_GATEWAY_PORT = "8081"
   ALBERT_WEBHOOK_WORKER_ID = "webhook-gateway"
@@ -49,6 +50,17 @@ kill_timeout = 120
     method = "GET"
     path = "/livez"
     timeout = "5s"
+
+[checks]
+  [checks.readiness]
+    grace_period = "30s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8081
+    timeout = "8s"
+    type = "http"
+    processes = ["app"]
 
 [[restart]]
   policy = "always"

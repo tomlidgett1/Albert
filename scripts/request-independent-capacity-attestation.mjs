@@ -19,6 +19,13 @@ function appName(name) {
   return value;
 }
 
+function servicesImageDigest() {
+  const value = required("ALBERT_RELEASE_SERVICES_IMAGE");
+  const match = /^ghcr\.io\/[a-z0-9][a-z0-9._/-]{1,200}@(sha256:[a-f0-9]{64})$/u.exec(value);
+  assert.ok(match, "ALBERT_RELEASE_SERVICES_IMAGE must be an immutable GHCR digest reference.");
+  return match[1];
+}
+
 async function githubOidcToken() {
   if (cachedOidcToken && cachedOidcToken.expiresAt > Date.now() + 60_000) {
     return cachedOidcToken.value;
@@ -55,13 +62,23 @@ export async function requestIndependentCapacityAttestation(outputPath) {
     "Capacity floor is outside the reviewed range.");
   const corpusFingerprint = required("ALBERT_CAPACITY_CORPUS_FINGERPRINT");
   assert.match(corpusFingerprint, /^[a-f0-9]{64}$/u, "Capacity corpus fingerprint is invalid.");
+  const authoritySha = required("ALBERT_RELEASE_AUTHORITY_TOOLING_SHA");
+  assert.equal(authoritySha, required("GITHUB_SHA"),
+    "Capacity request authority SHA differs from the executing workflow.");
+  const workflowRef = required("ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF");
+  assert.equal(workflowRef, required("GITHUB_WORKFLOW_REF"),
+    "Capacity request authority workflow ref differs from the executing workflow.");
   const requestBody = JSON.stringify({
-      schemaVersion: 1,
-      candidateSha: required("GITHUB_SHA"),
+      schemaVersion: 2,
+      authoritySha,
+      authorityRef: required("GITHUB_REF"),
+      candidateSha: required("ALBERT_RELEASE_CANDIDATE_SHA"),
+      candidateTransformImageDigest: servicesImageDigest(),
+      releasePlanDigest: required("ALBERT_RELEASE_PLAN_DIGEST"),
       repository: required("GITHUB_REPOSITORY"),
       workflowRunId: required("GITHUB_RUN_ID"),
       workflowRunAttempt: Number(required("GITHUB_RUN_ATTEMPT")),
-      workflowRef: required("GITHUB_WORKFLOW_REF"),
+      workflowRef,
       capacityRunId: `${required("GITHUB_RUN_ID")}-${required("GITHUB_RUN_ATTEMPT")}`,
       stagingCellId: required("STAGING_CELL_ID"),
       transformApp: appName("TARGET_APP"),
@@ -96,7 +113,7 @@ export async function requestIndependentCapacityAttestation(outputPath) {
     if (response.status === 202) {
       assert.deepEqual(Object.keys(body).sort(), ["attestationId", "pollAfterSeconds", "schemaVersion", "status"],
         "Capacity attestor pending response shape is invalid.");
-      assert.equal(body.schemaVersion, 1, "Capacity attestor pending schema is invalid.");
+      assert.equal(body.schemaVersion, 2, "Capacity attestor pending schema is invalid.");
       assert.equal(body.status, "pending", "Capacity attestor pending state is invalid.");
       assert.match(body.attestationId ?? "", /^[a-f0-9]{64}$/u, "Capacity attestor id is invalid.");
       assert.ok(Number.isInteger(body.pollAfterSeconds) && body.pollAfterSeconds >= 5 && body.pollAfterSeconds <= 30,

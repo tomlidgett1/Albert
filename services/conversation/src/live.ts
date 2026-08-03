@@ -38,6 +38,15 @@ import {
 } from "./grounding.js";
 import { SemanticServiceClient } from "./semantic-client.js";
 import {
+  assertPromptRouteClarification,
+  assertPromptRouteCompletion,
+  assertPromptRouteDataToolAllowed,
+  criticalPromptRouteContract,
+  promptRouteInstruction,
+  serverOwnedUnavailableAnswer,
+  type PromptRouteContract,
+} from "./prompt-routing.js";
+import {
   adaptGovernedResult,
   adaptValidations,
   requireCapabilities,
@@ -84,6 +93,7 @@ type LiveAgentContext = AgentToolContext & Readonly<{
   queryAuditIds: string[];
   clarificationAsked: { value: boolean };
   observationGate: ObservationGate;
+  promptRouteContract: PromptRouteContract | undefined;
   confirmationReceipt?: Readonly<{
     optionId: AlbertPreferenceOptionId;
     preference: string;
@@ -273,6 +283,7 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 35_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
+      assertPromptRouteDataToolAllowed(context.promptRouteContract, "run_semantic_query");
       assertObservationGateClear(context.observationGate);
       await context.emit({ type: "progress", status: "running", label: "Running the governed analysis" });
       const ir = semanticQueryIrSchema.parse(input);
@@ -361,6 +372,7 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 35_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
+      assertPromptRouteDataToolAllowed(context.promptRouteContract, "run_source_query");
       assertObservationGateClear(context.observationGate);
       await context.emit({ type: "progress", status: "running", label: "Exploring an allowlisted source field" });
       const response = await context.semantic.execute("run_source_query", input, context);
@@ -411,6 +423,7 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     strict: true,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
+      assertPromptRouteClarification(context.promptRouteContract, input);
       const options = input.options.map(({ id }) => resolveAlbertPreferenceOption(id));
       if (new Set(options.map((option) => option.id)).size !== options.length) {
         throw new Error("Clarification option ids must be unique.");
@@ -638,29 +651,34 @@ function governedSummaryInput(question: string, result: GovernedResult): string 
   });
 }
 
-export function createLiveAlbertAgent(preferences:AgentRunPreferences,safetyIdentifier?:string){
-  const runConfig=buildOpenAIAgentRunConfig(preferences);
-  return new Agent<LiveAgentContext,typeof finalOutputSchema>({
-    name:"Albert",
-    instructions,
-    model:runConfig.model,
-    modelSettings:{
-      reasoning:{...runConfig.modelSettings.reasoning},
-      text:{verbosity:"medium"},
-      parallelToolCalls:false,
-      store:false,
-      providerData:{
+export function createLiveAlbertAgent(
+  preferences: AgentRunPreferences,
+  safetyIdentifier?: string,
+  promptRouteContract?: PromptRouteContract,
+) {
+  const runConfig = buildOpenAIAgentRunConfig(preferences);
+  return new Agent<LiveAgentContext, typeof finalOutputSchema>({
+    name: "Albert",
+    instructions: `${instructions}${promptRouteInstruction(promptRouteContract)}`,
+    model: runConfig.model,
+    modelSettings: {
+      reasoning: { ...runConfig.modelSettings.reasoning },
+      text: { verbosity: "medium" },
+      parallelToolCalls: false,
+      store: false,
+      providerData: {
         ...runConfig.modelSettings.providerData,
-        ...(safetyIdentifier?{safety_identifier:safetyIdentifier}:{}),
+        ...(safetyIdentifier ? { safety_identifier: safetyIdentifier } : {}),
       },
     },
-    tools:[...createTools()],
-    outputType:finalOutputSchema,
+    tools: [...createTools()],
+    outputType: finalOutputSchema,
   });
 }
 
 export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Promise<LiveAlbertTurnResult> {
-  const agent=createLiveAlbertAgent(options.preferences,options.safetyIdentifier);
+  const promptRouteContract = criticalPromptRouteContract(options.message);
+  const agent = createLiveAlbertAgent(options.preferences, options.safetyIdentifier, promptRouteContract);
   const summaryAgent = createLargeResultSummaryAgent(options.preferences, options.safetyIdentifier);
   const ownedProvider = options.modelProvider ? undefined : new OpenAIProvider({
     apiKey: options.openaiApiKey,
@@ -707,6 +725,7 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     queryAuditIds,
     clarificationAsked,
     observationGate,
+    promptRouteContract,
     confirmationReceipt: options.confirmedPreference,
     summarizeLargeResult: async (result) => {
       const summarized = await summaryRunner.run(
@@ -747,6 +766,10 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
   if (!streamed.lastResponseId) throw new Error("The model provider did not return a continuation identifier.");
 
   const output = finalOutputSchema.parse(streamed.finalOutput) as FinalOutput;
+  assertPromptRouteCompletion(promptRouteContract, {
+    clarificationAsked: clarificationAsked.value,
+    queryEvidenceCount: evidence.length,
+  });
   const allRows = [...results.values()].flatMap(({ rows }) => rows);
   const sanitizedClaims = output.claims.map((claim):EvidenceClaim => ({
     ...claim,
@@ -805,6 +828,13 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     });
   }
 
+  const unavailableRouteAnswer = serverOwnedUnavailableAnswer(promptRouteContract);
+  if (unavailableRouteAnswer) {
+    answerState = "Unavailable";
+    answerText = unavailableRouteAnswer;
+    answerClaims = [];
+  }
+
   if (blockedFollowUpCount > 0) {
     await options.emit({
       type: "validation",
@@ -840,6 +870,17 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
         resultDigest: item.queryAudit.resultDigest,
         bundleHash: item.queryAudit.bundleHash,
       }] : []),
+      promptRoute: promptRouteContract ? {
+        caseId: promptRouteContract.caseId,
+        route: promptRouteContract.route,
+        ...(promptRouteContract.route === "unavailable"
+          ? {
+              reasonCode: promptRouteContract.reasonCode,
+              missingObservation: promptRouteContract.missingObservation,
+              unlock: promptRouteContract.unlock,
+            }
+          : { question: promptRouteContract.question, optionIds: promptRouteContract.optionIds }),
+      } : null,
     })),
   );
   const resultDigestHex = [...new Uint8Array(resultDigest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

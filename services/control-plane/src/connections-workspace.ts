@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ALBERT_BLOCKING_QUESTIONS_CONTRACT } from "../../../packages/config/src/blocking-questions.js";
+
 const readinessSchema = z.object({
   domain: z.string(),
   state: z.enum(["not_started", "syncing", "transforming", "validating", "ready_partial", "ready_complete", "degraded", "blocked"]),
@@ -97,57 +99,6 @@ const dossierLabels: Readonly<Record<string, string>> = {
   accounting_basis: "Accounting basis",
   channels: "Sales channels",
 };
-
-const blockingQuestions = [
-  {
-    id: "sales-lens",
-    label: "Default sales lens",
-    question: "When you say sales, which figure should Albert use by default?",
-    options: [
-      { id: "ex-gst", label: "Excluding GST" },
-      { id: "inc-gst", label: "Including GST" },
-    ],
-  },
-  {
-    id: "trading-day",
-    label: "Trading-day cutoff",
-    question: "When should a trading day end for overnight activity?",
-    options: [
-      { id: "midnight", label: "Midnight" },
-      { id: "2am", label: "2 am" },
-      { id: "4am", label: "4 am" },
-    ],
-  },
-  {
-    id: "employee-performance",
-    label: "Employee performance",
-    question: "What should performed best mean by default?",
-    options: [
-      { id: "net-sales", label: "Net sales" },
-      { id: "gross-profit", label: "Gross profit" },
-      { id: "profit-per-hour", label: "Gross profit per worked hour" },
-    ],
-  },
-  {
-    id: "pos-posting-topology",
-    label: "Xero posting method",
-    question: "How does your point of sale normally post takings into Xero?",
-    options: [
-      { id: "daily-summary", label: "Daily summary journals" },
-      { id: "line-by-line", label: "Individual transactions" },
-      { id: "not-sure", label: "I’m not sure" },
-    ],
-  },
-] as const;
-
-const blockingQuestionConnectorRequirements: Readonly<
-  Record<(typeof blockingQuestions)[number]["id"], readonly (keyof typeof providerDefinitions)[]>
-> = Object.freeze({
-  "sales-lens": Object.freeze(["lightspeed-r"] as const),
-  "trading-day": Object.freeze(["lightspeed-r"] as const),
-  "employee-performance": Object.freeze(["lightspeed-r", "deputy"] as const),
-  "pos-posting-topology": Object.freeze(["lightspeed-r", "xero"] as const),
-});
 
 function validDate(value: unknown): string | undefined {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return undefined;
@@ -357,11 +308,17 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
       latestActivityAt,
     },
     dossier,
-    blockingQuestions: blockingQuestions
-      .filter((question) => blockingQuestionConnectorRequirements[question.id]
+    blockingQuestions: ALBERT_BLOCKING_QUESTIONS_CONTRACT.questions
+      .filter((question) => question.connectorPrerequisites
         .every((connectorKey) => activeConnectorKeys.has(connectorKey)))
       .map((question) => ({
-        ...question,
+        id: question.id,
+        label: question.label,
+        question: question.question,
+        options: question.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+        })),
         selectedOptionId: workspace.blocking_answers[question.id],
       })),
     identityMatches,

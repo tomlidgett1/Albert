@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { safeDashboardRedirect } from "@/app/login/safe-redirect";
 
-function safeNext(value: string | null): string {
+function safeNext(value: string | null, origin: string): string {
   if (value === "/dash" || value === "/reset-password?mode=update") return value;
-  return "/dash";
+  return safeDashboardRedirect(value, origin);
 }
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const next = safeNext(url.searchParams.get("next"));
+  const next = safeNext(url.searchParams.get("next"), url.origin);
   if (!code) return NextResponse.redirect(new URL("/login?auth_error=missing_code", url));
 
   try {

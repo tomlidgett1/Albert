@@ -21,7 +21,7 @@ export class GitHubRunObserver {
     if (token.length < 20) throw new Error("Capacity attestor GitHub token is invalid.");
   }
 
-  async assertCandidateRun(request: CapacityAttestationRequest): Promise<void> {
+  async assertAuthorityRun(request: CapacityAttestationRequest): Promise<void> {
     const url = new URL(
       `/repos/${encodeURIComponent(request.repository.split("/")[0]!)}/${encodeURIComponent(request.repository.split("/")[1]!)}` +
       `/actions/runs/${request.workflowRunId}/attempts/${request.workflowRunAttempt}`,
@@ -42,7 +42,7 @@ export class GitHubRunObserver {
     const expectedRef = request.workflowRef.slice(request.workflowRef.indexOf("@") + 1);
     const observedPath = String(run.path ?? "");
     const [observedFile, observedRef] = observedPath.split("@", 2);
-    assert.equal(run.head_sha, request.candidateSha, "Observed GitHub run SHA differs from the candidate.");
+    assert.equal(run.head_sha, request.authoritySha, "Observed GitHub run SHA differs from the release authority.");
     assert.equal(Number(run.run_attempt), request.workflowRunAttempt, "Observed GitHub run attempt differs.");
     assert.equal(run.event, "workflow_dispatch", "Observed GitHub run was not manually protected release dispatch.");
     assert.equal(observedFile, expectedPath, "Observed GitHub workflow path differs.");
@@ -75,7 +75,7 @@ export class GitHubRunObserver {
       "Protected capacity job has no immutable check-run identity.");
     assert.match(String(job.check_run_url ?? ""), new RegExp(`/check-runs/${job.check_run_id}$`, "u"),
       "Protected capacity job check-run URL differs.");
-    assert.ok(Array.isArray(job.labels) && job.labels.includes("ubuntu-latest"),
+    assert.ok(Array.isArray(job.labels) && job.labels.includes("ubuntu-24.04"),
       "Protected capacity job is not running on the reviewed runner class.");
     const steps = Array.isArray(job.steps) ? job.steps as readonly Readonly<Record<string, unknown>>[] : [];
     const requestStep = steps.filter((step) => step.name === "Ask the independently pinned attestor to observe and sign the run");
@@ -85,7 +85,7 @@ export class GitHubRunObserver {
 
   private async assertUniqueProtectedEnvironmentJob(request: CapacityAttestationRequest): Promise<void> {
     const response = await this.github(
-      `/repos/${request.repository}/contents/.github/workflows/release.yml?ref=${request.candidateSha}`,
+      `/repos/${request.repository}/contents/.github/workflows/release-authority.yml?ref=${request.authoritySha}`,
       "application/vnd.github.raw+json",
     );
     const source = await response.text();
@@ -183,6 +183,8 @@ export class FlyCapacityObserver {
       ids.push(id);
       const digest = String(machine.image_ref?.digest ?? "");
       assert.match(digest, /^sha256:[a-f0-9]{64}$/u, "Capacity Machine image digest is unavailable.");
+      assert.equal(digest, request.candidateTransformImageDigest,
+        "Capacity Machine image digest is not the approved candidate image.");
       digests.add(digest);
     }
     for (const machine of autoscalerRunning) {

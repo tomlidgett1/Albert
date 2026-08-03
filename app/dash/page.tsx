@@ -346,9 +346,16 @@ export default function DashPage() {
   const [composerExpanded, setComposerExpanded] = useState(false);
   const reduceMotion = useReducedMotion();
   const accountAreaRef = useRef<HTMLDivElement>(null);
+  const accountPopoverRef = useRef<HTMLDivElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const accountPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatSpacerRef = useRef<HTMLDivElement>(null);
   const chatComposerRef = useRef<HTMLFormElement>(null);
+  const chatHistoryTriggerRef = useRef<HTMLButtonElement>(null);
+  const chatHistoryCloseRef = useRef<HTMLButtonElement>(null);
+  const chatHistoryPreviousFocusRef = useRef<HTMLElement | null>(null);
   const lastPinnedUserMessageIdRef = useRef<number | null>(null);
   const composerOriginTopRef = useRef<number | null>(null);
   const chatPinAnimationsRef = useRef<Array<{ stop: () => void }>>([]);
@@ -400,6 +407,22 @@ export default function DashPage() {
     }, 0);
     return () => window.clearTimeout(task);
   }, []);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      if (collapsed) {
+        setCollapsed(false);
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
+      searchInputRef.current?.focus();
+    };
+
+    document.addEventListener("keydown", focusSearch);
+    return () => document.removeEventListener("keydown", focusSearch);
+  }, [collapsed]);
 
   const loadConnections = useCallback(async () => {
     setConnectionsStatus({ kind: "loading" });
@@ -861,23 +884,77 @@ export default function DashPage() {
   useEffect(() => {
     if (!accountOpen) return;
 
+    accountPreviousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : accountTriggerRef.current;
+    const popover = accountPopoverRef.current;
+    const focusFrame = window.requestAnimationFrame(() => {
+      const selectedTheme = popover?.querySelector<HTMLElement>("[aria-pressed=\"true\"]");
+      const firstControl = popover?.querySelector<HTMLElement>("button:not(:disabled), [href]");
+      (selectedTheme ?? firstControl)?.focus();
+    });
+
     const closeMenuOnOutsidePress = (event: PointerEvent) => {
       if (!accountAreaRef.current?.contains(event.target as Node)) {
         setAccountOpen(false);
       }
     };
 
-    const closeMenuOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAccountOpen(false);
+    const handleMenuKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAccountOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !popover) return;
+      const focusable = [
+        ...popover.querySelectorAll<HTMLElement>("button:not(:disabled), [href]"),
+      ];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
 
     document.addEventListener("pointerdown", closeMenuOnOutsidePress);
-    document.addEventListener("keydown", closeMenuOnEscape);
+    document.addEventListener("keydown", handleMenuKeyDown);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("pointerdown", closeMenuOnOutsidePress);
-      document.removeEventListener("keydown", closeMenuOnEscape);
+      document.removeEventListener("keydown", handleMenuKeyDown);
+      const previousFocus = accountPreviousFocusRef.current;
+      accountPreviousFocusRef.current = null;
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [accountOpen]);
+
+  useEffect(() => {
+    if (!chatHistoryOpen) return;
+
+    chatHistoryPreviousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : chatHistoryTriggerRef.current;
+    const focusFrame = window.requestAnimationFrame(() => chatHistoryCloseRef.current?.focus());
+    const closeHistoryOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setChatHistoryOpen(false);
+    };
+    document.addEventListener("keydown", closeHistoryOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", closeHistoryOnEscape);
+      const previousFocus = chatHistoryPreviousFocusRef.current;
+      chatHistoryPreviousFocusRef.current = null;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [chatHistoryOpen]);
 
   const sendChatMessage = async (
     suggestedText?: string,
@@ -1098,7 +1175,9 @@ export default function DashPage() {
         <label className={styles.searchBox}>
           <Icon name="search" />
           <input
+            ref={searchInputRef}
             aria-label="Search"
+            aria-keyshortcuts="Meta+K Control+K"
             placeholder="Search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -1115,6 +1194,7 @@ export default function DashPage() {
                   className={`${styles.navItem} ${isActive ? styles.active : ""}`}
                   key={item.label}
                   type="button"
+                  aria-label={item.label}
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => {
                     setActiveItem(item.label);
@@ -1134,6 +1214,7 @@ export default function DashPage() {
         <div className={styles.accountArea} ref={accountAreaRef}>
           <div
             className={`${styles.accountPopover} ${accountOpen ? styles.accountPopoverOpen : ""}`}
+            ref={accountPopoverRef}
             role="dialog"
             aria-label="Account menu"
             aria-hidden={!accountOpen}
@@ -1200,6 +1281,7 @@ export default function DashPage() {
           </div>
 
           <button
+            ref={accountTriggerRef}
             className={styles.accountTrigger}
             type="button"
             aria-expanded={accountOpen}
@@ -1313,6 +1395,7 @@ export default function DashPage() {
                     <h2>History</h2>
                   </div>
                   <button
+                    ref={chatHistoryCloseRef}
                     className={styles.chatHistoryClose}
                     type="button"
                     aria-label="Close conversation history"
@@ -1500,6 +1583,7 @@ export default function DashPage() {
                   >
                     <div className={styles.chatComposerTools}>
                       <button
+                        ref={chatHistoryTriggerRef}
                         className={styles.chatHistoryTrigger}
                         type="button"
                         tabIndex={chatComposerCompact ? -1 : undefined}
@@ -1565,6 +1649,7 @@ export default function DashPage() {
             onMatchDecision={decideConnectionMatch}
             onSelectOAuthAccount={selectOAuthAccount}
             onDisconnect={disconnectConnection}
+            onRetry={() => void loadConnections()}
           />
         ) : activeItem === "Admin" && isInternalOperator ? (
           <AdminWorkspace />

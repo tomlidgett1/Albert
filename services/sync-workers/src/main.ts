@@ -29,6 +29,10 @@ import {
   PostgresOAuthTokenKekRotationStore,
 } from "./token-kek-rotation.js";
 import { SyncJobProcessor } from "./worker.js";
+import {
+  loadVendorAttestationRelayConfig,
+  VendorAttestationRelay,
+} from "./vendor-attestation-relay.js";
 
 const MAX_INTERNAL_BODY_BYTES = 64 * 1024;
 
@@ -139,6 +143,15 @@ export async function runSyncWorker(): Promise<void> {
     tokenKeyWrapper,
   );
   const credentialVaults = new CredentialVaultFactory(controlDb, cryptography);
+  const vendorAttestationRelayConfig = loadVendorAttestationRelayConfig();
+  const vendorAttestationRelay = vendorAttestationRelayConfig
+    ? new VendorAttestationRelay({
+        database: controlDb,
+        vault: credentialVaults.reader(),
+        workerId: config.workerId,
+        config: vendorAttestationRelayConfig,
+      })
+    : null;
   const connectorFactory = new ProductionConnectorFactory(config);
   const registry = new ProductionConnectorRegistry(connectorFactory, credentialVaults.reader());
   const rawSessionPool = new SupabaseMachineSessionPool(config.rawStorage);
@@ -162,7 +175,7 @@ export async function runSyncWorker(): Promise<void> {
     analytical,
     rawWriter,
     config.workerId,
-    { xeroDailyRequestLimit: config.xeroDailyRequestLimit },
+    { vendorRateBudgetOptions: { dailyRequestLimit: config.xeroDailyRequestLimit } },
   );
   const service = new SyncWorkerService(config.workerId, queue, processor, {
     visibilityTimeoutSeconds: 900,
@@ -184,6 +197,7 @@ export async function runSyncWorker(): Promise<void> {
       rawObjectStore.ready(),
       controlDb.query("select control_plane.assert_raw_storage_session_authority_ready('sync')"),
       tokenKekRotation.assertReady(),
+      ...(vendorAttestationRelay ? [vendorAttestationRelay.ready()] : []),
       controlDb.query("select control_plane.assert_analytical_capability_issuer_ready()"),
       analyticalDb.query("select capability_internal.assert_verifier_ready()"),
     ]);
@@ -352,6 +366,7 @@ export async function runSyncWorker(): Promise<void> {
       await Promise.all([
         service.run(abort.signal),
         tokenKekRotation.run(abort.signal),
+        ...(vendorAttestationRelay ? [vendorAttestationRelay.run(abort.signal)] : []),
       ]);
     } finally {
       clearInterval(heartbeatTimer);
@@ -363,6 +378,7 @@ export async function runSyncWorker(): Promise<void> {
     if (server.listening) await closeServer(server);
     if (metricsServer.listening) await closeServer(metricsServer);
     rawObjectStore.destroy();
+    vendorAttestationRelay?.destroy();
     await Promise.allSettled([controlDb.close(), analyticalDb.close()]);
   }
 }

@@ -249,6 +249,7 @@ export class XeroConnector implements OAuthConnectorPack {
       {
         method: "POST",
         headers: {
+          authorization: basicAuth(this.config.clientId),
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },
@@ -982,6 +983,7 @@ export class XeroConnector implements OAuthConnectorPack {
       {
         method: "POST",
         headers: {
+          authorization: basicAuth(this.config.clientId),
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },

@@ -10,23 +10,70 @@ import {
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { z } from "zod";
+import {
+  DOGFOOD_SEED_OUTCOME_SUITE_CASES,
+  DOGFOOD_SEED_OUTCOME_SUITE_DIGEST,
+  DOGFOOD_SEED_OUTCOME_SUITE_VERSION,
+  buildDogfoodSeedOutcomeManifestEvidence,
+  validateDogfoodSeedObservedOutcomeEvidence,
+} from "../evals/golden/seed-outcome-suite.mjs";
+import {
+  DOGFOOD_SEMANTIC_SUITE_CASES,
+  DOGFOOD_SEMANTIC_SUITE_DIGEST,
+  DOGFOOD_SEMANTIC_SUITE_VERSION,
+  dogfoodSemanticInputContractDigest,
+  validateDogfoodSemanticRangeRelations,
+} from "../evals/golden/dogfood-semantic-suite.mjs";
 
 const { Client } = pg;
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
 const COMMIT_SHA = /^[a-f0-9]{40}$/u;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
-const SAFE_ID = /^[a-z][a-z0-9_-]{1,79}$/u;
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const WORKFLOW_REF = /^refs\/tags\/[A-Za-z0-9][A-Za-z0-9._\/-]{0,239}$/u;
 const DIGIT_STRING = /^[1-9][0-9]{0,19}$/u;
+const UTC_DAY_ANCHOR = /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/u;
 const MAX_ATTESTATION_LIFETIME_MS = 6 * 60 * 60 * 1_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const MAX_SEMANTIC_COLLECTION_DURATION_MS = 65 * 60 * 1_000;
 
 const digestSchema = z.string().regex(SHA256_HEX);
+const prefixedDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const connectorSchema = z.enum(["lightspeed-r", "xero", "deputy"]);
 const answerStateSchema = z.enum(["verified", "qualified"]);
+const dogfoodM5ResultCasesSchema = z.tuple(DOGFOOD_SEMANTIC_SUITE_CASES.map((entry) => z.object({
+  caseId: z.literal(entry.caseId),
+  kind: z.literal(entry.kind),
+  answerState: z.literal(entry.expectedState),
+  queries: z.tuple(entry.queries.map((query) => z.object({
+    queryId: z.literal(query.queryId),
+    rowRequirement: z.literal(query.rowRequirement),
+    rowCount: z.number().int().min(query.rowRequirement === "nonempty" ? 1 : 0).max(10_000),
+    resultDigest: digestSchema,
+    bundleHash: digestSchema,
+  }).strict())),
+}).strict()));
+const dogfoodM5ProtectedPlanCasesSchema = z.tuple(DOGFOOD_SEMANTIC_SUITE_CASES.map((entry) => z.object({
+  caseId: z.literal(entry.caseId),
+  queries: z.tuple(entry.queries.map((query) => z.object({
+    queryId: z.literal(query.queryId),
+    expectedResultDigest: digestSchema,
+    input: z.record(z.string(), z.unknown()),
+  }).strict())),
+}).strict()));
+const dogfoodSeedOutcomesSchema = z.tuple(DOGFOOD_SEED_OUTCOME_SUITE_CASES.map((entry) => z.object({
+  caseId: z.literal(entry.caseId),
+  promptDigest: z.literal(entry.promptDigest),
+  expectedRoute: z.literal(entry.expectedRoute),
+  expectedState: z.literal(entry.expectedState),
+  requiredOutcomeDigest: z.literal(entry.requiredOutcomeDigest),
+  observedRoute: z.literal(entry.expectedRoute),
+  observedState: z.literal(entry.expectedState),
+  observedOutcomeDigest: z.literal(entry.requiredOutcomeDigest),
+  passed: z.literal(true),
+}).strict()));
 export const DOGFOOD_REQUIRED_RUNTIMES = Object.freeze([
   "deletion-worker",
   "operator-diagnostic",
@@ -37,6 +84,57 @@ export const DOGFOOD_REQUIRED_RUNTIMES = Object.freeze([
   "webhook-gateway",
 ]);
 const deploymentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u);
+const flyAppsSchema = z.tuple([
+  ["deletion-worker", "private"],
+  ["operator-diagnostic", "public"],
+  ["semantic-query", "public"],
+  ["sync-worker", "public"],
+  ["transform-worker", "private"],
+  ["webhook-gateway", "public"],
+].map(([service, exposure]) => z.object({
+  service: z.literal(service),
+  exposure: z.literal(exposure),
+  appId: z.string().min(1).max(256),
+  appName: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/u),
+  origin: exposure === "public" ? z.string().url().startsWith("https://") : z.null(),
+  platformVersion: z.string().min(1).max(128),
+  machineIds: z.array(z.string().regex(/^[a-f0-9]{14}$/u)).min(2).max(40),
+  machineConfigDigest: digestSchema,
+  secretSetDigest: digestSchema,
+}).strict()));
+
+const flyManifestSchema = z.object({
+  organization: z.object({
+    id: z.string().min(1).max(256),
+    slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/u),
+    name: z.string().min(1).max(200),
+  }).strict(),
+  candidateSha: z.string().regex(COMMIT_SHA),
+  deploymentId: deploymentIdSchema,
+  imageDigest: prefixedDigestSchema,
+  observedAt: z.string().datetime({ offset: true }),
+  apps: flyAppsSchema,
+  manifestDigest: digestSchema,
+}).strict();
+
+const sitesManifestSchema = z.object({
+  projectId: z.string().regex(/^appgprj_[a-f0-9]{32}$/u),
+  versionId: z.string().min(1).max(256),
+  versionNumber: z.number().int().positive(),
+  sourceCommitSha: z.string().regex(COMMIT_SHA),
+  archiveContentHash: prefixedDigestSchema,
+  deploymentId: z.string().min(1).max(256),
+  providerDeploymentId: z.string().min(1).max(512),
+  deploymentUrl: z.string().url().startsWith("https://"),
+  environmentRevision: z.number().int().positive(),
+  environmentBindingDigest: digestSchema,
+  accessMode: z.enum(["public", "admins_only", "workspace_all", "custom"]),
+  accessPolicyRevision: z.number().int().positive(),
+  accessPolicyDigest: digestSchema,
+  customDomains: z.array(z.string().min(1).max(253)).max(20),
+  observedAt: z.string().datetime({ offset: true }),
+  manifestDigest: digestSchema,
+}).strict();
 
 const zeroResidualsSchema = z.object({
   rawObjects: z.literal(0),
@@ -65,8 +163,23 @@ const deletionProofSchema = z.object({
   residuals: zeroResidualsSchema,
 }).strict();
 
+const dogfoodM6LineageBindingSchema = z.object({
+  artifactDigest: digestSchema,
+  traceDigest: digestSchema,
+  answerState: answerStateSchema,
+  provenanceComplete: z.literal(true),
+  sequentialNarrative: z.literal(true),
+  contractVersion: z.literal(1),
+  caseContractDigest: digestSchema,
+  questionDigest: digestSchema,
+  semanticPlanDigest: digestSchema,
+  traceContractDigest: digestSchema,
+  provenanceDigest: digestSchema,
+  lineageBindingDigest: digestSchema,
+}).strict();
+
 export const dogfoodAcceptanceBodySchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(4),
   kind: z.literal("albert.protected-dogfood-acceptance"),
   attestationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
   candidateSha: z.string().regex(COMMIT_SHA),
@@ -104,6 +217,8 @@ export const dogfoodAcceptanceBodySchema = z.object({
     deploymentId: deploymentIdSchema,
     barrierAt: z.string().datetime({ offset: true }),
     identityDigest: digestSchema,
+    fly: flyManifestSchema,
+    sites: sitesManifestSchema,
   }).strict(),
   connectionGenerations: z.array(z.object({
     connector: connectorSchema,
@@ -129,45 +244,57 @@ export const dogfoodAcceptanceBodySchema = z.object({
     }).strict(),
     m5: z.object({
       passed: z.literal(true),
+      suiteVersion: z.literal(DOGFOOD_SEMANTIC_SUITE_VERSION),
+      suiteDigest: z.literal(DOGFOOD_SEMANTIC_SUITE_DIGEST),
+      caseCount: z.literal(DOGFOOD_SEMANTIC_SUITE_CASES.length),
+      collectionAnchor: z.string().datetime({ offset: true }).regex(UTC_DAY_ANCHOR),
       planDigest: digestSchema,
-      cases: z.array(z.object({
-        caseId: z.string().regex(SAFE_ID),
-        kind: z.enum(["golden", "composite"]),
-        answerState: answerStateSchema,
-        rowCount: z.number().int().nonnegative().max(10_000),
-        resultDigest: digestSchema,
-        bundleHash: digestSchema,
-      }).strict()).min(2).max(20),
+      referencePlanDigest: digestSchema,
+      referenceSignerKeyId: z.string().regex(KEY_ID),
+      seedOutcomeSuiteVersion: z.literal(DOGFOOD_SEED_OUTCOME_SUITE_VERSION),
+      seedOutcomeSuiteDigest: z.literal(DOGFOOD_SEED_OUTCOME_SUITE_DIGEST),
+      seedOutcomeCaseCount: z.literal(DOGFOOD_SEED_OUTCOME_SUITE_CASES.length),
+      seedOutcomeManifestDigest: digestSchema,
+      seedOutcomeEvidenceDigest: digestSchema,
+      seedOutcomes: dogfoodSeedOutcomesSchema,
+      cases: dogfoodM5ResultCasesSchema,
       evidenceDigest: digestSchema,
     }).strict(),
     m6: z.object({
       passed: z.literal(true),
-      flagship: z.object({
-        artifactDigest: digestSchema,
-        traceDigest: digestSchema,
-        answerState: answerStateSchema,
-        queryCount: z.number().int().min(2).max(20),
-        provenanceComplete: z.literal(true),
-        sequentialNarrative: z.literal(true),
+      flagship: dogfoodM6LineageBindingSchema.extend({
+        queryCount: z.literal(2),
       }).strict(),
-      category: z.object({
-        artifactDigest: digestSchema,
-        traceDigest: digestSchema,
-        answerState: answerStateSchema,
-        queryCount: z.number().int().positive().max(20),
-        provenanceComplete: z.literal(true),
-        sequentialNarrative: z.literal(true),
+      category: dogfoodM6LineageBindingSchema.extend({
+        queryCount: z.literal(1),
         chartPresent: z.literal(true),
       }).strict(),
       evidenceDigest: digestSchema,
     }).strict(),
     m7: z.object({
       passed: z.literal(true),
+      journeyRef: digestSchema,
+      journeyIssuedAt: z.string().datetime({ offset: true }),
+      claimedAt: z.string().datetime({ offset: true }),
+      browserReceiptAt: z.string().datetime({ offset: true }),
       onboardingMinutes: z.number().nonnegative().max(24 * 60),
       targetMinutes: z.number().int().positive().max(24 * 60),
       readyPartialDomainCount: z.number().int().positive().max(100),
-      blockingAnswerCount: z.number().int().min(4).max(100),
+      readinessBindingDigest: digestSchema,
+      liveVendorAttestationConsumptionRef: digestSchema,
+      liveVendorAttestationEvidenceDigest: digestSchema,
+      liveVendorAttestationProviderCount: z.literal(3),
+      controlEvidenceDigest: digestSchema,
+      blockingAnswerCount: z.literal(4),
+      blockingQuestionContractDigest: digestSchema,
+      blockingResponseDigest: digestSchema,
       overlayDigest: digestSchema,
+      oauthConnectionCount: z.literal(3),
+      claimDigest: digestSchema,
+      browserReceiptDigest: digestSchema,
+      authAuditProofDigest: digestSchema,
+      oauthBindingDigest: digestSchema,
+      journeyBindingDigest: digestSchema,
       evidenceDigest: digestSchema,
     }).strict(),
     m8: z.object({
@@ -190,6 +317,37 @@ export const dogfoodAcceptanceBodySchema = z.object({
   if (Date.parse(value.runtimes.barrierAt) > issuedAt) {
     context.addIssue({ code: "custom", path: ["runtimes", "barrierAt"], message: "Candidate deployment barrier is after evidence issuance." });
   }
+  if (value.runtimes.fly.candidateSha !== value.candidateSha
+      || value.runtimes.fly.deploymentId !== value.runtimes.deploymentId) {
+    context.addIssue({
+      code: "custom",
+      path: ["runtimes", "fly"],
+      message: "Fly provenance is not bound to the attested candidate and deployment.",
+    });
+  }
+  if (value.runtimes.sites.sourceCommitSha !== value.candidateSha) {
+    context.addIssue({
+      code: "custom",
+      path: ["runtimes", "sites", "sourceCommitSha"],
+      message: "Sites provenance is not bound to the attested candidate.",
+    });
+  }
+  const flyWithoutDigest = { ...value.runtimes.fly };
+  delete flyWithoutDigest.manifestDigest;
+  const sitesWithoutDigest = { ...value.runtimes.sites };
+  delete sitesWithoutDigest.manifestDigest;
+  if (value.runtimes.fly.manifestDigest !== sha256(flyWithoutDigest)) {
+    context.addIssue({ code: "custom", path: ["runtimes", "fly", "manifestDigest"],
+      message: "Fly platform manifest digest is inconsistent." });
+  }
+  if (value.runtimes.sites.manifestDigest !== sha256(sitesWithoutDigest)) {
+    context.addIssue({ code: "custom", path: ["runtimes", "sites", "manifestDigest"],
+      message: "Sites platform manifest digest is inconsistent." });
+  }
+  if (value.runtimes.identityDigest !== sha256({ fly: value.runtimes.fly, sites: value.runtimes.sites })) {
+    context.addIssue({ code: "custom", path: ["runtimes", "identityDigest"],
+      message: "Combined platform identity digest is inconsistent." });
+  }
   const connectorSet = new Set(value.connectionGenerations.map(({ connector }) => connector));
   if (connectorSet.size !== 3) {
     context.addIssue({ code: "custom", path: ["connectionGenerations"], message: "Each V1 connector must be attested exactly once." });
@@ -206,12 +364,55 @@ export const dogfoodAcceptanceBodySchema = z.object({
   if (m7.onboardingMinutes > m7.targetMinutes) {
     context.addIssue({ code: "custom", path: ["milestones", "m7", "onboardingMinutes"], message: "Fresh onboarding exceeded its target." });
   }
-  const kinds = new Set(m5.cases.map(({ kind }) => kind));
-  if (!kinds.has("golden") || !kinds.has("composite")) {
-    context.addIssue({ code: "custom", path: ["milestones", "m5", "cases"], message: "Dogfood requires both numeric golden and composite cases." });
+  const m7Content = { ...m7 };
+  delete m7Content.evidenceDigest;
+  if (m7.evidenceDigest !== sha256(m7Content)) {
+    context.addIssue({
+      code: "custom",
+      path: ["milestones", "m7", "evidenceDigest"],
+      message: "M7 evidence digest is inconsistent with its signed content.",
+    });
   }
-  if (new Set(m5.cases.map(({ caseId }) => caseId)).size !== m5.cases.length) {
-    context.addIssue({ code: "custom", path: ["milestones", "m5", "cases"], message: "Dogfood case ids must be unique." });
+  const collectionAnchor = Date.parse(m5.collectionAnchor);
+  if (collectionAnchor < issuedAt - MAX_SEMANTIC_COLLECTION_DURATION_MS ||
+      collectionAnchor > issuedAt + 24 * 60 * 60 * 1_000) {
+    context.addIssue({
+      code: "custom",
+      path: ["milestones", "m5", "collectionAnchor"],
+      message: "Semantic collection anchor is not contemporaneous with evidence issuance.",
+    });
+  }
+  if (m5.evidenceDigest !== computeDogfoodM5EvidenceDigest(m5)) {
+    context.addIssue({
+      code: "custom",
+      path: ["milestones", "m5", "evidenceDigest"],
+      message: "M5 evidence digest is inconsistent with its signed content.",
+    });
+  }
+  try {
+    validateDogfoodSeedObservedOutcomeEvidence({
+      suiteVersion: m5.seedOutcomeSuiteVersion,
+      suiteDigest: m5.seedOutcomeSuiteDigest,
+      cases: m5.seedOutcomes,
+    });
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      path: ["milestones", "m5", "seedOutcomes"],
+      message: error instanceof Error ? error.message : "Seed outcome evidence is invalid.",
+    });
+  }
+  if (m5.seedOutcomeManifestDigest !== sha256(buildDogfoodSeedOutcomeManifestEvidence())) {
+    context.addIssue({ code: "custom", path: ["milestones", "m5", "seedOutcomeManifestDigest"],
+      message: "Seed outcome manifest digest is inconsistent." });
+  }
+  if (m5.seedOutcomeEvidenceDigest !== sha256({
+    suiteVersion: m5.seedOutcomeSuiteVersion,
+    suiteDigest: m5.seedOutcomeSuiteDigest,
+    cases: m5.seedOutcomes,
+  })) {
+    context.addIssue({ code: "custom", path: ["milestones", "m5", "seedOutcomeEvidenceDigest"],
+      message: "Seed outcome evidence digest is inconsistent." });
   }
 });
 
@@ -224,25 +425,67 @@ export const dogfoodAcceptanceEnvelopeSchema = z.object({
   }).strict(),
 }).strict();
 
-export const dogfoodSemanticPlanSchema = z.array(z.object({
-  caseId: z.string().regex(SAFE_ID),
-  kind: z.enum(["golden", "composite"]),
-  expectedResultDigest: digestSchema,
-  input: z.record(z.string(), z.unknown()),
-}).strict()).min(2).max(20).superRefine((cases, context) => {
-  if (new Set(cases.map(({ caseId }) => caseId)).size !== cases.length) {
-    context.addIssue({ code: "custom", message: "Semantic case ids must be unique." });
-  }
-  const kinds = new Set(cases.map(({ kind }) => kind));
-  if (!kinds.has("golden") || !kinds.has("composite")) {
-    context.addIssue({ code: "custom", message: "The plan requires a golden and a composite case." });
-  }
-  for (const [index, item] of cases.entries()) {
-    if ((item.kind === "composite") !== (item.input.kind === "composite")) {
-      context.addIssue({ code: "custom", path: [index, "input", "kind"], message: "Case kind and semantic IR kind do not agree." });
+export const dogfoodSemanticPlanSchema = z.object({
+  suiteVersion: z.literal(DOGFOOD_SEMANTIC_SUITE_VERSION),
+  suiteDigest: z.literal(DOGFOOD_SEMANTIC_SUITE_DIGEST),
+  cases: dogfoodM5ProtectedPlanCasesSchema,
+}).strict().superRefine((plan, context) => {
+  for (const [index, item] of plan.cases.entries()) {
+    const registryEntry = DOGFOOD_SEMANTIC_SUITE_CASES[index];
+    for (const [queryIndex, query] of item.queries.entries()) {
+      const queryContract = registryEntry.queries[queryIndex];
+      if ((registryEntry.kind === "composite") !== (query.input.kind === "composite")) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "queries", queryIndex, "input", "kind"],
+          message: `Case ${registryEntry.caseId} query ${queryContract.queryId} must use its reviewed ${registryEntry.kind} IR shape.`,
+        });
+      }
+      try {
+        if (dogfoodSemanticInputContractDigest(query.input, queryContract.periods) !== queryContract.inputContractDigest) {
+          context.addIssue({
+            code: "custom",
+            path: ["cases", index, "queries", queryIndex, "input"],
+            message: `Case ${registryEntry.caseId} query ${queryContract.queryId} does not match its reviewed semantic input contract.`,
+          });
+        }
+      } catch (error) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "queries", queryIndex, "input"],
+          message: error instanceof Error ? error.message : "Reviewed semantic period validation failed.",
+        });
+      }
+    }
+    try {
+      validateDogfoodSemanticRangeRelations(
+        new Map(item.queries.map((query) => [query.queryId, query.input])),
+        registryEntry.rangeRelations,
+      );
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        path: ["cases", index, "queries"],
+        message: error instanceof Error ? error.message : "Reviewed semantic period alignment failed.",
+      });
     }
   }
-});
+}).transform((plan) => Object.freeze({
+  suiteVersion: plan.suiteVersion,
+  suiteDigest: plan.suiteDigest,
+  cases: Object.freeze(plan.cases.map((item, index) => Object.freeze({
+    caseId: item.caseId,
+    kind: DOGFOOD_SEMANTIC_SUITE_CASES[index].kind,
+    expectedState: DOGFOOD_SEMANTIC_SUITE_CASES[index].expectedState,
+    rangeRelations: DOGFOOD_SEMANTIC_SUITE_CASES[index].rangeRelations,
+    queries: Object.freeze(item.queries.map((query, queryIndex) => Object.freeze({
+      ...query,
+      rowRequirement: DOGFOOD_SEMANTIC_SUITE_CASES[index].queries[queryIndex].rowRequirement,
+      periods: DOGFOOD_SEMANTIC_SUITE_CASES[index].queries[queryIndex].periods,
+      inputContractDigest: DOGFOOD_SEMANTIC_SUITE_CASES[index].queries[queryIndex].inputContractDigest,
+    }))),
+  }))),
+}));
 
 export const DOGFOOD_ACCEPTANCE_JSON_SCHEMA = Object.freeze(z.toJSONSchema(
   dogfoodAcceptanceEnvelopeSchema,
@@ -282,6 +525,13 @@ export function computeEvidenceDigest(body) {
     connectionGenerations: body.connectionGenerations,
     milestones: body.milestones,
   });
+}
+
+export function computeDogfoodM5EvidenceDigest(m5) {
+  assert.ok(m5 && typeof m5 === "object" && !Array.isArray(m5), "M5 evidence must be an object.");
+  const content = { ...m5 };
+  delete content.evidenceDigest;
+  return sha256(content);
 }
 
 export function dogfoodAcceptanceKeyId(keyInput) {

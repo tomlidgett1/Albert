@@ -58,11 +58,16 @@ test("all 25 V1 seed questions run through the deterministic golden harness", as
   assert.equal(result.questionCount, 25);
   assert.equal(result.cases.length, 25);
   assert.equal(new Set(result.cases.map((item) => item.id)).size, 25);
-  assert.equal(result.executableCount, 21);
+  assert.equal(result.executableCount, 25);
   assert.deepEqual(result.executableGaps, []);
 
   for (const item of result.cases) {
-    if (item.outcome === "passed") assert.match(item.bundleHash ?? "", /^[a-f0-9]{64}$/);
+    if (item.outcome === "passed" && (item.route === "semantic" || item.route === "source_exploration")) {
+      assert.match(item.bundleHash ?? "", /^[a-f0-9]{64}$/);
+    }
+    if (item.outcome === "passed" && (item.route === "clarification" || item.route === "unavailable")) {
+      assert.ok(item.reason);
+    }
     if (item.outcome === "executable_gap") assert.ok(item.reason);
   }
 });

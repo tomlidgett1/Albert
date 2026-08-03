@@ -3,6 +3,8 @@
  * in thrown errors or readiness responses.
  */
 
+import { ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST } from "./blocking-questions.js";
+
 export type RuntimeMode =
   | "web"
   | "worker"
@@ -121,6 +123,7 @@ const productionRequirements: Readonly<Record<RuntimeMode, readonly string[]>> =
     "ALBERT_LIGHTSPEED_PRODUCT",
     "ALBERT_CONVERSATION_RUNTIME",
     "ALBERT_ALLOW_FIXTURE_RUNTIME",
+    "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST",
     "ALBERT_SERVICE_VERSION",
     "ALBERT_DEPLOYMENT_ID",
   ],
@@ -475,6 +478,12 @@ export function inspectRuntimeEnvironment(
       }
       if (source.ALBERT_ALLOW_FIXTURE_RUNTIME?.trim() !== "false") {
         invalid.push("ALBERT_ALLOW_FIXTURE_RUNTIME");
+      }
+      if (
+        source.ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST?.trim() !==
+          ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST
+      ) {
+        invalid.push("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST");
       }
     }
     if (

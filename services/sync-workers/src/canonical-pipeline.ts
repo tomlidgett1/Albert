@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
-import { deputyManifest } from "../../../connectors/deputy/manifest.js";
-import { lightspeedRManifest } from "../../../connectors/lightspeed-r/manifest.js";
-import { xeroManifest } from "../../../connectors/xero/manifest.js";
+import {
+  connectorCompatibilityReplay,
+  connectorDossierContributors,
+  connectorHookDatabase,
+  connectorHookDatabaseBinding,
+  connectorReferenceLookup,
+} from "../../../connectors/canonical-registry.js";
+import {
+  connectorManifest,
+  connectorManifests,
+} from "../../../connectors/registry.js";
 import {
   type SourceAuthorityConcept,
 } from "../../../packages/canonical-schema/src/index.js";
@@ -14,6 +22,7 @@ import {
   type FieldCoverage,
   type StagingFieldContract,
   type StagingStreamContract,
+  type StreamContract,
 } from "../../../packages/connector-sdk/src/index.js";
 import type { PostgresQueryClient } from "../../../packages/queue/src/index.js";
 import type { TransactionalPostgres } from "./database.js";
@@ -21,6 +30,7 @@ import {
   isCanonicalSourceReference,
   type CanonicalEntityType,
   type CanonicalCategoryAssignmentCommand,
+  type CanonicalDossierFactContribution,
   type CanonicalEventLinkCommand,
   type CanonicalIdentityHintCommand,
   type CanonicalMappingContext,
@@ -32,49 +42,8 @@ import {
   type CanonicalUpsertCommand,
 } from "./canonical-contract.js";
 
-const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
-const manifestsByConnector = new Map(manifests.map((manifest) => [manifest.id, manifest]));
-const stagingContracts = buildStagingContracts(manifests);
+const stagingContracts = buildStagingContracts(connectorManifests);
 const stagingByStream = new Map(stagingContracts.map((contract) => [`${contract.connectorId}:${contract.stream}`, contract]));
-const sourceAuthorityByStream = Object.freeze({
-  "lightspeed-r": Object.freeze({
-    shops: "operational_sales",
-    employees: "operational_sales",
-    categories: "product_master",
-    items: "product_master",
-    item_shops: "stock",
-    sales: "operational_sales",
-    customers: "customer_master",
-    vendors: "stock",
-    orders: "stock",
-    order_lines: "stock",
-    payment_types: "operational_sales",
-    tax_categories: "operational_sales",
-    inventory_logs: "stock",
-  }),
-  xero: Object.freeze({
-    organisation: "statutory_finance",
-    accounts: "statutory_finance",
-    contacts: "statutory_finance",
-    invoices: "statutory_finance",
-    credit_notes: "statutory_finance",
-    payments: "cash_settlement",
-    bank_transactions: "cash_settlement",
-    manual_journals: "statutory_finance",
-    journals: "statutory_finance",
-    tax_rates: "statutory_finance",
-    tracking_categories: "statutory_finance",
-  }),
-  deputy: Object.freeze({
-    companies: "planned_shifts",
-    operational_units: "planned_shifts",
-    employees: "worked_hours",
-    rosters: "planned_shifts",
-    timesheets: "worked_hours",
-    leave: "worked_hours",
-    contacts: "worked_hours",
-  }),
-} satisfies Readonly<Record<ConnectorId, Readonly<Record<string, SourceAuthorityConcept>>>>);
 type TableConfig = Readonly<{
   rank: number;
   columns: ReadonlySet<string>;
@@ -113,28 +82,6 @@ const tableColumns: Readonly<Record<CanonicalProjectionTable, TableConfig>> = Ob
   workforce_leave: config(100, true, ["worker_id","employment_episode_id","location_id","starts_at","ends_at","business_date","status","leave_type","leave_minutes","leave_cost","currency"]),
 });
 
-const defaultAuthority: Readonly<Record<ConnectorId, readonly SourceAuthorityConcept[]>> = {
-  "lightspeed-r": ["operational_sales","stock","product_master","customer_master"],
-  xero: ["statutory_finance","cash_settlement"],
-  deputy: ["planned_shifts","worked_hours"],
-};
-
-const defaultFactAuthority: Partial<Record<CanonicalProjectionTable, SourceAuthorityConcept>> = {
-  commerce_order: "operational_sales",
-  commerce_order_line: "operational_sales",
-  commerce_payment: "operational_sales",
-  commerce_refund_line: "operational_sales",
-  inventory_movement: "stock",
-  inventory_balance_snapshot: "stock",
-  purchase_order_line: "stock",
-  finance_journal_line: "statutory_finance",
-  finance_invoice_line: "statutory_finance",
-  finance_bank_transaction: "cash_settlement",
-  workforce_shift: "planned_shifts",
-  workforce_time_entry: "worked_hours",
-  workforce_leave: "worked_hours",
-};
-
 export type CanonicalTransformResult = Readonly<{
   batchId: string;
   replayed: boolean;
@@ -147,6 +94,10 @@ export type CanonicalTransformResult = Readonly<{
   partialQualityStatus: "passed" | "warning" | "failed" | "blocked";
   completeQualityStatus: "passed" | "warning" | "failed" | "blocked";
   dataReadyThrough: string | null;
+  compatibilityReplayPending: boolean;
+  compatibilityReplayCandidates: number;
+  compatibilityReplayCommands: number;
+  compatibilityReplayProgressToken: string | null;
 }>;
 
 export type ReadinessQualityEvidence = Readonly<{
@@ -328,6 +279,8 @@ export class CanonicalTransformPipeline {
     }
     const contract = requireStagingContract(job.connectorId, stream);
     const manifest = requireManifest(job.connectorId);
+    const streamContract = requireStreamContract(manifest, stream);
+    const streamAuthority = streamContract.authorityConcept;
     const mapper = this.mappers[job.connectorId];
     if (!mapper) throw new Error(`canonical_mapper_missing:${job.connectorId}`);
     const mappingContext = await loadMappingContext(this.control, job);
@@ -368,8 +321,11 @@ export class CanonicalTransformPipeline {
       const appliedCommands: CanonicalProjectionCommand[] = [];
       const previouslyMaterializedDates:string[]=[];
       for (const item of commands) {
+        assertCanonicalCommandAdmission(item.command,streamContract);
         if (item.command.kind === "dimension" || item.command.kind === "fact") {
-          const outcome=await executeUpsert(client, job, item.row, item.command);
+          const outcome=await executeUpsert(
+            client,job,item.row,item.command,streamAuthority,
+          );
           if (outcome.applied) {
             canonicalRows += 1;
             appliedCommands.push(item.command);
@@ -402,7 +358,6 @@ export class CanonicalTransformPipeline {
       await generateIdentitySuggestions(client, job.tenantId);
       const acceptedRows = isolated.accepted.map(({ row }) => row);
       const readyThrough = latestSourceTimestamp(acceptedRows);
-      const snapshotAt = this.clock().toISOString();
       const dateBounds = canonicalDateBounds(appliedCommands,previouslyMaterializedDates);
       if (dateBounds) {
         await ensureCalendarDays(client,dateBounds);
@@ -414,14 +369,21 @@ export class CanonicalTransformPipeline {
       }
       // Invariants must observe the newly refreshed marts and settlement links,
       // never the prior committed analytical state.
+      // Refresh connector checks here as well: the ingest-side rollup precedes
+      // the control-plane run commit, while a release attestation must be
+      // causally newer than that durable completion evidence.
+      await client.query("select quality.refresh_connector_quality_rollup($1,$2)", [
+        job.tenantId,job.syncRunId,
+      ]);
       await client.query("select quality.run_all_invariants($1,$2)", [job.tenantId, job.syncRunId]);
       await client.query(
         "select quality.record_canonical_mapping_quality($1,$2,$3::bigint,$4::bigint)",
         [job.tenantId,job.syncRunId,rows.length,isolated.rejected.length],
       );
+      const snapshotAt = this.clock().toISOString();
       await client.query(
-        "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb)",
-        [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough })],
+        "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb,$5::text)",
+        [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough }),job.syncRunId],
       );
       const qualityStatuses = await readinessQualityStatuses(client,job.tenantId,job.syncRunId);
       const qualityStatus=backfillComplete
@@ -449,78 +411,152 @@ export class CanonicalTransformPipeline {
         partialQualityStatus:qualityStatuses.partial,
         completeQualityStatus:qualityStatuses.complete,
         dataReadyThrough:readyThrough,
+        compatibilityReplayPending:false,
+        compatibilityReplayCandidates:0,
+        compatibilityReplayCommands:0,
+        compatibilityReplayProgressToken:null,
       } satisfies CanonicalTransformResult;
     }));
 
-    await this.drainLegacyLightspeedOrderDependencies(
+    const compatibilityReplay=await this.drainCompatibilityReplay(
       job,stream,mapper,mappingContext,authorization,
     );
 
-    if(publishControl){
+    if(publishControl&&!compatibilityReplay.pending){
       await this.publishPendingControlProjections(job.tenantId, job.batchId,authorization);
       await this.refreshDossier(job.tenantId,authorization);
     }
-    return result;
+    return Object.freeze({
+      ...result,
+      compatibilityReplayPending:compatibilityReplay.pending,
+      compatibilityReplayCandidates:compatibilityReplay.candidates,
+      compatibilityReplayCommands:compatibilityReplay.commands,
+      compatibilityReplayProgressToken:compatibilityReplay.progressToken,
+    });
   }
 
   /**
    * Compatibility projection is deliberately outside the terminal page's
    * transform transaction. Each bounded chunk commits its exact audit
    * progress, so a worker crash or lease hand-off resumes from the first
-   * unaudited Order instead of restarting an unbounded historical scan.
+   * unaudited record instead of restarting an unbounded historical scan.
    */
-  private async drainLegacyLightspeedOrderDependencies(
+  private async drainCompatibilityReplay(
     job:CanonicalTransformBatch,
     stream:string,
     mapper:CanonicalStreamMapper,
     context:CanonicalMappingContext,
     authorization:TransformCapabilityEvidence|undefined,
-  ):Promise<void>{
-    if(job.connectorId!=="lightspeed-r"||!['vendors','orders'].includes(stream))return;
-    for(;;){
-      const done=await this.withTransformAuthorization(authorization,(capability)=>
-        this.analytical.transaction(async(client)=>{
-          await establishTransformScope(client,job.tenantId,capability);
-          await client.query(
-            "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-            [`canonical:${job.tenantId}`],
-          );
-          const progress=await replayLegacyLightspeedOrderDependencyChunk(
-            client,job,stream,mapper,context,
-          );
-          const dateBounds=canonicalDateBounds(
-            progress.appliedCommands,progress.previousDates,
-          );
-          if(dateBounds){
-            await ensureCalendarDays(client,dateBounds);
-            await refreshMarts(client,job.tenantId,dateBounds);
-            await client.query(
-              "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
-              [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
-            );
-            await client.query(
-              "select quality.run_all_invariants($1,$2)",
-              [job.tenantId,job.syncRunId],
-            );
-          }
-          if(!progress.eligible)return true;
-          if(progress.pending)return false;
-          const finalized=await client.query<{result:unknown}>(
-            `select semantic_internal.finalize_lightspeed_supplier_replay_gate(
-               $1::text,$2::text,$3::text
-             ) as result`,
-            [job.tenantId,job.connectionId,job.batchId],
-          );
-          const gate=finalized.rows[0]?.result;
-          if(!gate||typeof gate!=="object"||Array.isArray(gate)
-            ||(gate as {ready?:unknown}).ready!==true){
-            throw new Error("canonical_dependency_replay_gate_not_ready");
-          }
-          return true;
-        })
-      );
-      if(done)return;
+  ):Promise<Readonly<{pending:boolean;candidates:number;commands:number;progressToken:string|null}>>{
+    const hook=connectorCompatibilityReplay(job.connectorId);
+    if(!hook?.handles(job,stream))return Object.freeze({pending:false,candidates:0,commands:0,progressToken:null});
+    if(!Number.isSafeInteger(hook.candidateLimit)||hook.candidateLimit<1||hook.candidateLimit>1_000||
+        !Number.isSafeInteger(hook.commandLimit)||hook.commandLimit<1||hook.commandLimit>5_000){
+      throw new Error("canonical_dependency_replay_budget_invalid");
     }
+    const manifest=requireManifest(job.connectorId);
+    const sourceContract=requireStreamContract(manifest,hook.sourceStream);
+    return this.withTransformAuthorization(authorization,(capability)=>
+      this.analytical.transaction(async(client)=>{
+        await establishTransformScope(client,job.tenantId,capability);
+        await client.query(
+          "select pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [`canonical:${job.tenantId}`],
+        );
+        const binding=connectorHookDatabaseBinding(hook.databaseRegistrationId,client,{
+          tenantId:job.tenantId,connectionId:job.connectionId,
+          batchId:job.batchId,syncRunId:job.syncRunId,
+          mappingVersion:job.mappingVersion,connectionGeneration:job.connectionGeneration,
+        });
+        const selection=await hook.selectChunk({database:binding.database,job});
+        binding.assertReplaySelection(selection.eligible,selection.candidates);
+        if(!selection.eligible){
+          if(selection.candidates.length)throw new Error("canonical_dependency_replay_selection_invalid");
+          return Object.freeze({pending:false,candidates:0,commands:0,progressToken:null});
+        }
+        let commandCount=0;
+        let checkpointCount=0;
+        let pending=false;
+        const appliedCommands:CanonicalProjectionCommand[]=[];
+        const previousDates:string[]=[];
+        const progressEvidence:string[]=[];
+        for(const handle of selection.candidates){
+          const row=binding.resolveReplayCandidate(handle);
+          const sourceJob=Object.freeze({...job,batchId:row.payload_batch_id,syncRunId:row.sync_run_id});
+          assertStagingLineage(row,sourceJob,job.mappingVersion);
+          if(row.source_object_type!==sourceContract.resource||row.tombstone!==false||
+              !row.namespaced_source_key.trim()||!row.source_record_id.trim()||
+              !/^[a-f0-9]{64}$/u.test(row.payload_hash)){
+            throw new Error(`canonical_dependency_replay_lineage_invalid:${row.source_record_id}`);
+          }
+          const mapped=mapper(hook.sourceStream,row,context);
+          if(!Array.isArray(mapped)||!mapped.length){
+            throw new Error(`canonical_dependency_replay_mapper_empty:${row.source_record_id}`);
+          }
+          const upserts:CanonicalUpsertCommand[]=[];
+          const identities=new Set<string>();
+          for(const command of mapped){
+            assertCanonicalCommandAdmission(command,sourceContract);
+            if(command.kind!=="dimension"&&command.kind!=="fact"){
+              throw new Error(`canonical_dependency_replay_command_unsupported:${command.kind}`);
+            }
+            const identity=`${command.kind}\u001f${command.table}\u001f${command.sourceObjectType}\u001f${command.sourceRecordId}`;
+            if(identities.has(identity)){
+              throw new Error(`canonical_dependency_replay_command_duplicate:${command.sourceRecordId}`);
+            }
+            identities.add(identity);
+            upserts.push(command);
+          }
+          const materialized=await binding.materializedReplaySourceRecordIds(handle);
+          if([...materialized].some((sourceRecordId)=>
+            !upserts.some((command)=>command.sourceRecordId===sourceRecordId))){
+            throw new Error("canonical_dependency_replay_materialized_scope_invalid");
+          }
+          const missing=upserts.filter((command)=>!materialized.has(command.sourceRecordId));
+          const selected=missing.slice(0,hook.commandLimit-commandCount);
+          for(const command of selected){
+            const outcome=await executeUpsert(
+              client,sourceJob,row,command,sourceContract.authorityConcept,
+            );
+            commandCount+=1;
+            progressEvidence.push(`command\u001f${row.namespaced_source_key}\u001f${command.kind}\u001f${command.table}\u001f${command.sourceObjectType}\u001f${command.sourceRecordId}`);
+            if(outcome.applied){
+              appliedCommands.push(command);
+              previousDates.push(...outcome.previousDates);
+            }
+          }
+          if(selected.length<missing.length){pending=true;break;}
+          await binding.checkpointReplayCandidate(handle);
+          checkpointCount+=1;
+          progressEvidence.push(`checkpoint\u001f${row.namespaced_source_key}\u001f${row.payload_hash}`);
+          if(commandCount>=hook.commandLimit&&checkpointCount<selection.candidates.length){
+            pending=true;
+            break;
+          }
+        }
+        if(selection.candidates.length>0&&commandCount+checkpointCount===0){
+          throw new Error("canonical_dependency_replay_no_progress");
+        }
+        pending=pending||selection.candidates.length===hook.candidateLimit;
+        const dateBounds=canonicalDateBounds(appliedCommands,previousDates);
+        if(dateBounds){
+          await ensureCalendarDays(client,dateBounds);
+          await refreshMarts(client,job.tenantId,dateBounds);
+          await client.query(
+            "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
+            [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
+          );
+          await client.query("select quality.run_all_invariants($1,$2)",[job.tenantId,job.syncRunId]);
+        }
+        if(!pending)await binding.finalizeReplay();
+        return Object.freeze({
+          pending,candidates:checkpointCount,commands:commandCount,
+          progressToken:progressEvidence.length
+            ?createHash("sha256").update(progressEvidence.join("\n")).digest("hex")
+            :null,
+        });
+      })
+    );
   }
 
   async publishPendingControlProjections(
@@ -813,17 +849,31 @@ export class CanonicalTransformPipeline {
     tenantId:string,
     authorization?:TransformCapabilityEvidence,
   ):Promise<boolean>{
-    const timezoneResult=await this.control.transaction(async(client)=>{
+    const contributors=connectorDossierContributors();
+    const controlEvidence=await this.control.transaction(async(client)=>{
       await establishControlTransformScope(client,tenantId);
-      return client.query<{timezone:string|null}>(
+      const timezoneResult=await client.query<{timezone:string|null}>(
         `select overlay->>'timezone' as timezone
            from control_plane.tenant_overlays
           where tenant_id=$1 and status='published'
           order by version desc limit 1`,
         [tenantId],
       );
+      const connections=await client.query<{
+        connection_id:string;
+        connection_generation:number|string;
+        connector_key:ConnectorId;
+      }>(
+        `select connection_id,connection_generation,connector_key
+           from control_plane.connections
+          where tenant_id=$1 and connector_key=any($2::text[])
+            and status in ('connected','degraded')
+          order by connector_key,connection_id`,
+        [tenantId,[...new Set(contributors.map((contributor)=>contributor.connectorId))]],
+      );
+      return Object.freeze({timezoneResult,connections});
     });
-    const timezone=timezoneResult.rows[0]?.timezone;
+    const timezone=controlEvidence.timezoneResult.rows[0]?.timezone;
     if(!timezone)throw new Error("dossier_timezone_missing");
     try{new Intl.DateTimeFormat("en-AU",{timeZone:timezone}).format(new Date(0));}
     catch{throw new Error("dossier_timezone_invalid");}
@@ -831,7 +881,7 @@ export class CanonicalTransformPipeline {
     const source=await this.withTransformAuthorization(authorization,(capability)=>
       this.analytical.transaction(async(client)=>{
       await establishTransformScope(client,tenantId,capability);
-      return client.query<DossierSourceRow>(
+      const canonical=await client.query<DossierSourceRow>(
         `with location_summary as (
            select coalesce(array_agg(name order by name),'{}'::text[]) as names,
                   max(updated_at) as observed_at
@@ -845,13 +895,6 @@ export class CanonicalTransformPipeline {
                   (array_agg(base_currency order by updated_at desc,id))[1] as base_currency,
                   max(updated_at) as observed_at
              from core.legal_entity where tenant_id=$1 and active
-         ), xero_summary as (
-           select name,base_currency,sales_tax_basis,tax_number,
-                  coalesce(updated_date_utc,source_updated_at,ingested_at) as observed_at
-             from source_xero.organisation
-            where tenant_id=$1 and not tombstone
-            order by coalesce(updated_date_utc,source_updated_at,ingested_at) desc,namespaced_source_key
-            limit 1
          ), sales_summary as (
            select count(*)::bigint as sale_count,
                   max(coalesce(completed_at,ordered_at)) as observed_at
@@ -895,21 +938,54 @@ export class CanonicalTransformPipeline {
                 channel_summary.names as channel_names,
                 channel_summary.observed_at as channels_observed_at,
                 entity_summary.name as legal_entity_name,
-                coalesce(xero_summary.base_currency,entity_summary.base_currency) as base_currency,
-                greatest(entity_summary.observed_at,xero_summary.observed_at) as entity_observed_at,
-                xero_summary.sales_tax_basis,xero_summary.tax_number,
-                xero_summary.observed_at as xero_observed_at,
+                entity_summary.base_currency,
+                entity_summary.observed_at as entity_observed_at,
                 sales_summary.sale_count,sales_summary.observed_at as sales_observed_at,
                 product_summary.product_count,product_summary.observed_at as products_observed_at,
                 trading_hours.hours,seasonality.strongest_month,seasonality.quietest_month,
                 seasonality.observed_months
            from location_summary cross join channel_summary cross join entity_summary
            cross join sales_summary cross join product_summary cross join trading_hours
-           cross join seasonality left join xero_summary on true`,
+           cross join seasonality`,
         [tenantId,timezone],
       );
+      const row=canonical.rows[0];
+      const contributions:CanonicalDossierFactContribution[]=[];
+      if(row){
+        for(const connection of controlEvidence.connections.rows){
+          const generation=Number(connection.connection_generation);
+          if(!Number.isSafeInteger(generation)||generation<1){
+            throw new Error("dossier_connection_generation_invalid");
+          }
+          for(const contributor of contributors.filter((candidate)=>
+            candidate.connectorId===connection.connector_key)){
+            const collected=await contributor.collect({
+              database:connectorHookDatabase(contributor.databaseRegistrationId,client,{
+                tenantId,connectionId:connection.connection_id,
+                connectionGeneration:generation,
+              }),tenantId,
+              connection:Object.freeze({
+                connectionId:connection.connection_id,
+                connectionGeneration:generation,
+              }),
+              context:{
+                legalEntityName:row.legal_entity_name,
+                baseCurrency:row.base_currency,
+                entityObservedAt:row.entity_observed_at,
+              },
+            });
+            for(const contribution of collected){
+              contributions.push(normalizedDossierContribution(
+                contribution,
+                contributor.ownedKeys,
+              ));
+            }
+          }
+        }
+      }
+      return{row,contributions:Object.freeze(contributions)};
     }));
-    const draft=buildDossierDraft(source.rows[0]);
+    const draft=buildDossierDraft(source.row,source.contributions);
     if(!draft)return false;
     const published=await this.control.transaction(async(client)=>{
       await establishControlTransformScope(client,tenantId);
@@ -941,12 +1017,11 @@ type TransformMaintenanceClaimRow={
   authorization_id:string;tenant_id:string;lease_token:string;
   expires_at:string|Date;source_watermarks:Record<string,string|null>;
 };
-type PipelineStatProjectionRow={projection_id:string;tenant_id:string;snapshot_at:string|Date;schema_name:string;table_name:string;row_count:string|number;max_event_at:string|Date|null;max_ingested_at:string|Date|null;invariant_status:unknown};
+type PipelineStatProjectionRow={projection_id:string;tenant_id:string;snapshot_at:string|Date;schema_name:string;table_name:string;row_count:string|number;max_event_at:string|Date|null;max_ingested_at:string|Date|null;invariant_status:unknown;quality_run_id:string|null;quality_checked_at:string|Date|null;snapshot_table_count:number|null;snapshot_inventory_hash:string|null};
 type DossierSourceRow={
   location_names:string[]|null;locations_observed_at:string|Date|null;
   channel_names:string[]|null;channels_observed_at:string|Date|null;
   legal_entity_name:string|null;base_currency:string|null;entity_observed_at:string|Date|null;
-  sales_tax_basis:string|null;tax_number:string|null;xero_observed_at:string|Date|null;
   sale_count:string|number; sales_observed_at:string|Date|null;
   product_count:string|number;products_observed_at:string|Date|null;
   hours:unknown;strongest_month:string|Date|null;quietest_month:string|Date|null;observed_months:string|number;
@@ -962,7 +1037,57 @@ type DossierDraft=Readonly<{
 
 const weekdayNames=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"] as const;
 
-export function buildDossierDraft(row:DossierSourceRow|undefined):DossierDraft|null{
+export function assertDossierContribution(
+  contribution:CanonicalDossierFactContribution,
+  ownedKeys?:readonly string[],
+):void{
+  if(!/^[a-z][a-z0-9_]{0,63}$/u.test(contribution.key)||
+      (ownedKeys&&(!ownedKeys.length||new Set(ownedKeys).size!==ownedKeys.length||
+        !ownedKeys.includes(contribution.key)))||
+      !contribution.source.trim()||contribution.source.length>200||
+      !Number.isFinite(contribution.confidence)||contribution.confidence<0||
+      contribution.confidence>1||
+      !["source_reported","inferred"].includes(contribution.confirmationState)||
+      !["replace","fill"].includes(contribution.merge)){
+    throw new Error("dossier_contribution_invalid");
+  }
+  const value=contribution.value;
+  if(typeof value==="string"&&value.length>500)throw new Error("dossier_contribution_invalid");
+  if(Array.isArray(value)&&(value.length>50||value.some((item)=>
+    typeof item!=="string"||!item.trim()||item.length>160))){
+    throw new Error("dossier_contribution_invalid");
+  }
+  if(contribution.observedAt!==null&&!isoOrNull(contribution.observedAt)){
+    throw new Error("dossier_contribution_invalid");
+  }
+}
+
+function normalizedDossierContribution(
+  contribution:CanonicalDossierFactContribution,
+  ownedKeys:readonly string[],
+):CanonicalDossierFactContribution{
+  const value=contribution.value;
+  const observedAt=contribution.observedAt;
+  const captured:CanonicalDossierFactContribution={
+    key:contribution.key,
+    value:Array.isArray(value)?Object.freeze([...value]):value,
+    source:contribution.source,
+    observedAt,
+    confidence:contribution.confidence,
+    confirmationState:contribution.confirmationState,
+    merge:contribution.merge,
+  };
+  assertDossierContribution(captured,ownedKeys);
+  return Object.freeze({
+    ...captured,
+    observedAt:isoOrNull(captured.observedAt),
+  });
+}
+
+export function buildDossierDraft(
+  row:DossierSourceRow|undefined,
+  contributions:readonly CanonicalDossierFactContribution[]=[],
+):DossierDraft|null{
   if(!row)return null;
   const content:Record<string,string|readonly string[]>={};
   const provenance:Record<string,DossierFactProvenance>={};
@@ -991,7 +1116,7 @@ export function buildDossierDraft(row:DossierSourceRow|undefined):DossierDraft|n
   add(
     "base_currency",
     baseCurrency&&/^[A-Z]{3}$/.test(baseCurrency)?baseCurrency:null,
-    "Xero Organisation settings and canonical legal entity",
+    "Canonical legal entity",
     row.entity_observed_at,
     1,
     "source_reported",
@@ -1011,22 +1136,18 @@ export function buildDossierDraft(row:DossierSourceRow|undefined):DossierDraft|n
     );
   }
 
-  const salesTaxBasis=row.sales_tax_basis?.trim().toUpperCase()??"";
-  const accountingBasis=salesTaxBasis.includes("CASH")
-    ? "Cash"
-    : salesTaxBasis.includes("ACCRUAL")?"Accrual":null;
-  add("accounting_basis",accountingBasis,"Xero Organisation settings",row.xero_observed_at,1,"source_reported");
-  const gstRegistration=salesTaxBasis==="NONE"
-    ? "Not registered"
-    : salesTaxBasis||row.tax_number?.trim()?"Registered":null;
-  add(
-    "gst_registration",
-    gstRegistration,
-    "Xero Organisation tax settings",
-    row.xero_observed_at,
-    salesTaxBasis?0.98:0.85,
-    salesTaxBasis?"source_reported":"inferred",
-  );
+  for(const contribution of [...contributions].sort((left,right)=>
+    left.key.localeCompare(right.key)||
+    (isoOrNull(left.observedAt)??"").localeCompare(isoOrNull(right.observedAt)??"")||
+    left.source.localeCompare(right.source)
+  )){
+    assertDossierContribution(contribution);
+    if(contribution.merge==="fill"&&Object.hasOwn(content,contribution.key))continue;
+    add(
+      contribution.key,contribution.value,contribution.source,
+      contribution.observedAt,contribution.confidence,contribution.confirmationState,
+    );
+  }
 
   const hours=formatTradingHours(row.hours);
   add(
@@ -1112,7 +1233,7 @@ function monthName(value:string|Date|null):string|null{
   return new Intl.DateTimeFormat("en-AU",{month:"long",timeZone:"UTC"}).format(new Date(iso));
 }
 
-function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),quarantinedRows:Number(row.quarantined_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,partialQualityStatus:row.partial_quality_status,completeQualityStatus:row.complete_quality_status,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null};}
+function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),quarantinedRows:Number(row.quarantined_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,partialQualityStatus:row.partial_quality_status,completeQualityStatus:row.complete_quality_status,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null,compatibilityReplayPending:false,compatibilityReplayCandidates:0,compatibilityReplayCommands:0,compatibilityReplayProgressToken:null};}
 
 async function establishTransformScope(
   client:PostgresQueryClient,
@@ -1156,9 +1277,13 @@ async function establishControlWorkerRole(client:PostgresQueryClient):Promise<vo
   }
 }
 
-function requireManifest(connectorId:ConnectorId):ConnectorManifest{const manifest=manifestsByConnector.get(connectorId);if(!manifest)throw new Error(`canonical_manifest_missing:${connectorId}`);return manifest;}
+function requireManifest(connectorId:ConnectorId):ConnectorManifest{return connectorManifest(connectorId);}
 function requireStagingContract(connectorId:ConnectorId,stream:string):StagingStreamContract{const contract=stagingByStream.get(`${connectorId}:${stream}`);if(!contract)throw new Error(`canonical_staging_contract_missing:${connectorId}:${stream}`);return contract;}
-
+function requireStreamContract(manifest:ConnectorManifest,stream:string):StreamContract{
+  const streamContract=manifest.streams.find((candidate)=>candidate.id===stream);
+  if(!streamContract)throw new Error(`canonical_manifest_stream_missing:${manifest.id}:${stream}`);
+  return streamContract;
+}
 async function loadMappingContext(
   control: TransactionalPostgres,
   job: CanonicalTransformBatch,
@@ -1282,211 +1407,6 @@ async function loadStagingRows(client:PostgresQueryClient,contract:StagingStream
   return [...result.rows];
 }
 
-const LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT=100;
-const LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT=500;
-
-type LegacyLightspeedDependencyReplayChunk = Readonly<{
-  eligible:boolean;
-  pending:boolean;
-  commandCount:number;
-  canonicalRows:number;
-  appliedCommands:readonly CanonicalProjectionCommand[];
-  previousDates:readonly string[];
-}>;
-
-const noLegacyLightspeedDependencyReplay:LegacyLightspeedDependencyReplayChunk=Object.freeze({
-  eligible:false,pending:false,commandCount:0,canonicalRows:0,
-  appliedCommands:Object.freeze([]),previousDates:Object.freeze([]),
-});
-
-/**
- * Pack 1.0 Orders that failed solely because Vendor did not exist cannot be
- * claimed again after OAuth re-consent fences their old transform generation.
- * Pack 1.1 therefore has one bounded compatibility lane. The database opens
- * it only after current-generation Vendor and Order backfill plus deletion
- * reconciliation are complete, and it returns only exact, unchanged legacy
- * typed projections with immutable pack-1.0 origin evidence.
- */
-async function replayLegacyLightspeedOrderDependencyChunk(
-  client:PostgresQueryClient,
-  repairJob:CanonicalTransformBatch,
-  repairStream:string,
-  mapper:CanonicalStreamMapper,
-  context:CanonicalMappingContext,
-):Promise<LegacyLightspeedDependencyReplayChunk>{
-  if(repairJob.connectorId!=="lightspeed-r"||!['vendors','orders'].includes(repairStream)){
-    return noLegacyLightspeedDependencyReplay;
-  }
-  const eligibility=await client.query<{connection_generation:number|string|null}>(
-    `select semantic_internal.lightspeed_supplier_replay_generation(
-       $1::text,$2::text,$3::text
-     ) as connection_generation`,
-    [repairJob.tenantId,repairJob.connectionId,repairJob.batchId],
-  );
-  const generation=eligibility.rows[0]?.connection_generation;
-  if(generation===null||generation===undefined)return noLegacyLightspeedDependencyReplay;
-  const parsedGeneration=Number(generation);
-  if(!Number.isSafeInteger(parsedGeneration)||parsedGeneration<1){
-    throw new Error("canonical_dependency_replay_generation_invalid");
-  }
-
-  const candidates=await client.query<CanonicalStagingRow>(
-    `select staged.*,origin.source_object_type
-       from source_lightspeed.orders staged
-       join ingestion.source_records origin
-         on origin.tenant_id=staged.tenant_id
-        and origin.namespaced_source_key=staged.namespaced_source_key
-        and origin.connection_id=staged.connection_id
-        and origin.connector_key='lightspeed-r' and origin.stream='orders'
-        and origin.source_object_type='Order'
-        and origin.source_record_id=staged.source_record_id
-        and origin.payload_hash=staged.payload_hash
-        and origin.normalized_schema_version='1.0.0'
-       join ingestion.batch_manifests origin_manifest
-         on origin_manifest.tenant_id=origin.tenant_id
-        and origin_manifest.batch_id=origin.payload_batch_id
-        and origin_manifest.connection_id=origin.connection_id
-        and origin_manifest.sync_run_id=origin.sync_run_id
-        and origin_manifest.connector_key='lightspeed-r'
-        and origin_manifest.connector_version='1.0.0'
-        and origin_manifest.stream='orders'
-       left join semantic_internal.lightspeed_order_dependency_replay_audit audit
-         on audit.tenant_id=staged.tenant_id
-        and audit.connection_id=staged.connection_id
-        and audit.connection_generation=$4::bigint
-        and audit.source_order_namespaced_key=staged.namespaced_source_key
-        and audit.source_order_payload_hash=staged.payload_hash
-        and audit.source_order_mapping_version=staged.mapping_version
-      where staged.tenant_id=$1 and staged.connection_id=$2
-        and staged.mapping_version=$3 and not staged.tombstone
-        and nullif(btrim(staged.vendor_id),'') is not null
-        and btrim(staged.vendor_id)<>'0'
-        and audit.tenant_id is null
-        and (
-          jsonb_typeof(staged.order_lines->'OrderLine')='object'
-          or (jsonb_typeof(staged.order_lines->'OrderLine')='array'
-              and jsonb_array_length(staged.order_lines->'OrderLine')>0)
-          or (jsonb_typeof(staged.order_lines)='array'
-              and jsonb_array_length(staged.order_lines)>0)
-        )
-      order by staged.namespaced_source_key
-      limit $5::integer`,
-    [repairJob.tenantId,repairJob.connectionId,repairJob.mappingVersion,parsedGeneration,
-      LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT],
-  );
-
-  let commandCount=0;
-  let canonicalRows=0;
-  let pending=candidates.rows.length===LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT;
-  const appliedCommands:CanonicalProjectionCommand[]=[];
-  const previousDates:string[]=[];
-  for(let candidateIndex=0;candidateIndex<candidates.rows.length;candidateIndex+=1){
-    const row=candidates.rows[candidateIndex]!;
-    assertLegacyLightspeedOrderReplayLineage(row,repairJob);
-    const vendorId=String(row.vendor_id??"").trim();
-    const mapped=mapper("orders",row,context);
-    if(!Array.isArray(mapped)||mapped.length===0){
-      throw new Error(`canonical_dependency_replay_mapper_empty:${row.source_record_id}`);
-    }
-    const lineIdentities=new Set<string>();
-    for(const command of mapped){
-      if(command.kind!=="fact"||command.table!=="purchase_order_line"){
-        throw new Error(`canonical_dependency_replay_command_unsupported:${command.kind}`);
-      }
-      if(command.sourceObjectType!=="OrderLine"||!command.sourceRecordId.trim()){
-        throw new Error(`canonical_dependency_replay_line_identity_invalid:${row.source_record_id}`);
-      }
-      const lineIdentity=`${command.sourceObjectType}\u001f${command.sourceRecordId}`;
-      if(lineIdentities.has(lineIdentity)){
-        throw new Error(`canonical_dependency_replay_line_identity_duplicate:${command.sourceRecordId}`);
-      }
-      lineIdentities.add(lineIdentity);
-      const supplier=command.values.supplier_id;
-      if(!isCanonicalSourceReference(supplier)
-        ||supplier.sourceRef.table!=="supplier"
-        ||supplier.sourceRef.sourceObjectType!=="Vendor"
-        ||supplier.sourceRef.sourceRecordId!==vendorId
-        ||supplier.sourceRef.connectionId!==row.connection_id){
-        throw new Error(`canonical_dependency_replay_supplier_scope_invalid:${row.source_record_id}`);
-      }
-    }
-    const materialized=await client.query<{source_record_id:string}>(
-      `select state.source_record_id
-         from semantic_internal.canonical_record_state state
-        where state.tenant_id=$1
-          and state.canonical_table='purchase_order_line'
-          and state.connection_id=$2
-          and state.batch_id=$3
-          and state.sync_run_id=$4
-          and state.payload_hash=$5
-          and state.mapping_version=$6
-          and state.source_object_type='OrderLine'`,
-      [repairJob.tenantId,repairJob.connectionId,row.payload_batch_id,row.sync_run_id,
-        row.payload_hash,row.mapping_version],
-    );
-    const materializedIds=new Set(materialized.rows.map((state)=>state.source_record_id));
-    const missing=mapped.filter((command)=>
-      !materializedIds.has((command as CanonicalUpsertCommand).sourceRecordId)
-    );
-    const remainingBudget=LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT-commandCount;
-    const selected=missing.slice(0,remainingBudget);
-    const sourceJob:CanonicalTransformBatch=Object.freeze({
-      ...repairJob,batchId:row.payload_batch_id,syncRunId:row.sync_run_id,
-    });
-    for(const command of selected){
-      const outcome=await executeUpsert(client,sourceJob,row,command as CanonicalUpsertCommand);
-      commandCount+=1;
-      if(outcome.applied){
-        canonicalRows+=1;
-        appliedCommands.push(command);
-        previousDates.push(...outcome.previousDates);
-      }
-    }
-    if(selected.length<missing.length){
-      pending=true;
-      break;
-    }
-    const audit=await client.query<{recorded:boolean}>(
-      `select semantic_internal.record_lightspeed_order_dependency_replay(
-         $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text
-       ) as recorded`,
-      [repairJob.tenantId,repairJob.connectionId,repairJob.batchId,repairJob.syncRunId,
-        row.namespaced_source_key,row.payload_hash,row.mapping_version],
-    );
-    if(audit.rows[0]?.recorded!==true){
-      throw new Error(`canonical_dependency_replay_audit_conflict:${row.source_record_id}`);
-    }
-    if(commandCount>=LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT
-      &&candidateIndex<candidates.rows.length-1){
-      pending=true;
-      break;
-    }
-  }
-  return Object.freeze({
-    eligible:true,pending,commandCount,canonicalRows,
-    appliedCommands:Object.freeze(appliedCommands),
-    previousDates:Object.freeze(previousDates),
-  });
-}
-
-function assertLegacyLightspeedOrderReplayLineage(
-  row:CanonicalStagingRow,
-  repairJob:CanonicalTransformBatch,
-):void{
-  if(row.tenant_id!==repairJob.tenantId
-    ||row.connection_id!==repairJob.connectionId
-    ||row.mapping_version!==repairJob.mappingVersion
-    ||row.source_object_type!=="Order"
-    ||row.tombstone!==false
-    ||!row.payload_batch_id.trim()
-    ||!row.sync_run_id.trim()
-    ||!row.namespaced_source_key.trim()
-    ||!row.source_record_id.trim()
-    ||!row.payload_hash.match(/^[a-f0-9]{64}$/u)){
-    throw new Error(`canonical_dependency_replay_lineage_invalid:${row.source_record_id}`);
-  }
-}
-
 async function recordCanonicalMappingQuarantine(
   client:PostgresQueryClient,
   job:CanonicalTransformBatch,
@@ -1547,7 +1467,46 @@ function canonicalId(tenantId:string,table:CanonicalProjectionTable,connectionId
 
 type CanonicalUpsertOutcome=Readonly<{applied:boolean;previousDates:readonly string[]}>;
 
-async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBatch,row:CanonicalStagingRow,command:CanonicalUpsertCommand):Promise<CanonicalUpsertOutcome>{
+/**
+ * A fact mapper may not claim an authority concept different from the exact
+ * stream contract that produced its source row. Keep this check pure and
+ * exported so every connector fixture and the runtime exercise the same
+ * fail-closed boundary.
+ */
+export function assertCanonicalCommandAuthority(
+  command:CanonicalUpsertCommand,
+  streamAuthority:SourceAuthorityConcept,
+):void{
+  if(command.kind==="fact"&&command.authorityConcept!==streamAuthority){
+    throw new Error(`canonical_authority_manifest_mismatch:${command.table}`);
+  }
+}
+
+/**
+ * Bind every durable mapper output to the exact stream declaration before a
+ * command-specific executor can perform a write. Special outputs intentionally
+ * use explicit manifest targets instead of pretending to be canonical tables.
+ */
+export function assertCanonicalCommandAdmission(
+  command:CanonicalProjectionCommand,
+  stream:Pick<StreamContract,"canonicalTargets"|"authorityConcept">,
+):void{
+  const target=command.kind==="dimension"||command.kind==="fact"
+    ?command.table
+    :command.kind;
+  if(!stream.canonicalTargets.some((declared)=>declared===target)){
+    throw new Error(`canonical_target_manifest_mismatch:${target}`);
+  }
+  if(command.kind==="fact")assertCanonicalCommandAuthority(command,stream.authorityConcept);
+}
+
+async function executeUpsert(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  row:CanonicalStagingRow,
+  command:CanonicalUpsertCommand,
+  streamAuthority:SourceAuthorityConcept,
+):Promise<CanonicalUpsertOutcome>{
   const table=tableColumns[command.table];
   if(!table||command.table==="calendar_day")throw new Error(`canonical_table_unsupported:${command.table}`);
   if((command.kind==="fact")!==table.fact)throw new Error(`canonical_command_kind_mismatch:${command.table}`);
@@ -1559,6 +1518,7 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
   if(command.tombstone&&table.fact&&!entries.some(([column])=>column==="voided"||column==="status"||column==="order_status")){
     throw new Error(`canonical_tombstone_unrepresented:${command.table}`);
   }
+  assertCanonicalCommandAuthority(command,streamAuthority);
   const id=canonicalId(job.tenantId,command.table,job.connectionId,command.sourceObjectType,command.sourceRecordId);
   let persisted:Readonly<Record<string,unknown>>|undefined;
   if(command.updateOnly){
@@ -1598,9 +1558,9 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
       [job.tenantId,id,...Object.values(resolved),row.sync_run_id],
     );
     if(!updated.rows[0])return{applied:false,previousDates};
-    if(command.table==="legal_entity"&&job.connectorId==="xero"){
-      await publishXeroLegalEntityAuthorityDefaults(client,job,row.sync_run_id,id);
-    }
+    await publishCanonicalDimensionAuthorityDefaults(
+      client,job,row.sync_run_id,command.table,id,
+    );
     if(command.entityType)await upsertDirectEntityLink(client,job,row,command,id);
     return{applied:true,previousDates};
   }
@@ -1610,9 +1570,9 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
   const mutable=columns.filter((column)=>!['tenant_id','id','primary_connection_id','primary_source_record_id','sync_run_id'].includes(column));
   const conflict=mutable.length?`do update set ${mutable.map((column)=>`${quoteIdentifier(column)}=excluded.${quoteIdentifier(column)}`).join(",")},updated_at=now()`:"do nothing";
   await client.query(`insert into core.${quoteIdentifier(command.table)} (${columns.map(quoteIdentifier).join(",")}) values (${columns.map((_,index)=>`$${index+1}`).join(",")}) on conflict (tenant_id,id) ${conflict}`,parameters);
-  if(command.table==="legal_entity"&&job.connectorId==="xero"){
-    await publishXeroLegalEntityAuthorityDefaults(client,job,row.sync_run_id,id);
-  }
+  await publishCanonicalDimensionAuthorityDefaults(
+    client,job,row.sync_run_id,command.table,id,
+  );
   if(command.entityType)await upsertDirectEntityLink(client,job,row,command,id);
   if(command.table==="commerce_order")await upsertOrderObservation(client,job,row,command,id);
   if(command.table==="commerce_order_line")await upsertOrderLineObservation(client,job,row,command,id);
@@ -1647,24 +1607,41 @@ async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBat
       : `canonical_employment_episode_missing:${ref.lookup.workerSourceRecordId}:${businessDate}`
     );
   }
-  if(ref.lookup?.kind==="xero_gl_account_code"){
-    if(ref.table!=="gl_account"||connectionId!==job.connectionId)throw new Error("canonical_natural_key_scope_invalid");
-    const matched=await client.query<{source_record_id:string;source_object_type:string}>(
-      `select account.source_record_id,source.source_object_type
-         from source_xero.accounts account
-         join ingestion.source_records source on source.tenant_id=account.tenant_id and source.namespaced_source_key=account.namespaced_source_key
-        where account.tenant_id=$1 and account.connection_id=$2 and account.code=$3 and not account.tombstone
-        order by account.source_updated_at desc nulls last limit 2`,
-      [job.tenantId,connectionId,ref.lookup.value],
-    );
-    if(matched.rows.length===1){
-      const row=matched.rows[0]!;const id=canonicalId(job.tenantId,"gl_account",connectionId,row.source_object_type,row.source_record_id);
-      const exists=await client.query<{present:number}>("select 1 as present from core.gl_account where tenant_id=$1 and id=$2",[job.tenantId,id]);
-      if(exists.rows[0])return id;
-      throw new Error(`canonical_reference_missing:gl_account:${ref.lookup.value}`);
+  if(ref.lookup?.kind==="connector_natural_key"){
+    const hook=connectorReferenceLookup(job.connectorId);
+    if(!hook)throw new Error(`canonical_natural_key_lookup_unsupported:${job.connectorId}`);
+    const resolution=await hook.resolve({
+      database:connectorHookDatabase(hook.databaseRegistrationId,client,{
+        tenantId:job.tenantId,connectionId:job.connectionId,
+        batchId:job.batchId,syncRunId:job.syncRunId,
+        mappingVersion:job.mappingVersion,
+        connectionGeneration:job.connectionGeneration,
+      }),
+      job,reference:ref,lookup:ref.lookup,
+    });
+    if(resolution.status!=="matched"){
+      if(ref.nullable&&resolution.status==="missing")return null;
+      throw new Error(
+        `canonical_natural_key_${resolution.status}:${ref.table}:${ref.lookup.value}`,
+      );
     }
-    if(ref.nullable&&matched.rows.length===0)return null;
-    throw new Error(matched.rows.length?`canonical_natural_key_ambiguous:gl_account:${ref.lookup.value}`:`canonical_natural_key_missing:gl_account:${ref.lookup.value}`);
+    if(!resolution.sourceObjectType.trim()||!resolution.sourceRecordId.trim()){
+      throw new Error("canonical_natural_key_identity_invalid");
+    }
+    const target=tableColumns[ref.table];
+    if(!target||ref.table==="calendar_day"){
+      throw new Error(`canonical_reference_table_unsupported:${ref.table}`);
+    }
+    const id=canonicalId(
+      job.tenantId,ref.table,connectionId,
+      resolution.sourceObjectType,resolution.sourceRecordId,
+    );
+    const exists=await client.query<{present:number}>(
+      `select 1 as present from core.${quoteIdentifier(ref.table)} where tenant_id=$1 and id=$2`,
+      [job.tenantId,id],
+    );
+    if(exists.rows[0])return id;
+    throw new Error(`canonical_reference_missing:${ref.table}:${ref.lookup.value}`);
   }
   if(!ref.sourceRecordId?.trim()){if(ref.nullable)return null;throw new Error("canonical_reference_id_missing");}
   // Facts always retain the source-owned canonical foreign key. Identity
@@ -1749,7 +1726,7 @@ async function assertAuthority(
   resolved:Readonly<Record<string,unknown>>,
   persisted:Readonly<Record<string,unknown>>|undefined,
 ):Promise<void>{
-  const concept=command.authorityConcept??defaultFactAuthority[command.table];
+  const concept=command.authorityConcept;
   if(!concept)throw new Error(`canonical_authority_undefined:${command.table}`);
   const scope=await resolvedAuthorityScope(client,job,command,resolved,persisted);
   const effectiveAt=authorityEffectiveAt(command,resolved,persisted,row);
@@ -1841,30 +1818,40 @@ function requiredResolvedScopeId(table:CanonicalProjectionTable,column:string,va
 }
 
 async function publishAuthorityDefaults(client:PostgresQueryClient,job:CanonicalTransformBatch):Promise<void>{
-  if(job.connectorId==="xero")return;
-  for(const concept of defaultAuthority[job.connectorId]){
-    await client.query(
-      `select core.install_default_source_authority(
-         $1::text,$2::text,'account'::text,$3::text,$3::text,$4::text,$5::timestamptz
-       )`,
-      [job.tenantId,concept,job.connectionId,job.syncRunId,new Date(0).toISOString()],
-    );
+  const policies=requireManifest(job.connectorId).sourceAuthority.defaults;
+  for(const policy of policies){
+    if(policy.scope.kind!=="connection_account")continue;
+    for(const concept of policy.concepts){
+      await client.query(
+        `select core.install_default_source_authority(
+           $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::timestamptz
+         )`,
+        [job.tenantId,concept,"account",job.connectionId,job.connectionId,
+          job.syncRunId,new Date(0).toISOString()],
+      );
+    }
   }
 }
 
-async function publishXeroLegalEntityAuthorityDefaults(
+async function publishCanonicalDimensionAuthorityDefaults(
   client:PostgresQueryClient,
   job:CanonicalTransformBatch,
   syncRunId:string,
-  legalEntityId:string,
+  table:CanonicalProjectionTable,
+  canonicalId:string,
 ):Promise<void>{
-  for(const concept of defaultAuthority.xero){
-    await client.query(
-      `select core.install_default_source_authority(
-         $1::text,$2::text,'legal_entity'::text,$3::text,$4::text,$5::text,$6::timestamptz
-       )`,
-      [job.tenantId,concept,legalEntityId,job.connectionId,syncRunId,new Date(0).toISOString()],
-    );
+  const policies=requireManifest(job.connectorId).sourceAuthority.defaults;
+  for(const policy of policies){
+    if(policy.scope.kind!=="canonical_dimension"||policy.scope.table!==table)continue;
+    for(const concept of policy.concepts){
+      await client.query(
+        `select core.install_default_source_authority(
+           $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::timestamptz
+         )`,
+        [job.tenantId,concept,policy.scope.scopeType,canonicalId,
+          job.connectionId,syncRunId,new Date(0).toISOString()],
+      );
+    }
   }
 }
 
@@ -2104,8 +2091,8 @@ function sourceFieldType(field:StagingFieldContract):string{return field.type===
 function explorationSafePii(value:FieldCoverage["pii"]):boolean{return value==="none"||value==="business_contact";}
 function sourcePiiClass(field:StagingFieldContract):string{if(field.pii==="none")return"none";if(field.pii==="business_contact")return"business";if(field.pii==="payroll_sensitive")return"payroll";if(field.pii==="free_text_untrusted")return"sensitive_personal";return"customer_contact";}
 export function sourceAuthorityForField(connectorId:ConnectorId,stream:string,target:string):SourceAuthorityConcept{
-  const connectorAuthorities:Readonly<Record<string,SourceAuthorityConcept>>=sourceAuthorityByStream[connectorId];
-  const authority=connectorAuthorities[stream];
+  const streamContract=requireManifest(connectorId).streams.find((candidate)=>candidate.id===stream);
+  const authority=streamContract?.authorityConcept;
   if(!authority)throw new Error(`source_authority_unmapped:${connectorId}:${stream}`);
   const expectedSourcePrefix=`${stagingSchema(connectorId)}.${stream}.`;
   if(target.startsWith("source_")&&!target.startsWith(expectedSourcePrefix)){
@@ -2271,7 +2258,7 @@ async function projectReadiness(client:PostgresQueryClient,row:ReadinessProjecti
   await client.query(`insert into control_plane.readiness (tenant_id,connection_id,domain,state,progress,data_ready_through,backfill_complete,reason_code,reason_detail,evaluated_at,covered_from,covered_to,coverage_qualification,reconciliation_status) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (tenant_id,connection_id,domain) do update set state=excluded.state,progress=excluded.progress,data_ready_through=excluded.data_ready_through,backfill_complete=excluded.backfill_complete,reason_code=excluded.reason_code,reason_detail=excluded.reason_detail,evaluated_at=excluded.evaluated_at,covered_from=excluded.covered_from,covered_to=excluded.covered_to,coverage_qualification=excluded.coverage_qualification,reconciliation_status=excluded.reconciliation_status`,[row.tenant_id,row.connection_id,row.domain,state,progress,dataReadyThrough,complete,reasonCode,reasonDetail,isoOrNull(row.evaluated_at),progressiveFrom,progressiveTo,progressiveActive?"Recent data is available only for the disclosed covered range while deeper history continues.":null,progressiveActive?"scheduled":null]);
 }
 async function projectIdentityReview(client:PostgresQueryClient,row:IdentityReviewProjectionRow):Promise<void>{await client.query(`insert into control_plane.identity_review_tasks (tenant_id,identity_review_task_id,entity_type,status,confidence_band,candidate_links,evidence) values ($1,$2,$3,'proposed',$4,$5::jsonb,$6::jsonb) on conflict (tenant_id,identity_review_task_id) do nothing`,[row.tenant_id,row.task_id,row.entity_type,row.confidence_band,JSON.stringify(row.candidate_links),JSON.stringify(row.evidence)]);}
-async function projectPipelineStat(client:PostgresQueryClient,row:PipelineStatProjectionRow):Promise<void>{await client.query(`insert into control_plane.pipeline_stats (tenant_id,snapshot_at,schema_name,table_name,row_count,max_event_at,max_ingested_at,invariant_status) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) on conflict (tenant_id,snapshot_at,schema_name,table_name) do nothing`,[row.tenant_id,isoOrNull(row.snapshot_at),row.schema_name,row.table_name,Number(row.row_count),isoOrNull(row.max_event_at),isoOrNull(row.max_ingested_at),JSON.stringify(row.invariant_status)]);}
+async function projectPipelineStat(client:PostgresQueryClient,row:PipelineStatProjectionRow):Promise<void>{await client.query(`insert into control_plane.pipeline_stats (tenant_id,snapshot_at,schema_name,table_name,row_count,max_event_at,max_ingested_at,invariant_status,quality_run_id,quality_checked_at,snapshot_table_count,snapshot_inventory_hash) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12) on conflict (tenant_id,snapshot_at,schema_name,table_name) do nothing`,[row.tenant_id,isoOrNull(row.snapshot_at),row.schema_name,row.table_name,Number(row.row_count),isoOrNull(row.max_event_at),isoOrNull(row.max_ingested_at),JSON.stringify(row.invariant_status),row.quality_run_id,isoOrNull(row.quality_checked_at),row.snapshot_table_count,row.snapshot_inventory_hash]);}
 async function markPublished(client:PostgresQueryClient,table:string,key:string,ids:readonly string[],publishedAt:string):Promise<void>{if(!new Set(["readiness_projection_outbox","identity_review_projection_outbox","pipeline_table_stats_projection_outbox"]).has(table))throw new Error("projection_table_invalid");if(key!=="projection_id")throw new Error("projection_key_invalid");await client.query(`update semantic_internal.${quoteIdentifier(table)} set published_at=$2 where tenant_id=current_setting('albert.tenant_id') and ${quoteIdentifier(key)}=any($1::text[]) and published_at is null`,[ids,publishedAt]);}
 
 function latestSourceTimestamp(rows:readonly CanonicalStagingRow[]):string|null{const timestamps=rows.flatMap((row)=>{const value=isoOrNull(row.source_updated_at);return value?[value]:[];}).sort();return timestamps.at(-1)??null;}

@@ -614,7 +614,7 @@ function glAccountRef(
       sourceObjectType: "Accounts",
       connectionId: row.connection_id,
       nullable,
-      lookup: { kind: "xero_gl_account_code", value: code },
+      lookup: { kind: "connector_natural_key", key: "gl_account_code", value: code },
     },
   };
 }

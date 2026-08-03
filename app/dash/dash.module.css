@@ -16,9 +16,9 @@
   --dash-text-heading: light-dark(#161719, #f5f6f8);
   --dash-text-body: light-dark(#292a2d, #e0e2e7);
   --dash-text-muted: light-dark(#646568, #a8abb4);
-  --dash-text-soft: light-dark(#77787c, #969aa4);
-  --dash-text-subtle: light-dark(#808185, #9296a1);
-  --dash-text-faint: light-dark(#929397, #7f838e);
+  --dash-text-soft: light-dark(#66676b, #969aa4);
+  --dash-text-subtle: light-dark(#66676b, #989ca6);
+  --dash-text-faint: light-dark(#66676b, #989ca6);
   --dash-border: light-dark(#dfdfdf, #34363c);
   --dash-border-soft: light-dark(#dedede, #2d3036);
   --dash-border-input: light-dark(#d5d5d5, #3a3d44);
@@ -603,7 +603,10 @@
   pointer-events: none;
   transform: translateY(10px) scale(0.96);
   transform-origin: bottom left;
-  transition: opacity 160ms ease, transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1), visibility 160ms ease;
+  transition:
+    opacity 160ms ease,
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    visibility 0s linear 160ms;
   visibility: hidden;
   will-change: transform, opacity;
 }
@@ -612,6 +615,10 @@
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+  transition:
+    opacity 160ms ease,
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    visibility 0s linear 0s;
   visibility: visible;
 }
 
@@ -7385,6 +7392,31 @@
   line-height: 1.4;
 }
 
+.connectionsNotice button {
+  min-height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(11px * var(--text-scale));
+  font-weight: 650;
+  padding: 0 10px;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.connectionsNotice button:hover {
+  background: color-mix(in srgb, currentColor, transparent 90%);
+  transform: translateY(-1px);
+}
+
+.connectionsNotice button:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
 .connectionsNotice strong {
   font-weight: 680;
 }
@@ -8519,6 +8551,10 @@
     transition: none;
   }
 
+  .connectionsNotice button {
+    transition: none;
+  }
+
   .connectionsProgressFill[data-indeterminate="true"] {
     left: 0;
     width: 42%;
@@ -8642,7 +8678,7 @@
   visibility: hidden;
   transition:
     opacity 160ms ease,
-    visibility 160ms ease,
+    visibility 0s linear 160ms,
     transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -8650,6 +8686,10 @@
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+  transition:
+    opacity 160ms ease,
+    visibility 0s linear 0s,
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
   visibility: visible;
 }
 

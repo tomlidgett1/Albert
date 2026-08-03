@@ -12,10 +12,10 @@ END;
 $$;
 
 SELECT pg_temp.assert_true(
-  (SELECT count(*)=1
+  (SELECT count(*)=0
      FROM control_plane.protected_dogfood_acceptance_consumptions
     WHERE snapshot_id='01H00000000000000000005403'),
-  'the snapshot must have exactly one durable release consumption'
+  'legacy evidence without nonce-bound human M7 must never be consumed'
 );
 
 SELECT pg_temp.assert_true(

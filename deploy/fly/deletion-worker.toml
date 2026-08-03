@@ -9,6 +9,7 @@ kill_timeout = 120
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_DELETION_WORKER_ID = "deletion-worker"
+  ALBERT_RUNTIME_IDENTITY = "deletion-worker"
   DELETION_WORKER_PORT = "8083"
   NODE_ENV = "production"
   SUPABASE_STORAGE_S3_REGION = "ap-southeast-2"

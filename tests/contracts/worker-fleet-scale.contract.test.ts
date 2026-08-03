@@ -99,7 +99,7 @@ test("fleet capacity, maintenance draining, autoscaling, and retention remain on
       readFile(new URL("../../infra/migrations/analytical/0089_m4_pipeline_history_retention.sql",import.meta.url),"utf8"),
       readFile(new URL("../../deploy/fly-autoscalers/sync-worker.toml",import.meta.url),"utf8"),
       readFile(new URL("../../deploy/fly-autoscalers/transform-worker.toml",import.meta.url),"utf8"),
-      readFile(new URL("../../.github/workflows/release.yml",import.meta.url),"utf8"),
+      readFile(new URL("../../.github/workflows/release-authority.yml",import.meta.url),"utf8"),
     ]);
 
   assert.match(pipeline,/while\(claimedCount<maxClaims\)/u);

@@ -33,6 +33,11 @@ export interface DurableCanonicalTransformQueue {
     claim:ClaimedCanonicalTransformJob,
     result:Readonly<Record<string,unknown>>,
   ):Promise<void>;
+  continueReplay(
+    claim:ClaimedCanonicalTransformJob,
+    progress:Readonly<{kind:"compatibility_replay";pending:true;candidates:number;commands:number;progressToken:string}>,
+    delaySeconds:number,
+  ):Promise<number>;
   retryOrFail(
     claim:ClaimedCanonicalTransformJob,
     error:Readonly<{code:string;retryable:boolean}>,

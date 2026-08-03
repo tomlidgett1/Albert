@@ -1,0 +1,1103 @@
+name: Immutable production release authority
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact protected-main commit to release
+        required: true
+        type: string
+      dogfood_run_id:
+        description: Exact trusted dogfood workflow run containing the signed envelope
+        required: true
+        type: string
+      dogfood_artifact_id:
+        description: Exact unexpired dogfood artifact ID from that run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: albert-production-release
+  cancel-in-progress: false
+
+env:
+  ALBERT_RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  ALBERT_DOGFOOD_RUN_ID: ${{ inputs.dogfood_run_id }}
+  ALBERT_DOGFOOD_ARTIFACT_ID: ${{ inputs.dogfood_artifact_id }}
+
+jobs:
+  verify-candidate:
+    name: Verify immutable authority, protected main, and credential-free candidate
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      ci_workflow_id: ${{ steps.ci.outputs.ci_workflow_id }}
+      ci_run_id: ${{ steps.ci.outputs.ci_run_id }}
+      ci_run_attempt: ${{ steps.ci.outputs.ci_run_attempt }}
+      ci_check_suite_id: ${{ steps.ci.outputs.ci_check_suite_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: authority
+          persist-credentials: false
+      - name: Require the immutable signed release-authority tag
+        working-directory: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALBERT_RELEASE_ENVIRONMENT: production
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
+          ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXPECTED_SIGNER_EMAIL: ${{ vars.ALBERT_RELEASE_AUTHORITY_SIGNER_EMAIL }}
+        run: |
+          node scripts/assert-release-authority.mjs
+          test -n "$EXPECTED_SIGNER_EMAIL"
+          tag_name="${GITHUB_REF#refs/tags/}"
+          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag_name")"
+          tag_object_sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = tag
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$tag_name"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = true
+          test "$(jq -r '.verification.reason' <<<"$tag_json")" = valid
+          test "$(jq -r '.tagger.email' <<<"$tag_json")" = "$EXPECTED_SIGNER_EMAIL"
+      - name: Require one exact protected-main CI workflow run and check suite
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$ALBERT_RELEASE_CANDIDATE_SHA" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) exit 1 ;;
+          esac
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+          ci_workflow_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml")"
+          test "$(jq -r .path <<<"$ci_workflow_json")" = .github/workflows/ci.yml
+          ci_workflow_id="$(jq -r .id <<<"$ci_workflow_json")"
+          case "$ci_workflow_id" in *[!0-9]*|'') exit 1 ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$ci_workflow_id/runs?head_sha=$ALBERT_RELEASE_CANDIDATE_SHA&branch=main&event=push&per_page=100" > "$RUNNER_TEMP/ci-runs.json"
+          ci_run="$(jq -ce --arg sha "$ALBERT_RELEASE_CANDIDATE_SHA" --arg repo "$GITHUB_REPOSITORY" --argjson workflow "$ci_workflow_id" '
+            [.workflow_runs[] | select(
+              .workflow_id == $workflow and .head_sha == $sha and .head_branch == "main" and
+              .event == "push" and .status == "completed" and .conclusion == "success" and
+              .path == ".github/workflows/ci.yml" and .head_repository.full_name == $repo
+            )] | if length == 1 then .[0] else error("expected one exact successful CI run") end
+          ' "$RUNNER_TEMP/ci-runs.json")"
+          ci_run_id="$(jq -r .id <<<"$ci_run")"
+          ci_run_attempt="$(jq -r .run_attempt <<<"$ci_run")"
+          ci_check_suite_id="$(jq -r .check_suite_id <<<"$ci_run")"
+          case "$ci_run_id:$ci_run_attempt:$ci_check_suite_id" in *[!0-9:]*) exit 1 ;; esac
+          test "$ci_run_attempt" = 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run_id/attempts/$ci_run_attempt/jobs?per_page=100" > "$RUNNER_TEMP/ci-jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$ALBERT_RELEASE_CANDIDATE_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/check-runs.json"
+          for context in verify browser-acceptance analytical-database control-plane-database; do
+            jq -e --arg context "$context" --argjson run "$ci_run_id" '
+              [.jobs[] | select(.name == $context and .run_id == $run and .status == "completed" and .conclusion == "success")] | length == 1
+            ' "$RUNNER_TEMP/ci-jobs.json"
+            jq -e --arg context "$context" --argjson suite "$ci_check_suite_id" '
+              [.check_runs[] | select(
+                .name == $context and .check_suite.id == $suite and .status == "completed" and
+                .conclusion == "success" and .app.slug == "github-actions" and .app.id == 15368
+              )] | length == 1
+            ' "$RUNNER_TEMP/check-runs.json"
+          done
+          echo "ci_workflow_id=$ci_workflow_id" >> "$GITHUB_OUTPUT"
+          echo "ci_run_id=$ci_run_id" >> "$GITHUB_OUTPUT"
+          echo "ci_run_attempt=$ci_run_attempt" >> "$GITHUB_OUTPUT"
+          echo "ci_check_suite_id=$ci_check_suite_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: candidate/package-lock.json
+      - name: Prove the candidate privileged surface before executing candidate code
+        run: |
+          test "$(git -C candidate rev-parse HEAD)" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+          node --input-type=module - <<'NODE'
+          import assert from "node:assert/strict";
+          import { digestReleaseAuthoritySurface } from "./authority/scripts/create-release-plan.mjs";
+          const [authority, candidate] = await Promise.all([
+            digestReleaseAuthoritySurface("authority"),
+            digestReleaseAuthoritySurface("candidate"),
+          ]);
+          assert.deepEqual(candidate, authority, "candidate privileged surface differs from authority");
+          NODE
+      - name: Run candidate checks without credentials
+        working-directory: candidate
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+
+  build-candidate:
+    name: Build and publish the reviewed credential-free candidate image
+    if: github.run_attempt == 1
+    needs: verify-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      services_image: ${{ steps.image.outputs.services_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Verify the reviewed candidate checkout without executing its scripts
+        run: test "$(git -C candidate rev-parse HEAD)" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+      - name: Build and publish the exact candidate image without build secrets
+        id: image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/albert-services"
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --name "albert-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --driver docker-container --use
+          docker buildx build candidate \
+            --file candidate/Dockerfile.services \
+            --platform linux/amd64 \
+            --build-arg "ALBERT_BUILD_SHA=$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --label "org.opencontainers.image.revision=$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --provenance=mode=max \
+            --sbom=true \
+            --tag "$image:$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --metadata-file "$RUNNER_TEMP/build-metadata.json" \
+            --push
+          digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/build-metadata.json")"
+          case "$digest" in sha256:[0-9a-f][0-9a-f]*) ;; *) exit 1 ;; esac
+          test "${#digest}" -eq 71
+          services_image="$image@$digest"
+          docker pull --platform linux/amd64 "$services_image"
+          test "$(docker inspect "$services_image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+          echo "services_image=$services_image" >> "$GITHUB_OUTPUT"
+      - name: Prove the immutable image is publicly pullable by Fly without registry credentials
+        env:
+          SERVICES_IMAGE: ${{ steps.image.outputs.services_image }}
+        run: |
+          docker logout ghcr.io
+          for attempt in $(seq 1 12); do
+            if docker manifest inspect "$SERVICES_IMAGE" > /dev/null; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+      - name: Remove the isolated candidate builder
+        if: always()
+        run: docker buildx rm "albert-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" || true
+
+  plan:
+    name: Create candidate-bound human-review plan
+    if: github.run_attempt == 1
+    needs:
+      - verify-candidate
+      - build-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      plan_digest: ${{ steps.plan.outputs.plan_digest }}
+      services_image: ${{ steps.plan.outputs.services_image }}
+      plan_artifact_id: ${{ steps.plan_artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: authority
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Verify exact dogfood workflow and artifact provenance
+        id: dogfood
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for identifier in "$ALBERT_DOGFOOD_RUN_ID" "$ALBERT_DOGFOOD_ARTIFACT_ID"; do
+            case "$identifier" in ''|0*|*[!0-9]*) exit 1 ;; esac
+          done
+          dogfood_workflow_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/dogfood-acceptance.yml")"
+          dogfood_workflow_id="$(jq -r .id <<<"$dogfood_workflow_json")"
+          test "$(jq -r .path <<<"$dogfood_workflow_json")" = .github/workflows/dogfood-acceptance.yml
+          case "$dogfood_workflow_id" in ''|*[!0-9]*) exit 1 ;; esac
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ALBERT_DOGFOOD_RUN_ID")"
+          test "$(jq -r .workflow_id <<<"$run_json")" = "$dogfood_workflow_id"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$GITHUB_SHA"
+          test "$(jq -r .head_branch <<<"$run_json")" = "${GITHUB_REF#refs/tags/}"
+          test "$(jq -r .repository.full_name <<<"$run_json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .head_repository.full_name <<<"$run_json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .path <<<"$run_json")" = .github/workflows/dogfood-acceptance.yml
+          test "$(jq -r .event <<<"$run_json")" = workflow_dispatch
+          test "$(jq -r .status <<<"$run_json")" = completed
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          test "$(jq -r .run_attempt <<<"$run_json")" = 1
+          artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ALBERT_DOGFOOD_ARTIFACT_ID")"
+          test "$(jq -r .workflow_run.id <<<"$artifact_json")" = "$ALBERT_DOGFOOD_RUN_ID"
+          test "$(jq -r .name <<<"$artifact_json")" = "dogfood-acceptance-$ALBERT_RELEASE_CANDIDATE_SHA"
+          test "$(jq -r .expired <<<"$artifact_json")" = false
+          artifact_size="$(jq -r .size_in_bytes <<<"$artifact_json")"
+          test "$artifact_size" -gt 0
+          test "$artifact_size" -le 16777216
+          artifact_digest="$(jq -r .digest <<<"$artifact_json")"
+          case "$artifact_digest" in sha256:[0-9a-f][0-9a-f]*) ;; *) exit 1 ;; esac
+          test "${#artifact_digest}" -eq 71
+          echo "dogfood_artifact_digest=$artifact_digest" >> "$GITHUB_OUTPUT"
+      - name: Create deterministic authority/candidate release plan
+        id: plan
+        working-directory: authority
+        run: node scripts/create-release-plan.mjs "$RUNNER_TEMP/release-plan.json"
+        env:
+          ALBERT_RELEASE_AUTHORITY_ROOT: ${{ github.workspace }}/authority
+          ALBERT_RELEASE_CANDIDATE_ROOT: ${{ github.workspace }}/candidate
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
+          ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_DOGFOOD_ARTIFACT_DIGEST: ${{ steps.dogfood.outputs.dogfood_artifact_digest }}
+          ALBERT_RELEASE_CI_WORKFLOW_ID: ${{ needs.verify-candidate.outputs.ci_workflow_id }}
+          ALBERT_RELEASE_CI_RUN_ID: ${{ needs.verify-candidate.outputs.ci_run_id }}
+          ALBERT_RELEASE_CI_RUN_ATTEMPT: ${{ needs.verify-candidate.outputs.ci_run_attempt }}
+          ALBERT_RELEASE_CI_CHECK_SUITE_ID: ${{ needs.verify-candidate.outputs.ci_check_suite_id }}
+      - name: Present the exact plan to the production reviewer
+        env:
+          PLAN_DIGEST: ${{ steps.plan.outputs.plan_digest }}
+          SERVICES_IMAGE: ${{ steps.plan.outputs.services_image }}
+          DOGFOOD_ARTIFACT_DIGEST: ${{ steps.dogfood.outputs.dogfood_artifact_digest }}
+          CI_RUN_ID: ${{ needs.verify-candidate.outputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ needs.verify-candidate.outputs.ci_run_attempt }}
+        run: |
+          {
+            echo '## Albert production release plan'
+            echo
+            echo "- Authority: \`$GITHUB_REF\` at \`$GITHUB_SHA\`"
+            echo "- Candidate: \`$ALBERT_RELEASE_CANDIDATE_SHA\`"
+            echo "- Services image: \`$SERVICES_IMAGE\`"
+            echo "- Plan digest: \`$PLAN_DIGEST\`"
+            echo "- CI run/attempt: \`$CI_RUN_ID/$CI_RUN_ATTEMPT\`"
+            echo "- Dogfood run/artifact: \`$ALBERT_DOGFOOD_RUN_ID/$ALBERT_DOGFOOD_ARTIFACT_ID\` at \`$DOGFOOD_ARTIFACT_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: plan_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-release-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  attest-transform-fleet-capacity:
+    name: attest-transform-fleet-capacity
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+    environment: staging-capacity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    outputs:
+      capacity_artifact_id: ${{ steps.capacity_artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify protected release authority
+        run: node scripts/assert-release-authority.mjs
+        env:
+          ALBERT_RELEASE_ENVIRONMENT: production
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ vars.ALBERT_RELEASE_AUTHORITY_TOOLING_SHA }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_REF }}
+          ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - run: npm ci --ignore-scripts
+      - name: Quiesce the isolated capacity cell
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+        run: |
+          flyctl scale count 0 --app "$AUTOSCALER_APP" --yes
+          flyctl scale count 0 --app "$TARGET_APP" --yes
+          flyctl machines list --app "$TARGET_APP" --json | jq -e \
+            '[.[] | select(.state == "started" or .state == "starting")] | length == 0'
+      - name: Apply authority-reviewed schema and reset only capacity run attribution
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CAPACITY_CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_DATABASE_URL: ${{ secrets.CAPACITY_ANALYTICAL_MIGRATION_URL }}
+          CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
+          ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+          CAPACITY_CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CAPACITY_CONTROL_PLANE_MIGRATION_URL }}
+          ALBERT_CAPACITY_STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          ALBERT_CAPACITY_RESET_APPROVED: reset-staging-capacity:${{ inputs.candidate_sha }}:${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+        run: |
+          npm run migrate
+          node scripts/prepare-transform-capacity-cell.mjs
+      - name: Derive immutable timing and per-Machine claim contract
+        id: run_contract
+        env:
+          REQUESTED_FLOOR: ${{ vars.ALBERT_CAPACITY_REQUESTED_FLOOR }}
+        run: |
+          node --input-type=module - <<'NODE' >> "$GITHUB_OUTPUT"
+          import { CAPACITY_ATTESTATION_HARNESS_HOLD_MS } from "./scripts/capacity-attestation-timing.mjs";
+          const floor = Number(process.env.REQUESTED_FLOOR || "2");
+          if (!Number.isInteger(floor) || floor < 2 || floor > 40) throw new Error("invalid protected capacity floor");
+          const now = Date.now();
+          console.log(`floor=${floor}`);
+          console.log(`max_claims=${Math.ceil(20_000 / floor)}`);
+          console.log(`not_before=${new Date(now + 8 * 60_000).toISOString()}`);
+          console.log(`hold_until=${new Date(now + CAPACITY_ATTESTATION_HARNESS_HOLD_MS).toISOString()}`);
+          NODE
+      - name: Stage capacity-only runtime database identities
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          APP_NAME: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          CONTROL_RUNTIME_URL: ${{ secrets.CAPACITY_TRANSFORM_CONTROL_PLANE_DATABASE_URL }}
+          ANALYTICAL_RUNTIME_URL: ${{ secrets.CAPACITY_TRANSFORM_DATABASE_URL }}
+        run: >-
+          flyctl secrets set --app "$APP_NAME" --stage
+          TRANSFORM_CONTROL_PLANE_DATABASE_URL="$CONTROL_RUNTIME_URL"
+          TRANSFORM_DATABASE_URL="$ANALYTICAL_RUNTIME_URL"
+      - name: Deploy only the approved candidate image behind the future barrier
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          APP_NAME: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          CAPACITY_PROJECT_REF: ${{ vars.ALBERT_CAPACITY_CONTROL_PLANE_PROJECT_REF }}
+          SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          FLOOR: ${{ steps.run_contract.outputs.floor }}
+          MAX_CLAIMS: ${{ steps.run_contract.outputs.max_claims }}
+          NOT_BEFORE: ${{ steps.run_contract.outputs.not_before }}
+          HOLD_UNTIL: ${{ steps.run_contract.outputs.hold_until }}
+        run: >-
+          flyctl deploy . --app "$APP_NAME" --config deploy/capacity/transform-fleet.toml
+          --image "$SERVICES_IMAGE" --ha=false --strategy immediate --wait-timeout 10m
+          --env "ALBERT_SERVICE_VERSION=$ALBERT_RELEASE_CANDIDATE_SHA"
+          --env "ALBERT_DEPLOYMENT_ID=capacity-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --env "ALBERT_CONTROL_PLANE_PROJECT_REF=$CAPACITY_PROJECT_REF"
+          --env "ALBERT_CAPACITY_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --env "ALBERT_CAPACITY_RUN_APPROVED=load-staging:$ALBERT_RELEASE_CANDIDATE_SHA"
+          --env "ALBERT_CAPACITY_MIN_SAMPLES=500"
+          --env "ALBERT_CAPACITY_MAX_CLAIMS=$MAX_CLAIMS"
+          --env "ALBERT_CAPACITY_NOT_BEFORE=$NOT_BEFORE"
+          --env "ALBERT_CAPACITY_HOLD_UNTIL=$HOLD_UNTIL"
+      - name: Deploy the immutable constant-signal autoscaler
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          TARGET_SCALING_TOKEN: ${{ secrets.FLY_TRANSFORM_CAPACITY_SCALING_TOKEN }}
+          PROMETHEUS_READ_TOKEN: ${{ secrets.FLY_PROMETHEUS_READ_TOKEN }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          FLOOR: ${{ steps.run_contract.outputs.floor }}
+        run: |
+          flyctl secrets set --app "$AUTOSCALER_APP" --stage \
+            FAS_API_TOKEN="$TARGET_SCALING_TOKEN" FAS_PROMETHEUS_TOKEN="$PROMETHEUS_READ_TOKEN"
+          flyctl deploy . --app "$AUTOSCALER_APP" --config deploy/capacity/transform-fleet-autoscaler.toml \
+            --image "flyio/fly-autoscaler@sha256:8befadf6269dd637e3f3759f61039bd8e1543e9ec3d06523e974e76a80c207df" \
+            --ha=false --wait-timeout 10m \
+            --env "FAS_APP_NAME=$TARGET_APP" \
+            --env "FAS_PROMETHEUS_ADDRESS=https://api.fly.io/prometheus/$FLY_ORGANIZATION_SLUG" \
+            --env "FAS_PROMETHEUS_QUERY=vector($FLOOR)" \
+            --env "FAS_CREATED_MACHINE_COUNT=$FLOOR"
+      - name: Ask the independently pinned attestor to observe and sign the run
+        env:
+          ATTESTOR_URL: ${{ vars.ALBERT_CAPACITY_ATTESTOR_URL }}
+          REQUESTED_FLOOR: ${{ steps.run_contract.outputs.floor }}
+          STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
+          ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ALBERT_RELEASE_PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
+          ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+        run: node scripts/request-independent-capacity-attestation.mjs "$RUNNER_TEMP/transform-fleet-capacity-attestation.json"
+      - id: capacity_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: transform-fleet-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transform-fleet-capacity-attestation.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Quiesce capacity-only Machines
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+        run: |
+          flyctl scale count 0 --app "$AUTOSCALER_APP" --yes
+          flyctl scale count 0 --app "$TARGET_APP" --yes
+
+  authorize:
+    name: Human approval and one-use independent evidence consumption
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+      - attest-transform-fleet-capacity
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      transform_machine_floor: ${{ steps.preflight.outputs.transform_machine_floor }}
+      authorization_digest: ${{ steps.authorization.outputs.authorization_digest }}
+      authorization_artifact_id: ${{ steps.authorization_artifact.outputs.artifact-id }}
+      github_authority_audit_digest: ${{ steps.github_audit.outputs.github_authority_audit_digest }}
+      approval_record_digest: ${{ steps.approval.outputs.approval_record_digest }}
+      reviewer_id: ${{ steps.approval.outputs.reviewer_id }}
+      reviewer_login: ${{ steps.approval.outputs.reviewer_login }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable release authority before protected credentials exist
+        run: node scripts/assert-release-authority.mjs
+        env:
+          ALBERT_RELEASE_ENVIRONMENT: production
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ vars.ALBERT_RELEASE_AUTHORITY_TOOLING_SHA }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_REF }}
+          ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          artifact-ids: ${{ needs.plan.outputs.plan_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          artifact-ids: ${{ needs.attest-transform-fleet-capacity.outputs.capacity_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/capacity
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.dogfood_run_id }}
+          artifact-ids: ${{ inputs.dogfood_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/dogfood
+      - name: Reject unexpected artifact filesystem content
+        run: |
+          for directory in "$RUNNER_TEMP/plan" "$RUNNER_TEMP/capacity" "$RUNNER_TEMP/dogfood"; do
+            test -z "$(find "$directory" -mindepth 1 ! -type f -print -quit)"
+          done
+          test "$(find "$RUNNER_TEMP/plan" -mindepth 1 | wc -l)" -eq 1
+          test "$(find "$RUNNER_TEMP/capacity" -mindepth 1 | wc -l)" -eq 1
+          test "$(find "$RUNNER_TEMP/dogfood" -mindepth 1 | wc -l)" -eq 1
+          test -s "$RUNNER_TEMP/plan/release-plan.json"
+          test -s "$RUNNER_TEMP/capacity/transform-fleet-capacity-attestation.json"
+          test -s "$RUNNER_TEMP/dogfood/dogfood-acceptance.json"
+          for artifact in \
+            "$RUNNER_TEMP/plan/release-plan.json" \
+            "$RUNNER_TEMP/capacity/transform-fleet-capacity-attestation.json" \
+            "$RUNNER_TEMP/dogfood/dogfood-acceptance.json"; do
+            test "$(wc -c < "$artifact")" -le 16777216
+          done
+          cp "$RUNNER_TEMP/dogfood/dogfood-acceptance.json" "$RUNNER_TEMP/dogfood-acceptance.json"
+      - name: Re-audit live GitHub release authority after human approval
+        id: github_audit
+        env:
+          GH_TOKEN: ${{ secrets.ALBERT_GITHUB_CONFIGURATION_AUDIT_TOKEN }}
+          ALBERT_RELEASE_AUTHORITY_CREATOR_APP_ID: ${{ vars.ALBERT_RELEASE_AUTHORITY_CREATOR_APP_ID }}
+          ALBERT_VENDOR_ATTESTOR_TAG_ISSUER_APP_ID: ${{ vars.ALBERT_VENDOR_ATTESTOR_TAG_ISSUER_APP_ID }}
+        run: |
+          node scripts/audit-production-environment.mjs \
+            --github-authority-only --repo "$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/github-release-authority-audit.json"
+          digest="$(sha256sum "$RUNNER_TEMP/github-release-authority-audit.json" | cut -d' ' -f1)"
+          case "$digest" in *[!0-9a-f]*|'') exit 1 ;; esac
+          test "${#digest}" -eq 64
+          echo "github_authority_audit_digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Bind the exact production reviewer without self-approval
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" > "$RUNNER_TEMP/approvals.json"
+          jq -ce --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" --arg actor "$GITHUB_ACTOR_ID" '
+            [.[] | select(.state == "approved") | select(any(.environments[]?; .name == "production"))] |
+            if length != 1 then error("expected one production approval") else .[0] end |
+            if (.user.id | tostring) == $actor then error("self approval is forbidden") else . end |
+            {
+              schemaVersion: 1,
+              kind: "albert.production-environment-approval",
+              repository: $repository,
+              workflowRunId: $run,
+              workflowRunAttempt: 1,
+              environment: "production",
+              state: "approved",
+              reviewer: {id: (.user.id | tostring), login: .user.login, type: .user.type}
+            }
+          ' "$RUNNER_TEMP/approvals.json" > "$RUNNER_TEMP/production-approval.json"
+          reviewer_id="$(jq -r .reviewer.id "$RUNNER_TEMP/production-approval.json")"
+          reviewer_login="$(jq -r .reviewer.login "$RUNNER_TEMP/production-approval.json")"
+          approval_record_digest="$(node --input-type=module -e '
+            import { createHash } from "node:crypto";
+            import { readFileSync } from "node:fs";
+            import { canonicalJson } from "./scripts/create-release-plan.mjs";
+            const value = JSON.parse(readFileSync(process.argv[1], "utf8"));
+            process.stdout.write(createHash("sha256").update(canonicalJson(value)).digest("hex"));
+          ' "$RUNNER_TEMP/production-approval.json")"
+          echo "reviewer_id=$reviewer_id" >> "$GITHUB_OUTPUT"
+          echo "reviewer_login=$reviewer_login" >> "$GITHUB_OUTPUT"
+          echo "approval_record_digest=$approval_record_digest" >> "$GITHUB_OUTPUT"
+      - name: Make exact envelopes available to trusted authority consumers
+        run: |
+          echo "ALBERT_TRANSFORM_FLEET_CAPACITY_ATTESTATION_BASE64=$(base64 -w0 "$RUNNER_TEMP/capacity/transform-fleet-capacity-attestation.json")" >> "$GITHUB_ENV"
+          echo "ALBERT_DOGFOOD_ACCEPTANCE_EVIDENCE=$(jq -c . "$RUNNER_TEMP/dogfood-acceptance.json")" >> "$GITHUB_ENV"
+      - name: Verify live infrastructure, data controls, capacity, and approved decisions
+        id: preflight
+        run: npm run release:preflight
+        env:
+          ALBERT_RELEASE_ENVIRONMENT: production
+          ALBERT_RELEASE_COMMIT_SHA: ${{ inputs.candidate_sha }}
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
+          ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF: ${{ github.workflow_ref }}
+          ALBERT_RELEASE_PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
+          ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_CONTROL_PLANE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          ALBERT_CONTROL_PLANE_REGION: ${{ vars.ALBERT_CONTROL_PLANE_REGION }}
+          ALBERT_ANALYTICAL_REGION: ${{ vars.ALBERT_ANALYTICAL_REGION }}
+          SUPABASE_STORAGE_S3_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          SUPABASE_STORAGE_S3_REGION: ${{ vars.SUPABASE_STORAGE_S3_REGION }}
+          ALBERT_MODEL_DATA_RESIDENCY_REGION: ${{ vars.ALBERT_MODEL_DATA_RESIDENCY_REGION }}
+          ALBERT_MODEL_DATA_CONTROL_APPROVED: ${{ vars.ALBERT_MODEL_DATA_CONTROL_APPROVED }}
+          ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST: ${{ vars.ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST }}
+          ALBERT_LIGHTSPEED_PRODUCT: ${{ vars.ALBERT_LIGHTSPEED_PRODUCT }}
+          ALBERT_PUBLIC_ORIGIN: ${{ vars.ALBERT_PUBLIC_ORIGIN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          SEMANTIC_QUERY_SERVICE_URL: ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+          OPERATOR_DIAGNOSTIC_SERVICE_URL: ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
+          SYNC_WORKER_INTERNAL_URL: ${{ vars.SYNC_WORKER_INTERNAL_URL }}
+          WEBHOOK_GATEWAY_PUBLIC_URL: ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
+          CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+          SUPABASE_MANAGEMENT_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_TOKEN }}
+          FLY_SEMANTIC_APP: ${{ vars.FLY_SEMANTIC_APP }}
+          FLY_SYNC_APP: ${{ vars.FLY_SYNC_APP }}
+          FLY_TRANSFORM_APP: ${{ vars.FLY_TRANSFORM_APP }}
+          FLY_WEBHOOK_APP: ${{ vars.FLY_WEBHOOK_APP }}
+          FLY_DELETION_APP: ${{ vars.FLY_DELETION_APP }}
+          FLY_OPERATOR_DIAGNOSTIC_APP: ${{ vars.FLY_OPERATOR_DIAGNOSTIC_APP }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          FLY_SYNC_AUTOSCALER_APP: ${{ vars.FLY_SYNC_AUTOSCALER_APP }}
+          FLY_TRANSFORM_AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_AUTOSCALER_APP }}
+          ALBERT_SNAPSHOT_P95_MS: ${{ vars.ALBERT_SNAPSHOT_P95_MS }}
+          ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64: ${{ secrets.ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64 }}
+          ALBERT_CAPACITY_STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          ALBERT_CAPACITY_ATTESTOR_TOOL_REF: ${{ vars.ALBERT_CAPACITY_ATTESTOR_TOOL_REF }}
+          ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST: ${{ vars.ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+      - name: Verify and atomically consume one-use dogfood acceptance
+        run: node scripts/dogfood-acceptance-attestation.mjs
+        env:
+          ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PUBLIC_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PUBLIC_KEY_BASE64URL }}
+          ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF: ${{ github.ref }}
+          ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA: ${{ github.sha }}
+          ALBERT_DOGFOOD_CONTROL_DATABASE_URL: ${{ secrets.ALBERT_DOGFOOD_CONTROL_DATABASE_URL }}
+          ALBERT_RELEASE_COMMIT_SHA: ${{ inputs.candidate_sha }}
+      - name: Seal downstream authorisation to the consumed evidence and plan
+        id: authorization
+        env:
+          ALBERT_RELEASE_AUTHORIZATION_ED25519_PRIVATE_KEY_BASE64URL: ${{ secrets.ALBERT_RELEASE_AUTHORIZATION_ED25519_PRIVATE_KEY_BASE64URL }}
+          ALBERT_RELEASE_GITHUB_AUTHORITY_AUDIT_DIGEST: ${{ steps.github_audit.outputs.github_authority_audit_digest }}
+        run: |
+          node scripts/release-authorization-receipt.mjs seal \
+            "$RUNNER_TEMP/release-authorization.json" \
+            "$RUNNER_TEMP/plan/release-plan.json" \
+            "$RUNNER_TEMP/capacity/transform-fleet-capacity-attestation.json" \
+            "$RUNNER_TEMP/dogfood-acceptance.json" \
+            "$RUNNER_TEMP/production-approval.json"
+          echo "authorization_digest=$(sha256sum "$RUNNER_TEMP/release-authorization.json" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - id: authorization_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-release-authorization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-authorization.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve the redacted live-authority and approval records
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-release-authority-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/github-release-authority-audit.json
+            ${{ runner.temp }}/production-approval.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record the signed authorization identities
+        env:
+          AUTHORIZATION_DIGEST: ${{ steps.authorization.outputs.authorization_digest }}
+          GITHUB_AUTHORITY_AUDIT_DIGEST: ${{ steps.github_audit.outputs.github_authority_audit_digest }}
+          APPROVAL_RECORD_DIGEST: ${{ steps.approval.outputs.approval_record_digest }}
+          REVIEWER_ID: ${{ steps.approval.outputs.reviewer_id }}
+          REVIEWER_LOGIN: ${{ steps.approval.outputs.reviewer_login }}
+        run: |
+          {
+            echo '## Production authorization sealed'
+            echo
+            echo "- Authorization digest: \`$AUTHORIZATION_DIGEST\`"
+            echo "- GitHub authority audit digest: \`$GITHUB_AUTHORITY_AUDIT_DIGEST\`"
+            echo "- Approval record digest: \`$APPROVAL_RECORD_DIGEST\`"
+            echo "- Reviewer: \`$REVIEWER_LOGIN\` (GitHub user ID \`$REVIEWER_ID\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  schema:
+    name: Apply authority-reviewed schema
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+      - authorize
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          artifact-ids: ${{ needs.authorize.outputs.authorization_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/authorization
+      - name: Verify signed release authorisation
+        env:
+          ALBERT_RELEASE_AUTHORIZATION_ED25519_PUBLIC_KEY_BASE64URL: ${{ vars.ALBERT_RELEASE_AUTHORIZATION_ED25519_PUBLIC_KEY_BASE64URL }}
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ vars.ALBERT_RELEASE_AUTHORITY_TOOLING_SHA }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_REF }}
+          ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_RELEASE_PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
+          ALBERT_RELEASE_REVIEWER_ID: ${{ needs.authorize.outputs.reviewer_id }}
+          ALBERT_RELEASE_REVIEWER_LOGIN: ${{ needs.authorize.outputs.reviewer_login }}
+          ALBERT_RELEASE_APPROVAL_RECORD_DIGEST: ${{ needs.authorize.outputs.approval_record_digest }}
+          ALBERT_RELEASE_GITHUB_AUTHORITY_AUDIT_DIGEST: ${{ needs.authorize.outputs.github_authority_audit_digest }}
+        run: |
+          test -z "$(find "$RUNNER_TEMP/authorization" -mindepth 1 ! -type f -print -quit)"
+          test "$(find "$RUNNER_TEMP/authorization" -mindepth 1 | wc -l)" -eq 1
+          test -s "$RUNNER_TEMP/authorization/release-authorization.json"
+          test "$(sha256sum "$RUNNER_TEMP/authorization/release-authorization.json" | cut -d' ' -f1)" = "${{ needs.authorize.outputs.authorization_digest }}"
+          node scripts/release-authorization-receipt.mjs verify "$RUNNER_TEMP/authorization/release-authorization.json"
+      - name: Reconcile reviewed administrator additions
+        run: npm run bootstrap:upgrade:control-plane
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+      - name: Apply immutable migrations with deployer identities
+        run: npm run migrate
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_DATABASE_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+          CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
+          ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+
+  runtime-security:
+    name: Reconcile exact runtime security identities
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+      - authorize
+      - schema
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Reconcile one-group database logins
+        run: npm run provision:runtime-logins
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ANALYTICAL_ADMIN_DATABASE_URL: ${{ secrets.ANALYTICAL_ADMIN_DATABASE_URL }}
+          ALBERT_CONTROL_DEPLOYER_DB_PASSWORD: ${{ secrets.ALBERT_CONTROL_DEPLOYER_DB_PASSWORD }}
+          ALBERT_SYNC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_SYNC_CONTROL_DB_PASSWORD }}
+          ALBERT_TRANSFORM_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_TRANSFORM_CONTROL_DB_PASSWORD }}
+          ALBERT_SEMANTIC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_CONTROL_DB_PASSWORD }}
+          ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD }}
+          ALBERT_WEBHOOK_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_WEBHOOK_CONTROL_DB_PASSWORD }}
+          ALBERT_DELETION_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_DELETION_CONTROL_DB_PASSWORD }}
+          ALBERT_ANALYTICAL_DEPLOYER_DB_PASSWORD: ${{ secrets.ALBERT_ANALYTICAL_DEPLOYER_DB_PASSWORD }}
+          ALBERT_INGEST_DB_PASSWORD: ${{ secrets.ALBERT_INGEST_DB_PASSWORD }}
+          ALBERT_TRANSFORM_DB_PASSWORD: ${{ secrets.ALBERT_TRANSFORM_DB_PASSWORD }}
+          ALBERT_SEMANTIC_READ_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_READ_DB_PASSWORD }}
+          ALBERT_SEMANTIC_METADATA_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_METADATA_DB_PASSWORD }}
+          ALBERT_OPERATOR_DIAGNOSTIC_ANALYTICAL_DB_PASSWORD: ${{ secrets.ALBERT_OPERATOR_DIAGNOSTIC_ANALYTICAL_DB_PASSWORD }}
+          ALBERT_DELETION_DB_PASSWORD: ${{ secrets.ALBERT_DELETION_DB_PASSWORD }}
+      - name: Create or rotate RLS-scoped raw Storage principals
+        run: npm run provision:raw-storage-machine-users
+        env:
+          SUPABASE_AUTH_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY }}
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ALBERT_CONTROL_PLANE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          SUPABASE_STORAGE_S3_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          SUPABASE_STORAGE_S3_REGION: ${{ vars.SUPABASE_STORAGE_S3_REGION }}
+          SUPABASE_STORAGE_S3_ACCESS_KEY_ID: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          SUPABASE_STORAGE_S3_LEGACY_ANON_KEY: ${{ secrets.SUPABASE_STORAGE_S3_LEGACY_ANON_KEY }}
+          ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION: ${{ vars.ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION }}
+          ALBERT_RAW_STORAGE_SYNC_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_SYNC_PASSWORD }}
+          ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD }}
+          ALBERT_RAW_STORAGE_DELETION_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_DELETION_PASSWORD }}
+      - name: Install the shared analytical capability key
+        run: npm run provision:analytical-capability-key
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ANALYTICAL_ADMIN_DATABASE_URL: ${{ secrets.ANALYTICAL_ADMIN_DATABASE_URL }}
+          ANALYTICAL_CAPABILITY_KEY_ID: ${{ vars.ANALYTICAL_CAPABILITY_KEY_ID }}
+          ANALYTICAL_CAPABILITY_SECRET_BASE64: ${{ secrets.ANALYTICAL_CAPABILITY_SECRET_BASE64 }}
+          ANALYTICAL_CAPABILITY_ACTIVE_AT: ${{ vars.ANALYTICAL_CAPABILITY_ACTIVE_AT }}
+          ANALYTICAL_CAPABILITY_RETIRE_AT: ${{ vars.ANALYTICAL_CAPABILITY_RETIRE_AT }}
+          ANALYTICAL_CAPABILITY_PREVIOUS_KEY_ID: ${{ vars.ANALYTICAL_CAPABILITY_PREVIOUS_KEY_ID }}
+          ANALYTICAL_CAPABILITY_PREVIOUS_RETIRE_AT: ${{ vars.ANALYTICAL_CAPABILITY_PREVIOUS_RETIRE_AT }}
+      - name: Install the webhook attestation key
+        run: npm run provision:webhook-attestation-key
+        env:
+          CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          WEBHOOK_ATTESTATION_KEY_ID: ${{ vars.WEBHOOK_ATTESTATION_KEY_ID }}
+          WEBHOOK_ATTESTATION_SECRET: ${{ secrets.WEBHOOK_ATTESTATION_SECRET }}
+
+  publish-registry:
+    name: Publish authority-reviewed semantic registry
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+      - authorize
+      - runtime-security
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run registry:publish
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ALBERT_SEMANTIC_PUBLISH_ROLE: albert_control_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+
+  stage-raw-storage-sessions:
+    name: Stage RLS Storage session / ${{ matrix.purpose }}
+    if: github.run_attempt == 1
+    needs:
+      - authorize
+      - runtime-security
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { purpose: sync, app_variable: FLY_SYNC_APP, token_secret: FLY_SYNC_API_TOKEN, password_secret: ALBERT_RAW_STORAGE_SYNC_PASSWORD, password_name: ALBERT_RAW_STORAGE_SYNC_PASSWORD }
+          - { purpose: webhook, app_variable: FLY_WEBHOOK_APP, token_secret: FLY_WEBHOOK_API_TOKEN, password_secret: ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD, password_name: ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD }
+          - { purpose: deletion, app_variable: FLY_DELETION_APP, token_secret: FLY_DELETION_API_TOKEN, password_secret: ALBERT_RAW_STORAGE_DELETION_PASSWORD, password_name: ALBERT_RAW_STORAGE_DELETION_PASSWORD }
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Stage only the owning runtime's Storage session coordinates
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+          MACHINE_PASSWORD: ${{ secrets[matrix.password_secret] }}
+          MACHINE_PASSWORD_NAME: ${{ matrix.password_name }}
+          STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          STORAGE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          STORAGE_LEGACY_ANON_KEY: ${{ secrets.SUPABASE_STORAGE_S3_LEGACY_ANON_KEY }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$MACHINE_PASSWORD"
+          flyctl secrets set --app "$APP_NAME" --stage \
+            SUPABASE_STORAGE_S3_ENDPOINT="$STORAGE_ENDPOINT" \
+            SUPABASE_STORAGE_S3_ACCESS_KEY_ID="$STORAGE_PROJECT_REF" \
+            SUPABASE_STORAGE_S3_LEGACY_ANON_KEY="$STORAGE_LEGACY_ANON_KEY" \
+            "$MACHINE_PASSWORD_NAME=$MACHINE_PASSWORD"
+
+  stage-vendor-attestor-relay:
+    name: Stage the sync worker's private mTLS vendor-attestor relay
+    if: github.run_attempt == 1
+    needs:
+      - authorize
+      - runtime-security
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Stage only the relay's authenticated private trust material
+        env:
+          APP_NAME: ${{ vars.FLY_SYNC_APP }}
+          FLY_API_TOKEN: ${{ secrets.FLY_SYNC_API_TOKEN }}
+          PRIVATE_ORIGIN: ${{ vars.ALBERT_VENDOR_ATTESTOR_PRIVATE_ORIGIN }}
+          TLS_SERVER_NAME: ${{ vars.ALBERT_VENDOR_ATTESTOR_TLS_SERVER_NAME }}
+          EXPECTED_TOOL_REF: ${{ vars.ALBERT_VENDOR_ATTESTOR_EXPECTED_TOOL_REF }}
+          EXPECTED_BUILD_DIGEST: ${{ vars.ALBERT_VENDOR_ATTESTOR_EXPECTED_BUILD_DIGEST }}
+          TLS_CLIENT_CERT_BASE64: ${{ secrets.ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_CERT_BASE64 }}
+          TLS_CLIENT_KEY_BASE64: ${{ secrets.ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_KEY_BASE64 }}
+          TLS_SERVER_CA_BASE64: ${{ secrets.ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64 }}
+        run: |
+          test -n "$APP_NAME"
+          case "$PRIVATE_ORIGIN" in https://*.internal) ;; *) exit 1 ;; esac
+          test "$TLS_SERVER_NAME" = "${PRIVATE_ORIGIN#https://}"
+          case "$EXPECTED_BUILD_DIGEST" in sha256:[0-9a-f][0-9a-f]*) ;; *) exit 1 ;; esac
+          test "${#EXPECTED_BUILD_DIGEST}" -eq 71
+          test -n "$EXPECTED_TOOL_REF"
+          test -n "$TLS_CLIENT_CERT_BASE64"
+          test -n "$TLS_CLIENT_KEY_BASE64"
+          test -n "$TLS_SERVER_CA_BASE64"
+          flyctl secrets set --app "$APP_NAME" --stage \
+            ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED=true \
+            ALBERT_VENDOR_ATTESTOR_PRIVATE_ORIGIN="$PRIVATE_ORIGIN" \
+            ALBERT_VENDOR_ATTESTOR_TLS_SERVER_NAME="$TLS_SERVER_NAME" \
+            ALBERT_VENDOR_ATTESTOR_EXPECTED_TOOL_REF="$EXPECTED_TOOL_REF" \
+            ALBERT_VENDOR_ATTESTOR_EXPECTED_BUILD_DIGEST="$EXPECTED_BUILD_DIGEST" \
+            ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_CERT_BASE64="$TLS_CLIENT_CERT_BASE64" \
+            ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_KEY_BASE64="$TLS_CLIENT_KEY_BASE64" \
+            ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64="$TLS_SERVER_CA_BASE64"
+
+  deploy-services:
+    name: Deploy approved image / ${{ matrix.service }}
+    if: github.run_attempt == 1
+    needs:
+      - build-candidate
+      - plan
+      - authorize
+      - publish-registry
+      - stage-raw-storage-sessions
+      - stage-vendor-attestor-relay
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: semantic-query, config: deploy/fly/semantic-query.toml, app_variable: FLY_SEMANTIC_APP, token_secret: FLY_SEMANTIC_API_TOKEN, exposure: public }
+          - { service: sync-worker, config: deploy/fly/sync-worker.toml, app_variable: FLY_SYNC_APP, token_secret: FLY_SYNC_API_TOKEN, exposure: public }
+          - { service: transform-worker, config: deploy/fly/transform-worker.toml, app_variable: FLY_TRANSFORM_APP, token_secret: FLY_TRANSFORM_API_TOKEN, exposure: private }
+          - { service: webhook-gateway, config: deploy/fly/webhook-gateway.toml, app_variable: FLY_WEBHOOK_APP, token_secret: FLY_WEBHOOK_API_TOKEN, exposure: public }
+          - { service: deletion-worker, config: deploy/fly/deletion-worker.toml, app_variable: FLY_DELETION_APP, token_secret: FLY_DELETION_API_TOKEN, exposure: private }
+          - { service: operator-diagnostic, config: deploy/fly/operator-diagnostic.toml, app_variable: FLY_OPERATOR_DIAGNOSTIC_APP, token_secret: FLY_OPERATOR_DIAGNOSTIC_API_TOKEN, exposure: public }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Validate trusted config and deploy only the approved digest
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+          SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          TARGET_FLOOR: ${{ matrix.service == 'transform-worker' && needs.authorize.outputs.transform_machine_floor || 2 }}
+        run: |
+          test "$TARGET_FLOOR" -ge 2
+          test "$TARGET_FLOOR" -le 40
+          flyctl config validate --strict --app "$APP_NAME" --config "${{ matrix.config }}"
+          flyctl secrets list --app "$APP_NAME" --json > "$RUNNER_TEMP/fly-secrets.json"
+          node scripts/validate-runtime-secrets.mjs "${{ matrix.service }}" "$RUNNER_TEMP/fly-secrets.json"
+          flyctl deploy . --app "$APP_NAME" --config "${{ matrix.config }}" \
+            --image "$SERVICES_IMAGE" --strategy rolling --wait-timeout 10m \
+            --env "ALBERT_SERVICE_VERSION=$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --env "ALBERT_DEPLOYMENT_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          running_count="$(flyctl machines list --app "$APP_NAME" --json | jq '[.[] | select(.state == "started")] | length')"
+          if [ "$running_count" -lt "$TARGET_FLOOR" ]; then
+            flyctl scale count "$TARGET_FLOOR" --app "$APP_NAME" --yes
+          fi
+          flyctl machines list --app "$APP_NAME" --json | jq -e \
+            --argjson floor "$TARGET_FLOOR" --arg sha "$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --arg digest "${SERVICES_IMAGE##*@}" \
+            '([.[] | select(.state == "started")] | length) >= $floor and
+             ([.[] | select(.state == "started") | .config.env.ALBERT_SERVICE_VERSION] | all(. == $sha)) and
+             ([.[] | select(.state == "started") | (.config.image // .image_ref.digest // "")] | all(contains($digest)))'
+          if [ "${{ matrix.exposure }}" = private ]; then
+            flyctl ips list --app "$APP_NAME" --json | jq -e 'length == 0'
+          fi
+          flyctl status --app "$APP_NAME"
+          flyctl checks list --app "$APP_NAME"
+
+  deploy-autoscalers:
+    name: Deploy immutable autoscaler / ${{ matrix.kind }}
+    if: github.run_attempt == 1
+    needs:
+      - authorize
+      - deploy-services
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: sync, target_variable: FLY_SYNC_APP, autoscaler_variable: FLY_SYNC_AUTOSCALER_APP, config: deploy/fly-autoscalers/sync-worker.toml, deploy_token_secret: FLY_SYNC_AUTOSCALER_API_TOKEN, scaling_token_secret: FLY_SYNC_SCALING_TOKEN }
+          - { kind: transform, target_variable: FLY_TRANSFORM_APP, autoscaler_variable: FLY_TRANSFORM_AUTOSCALER_APP, config: deploy/fly-autoscalers/transform-worker.toml, deploy_token_secret: FLY_TRANSFORM_AUTOSCALER_API_TOKEN, scaling_token_secret: FLY_TRANSFORM_SCALING_TOKEN }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Stage scoped autoscaler credentials and deploy pinned upstream image
+        env:
+          AUTOSCALER_APP: ${{ vars[matrix.autoscaler_variable] }}
+          TARGET_APP: ${{ vars[matrix.target_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.deploy_token_secret] }}
+          TARGET_SCALING_TOKEN: ${{ secrets[matrix.scaling_token_secret] }}
+          PROMETHEUS_READ_TOKEN: ${{ secrets.FLY_PROMETHEUS_READ_TOKEN }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          TRANSFORM_MACHINE_FLOOR: ${{ needs.authorize.outputs.transform_machine_floor }}
+        run: |
+          flyctl secrets set --app "$AUTOSCALER_APP" --stage \
+            FAS_API_TOKEN="$TARGET_SCALING_TOKEN" FAS_PROMETHEUS_TOKEN="$PROMETHEUS_READ_TOKEN"
+          flyctl config validate --strict --app "$AUTOSCALER_APP" --config "${{ matrix.config }}"
+          created_count_expression='min(40, 2 + queue_pressure)'
+          if [ "${{ matrix.kind }}" = transform ]; then
+            test "$TRANSFORM_MACHINE_FLOOR" -ge 2
+            test "$TRANSFORM_MACHINE_FLOOR" -le 40
+            created_count_expression="min(40, $TRANSFORM_MACHINE_FLOOR + queue_pressure)"
+          fi
+          flyctl deploy . --app "$AUTOSCALER_APP" --config "${{ matrix.config }}" \
+            --image "flyio/fly-autoscaler@sha256:8befadf6269dd637e3f3759f61039bd8e1543e9ec3d06523e974e76a80c207df" \
+            --ha=false --wait-timeout 10m \
+            --env "FAS_APP_NAME=$TARGET_APP" \
+            --env "FAS_PROMETHEUS_ADDRESS=https://api.fly.io/prometheus/$FLY_ORGANIZATION_SLUG" \
+            --env "FAS_CREATED_MACHINE_COUNT=$created_count_expression"
+          flyctl status --app "$AUTOSCALER_APP"
+
+  activate-and-smoke:
+    name: Activate pack and prove exact live release
+    if: github.run_attempt == 1
+    needs:
+      - authorize
+      - deploy-services
+      - deploy-autoscalers
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Wait for every public runtime at the exact candidate and deployment
+        env:
+          ALBERT_RELEASE_READINESS_ATTEMPTS: "24"
+          ALBERT_RELEASE_READINESS_DELAY_MS: "5000"
+          SERVICE_URLS: >-
+            ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+            ${{ vars.SYNC_WORKER_INTERNAL_URL }}
+            ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
+            ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
+        run: |
+          for service_url in $SERVICE_URLS; do
+            node scripts/verify-release-readiness.mjs \
+              "$service_url" /readyz "$ALBERT_RELEASE_CANDIDATE_SHA" \
+              "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          done
+      - name: Verify and atomically activate complete Lightspeed pack 1.1
+        env:
+          ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+        run: |
+          npm run connector-pack:activate -- --connector=lightspeed-r --candidate=1.1.0 --expected-active=1.0.0 --check
+          npm run connector-pack:activate -- --connector=lightspeed-r --candidate=1.1.0 --expected-active=1.0.0
+      - name: Require the hosted web release at the same immutable candidate
+        env:
+          WEB_ORIGIN: ${{ vars.ALBERT_PUBLIC_ORIGIN }}
+          ALBERT_RELEASE_READINESS_ATTEMPTS: "240"
+          ALBERT_RELEASE_READINESS_DELAY_MS: "5000"
+        run: >-
+          node scripts/verify-release-readiness.mjs
+          "$WEB_ORIGIN" /api/health "$ALBERT_RELEASE_CANDIDATE_SHA"
+          "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

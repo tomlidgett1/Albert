@@ -4,6 +4,7 @@ import { createTraceSseResponse, type TraceSseOptions } from "./sse.js";
 export * from "./fixture.js";
 export * from "./sse.js";
 export * from "./live.js";
+export * from "./prompt-routing.js";
 export * from "./claims.js";
 export * from "./usage-lifecycle.js";
 export * from "./semantic-adapter.js";

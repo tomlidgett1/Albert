@@ -45,7 +45,7 @@ export type CapacityCollectorPersistence = Readonly<{
 }>;
 
 export type CapacityCollectorDependencies = Readonly<{
-  github: Pick<GitHubRunObserver, "assertCandidateRun">;
+  github: Pick<GitHubRunObserver, "assertAuthorityRun">;
   fly: Pick<FlyCapacityObserver, "snapshot">;
   prometheus: Pick<FlyPrometheusObserver, "observe">;
   control: Pick<PostgresCapacityControlObserver, "sample" | "detail">;
@@ -79,7 +79,7 @@ export class TransformFleetCapacityCollector {
     request: CapacityAttestationRequest,
     persistence?: CapacityCollectorPersistence,
   ): Promise<Readonly<Record<string, unknown>>> {
-    await this.dependencies.github.assertCandidateRun(request);
+    await this.dependencies.github.assertAuthorityRun(request);
     const restored = persistence?.checkpoint === undefined || persistence.checkpoint === null
       ? undefined
       : restoreCheckpoint(persistence.checkpoint);
@@ -87,6 +87,9 @@ export class TransformFleetCapacityCollector {
       assert.ok(restored.fleetSamples.every((sample) =>
         sample.transformRunning >= request.requestedFloor && sample.transformRunning <= 40),
       "Capacity collector checkpoint contains a below-floor fleet observation.");
+      assert.ok(restored.fleetSamples.every((sample) =>
+        sample.transformImageDigest === request.candidateTransformImageDigest),
+      "Capacity collector checkpoint contains another candidate image.");
     }
     const observationStartedAt = restored?.observationStartedAt ?? new Date(this.clock()).toISOString();
     const firstSample = restored?.firstSample ?? await this.dependencies.control.sample(request);
@@ -123,6 +126,10 @@ export class TransformFleetCapacityCollector {
 
     while (this.clock() <= deadline) {
       const fleet = await this.dependencies.fly.snapshot(request);
+      if (fleet.transformRunning > 0) {
+        assert.equal(fleet.transformImageDigest, request.candidateTransformImageDigest,
+          "Capacity fleet observation contains another candidate image.");
+      }
       if (floorReachedAt === null && fleet.transformRunning >= request.requestedFloor) {
         floorReachedAt = fleet.observedAt;
       }
@@ -172,6 +179,8 @@ export class TransformFleetCapacityCollector {
       "Capacity autoscaler was not continuously singular and running.");
     assert.equal(new Set(fleetSamples.map((sample) => sample.transformImageDigest)).size, 1,
       "Capacity transform image changed during observation.");
+    assert.equal(verifiedDeployment.transformImageDigest, request.candidateTransformImageDigest,
+      "Capacity verified deployment is not the approved candidate image.");
 
     const detail = await this.dependencies.control.detail(request);
     validateDetail(request, detail, fleetSamples);
@@ -208,11 +217,24 @@ export class TransformFleetCapacityCollector {
     const observedCounts = fleetSamples.map((sample) => sample.transformRunning);
     const stableSeconds = Math.floor((Date.parse(detail.completedAt) - Date.parse(floorReachedAt)) / 1_000);
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "albert_transform_fleet_capacity",
       stagingEnvironment: "staging",
       stagingCellId: request.stagingCellId,
-      candidateSha: request.candidateSha,
+      authority: {
+        repository: request.repository,
+        sha: request.authoritySha,
+        ref: request.authorityRef,
+        runId: request.workflowRunId,
+        runAttempt: request.workflowRunAttempt,
+        job: "attest-transform-fleet-capacity",
+        workflowRef: request.workflowRef,
+      },
+      candidate: {
+        sha: request.candidateSha,
+        transformImageDigest: request.candidateTransformImageDigest,
+        releasePlanDigest: request.releasePlanDigest,
+      },
       nonce: createCapacityNonce(),
       startedAt: detail.startedAt,
       completedAt: detail.completedAt,
@@ -222,13 +244,6 @@ export class TransformFleetCapacityCollector {
       producer: {
         toolRef: this.dependencies.producerToolRef,
         buildDigest: this.dependencies.producerBuildDigest,
-      },
-      workflow: {
-        repository: request.repository,
-        runId: request.workflowRunId,
-        runAttempt: request.workflowRunAttempt,
-        job: "attest-transform-fleet-capacity",
-        workflowRef: request.workflowRef,
       },
       workload: {
         designTenants: DESIGN_TENANTS,

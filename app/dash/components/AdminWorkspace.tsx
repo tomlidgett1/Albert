@@ -377,7 +377,14 @@ function DetailCell({ value, kind = "text" }: Readonly<{ value: unknown; kind?: 
   if (kind === "percent") {
     const progress = Math.max(0, Math.min(1, Number(value) || 0));
     return (
-      <span className={styles.opsCellProgress} aria-label={`${Math.round(progress * 100)} percent`}>
+      <span
+        className={styles.opsCellProgress}
+        role="progressbar"
+        aria-label="Domain readiness progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+      >
         <span><i style={{ width: `${progress * 100}%` }} /></span>
         <b>{Math.round(progress * 100)}%</b>
       </span>
@@ -736,7 +743,14 @@ export default function AdminWorkspace() {
                       {connection.streams.length > 3 ? <small>+{connection.streams.length - 3} more</small> : null}
                     </div>
                     <div role="cell">
-                      <span className={styles.opsFleetProgress} aria-label={`${Math.round(connection.backfill_progress * 100)} percent backfilled`}>
+                      <span
+                        className={styles.opsFleetProgress}
+                        role="progressbar"
+                        aria-label={`${connection.tenant_name} ${connectorLabel(connection.connector_key)} backfill progress`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(connection.backfill_progress * 100)}
+                      >
                         <i style={{ width: `${connection.backfill_progress * 100}%` }} />
                       </span>
                       <strong>{Math.round(connection.backfill_progress * 100)}%</strong>

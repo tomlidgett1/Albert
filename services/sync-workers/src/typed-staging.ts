@@ -1,6 +1,4 @@
-import { deputyManifest } from "../../../connectors/deputy/manifest.js";
-import { lightspeedRManifest } from "../../../connectors/lightspeed-r/manifest.js";
-import { xeroManifest } from "../../../connectors/xero/manifest.js";
+import { connectorManifests } from "../../../connectors/registry.js";
 import {
   buildStagingContracts,
   projectStagingFields,
@@ -11,11 +9,7 @@ import {
 } from "../../../packages/connector-sdk/src/index.js";
 import type { PostgresQueryClient } from "../../../packages/queue/src/index.js";
 
-const contracts = buildStagingContracts([
-  lightspeedRManifest,
-  xeroManifest,
-  deputyManifest,
-]);
+const contracts = buildStagingContracts(connectorManifests);
 
 const contractsByStream = new Map(
   contracts.map((contract) => [contractKey(contract.connectorId, contract.stream), contract]),
@@ -112,8 +106,6 @@ export async function upsertTypedStagingRecord(
     });
   assignments.push("ingested_at = now()");
 
-  const preserveDailyObservation = record.contract.connectorId === "lightspeed-r"
-    && record.contract.stream === "item_shops";
   const placeholders = casts.map((cast, index) => `$${index + 1}${sqlCast(cast)}`);
   await client.query(
     `insert into ${table} (${columns.map(quoteIdentifier).join(", ")})
@@ -148,7 +140,9 @@ export async function upsertTypedStagingRecord(
        ${table}.payload_hash <> excluded.payload_hash
        or ${table}.source_version is distinct from excluded.source_version
        or ${table}.mapping_version <> excluded.mapping_version
-       ${preserveDailyObservation ? `or ${table}.payload_batch_id <> excluded.payload_batch_id` : ""}
+       ${record.contract.reprocessIdenticalPayloadOnNewBatch
+          ? `or ${table}.payload_batch_id <> excluded.payload_batch_id`
+          : ""}
      )`,
     [...commonValues, ...fieldValues],
   );

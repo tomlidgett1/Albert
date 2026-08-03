@@ -1,0 +1,41 @@
+# Reference for the independently reviewed trusted-tooling deployment.  There
+# is deliberately no http_service or public service.  Sync workers reach 8791
+# over Fly private networking and mutual TLS; Fly alone probes 8792.
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile.vendor-connection-attestor"
+
+[env]
+  ALBERT_VENDOR_ATTESTOR_HOST = "0.0.0.0"
+  ALBERT_VENDOR_ATTESTOR_PORT = "8791"
+  ALBERT_VENDOR_ATTESTOR_HEALTH_PORT = "8792"
+  NODE_ENV = "production"
+
+[checks.ready]
+  type = "http"
+  port = 8792
+  method = "get"
+  path = "/readyz"
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "15s"
+
+[checks.live]
+  type = "http"
+  port = 8792
+  method = "get"
+  path = "/livez"
+  interval = "30s"
+  timeout = "3s"
+  grace_period = "10s"
+
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

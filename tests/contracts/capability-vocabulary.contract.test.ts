@@ -99,7 +99,7 @@ test("source allowlist publication atomically retires removed and newly sensitiv
   const job = {
     tenantId:"01J00000000000000000000001",batchId:"01J00000000000000000000002",
     syncRunId:"01J00000000000000000000003",connectionId:"01J00000000000000000000004",
-    connectorId:"xero",mappingVersion:"test",
+    connectionGeneration:1,connectorId:"xero",mappingVersion:"test",
   } as const satisfies CanonicalTransformBatch;
   const active=new Set<string>();
   const statements:string[]=[];

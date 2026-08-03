@@ -65,11 +65,18 @@ export async function startCapacityAttestorFromEnvironment(
 function loadPolicy(environment: NodeJS.ProcessEnv): CapacityAttestorPolicy {
   const repository = required(environment, "ALBERT_CAPACITY_ALLOWED_REPOSITORY");
   assert.match(repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u, "Capacity allowed repository is invalid.");
+  const authoritySha = required(environment, "ALBERT_CAPACITY_ALLOWED_AUTHORITY_SHA");
+  assert.match(authoritySha, /^[a-f0-9]{40}$/u, "Capacity allowed authority SHA is invalid.");
+  const authorityRef = required(environment, "ALBERT_CAPACITY_ALLOWED_AUTHORITY_REF");
+  assert.match(authorityRef,
+    /^refs\/tags\/albert-release-authority-v[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u,
+    "Capacity allowed authority ref is invalid.");
   const workflowRef = required(environment, "ALBERT_CAPACITY_ALLOWED_WORKFLOW_REF");
-  assert.match(workflowRef, new RegExp(`^${escapeRegex(repository)}/\\.github/workflows/release\\.yml@refs/(?:heads|tags)/[A-Za-z0-9._/-]+$`, "u"),
-    "Capacity allowed workflow ref is invalid.");
-  const releaseRef = required(environment, "ALBERT_CAPACITY_ALLOWED_RELEASE_REF");
-  assert.match(releaseRef, /^refs\/(?:heads|tags)\/[A-Za-z0-9._/-]+$/u, "Capacity allowed release ref is invalid.");
+  assert.equal(
+    workflowRef,
+    `${repository}/.github/workflows/release-authority.yml@${authorityRef}`,
+    "Capacity allowed workflow ref is not the exact authority workflow and tag.",
+  );
   const stagingCellId = required(environment, "ALBERT_CAPACITY_STAGING_CELL_ID");
   const transformApp = required(environment, "ALBERT_CAPACITY_TRANSFORM_APP");
   const autoscalerApp = required(environment, "ALBERT_CAPACITY_AUTOSCALER_APP");
@@ -82,7 +89,8 @@ function loadPolicy(environment: NodeJS.ProcessEnv): CapacityAttestorPolicy {
   return Object.freeze({
     repository,
     workflowRef,
-    releaseRef,
+    authorityRef,
+    authoritySha,
     stagingEnvironment: "staging-capacity",
     stagingCellId,
     transformApp,
@@ -124,10 +132,6 @@ function boundedInteger(value: string | undefined, fallback: number, minimum: nu
   assert.ok(Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum,
     `Expected an integer between ${minimum} and ${maximum}.`);
   return parsed;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function loadPg(): Promise<PgModule> {

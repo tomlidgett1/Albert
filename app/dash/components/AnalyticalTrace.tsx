@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import type {
   TraceChartEvent,
   TraceEvent,
@@ -234,20 +234,24 @@ function ProvenancePanel({
   lineageState,
   onRetryLineage,
   onClose,
+  panelRef,
+  titleId,
 }: {
   selection: ExplainSelection;
   lineageState: LineageState;
   onRetryLineage: () => void;
   onClose: () => void;
+  panelRef: RefObject<HTMLElement | null>;
+  titleId: string;
 }) {
   const { provenance } = selection;
 
   return (
-    <aside className={styles.traceExplainPanel} aria-labelledby="trace-explain-title">
+    <aside ref={panelRef} className={styles.traceExplainPanel} aria-labelledby={titleId}>
       <div className={styles.traceExplainHeader}>
         <div>
           <p>EXPLAIN THIS NUMBER</p>
-          <h4 id="trace-explain-title">{selection.title}</h4>
+          <h4 id={titleId}>{selection.title}</h4>
           {selection.value ? <strong>{selection.value}</strong> : null}
         </div>
         <button type="button" aria-label="Close explanation" onClick={onClose}>
@@ -492,7 +496,10 @@ export default function AnalyticalTrace({
   const [explainSelection, setExplainSelection] = useState<ExplainSelection | null>(null);
   const [lineageAttempt, setLineageAttempt] = useState(0);
   const [lineageState, setLineageState] = useState<LineageState>({ kind: "loading", key: "" });
+  const explainTitleId = useId().replaceAll(":", "");
   const lineageCacheRef = useRef<Readonly<{ key: string; lineage: SafeAnswerLineage }> | null>(null);
+  const explainPanelRef = useRef<HTMLElement>(null);
+  const explainPreviousFocusRef = useRef<HTMLElement | null>(null);
   const orderedEvents = useMemo(
     () => [...events].sort((first, second) => first.sequence - second.sequence),
     [events],
@@ -530,6 +537,36 @@ export default function AnalyticalTrace({
       : lineageState.kind !== "idle" && lineageState.key === lineageKey
         ? lineageState
         : { kind: "loading", key: lineageKey };
+
+  const openExplanation = (selection: ExplainSelection) => {
+    if (!explainSelection) {
+      explainPreviousFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    }
+    setExplainSelection(selection);
+  };
+
+  const explanationOpen = explainSelection !== null;
+  useEffect(() => {
+    if (!explanationOpen) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      explainPanelRef.current?.querySelector<HTMLElement>("button")?.focus();
+    });
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setExplainSelection(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", closeOnEscape);
+      const previousFocus = explainPreviousFocusRef.current;
+      explainPreviousFocusRef.current = null;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [explanationOpen]);
 
   useEffect(() => {
     if (!explainSelection || streaming || !lineageConversationId || !lineageTurnId) return;
@@ -587,7 +624,7 @@ export default function AnalyticalTrace({
           {auditProvenance ? (
             <button
               type="button"
-              onClick={() => setExplainSelection({ title: "Immutable turn record", provenance: auditProvenance })}
+              onClick={() => openExplanation({ title: "Immutable turn record", provenance: auditProvenance })}
             >
               Audit record
             </button>
@@ -645,7 +682,7 @@ export default function AnalyticalTrace({
                 </div>
               ) : null}
 
-              {event.type === "table" ? <ResultTable event={event} onExplain={setExplainSelection} /> : null}
+              {event.type === "table" ? <ResultTable event={event} onExplain={openExplanation} /> : null}
 
               {event.type === "chart" ? <ResultChart event={event} table={tables.get(event.dataRef)} /> : null}
 
@@ -660,7 +697,7 @@ export default function AnalyticalTrace({
                 <div className={styles.traceAnswer} data-answer-state={event.state}>
                   <div className={styles.traceAnswerTopline}>
                     <span title={answerStateDescriptions[event.state]}>{event.state}</span>
-                    <button type="button" onClick={() => setExplainSelection({ title: "Final answer", provenance: event.provenance })}>Explain answer</button>
+                    <button type="button" onClick={() => openExplanation({ title: "Final answer", provenance: event.provenance })}>Explain answer</button>
                   </div>
                   <p>{event.text}</p>
                   {event.followUps.length ? (
@@ -700,6 +737,8 @@ export default function AnalyticalTrace({
           lineageState={visibleLineageState}
           onRetryLineage={() => setLineageAttempt((attempt) => attempt + 1)}
           onClose={() => setExplainSelection(null)}
+          panelRef={explainPanelRef}
+          titleId={`${explainTitleId}-explanation-title`}
         />
       ) : null}
     </section>

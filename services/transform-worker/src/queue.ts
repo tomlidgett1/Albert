@@ -26,6 +26,7 @@ type ClaimRow=Readonly<{
   batch_id:string;
   sync_run_id:string;
   connection_id:string;
+  connection_generation:number|string;
   connector_id:string;
   stream:string;
   domains:string[];
@@ -58,6 +59,8 @@ function claimFromRow(row:ClaimRow,workerId:string):ClaimedCanonicalTransformJob
   }
   if(!CONNECTORS.has(row.connector_id))throw new Error("canonical_queue_invalid_connector_id");
   if(!row.stream?.trim()||!row.mapping_version?.trim())throw new Error("canonical_queue_invalid_job_metadata");
+  const connectionGeneration=integer(row.connection_generation,"connection_generation");
+  if(connectionGeneration<1)throw new Error("canonical_queue_invalid_connection_generation");
   if(!Array.isArray(row.domains)||!row.domains.length||row.domains.some((domain)=>!/^[a-z][a-z0-9_]*$/.test(domain))){
     throw new Error("canonical_queue_invalid_domains");
   }
@@ -72,6 +75,7 @@ function claimFromRow(row:ClaimRow,workerId:string):ClaimedCanonicalTransformJob
       batchId:row.batch_id,
       syncRunId:row.sync_run_id,
       connectionId:row.connection_id,
+      connectionGeneration,
       connectorId,
       stream:row.stream,
       domains:Object.freeze([...new Set(row.domains)]),
@@ -101,9 +105,9 @@ export class PostgresCanonicalTransformQueue implements DurableCanonicalTransfor
   async claim(input:Readonly<{workerId:string;mappingVersion:string;leaseSeconds:number}>):Promise<ClaimedCanonicalTransformJob|null>{
     const result=await withTransformControlRole(this.database,(client)=>client.query<ClaimRow>(
         `select tenant_id,transform_job_id,batch_id,sync_run_id,connection_id,
-                connector_id,stream,domains,mapping_version,backfill_complete,
+                connection_generation,connector_id,stream,domains,mapping_version,backfill_complete,
                 attempt_count,lease_token,lease_expires_at
-           from control_plane.claim_canonical_transform_job($1::text,$2::text,$3::integer)`,
+           from control_plane.claim_canonical_transform_job_v2($1::text,$2::text,$3::integer)`,
         [input.workerId,input.mappingVersion,input.leaseSeconds],
       ));
     return result.rows[0]?claimFromRow(result.rows[0],input.workerId):null;
@@ -126,6 +130,27 @@ export class PostgresCanonicalTransformQueue implements DurableCanonicalTransfor
          )`,
         [claim.job.tenantId,claim.job.transformJobId,claim.workerId,claim.leaseToken,JSON.stringify(result)],
       ).then(()=>undefined));
+  }
+
+  async continueReplay(
+    claim:ClaimedCanonicalTransformJob,
+    progress:Readonly<{kind:"compatibility_replay";pending:true;candidates:number;commands:number;progressToken:string}>,
+    delaySeconds:number,
+  ):Promise<number>{
+    if(!Number.isSafeInteger(delaySeconds)||delaySeconds<0||delaySeconds>300||
+        !Number.isSafeInteger(progress.candidates)||progress.candidates<0||progress.candidates>1_000||
+        !Number.isSafeInteger(progress.commands)||progress.commands<0||progress.commands>5_000||
+        progress.candidates+progress.commands<1||!/^[a-f0-9]{64}$/u.test(progress.progressToken)){
+      throw new Error("canonical_queue_invalid_continuation");
+    }
+    const result=await withTransformControlRole(this.database,(client)=>client.query<{continuation_count:number|string}>(
+      `select control_plane.continue_canonical_transform_job(
+         $1::text,$2::text,$3::text,$4::text,$5::jsonb,$6::integer
+       ) as continuation_count`,
+      [claim.job.tenantId,claim.job.transformJobId,claim.workerId,claim.leaseToken,
+        JSON.stringify(progress),delaySeconds],
+    ));
+    return integer(result.rows[0]?.continuation_count,"continuation_count");
   }
 
   async retryOrFail(

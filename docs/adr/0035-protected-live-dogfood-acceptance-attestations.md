@@ -4,6 +4,9 @@
 - Date: 2026-08-03
 - Owners: Albert product, data platform, and release engineering
 - Relates to: ADR 0003, ADR 0004, ADR 0006, ADR 0012, ADR 0022, ADR 0034
+- Superseded in part by: ADR 0044 for the exact M5 semantic suite policy,
+  ADR 0045 for the exact M3 connector-manifest and M4 quality policies, and
+  ADR 0046 for content-addressed exact M6 answer acceptance
 
 ## Context
 

@@ -257,7 +257,7 @@ function authHealthForFailure(
 
 export class SyncJobProcessor {
   private readonly operationTimeoutMs: number;
-  private readonly xeroDailyRequestLimit: 1000 | 5000;
+  private readonly vendorRateBudgetOptions: Readonly<Record<string, number | undefined>>;
 
   constructor(
     private readonly queue: DurableSyncQueue,
@@ -269,14 +269,14 @@ export class SyncJobProcessor {
     private readonly workerId: string,
     options: Readonly<{
       operationTimeoutMs?: number;
-      xeroDailyRequestLimit?: 1000 | 5000;
+      vendorRateBudgetOptions?: Readonly<Record<string, number | undefined>>;
     }> = {},
   ) {
     this.operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
     if (!Number.isFinite(this.operationTimeoutMs) || this.operationTimeoutMs <= 0) {
       throw new Error("Sync operation timeout must be a positive duration.");
     }
-    this.xeroDailyRequestLimit = options.xeroDailyRequestLimit ?? 1000;
+    this.vendorRateBudgetOptions = Object.freeze({ ...(options.vendorRateBudgetOptions ?? {}) });
   }
 
   async process(
@@ -314,8 +314,8 @@ export class SyncJobProcessor {
         vendorRateBudget: this.control.vendorRateBudget(
           job.tenantId,
           job.connectionId,
-          job.connectorId,
-          { xeroDailyRequestLimit: this.xeroDailyRequestLimit },
+          connector.manifest,
+          this.vendorRateBudgetOptions,
         ),
       } as const;
       const expectedStreams = manifestBackfillStreams(connector);

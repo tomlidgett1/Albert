@@ -4,7 +4,9 @@
 - Date: 2026-08-03
 - Owners: Albert platform and release security
 - Supersedes: ADR 0032 production blocker (not its diagnostic contract)
-- Relates to: ADR 0006, ADR 0022, ADR 0030
+- Relates to: ADR 0006, ADR 0022, ADR 0030, ADR 0053
+- Amended: 2026-08-04 to separate immutable release authority from the measured
+  candidate identity
 
 ## Context
 
@@ -34,15 +36,19 @@ The reference implementation lives under `services/capacity-attestor/` and is
 mirrored into that trust repository; `docs/independent-capacity-attestor.md`
 defines its bootstrap, deployment, credential, rotation, and incident runbook.
 
-The release job receives a GitHub OIDC token for the audience
-`albert-transform-capacity-attestor` and sends only public run coordinates. The
-attestor validates the token signature, audience, exact repository, SHA,
-workflow path and SHA, run id, attempt, protected environment, and hosted
-runner. It uses the Actions jobs API check-run identity and parses the workflow
-at the candidate SHA to prove this is the only job admitted to
-`staging-capacity`. Request fields
-cannot override those claims. It independently reads GitHub, Fly Machines, Fly
-Prometheus, and both database observation endpoints before signing.
+Under ADR 0053, the release-authority job receives a GitHub OIDC token for the
+audience `albert-transform-capacity-attestor` and sends only public run
+coordinates. Authority and candidate are separate identities: the attestor
+validates the token signature, audience, exact repository, protected authority
+tag/ref and SHA, `.github/workflows/release-authority.yml` path and SHA, run id,
+attempt, protected environment, and hosted runner. It uses the Actions jobs API
+check-run identity and parses that workflow at the authority SHA to prove this
+is the only job admitted to `staging-capacity`. It separately binds the full
+candidate SHA, the exact transform OCI image digest, and the content-addressed
+release-plan digest supplied by the immutable authority. Request fields cannot
+override trusted policy or OIDC claims. The attestor independently reads
+GitHub, Fly Machines, Fly Prometheus, and both database observation endpoints
+before signing.
 
 Observation uses a durable asynchronous POST/poll protocol. The first short
 request reserves the exact run in the trust database and returns 202; subsequent
@@ -68,7 +74,8 @@ Customer workers are never stopped because the cell and apps are capacity-only.
 An `always()` cleanup stops both capacity apps after success, failure, or
 cancellation; the next run verifies quiescence again.
 
-Every candidate Machine derives its participant id from Fly's immutable
+Every candidate Machine must run the request's exact immutable transform image
+digest and derives its participant id from Fly's immutable
 `FLY_MACHINE_ID`, waits behind a common future barrier, executes the real
 least-privilege `CanonicalTransformPipeline`, records its pool-acquire p95 and
 outcome through a security-definer runtime function, and remains alive long
@@ -80,8 +87,10 @@ leases and post-start pipeline snapshots are included.
 The exact-shape Ed25519 payload passes only when:
 
 - producer ref/build digest and signing key are pinned;
-- candidate SHA, repository, workflow ref, run id/attempt, staging cell, nonce,
-  issue time, and at-most-two-hour expiry match;
+- authority repository, protected tag/ref, tooling SHA, workflow ref, and run
+  id/attempt match the executing immutable workflow;
+- candidate SHA, transform image digest, release-plan digest, staging cell,
+  nonce, issue time, and at-most-two-hour expiry match;
 - exactly 20,000 distinct tenants complete and the approved corpus fingerprint
   and fixed strata match actual post-run snapshots;
 - the requested 2–40 Machine floor equals candidate participants, remains
@@ -98,22 +107,26 @@ The exact-shape Ed25519 payload passes only when:
   a failed operation, and every running Machine has the exact candidate SHA and
   one immutable image digest.
 
-Production preflight verifies and consumes the envelope once, before any
-production secret staging, migration, publication, or deployment. It checks
-the public key, producer ref, producer OCI build digest, corpus fingerprint,
-workflow attempt, candidate, cell, and expiry and exposes only the attested
-floor downstream. Workflow
-concurrency and run/attempt binding prevent cross-promotion replay. Transform
-deployment raises capacity to that floor without scaling down a larger fleet,
-and deploys the autoscaler with the same floor.
+Production preflight verifies and consumes the schema-v2 envelope once, before
+any production secret staging, migration, publication, or deployment. It
+checks the public key, producer ref, producer OCI build digest, corpus
+fingerprint, complete authority identity, complete candidate identity, cell,
+and expiry and exposes only the attested floor downstream. The durable store
+binds every retry to the authority SHA/ref and candidate SHA/image/plan plus the
+canonical request digest; legacy protocol-v1 rows cannot be reused as v2
+evidence. Workflow concurrency and run/attempt binding prevent cross-promotion
+replay. Transform deployment raises capacity to that floor without scaling
+down a larger fleet, and deploys the autoscaler with the same floor.
 
 The single-process diagnostic remains available and always reports
 `releaseEligible: false`; it is not input to this attestation.
 
 ## Consequences
 
-- Candidate code is measured but cannot mint evidence or read signing/observer
-  credentials.
+- Candidate code is measured but cannot mint evidence, select its verifier, or
+  read signing/observer credentials. OIDC proves immutable authority code is
+  requesting the measurement; Fly and database observations prove which
+  candidate actually ran.
 - An unavailable attestor, stale envelope, corpus drift, insufficient
   throughput, saturation, queue contamination, or cleanup failure blocks
   production rather than degrading to an estimate.
@@ -147,7 +160,7 @@ The single-process diagnostic remains available and always reports
 - `deploy/capacity/attestor-*.sql`
 - `deploy/capacity/capacity-attestor.reference.toml`
 - `docs/independent-capacity-attestor.md`
-- `.github/workflows/release.yml`
+- `.github/workflows/release-authority.yml`
 - `services/capacity-attestor/capacity-attestor.test.ts`
 - `tests/contracts/transform-fleet-capacity-attestation.contract.test.ts`
 - `tests/release-preflight.test.mjs`

@@ -41,12 +41,13 @@ import {
   type GoldenState,
 } from "./golden/questions.js";
 import { evaluateSourceFixtureQuery } from "./source-fixture-engine.js";
+import { criticalPromptRouteContract } from "../services/conversation/src/prompt-routing.js";
 
 export type GoldenCaseResult = Readonly<{
   id: string;
   route: GoldenQuestion["expectedRoute"];
   expectedState: GoldenState;
-  outcome: "passed" | "declarative" | "executable_gap";
+  outcome: "passed" | "executable_gap";
   rows?: readonly FixtureResultRow[];
   comparisonRows?: readonly FixtureResultRow[];
   bundleHash?: string;
@@ -120,12 +121,33 @@ async function runQuestion(
   if (question.ir || question.sourceQuery || question.expectedRows) {
     throw new Error(`${question.id} must not execute data access for ${question.expectedRoute}.`);
   }
+  return evaluateCriticalPromptRouteQuestion(question);
+}
+
+export function evaluateCriticalPromptRouteQuestion(
+  question: GoldenQuestion,
+): GoldenCaseResult {
+  const contract = criticalPromptRouteContract(question.question);
+  if (!contract) {
+    throw new Error(`${question.id} prompt did not activate a trusted critical route contract.`);
+  }
+  if (contract.caseId !== question.id) {
+    throw new Error(`${question.id} prompt activated substituted route contract ${contract.caseId}.`);
+  }
+  if (contract.route !== question.expectedRoute) {
+    throw new Error(`${question.id} expected ${question.expectedRoute} but prompt routing produced ${contract.route}.`);
+  }
+  if (question.expectedState !== contract.route) {
+    throw new Error(`${question.id} expected state ${question.expectedState} does not match route ${contract.route}.`);
+  }
   return {
     id: question.id,
     route: question.expectedRoute,
     expectedState: question.expectedState,
-    outcome: "declarative",
-    reason: question.rationale,
+    outcome: "passed",
+    reason: contract.route === "clarification"
+      ? `Prompt route requires ${contract.question} (${contract.optionIds.join(", ")}).`
+      : `Prompt route requires Unavailable (${contract.reasonCode}).`,
   };
 }
 

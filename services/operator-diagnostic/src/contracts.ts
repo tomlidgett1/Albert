@@ -36,8 +36,38 @@ export const operatorDiagnosticSampleSchema = z.object({
   cellCharacterLimit: z.literal(500),
 }).strict();
 
+const ulidSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const candidateShaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
+const deploymentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u);
+
+export const protectedDogfoodOnboardingReceiptRequestSchema = z.object({
+  journeyId: ulidSchema,
+  userId: z.string().uuid(),
+  tenantId: ulidSchema,
+  browserNonceHash: sha256Schema,
+  userAgentHash: sha256Schema,
+}).strict();
+
+export const protectedDogfoodOnboardingReceiptSchema = z.object({
+  journeyId: ulidSchema,
+  receiptId: ulidSchema,
+  receiptDigest: sha256Schema,
+  authProofDigest: sha256Schema,
+  candidateSha: candidateShaSchema,
+  deploymentId: deploymentIdSchema,
+  tenantId: ulidSchema,
+  completedAt: z.string().datetime({ offset: true }),
+}).strict();
+
 export type OperatorDiagnosticGrant = z.infer<typeof operatorDiagnosticGrantSchema>;
 export type OperatorDiagnosticSample = z.infer<typeof operatorDiagnosticSampleSchema>;
+export type ProtectedDogfoodOnboardingReceiptRequest = z.infer<
+  typeof protectedDogfoodOnboardingReceiptRequestSchema
+>;
+export type ProtectedDogfoodOnboardingReceipt = z.infer<
+  typeof protectedDogfoodOnboardingReceiptSchema
+>;
 
 export function targetMatchesStage(grant: OperatorDiagnosticGrant): boolean {
   return (grant.pipeline_stage === "staging" && [

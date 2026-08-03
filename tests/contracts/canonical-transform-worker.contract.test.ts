@@ -57,7 +57,8 @@ test("canonical queue parses a fenced, typed claim and never accepts malformed d
   const queries:{sql:string;values:readonly unknown[]}[]=[];
   const row={
     tenant_id:IDS.tenant,transform_job_id:IDS.job,batch_id:IDS.batch,
-    sync_run_id:IDS.run,connection_id:IDS.connection,connector_id:"xero",
+    sync_run_id:IDS.run,connection_id:IDS.connection,connection_generation:"7",
+    connector_id:"xero",
     stream:"journals",domains:["finance_journal_line"],mapping_version:"m2-v1",
     backfill_complete:false,attempt_count:"2",lease_token:IDS.lease,
     lease_expires_at:"2026-08-03T01:00:00.000Z",
@@ -78,6 +79,7 @@ test("canonical queue parses a fenced, typed claim and never accepts malformed d
   const queue=new PostgresCanonicalTransformQueue(database);
   const claim=await queue.claim({workerId:"canonical-1",mappingVersion:"m2-v1",leaseSeconds:900});
   assert.equal(claim?.job.connectorId,"xero");
+  assert.equal(claim?.job.connectionGeneration,7);
   assert.deepEqual(claim?.job.domains,["finance_journal_line"]);
   assert.equal(claim?.job.attemptCount,2);
   assert.match(queries[0]!.sql,/set local role albert_transform_control/i);

@@ -22,8 +22,9 @@ export const TRANSFORM_CAPACITY_CORPUS_CONTRACT_DIGEST =
   "82895eb48467068eabdb9b4c511e85242cedbc2584d0127ee700e791e4bdcf4a";
 
 const PAYLOAD_KEYS = [
+  "authority",
   "autoscaler",
-  "candidateSha",
+  "candidate",
   "completedAt",
   "databases",
   "expiresAt",
@@ -40,7 +41,6 @@ const PAYLOAD_KEYS = [
   "stagingDeployment",
   "stagingEnvironment",
   "startedAt",
-  "workflow",
   "workload",
 ];
 
@@ -98,13 +98,20 @@ export function verifyTransformFleetCapacityAttestation(envelopeInput, expected)
     "Capacity attestation signature is invalid.",
   );
 
-  assert.equal(payload.candidateSha, expected.candidateSha, "Capacity attestation does not match the release SHA.");
-  assert.equal(payload.workflow.repository, expected.repository, "Capacity attestation repository is invalid.");
-  assert.equal(payload.workflow.runId, expected.workflowRunId, "Capacity attestation is bound to another workflow run.");
-  assert.equal(payload.workflow.runAttempt, expected.workflowRunAttempt, "Capacity attestation is bound to another workflow attempt.");
-  if (expected.workflowRef) {
-    assert.equal(payload.workflow.workflowRef, expected.workflowRef, "Capacity attestation workflow ref is invalid.");
-  }
+  assert.equal(payload.authority.sha, expected.authoritySha,
+    "Capacity attestation does not match the release authority SHA.");
+  assert.equal(payload.authority.ref, expected.authorityRef,
+    "Capacity attestation does not match the release authority ref.");
+  assert.equal(payload.authority.repository, expected.repository, "Capacity attestation repository is invalid.");
+  assert.equal(payload.authority.runId, expected.workflowRunId, "Capacity attestation is bound to another workflow run.");
+  assert.equal(payload.authority.runAttempt, expected.workflowRunAttempt, "Capacity attestation is bound to another workflow attempt.");
+  assert.equal(payload.authority.workflowRef, expected.workflowRef, "Capacity attestation workflow ref is invalid.");
+  assert.equal(payload.candidate.sha, expected.candidateSha,
+    "Capacity attestation does not match the candidate SHA.");
+  assert.equal(payload.candidate.transformImageDigest, expected.candidateTransformImageDigest,
+    "Capacity attestation does not match the approved candidate image.");
+  assert.equal(payload.candidate.releasePlanDigest, expected.releasePlanDigest,
+    "Capacity attestation does not match the approved release plan.");
   if (expected.stagingCellId) {
     assert.equal(payload.stagingCellId, expected.stagingCellId, "Capacity attestation staging cell is invalid.");
   }
@@ -132,9 +139,13 @@ export function verifyTransformFleetCapacityAttestation(envelopeInput, expected)
   assert.ok(nowMs <= expiresAt, "Capacity attestation has expired.");
 
   return Object.freeze({
-    candidateSha: payload.candidateSha,
-    workflowRunId: payload.workflow.runId,
-    workflowRunAttempt: payload.workflow.runAttempt,
+    authoritySha: payload.authority.sha,
+    authorityRef: payload.authority.ref,
+    candidateSha: payload.candidate.sha,
+    candidateTransformImageDigest: payload.candidate.transformImageDigest,
+    releasePlanDigest: payload.candidate.releasePlanDigest,
+    workflowRunId: payload.authority.runId,
+    workflowRunAttempt: payload.authority.runAttempt,
     recommendedProductionFloor: payload.recommendedProductionFloor,
     nonce: payload.nonce,
     expiresAt: payload.expiresAt,
@@ -145,10 +156,9 @@ export function verifyTransformFleetCapacityAttestation(envelopeInput, expected)
 export function validateTransformFleetCapacityPayload(input) {
   assertRecord(input, "Capacity attestation payload");
   exactKeys(input, PAYLOAD_KEYS, "Capacity attestation payload");
-  assert.equal(input.schemaVersion, 1, "Capacity attestation schema is unsupported.");
+  assert.equal(input.schemaVersion, 2, "Capacity attestation schema is unsupported.");
   assert.equal(input.kind, "albert_transform_fleet_capacity", "Capacity attestation kind is invalid.");
   assert.equal(input.stagingEnvironment, "staging", "Capacity attestation must originate in staging.");
-  assert.match(input.candidateSha, /^[a-f0-9]{40}$/u, "Capacity attestation release SHA is invalid.");
   assert.match(input.stagingCellId, /^[a-z0-9][a-z0-9-]{2,62}$/u, "Capacity staging cell id is invalid.");
   assert.match(input.nonce, /^[a-f0-9]{64}$/u, "Capacity attestation nonce is invalid.");
   assert.equal(input.passed, true, "Capacity attestation did not pass.");
@@ -161,7 +171,8 @@ export function validateTransformFleetCapacityPayload(input) {
   assert.ok(expiresAt > generatedAt, "Capacity attestation expiry is invalid.");
   assert.ok(expiresAt - generatedAt <= MAXIMUM_ATTESTATION_AGE_MS, "Capacity attestation expiry exceeds two hours.");
 
-  validateWorkflow(input.workflow);
+  validateAuthority(input.authority);
+  validateCandidate(input.candidate);
   validateProducer(input.producer);
   validateWorkload(input.workload);
   validateFleet(input.fleet, input.workload, startedAt, completedAt);
@@ -170,7 +181,7 @@ export function validateTransformFleetCapacityPayload(input) {
   validateDatabase("analytical", input.databases?.analytical);
   validateAutoscaler(input.autoscaler, input.fleet.requestedMachineFloor, startedAt, completedAt);
   validateStagingDeployment(
-    input.stagingDeployment,input.candidateSha,input.fleet.requestedMachineFloor,
+    input.stagingDeployment,input.candidate,input.fleet.requestedMachineFloor,
     startedAt,generatedAt,
   );
   integer(input.recommendedProductionFloor, MINIMUM_MACHINES, MAXIMUM_MACHINES, "recommended production floor");
@@ -192,14 +203,34 @@ function validateProducer(value) {
     "Capacity producer build digest is invalid.");
 }
 
-function validateWorkflow(value) {
-  assertRecord(value, "Capacity workflow identity");
-  exactKeys(value, ["job", "repository", "runAttempt", "runId", "workflowRef"], "Capacity workflow identity");
-  assert.match(value.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u, "Capacity workflow repository is invalid.");
-  assert.match(value.runId, /^[1-9][0-9]{0,19}$/u, "Capacity workflow run id is invalid.");
-  integer(value.runAttempt, 1, 10_000, "Capacity workflow run attempt");
-  assert.equal(value.job, "attest-transform-fleet-capacity", "Capacity workflow job is invalid.");
-  assert.match(value.workflowRef, /^[^\s@]+\/\.github\/workflows\/release\.yml@[A-Za-z0-9._/-]+$/u, "Capacity workflow ref is invalid.");
+function validateAuthority(value) {
+  assertRecord(value, "Capacity release authority identity");
+  exactKeys(value, ["job", "ref", "repository", "runAttempt", "runId", "sha", "workflowRef"],
+    "Capacity release authority identity");
+  assert.match(value.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u,
+    "Capacity authority repository is invalid.");
+  assert.match(value.sha, /^[a-f0-9]{40}$/u, "Capacity authority SHA is invalid.");
+  assert.match(value.ref,
+    /^refs\/tags\/albert-release-authority-v[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u,
+    "Capacity authority ref is invalid.");
+  assert.match(value.runId, /^[1-9][0-9]{0,19}$/u, "Capacity authority workflow run id is invalid.");
+  integer(value.runAttempt, 1, 10_000, "Capacity authority workflow run attempt");
+  assert.equal(value.job, "attest-transform-fleet-capacity", "Capacity authority workflow job is invalid.");
+  assert.equal(
+    value.workflowRef,
+    `${value.repository}/.github/workflows/release-authority.yml@${value.ref}`,
+    "Capacity authority workflow ref is invalid.",
+  );
+}
+
+function validateCandidate(value) {
+  assertRecord(value, "Capacity candidate identity");
+  exactKeys(value, ["releasePlanDigest", "sha", "transformImageDigest"], "Capacity candidate identity");
+  assert.match(value.sha, /^[a-f0-9]{40}$/u, "Capacity candidate SHA is invalid.");
+  assert.match(value.transformImageDigest, /^sha256:[a-f0-9]{64}$/u,
+    "Capacity candidate transform image digest is invalid.");
+  assert.match(value.releasePlanDigest, /^[a-f0-9]{64}$/u,
+    "Capacity candidate release plan digest is invalid.");
 }
 
 function validateWorkload(value) {
@@ -323,12 +354,14 @@ function validateAutoscaler(value, requestedFloor, startedAt, completedAt) {
   assert.equal(value.errorCount, 0, "Capacity autoscaler observation recorded errors.");
 }
 
-function validateStagingDeployment(value, candidateSha, requestedFloor, startedAt, generatedAt) {
+function validateStagingDeployment(value, candidate, requestedFloor, startedAt, generatedAt) {
   assertRecord(value, "Capacity staging deployment");
   exactKeys(value, ["appName", "appliedFloor", "imageDigest", "releaseSha", "verifiedAt", "verifiedRunningMachines"], "Capacity staging deployment");
   assert.match(value.appName, /^[a-z0-9][a-z0-9-]{1,62}$/u, "Capacity staging transform app is invalid.");
   assert.match(value.imageDigest, /^sha256:[a-f0-9]{64}$/u, "Capacity staging image digest is invalid.");
-  assert.equal(value.releaseSha, candidateSha, "Capacity staging deployment is not the candidate release.");
+  assert.equal(value.releaseSha, candidate.sha, "Capacity staging deployment is not the candidate release.");
+  assert.equal(value.imageDigest, candidate.transformImageDigest,
+    "Capacity staging deployment is not the approved candidate image.");
   assert.equal(value.appliedFloor, requestedFloor, "Capacity staging floor differs from the measured floor.");
   assert.equal(value.verifiedRunningMachines, requestedFloor, "Capacity staging did not verify the exact requested Machine floor.");
   const verifiedAt = timestamp(value.verifiedAt, "staging deployment verifiedAt");
@@ -368,9 +401,21 @@ function deepFreeze(value) {
 }
 
 function decodedKey(name) {
+  const value = requiredEnvironment(name);
+  return Buffer.from(value, "base64").toString("utf8");
+}
+
+function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
   assert.ok(value, `${name} is required.`);
-  return Buffer.from(value, "base64").toString("utf8");
+  return value;
+}
+
+function immutableServicesImageDigest() {
+  const value = process.env.ALBERT_RELEASE_SERVICES_IMAGE?.trim();
+  const match = /^ghcr\.io\/[a-z0-9][a-z0-9._/-]{1,200}@(sha256:[a-f0-9]{64})$/u.exec(value ?? "");
+  assert.ok(match, "ALBERT_RELEASE_SERVICES_IMAGE must be an immutable GHCR digest reference.");
+  return match[1];
 }
 
 async function main() {
@@ -378,17 +423,28 @@ async function main() {
   assert.ok(inputPath, "Capacity attestation CLI requires an input path.");
   const input = JSON.parse(await readFile(inputPath, "utf8"));
   if (action === "verify") {
+    const authoritySha = requiredEnvironment("ALBERT_RELEASE_AUTHORITY_TOOLING_SHA");
+    const authorityRef = requiredEnvironment("GITHUB_REF");
+    const workflowRef = requiredEnvironment("ALBERT_RELEASE_AUTHORITY_WORKFLOW_REF");
+    assert.equal(authoritySha, requiredEnvironment("GITHUB_SHA"),
+      "Release authority SHA differs from the executing workflow.");
+    assert.equal(workflowRef, requiredEnvironment("GITHUB_WORKFLOW_REF"),
+      "Release authority workflow ref differs from the executing workflow.");
     const result = verifyTransformFleetCapacityAttestation(input, {
       publicKey: decodedKey("ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64"),
-      candidateSha: process.env.ALBERT_RELEASE_COMMIT_SHA,
-      repository: process.env.GITHUB_REPOSITORY,
-      workflowRunId: process.env.GITHUB_RUN_ID,
-      workflowRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-      workflowRef: process.env.GITHUB_WORKFLOW_REF,
-      stagingCellId: process.env.ALBERT_CAPACITY_STAGING_CELL_ID,
-      corpusFingerprint: process.env.ALBERT_CAPACITY_CORPUS_FINGERPRINT,
-      producerToolRef: process.env.ALBERT_CAPACITY_ATTESTOR_TOOL_REF,
-      producerBuildDigest: process.env.ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST,
+      authoritySha,
+      authorityRef,
+      candidateSha: requiredEnvironment("ALBERT_RELEASE_COMMIT_SHA"),
+      candidateTransformImageDigest: immutableServicesImageDigest(),
+      releasePlanDigest: requiredEnvironment("ALBERT_RELEASE_PLAN_DIGEST"),
+      repository: requiredEnvironment("GITHUB_REPOSITORY"),
+      workflowRunId: requiredEnvironment("GITHUB_RUN_ID"),
+      workflowRunAttempt: Number(requiredEnvironment("GITHUB_RUN_ATTEMPT")),
+      workflowRef,
+      stagingCellId: requiredEnvironment("ALBERT_CAPACITY_STAGING_CELL_ID"),
+      corpusFingerprint: requiredEnvironment("ALBERT_CAPACITY_CORPUS_FINGERPRINT"),
+      producerToolRef: requiredEnvironment("ALBERT_CAPACITY_ATTESTOR_TOOL_REF"),
+      producerBuildDigest: requiredEnvironment("ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST"),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (process.env.GITHUB_OUTPUT) {

@@ -19,7 +19,8 @@ BEGIN
       }'::jsonb,
       '01H00000000000000000005404',30,
       '01H00000000000000000005405','01H00000000000000000005406','sales',
-      '01H00000000000000000005407','01H00000000000000000005408'
+      '01H00000000000000000005407','01H00000000000000000005408',
+      '01H00000000000000000005409'
     );
     RAISE EXCEPTION 'capture accepted a deployment without exact candidate workers';
   EXCEPTION WHEN SQLSTATE '55000' THEN
@@ -43,7 +44,8 @@ BEGIN
       }'::jsonb,
       '01H00000000000000000005404',30,
       '01H00000000000000000005405','01H00000000000000000005406','sales',
-      '01H00000000000000000005407','01H00000000000000000005408'
+      '01H00000000000000000005407','01H00000000000000000005408',
+      '01H00000000000000000005409'
     );
     RAISE EXCEPTION 'capture accepted selectors without live OAuth evidence';
   EXCEPTION WHEN SQLSTATE '55000' THEN
@@ -95,23 +97,19 @@ EXCEPTION WHEN SQLSTATE '22023' OR SQLSTATE '55000' THEN NULL;
 END;
 $$;
 
-SELECT control_plane.consume_protected_dogfood_acceptance(
-  '01H00000000000000000005403',
-  'dddddddddddddddddddddddddddddddddddddddd',
-  'ce957ff9b4cf7efc2d3a244934ba1d2a6a4818a8e9e6a294a5b738394b9d4fef',
-  '540000000000000055','tomlidgett1/Albert'
-);
-
 DO $$
 BEGIN
   PERFORM control_plane.consume_protected_dogfood_acceptance(
     '01H00000000000000000005403',
     'dddddddddddddddddddddddddddddddddddddddd',
     'ce957ff9b4cf7efc2d3a244934ba1d2a6a4818a8e9e6a294a5b738394b9d4fef',
-    '540000000000000056','tomlidgett1/Albert'
+    '540000000000000055','tomlidgett1/Albert'
   );
-  RAISE EXCEPTION 'one snapshot authorized a second release';
-EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  RAISE EXCEPTION 'a legacy snapshot without nonce-bound human M7 evidence authorized release';
+EXCEPTION WHEN SQLSTATE '55000' THEN
+  IF SQLERRM NOT LIKE '%lacks nonce-bound human M7 evidence%' THEN
+    RAISE;
+  END IF;
 END;
 $$;
 

@@ -15,6 +15,7 @@ export type StagingStreamContract = Readonly<{
   schema: "source_lightspeed" | "source_xero" | "source_deputy";
   stream: string;
   table: string;
+  reprocessIdenticalPayloadOnNewBatch: boolean;
   fields: readonly StagingFieldContract[];
 }>;
 
@@ -179,6 +180,7 @@ export function buildStagingContracts(
       schema: stagingSchema(manifest.id),
       stream: stream.id,
       table: stagingColumnName(stream.id),
+      reprocessIdenticalPayloadOnNewBatch: stream.reprocessIdenticalPayloadOnNewBatch === true,
       fields,
     };
   }));

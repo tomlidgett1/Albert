@@ -211,6 +211,7 @@ function fixtureBatch(
       batchId,
       syncRunId,
       connectionId,
+      connectionGeneration:options.connectionGeneration ?? 1,
       connectorId: "lightspeed-r",
       mappingVersion: MAPPING_VERSION,
     },

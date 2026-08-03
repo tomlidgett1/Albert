@@ -9,9 +9,17 @@ import {
 import {
   operatorDiagnosticRequestSchema,
   operatorDiagnosticSampleSchema,
+  protectedDogfoodOnboardingReceiptRequestSchema,
+  protectedDogfoodOnboardingReceiptSchema,
   type OperatorDiagnosticGrant,
   type OperatorDiagnosticSample,
+  type ProtectedDogfoodOnboardingReceipt,
+  type ProtectedDogfoodOnboardingReceiptRequest,
 } from "./contracts.js";
+
+export const OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH = "/v1/row-samples";
+export const PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH =
+  "/v1/protected-dogfood/onboarding-receipts";
 
 const logger = createServiceLogger("operator-diagnostic");
 
@@ -23,6 +31,9 @@ export type OperatorDiagnosticControlStore = Readonly<{
     rowCount: number;
     errorCode?: string;
   }>): Promise<void>;
+  completeOnboardingReceipt?(
+    input: ProtectedDogfoodOnboardingReceiptRequest,
+  ): Promise<ProtectedDogfoodOnboardingReceipt>;
 }>;
 
 export type OperatorDiagnosticReadStore = Readonly<{
@@ -73,7 +84,12 @@ export function createOperatorDiagnosticHttpHandler(options: Readonly<{
     const requestId = request.headers.get("x-request-id")?.slice(0, 100);
     if (request.method !== "POST") return json({ error: { code: "METHOD_NOT_ALLOWED", message: "Use POST." } }, 405, requestId);
     const url = new URL(request.url);
-    if (url.pathname !== "/v1/row-samples") return json({ error: { code: "NOT_FOUND", message: "Unknown diagnostic endpoint." } }, 404, requestId);
+    if (![
+      OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH,
+      PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH,
+    ].includes(url.pathname)) {
+      return json({ error: { code: "NOT_FOUND", message: "Unknown diagnostic endpoint." } }, 404, requestId);
+    }
     const rawBody = await request.text();
     const verified = await verifyInternalRequest({
       method: request.method,
@@ -86,6 +102,39 @@ export function createOperatorDiagnosticHttpHandler(options: Readonly<{
       maxSkewMs: options.maxClockSkewMs ?? 60_000,
     });
     if (!verified) return json({ error: { code: "UNAUTHENTICATED", message: "A valid signed diagnostic request is required." } }, 401, requestId);
+
+    if (url.pathname === PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH) {
+      try {
+        if (!options.controlStore.completeOnboardingReceipt) {
+          throw Object.assign(new Error("Protected onboarding receipt is unavailable."), {
+            diagnosticCode: "ONBOARDING_RECEIPT_UNAVAILABLE",
+          });
+        }
+        const input = protectedDogfoodOnboardingReceiptRequestSchema.parse(JSON.parse(rawBody));
+        const receipt = protectedDogfoodOnboardingReceiptSchema.parse(
+          await options.controlStore.completeOnboardingReceipt(input),
+        );
+        logger.info("protected_dogfood_onboarding_receipt_completed", {
+          candidateSha: receipt.candidateSha,
+          deploymentId: receipt.deploymentId,
+          completedAt: receipt.completedAt,
+        }, requestId);
+        return json({ receipt }, 200, requestId);
+      } catch (error) {
+        const invalid = error instanceof z.ZodError || error instanceof SyntaxError;
+        logger.error("protected_dogfood_onboarding_receipt_failed", {
+          code: invalid ? "INVALID_REQUEST" : safeDiagnosticCode(error),
+        }, requestId);
+        return json({
+          error: {
+            code: invalid ? "INVALID_REQUEST" : "DIAGNOSTIC_UNAVAILABLE",
+            message: invalid
+              ? "The protected onboarding receipt request is invalid."
+              : "The protected onboarding receipt could not be completed.",
+          },
+        }, invalid ? 400 : 503, requestId);
+      }
+    }
 
     let grant: OperatorDiagnosticGrant | undefined;
     let completionSucceeded = false;
@@ -137,7 +186,22 @@ export async function signOperatorDiagnosticRequest(
 ): Promise<Readonly<Record<string, string>>> {
   return signInternalRequest({
     method: "POST",
-    path: "/v1/row-samples",
+    path: OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH,
+    body: rawBody,
+    secret,
+    ...(timestamp === undefined ? {} : { timestamp }),
+  });
+}
+
+export async function signProtectedDogfoodOnboardingRequest(
+  path: typeof PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH,
+  rawBody: string,
+  secret: string,
+  timestamp?: number,
+): Promise<Readonly<Record<string, string>>> {
+  return signInternalRequest({
+    method: "POST",
+    path,
     body: rawBody,
     secret,
     ...(timestamp === undefined ? {} : { timestamp }),

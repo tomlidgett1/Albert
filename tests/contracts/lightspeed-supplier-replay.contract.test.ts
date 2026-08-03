@@ -20,6 +20,22 @@ const pipeline = await readFile(
   new URL("../../services/sync-workers/src/canonical-pipeline.ts", import.meta.url),
   "utf8",
 );
+const replay = await readFile(
+  new URL("../../connectors/lightspeed-r/compatibility-replay.ts", import.meta.url),
+  "utf8",
+);
+const composition = await readFile(
+  new URL("../../connectors/canonical-registry.ts", import.meta.url),
+  "utf8",
+);
+const processor = await readFile(
+  new URL("../../services/transform-worker/src/processor.ts", import.meta.url),
+  "utf8",
+);
+const continuation = await readFile(
+  new URL("../../infra/migrations/control-plane/0064_m4_bounded_canonical_replay_continuations.sql", import.meta.url),
+  "utf8",
+);
 
 function migrationFunction(name: string): string {
   const marker = `CREATE FUNCTION ${name}`;
@@ -36,8 +52,12 @@ test("Lightspeed supplier replay evidence is exact and generation scoped", () =>
     /PRIMARY KEY\s*\(\s*tenant_id,connection_id,connection_generation,source_order_namespaced_key,\s*source_order_payload_hash,source_order_mapping_version\s*\)/u,
   );
   assert.match(
-    pipeline,
-    /audit\.connection_generation=\$4::bigint[\s\S]*?parsedGeneration/u,
+    composition,
+    /audit\.connection_generation=\$4::bigint/u,
+  );
+  assert.match(
+    replay,
+    /compatibility\.replay_candidates[\s\S]*?job\.mappingVersion, job\.connectionGeneration/u,
   );
   assert.match(
     migrationFunction("semantic_internal.finalize_lightspeed_supplier_replay_gate"),
@@ -116,22 +136,29 @@ test("Every Lightspeed replay gate mutation serializes before reading state", ()
 });
 
 test("Legacy dependency replay has durable bounded continuation", () => {
-  assert.match(pipeline, /LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT=100/u);
-  assert.match(pipeline, /LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT=500/u);
+  assert.match(replay, /LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT = 100/u);
+  assert.match(replay, /LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT = 500/u);
   assert.match(
-    pipeline,
+    composition,
     /order by staged\.namespaced_source_key\s+limit \$5::integer/u,
   );
   assert.match(
     pipeline,
-    /for\(;;\)[\s\S]*?this\.analytical\.transaction[\s\S]*?if\(done\)return/u,
+    /selection\.candidates[\s\S]*?hook\.commandLimit-commandCount/u,
+  );
+  assert.match(
+    composition,
+    /canonical_record_state/u,
   );
   assert.match(
     pipeline,
-    /canonical_record_state[\s\S]*?const missing=mapped\.filter[\s\S]*?missing\.slice\(0,remainingBudget\)/u,
+    /const missing=upserts\.filter[\s\S]*?missing\.slice\(0,hook\.commandLimit-commandCount\)/u,
   );
   assert.match(
-    pipeline,
-    /if\(progress\.pending\)return false;[\s\S]*?finalize_lightspeed_supplier_replay_gate/u,
+    processor,
+    /compatibilityReplayPending[\s\S]*?queue\.continueReplay/u,
   );
+  assert.match(continuation,/attempt_count=greatest\(job\.attempt_count-1,0\)/u);
+  assert.match(continuation,/progressToken[\s\S]*?IS DISTINCT FROM/u);
+  assert.match(composition, /finalize_lightspeed_supplier_replay_gate/u);
 });

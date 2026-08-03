@@ -14,7 +14,7 @@ import {
   type CapacityAttestationRequest,
   type CapacityAttestorPolicy,
 } from "./src/contracts.js";
-import { FlyPrometheusObserver, GitHubRunObserver } from "./src/external-observers.js";
+import { FlyCapacityObserver, FlyPrometheusObserver, GitHubRunObserver } from "./src/external-observers.js";
 import { GitHubOidcVerifier } from "./src/oidc.js";
 import { PostgresCapacityAttestationStore } from "./src/store.js";
 import { verifyTransformFleetCapacityAttestation } from "../../scripts/transform-fleet-capacity-attestation.mjs";
@@ -27,7 +27,11 @@ import {
 
 const repository = "tomlidgett1/Albert";
 const candidateSha = "a".repeat(40);
-const workflowRef = `${repository}/.github/workflows/release.yml@refs/heads/main`;
+const authoritySha = "b".repeat(40);
+const authorityRef = "refs/tags/albert-release-authority-v1";
+const workflowRef = `${repository}/.github/workflows/release-authority.yml@${authorityRef}`;
+const candidateTransformImageDigest = `sha256:${"9".repeat(64)}`;
+const releasePlanDigest = "7".repeat(64);
 const corpusFingerprint = "f".repeat(64);
 
 function prometheusSamples(value: number, count = 20, start = "2026-08-03T00:00:00.000Z") {
@@ -40,8 +44,12 @@ function prometheusSamples(value: number, count = 20, start = "2026-08-03T00:00:
 
 function request(): CapacityAttestationRequest {
   return capacityAttestationRequestSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    authoritySha,
+    authorityRef,
     candidateSha,
+    candidateTransformImageDigest,
+    releasePlanDigest,
     repository,
     workflowRunId: "123456789",
     workflowRunAttempt: 2,
@@ -60,7 +68,8 @@ function policy(): CapacityAttestorPolicy {
   return Object.freeze({
     repository,
     workflowRef,
-    releaseRef: "refs/heads/main",
+    authorityRef,
+    authoritySha,
     stagingEnvironment: "staging-capacity",
     stagingCellId: "sydney-capacity-01",
     transformApp: "albert-transform-capacity",
@@ -70,19 +79,24 @@ function policy(): CapacityAttestorPolicy {
   });
 }
 
-function jwt(privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"], kid: string, now: number): string {
+function jwt(
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  kid: string,
+  now: number,
+  overrides: Readonly<Record<string, unknown>> = {},
+): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", kid, typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
     iss: "https://token.actions.githubusercontent.com",
     aud: "albert-transform-capacity-attestor",
     sub: `repo:${repository}:environment:staging-capacity`,
     repository,
-    sha: candidateSha,
+    sha: authoritySha,
     run_id: "123456789",
     run_attempt: "2",
     workflow_ref: workflowRef,
-    workflow_sha: candidateSha,
-    ref: "refs/heads/main",
+    workflow_sha: authoritySha,
+    ref: authorityRef,
     environment: "staging-capacity",
     event_name: "workflow_dispatch",
     runner_environment: "github-hosted",
@@ -90,6 +104,7 @@ function jwt(privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"], k
     iat: Math.floor(now / 1_000) - 5,
     nbf: Math.floor(now / 1_000) - 5,
     exp: Math.floor(now / 1_000) + 300,
+    ...overrides,
   })).toString("base64url");
   return `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), privateKey).toString("base64url")}`;
 }
@@ -104,19 +119,29 @@ test("GitHub OIDC/JWKS verification binds protected environment, workflow SHA, r
     headers: { "content-type": "application/json" },
   }), () => now);
   const identity = await verifier.verify(jwt(privateKey, kid, now), request(), policy());
-  assert.equal(identity.sha, candidateSha);
+  assert.equal(identity.authoritySha, authoritySha);
+  assert.equal(identity.authorityRef, authorityRef);
   assert.equal(identity.environment, "staging-capacity");
 
   const wrongPolicy = { ...policy(), corpusFingerprint: "1".repeat(64) };
   assert.throws(() => enforceCapacityAttestorPolicy(request(), wrongPolicy), /corpus fingerprint/u);
   const wrongRequest = { ...request(), workflowRunAttempt: 3, capacityRunId: "123456789-3" };
   await assert.rejects(() => verifier.verify(jwt(privateKey, kid, now), wrongRequest, policy()), /attempt/u);
+  await assert.rejects(
+    () => verifier.verify(jwt(privateKey, kid, now, {
+      sha: candidateSha,
+      workflow_sha: candidateSha,
+    }), request(), policy()),
+    /authority SHA/u,
+  );
 });
 
 test("GitHub observer binds the active check-run and proves it is the only staging-capacity job", async () => {
+  let workflowSourceUrl = "";
   const observer = new GitHubRunObserver("g".repeat(40), async (input) => {
     const url = String(input);
     if (url.includes("/contents/")) {
+      workflowSourceUrl = url;
       return new Response(`jobs:\n  attest-transform-fleet-capacity:\n    environment: staging-capacity\n    steps:\n      - name: Ask the independently pinned attestor to observe and sign the run\n        run: node scripts/request-independent-capacity-attestation.mjs output.json\n  verify:\n    runs-on: ubuntu-latest\n`, { status: 200 });
     }
     if (url.includes("/jobs?")) {
@@ -125,31 +150,72 @@ test("GitHub observer binds the active check-run and proves it is the only stagi
         status: "in_progress",
         check_run_id: 9988,
         check_run_url: `https://api.github.com/repos/${repository}/check-runs/9988`,
-        labels: ["ubuntu-latest"],
+        labels: ["ubuntu-24.04"],
         steps: [{ name: "Ask the independently pinned attestor to observe and sign the run", status: "in_progress" }],
       }] });
     }
     return Response.json({
-      head_sha: candidateSha,
+      head_sha: authoritySha,
       run_attempt: 2,
       event: "workflow_dispatch",
-      path: ".github/workflows/release.yml@main",
+      path: ".github/workflows/release-authority.yml@albert-release-authority-v1",
       status: "in_progress",
     });
   });
-  await observer.assertCandidateRun(request());
+  await observer.assertAuthorityRun(request());
+  assert.match(workflowSourceUrl,
+    new RegExp(`/contents/\\.github/workflows/release-authority\\.yml\\?ref=${authoritySha}$`, "u"));
+
+  const candidateHead = new GitHubRunObserver("g".repeat(40), async () => Response.json({
+    head_sha: candidateSha,
+    run_attempt: 2,
+    event: "workflow_dispatch",
+    path: ".github/workflows/release-authority.yml@albert-release-authority-v1",
+    status: "in_progress",
+  }));
+  await assert.rejects(() => candidateHead.assertAuthorityRun(request()), /release authority/u);
 
   const duplicate = new GitHubRunObserver("g".repeat(40), async (input) => {
     const url = String(input);
     if (url.includes("/contents/")) return new Response(`jobs:\n  attest-transform-fleet-capacity:\n    environment: staging-capacity\n    steps:\n      - run: node scripts/request-independent-capacity-attestation.mjs out\n  rogue:\n    environment: staging-capacity\n`, { status: 200 });
     if (url.includes("/jobs?")) return Response.json({ total_count: 1, jobs: [{
       name: "attest-transform-fleet-capacity", status: "in_progress", check_run_id: 1,
-      check_run_url: `https://api.github.com/repos/${repository}/check-runs/1`, labels: ["ubuntu-latest"],
+      check_run_url: `https://api.github.com/repos/${repository}/check-runs/1`, labels: ["ubuntu-24.04"],
       steps: [{ name: "Ask the independently pinned attestor to observe and sign the run", status: "in_progress" }],
     }] });
-    return Response.json({ head_sha: candidateSha, run_attempt: 2, event: "workflow_dispatch", path: ".github/workflows/release.yml", status: "in_progress" });
+    return Response.json({
+      head_sha: authoritySha,
+      run_attempt: 2,
+      event: "workflow_dispatch",
+      path: ".github/workflows/release-authority.yml@albert-release-authority-v1",
+      status: "in_progress",
+    });
   });
-  await assert.rejects(() => duplicate.assertCandidateRun(request()), /Only the exact capacity attestation job/u);
+  await assert.rejects(() => duplicate.assertAuthorityRun(request()), /Only the exact capacity attestation job/u);
+});
+
+test("Fly observation rejects a Machine digest that is not the approved candidate image", async () => {
+  const observer = new FlyCapacityObserver("f".repeat(40), async (input) => {
+    const url = String(input);
+    if (url.includes("/apps/albert-transform-capacity/machines")) {
+      return Response.json([{
+        id: "00000000000001",
+        state: "started",
+        region: "syd",
+        image_ref: { digest: `sha256:${"8".repeat(64)}` },
+        config: { env: {
+          ALBERT_SERVICE_VERSION: candidateSha,
+          ALBERT_DEPLOYMENT_ID: "capacity-123456789-2",
+          ALBERT_CAPACITY_RUN_ID: "123456789-2",
+          ALBERT_CAPACITY_RUN_APPROVED: `load-staging:${candidateSha}`,
+          ALBERT_WORKER_CONCURRENCY: "8",
+          ALBERT_SNAPSHOT_CLAIM_BATCH_SIZE: "8",
+        } },
+      }]);
+    }
+    return Response.json([]);
+  });
+  await assert.rejects(() => observer.snapshot(request()), /approved candidate image/u);
 });
 
 test("collector signs only independently observed 20k fleet, queue, DB, autoscaler, and corpus evidence", async () => {
@@ -158,10 +224,10 @@ test("collector signs only independently observed 20k fleet, queue, DB, autoscal
   const machineIds = ["00000000000001", "00000000000002", "00000000000003", "00000000000004"];
   const basePressure = { maxConnections: 100, connections: 40, lockWaiters: 0, deadlocks: 2 };
   const collector = new TransformFleetCapacityCollector({
-    github: { assertCandidateRun: async () => undefined },
+    github: { assertAuthorityRun: async () => undefined },
     fly: { snapshot: async () => ({
       transformRunning: 4, autoscalerRunning: 1,
-      transformImageDigest: `sha256:${"9".repeat(64)}`,
+      transformImageDigest: candidateTransformImageDigest,
       transformMachineIds: machineIds,
       observedAt: "2026-08-03T00:00:00.000Z",
     }) },
@@ -223,7 +289,11 @@ test("collector signs only independently observed 20k fleet, queue, DB, autoscal
   const envelope = await collector.collect(request());
   const verified = verifyTransformFleetCapacityAttestation(envelope, {
     publicKey,
+    authoritySha,
+    authorityRef,
     candidateSha,
+    candidateTransformImageDigest,
+    releasePlanDigest,
     repository,
     workflowRunId: "123456789",
     workflowRunAttempt: 2,
@@ -247,14 +317,14 @@ test("collector durably retains and rejects a direct below-floor sample after st
   let flyCalls = 0;
   let durableCheckpoint: CapacityCollectorCheckpoint | undefined;
   const collector = new TransformFleetCapacityCollector({
-    github: { assertCandidateRun: async () => undefined },
+    github: { assertAuthorityRun: async () => undefined },
     fly: { snapshot: async () => {
       flyCalls += 1;
       const transformRunning = flyCalls === 1 ? 4 : 3;
       return {
         transformRunning,
         autoscalerRunning: 1,
-        transformImageDigest: `sha256:${"9".repeat(64)}`,
+        transformImageDigest: candidateTransformImageDigest,
         transformMachineIds: machineIds.slice(0, transformRunning),
         observedAt: new Date(Date.parse("2026-08-03T00:00:00.000Z") + flyCalls * 15_000).toISOString(),
       };
@@ -344,11 +414,11 @@ test("durable checkpoints let a replacement collector finish the same capacity a
   let controlCalls = 0;
   let now = Date.parse("2026-08-03T00:00:00.000Z");
   const collector = new TransformFleetCapacityCollector({
-    github: { assertCandidateRun: async () => undefined },
+    github: { assertAuthorityRun: async () => undefined },
     fly: { snapshot: async () => ({
       transformRunning: 4,
       autoscalerRunning: 1,
-      transformImageDigest: `sha256:${"9".repeat(64)}`,
+      transformImageDigest: candidateTransformImageDigest,
       transformMachineIds: machineIds,
       observedAt: new Date(now).toISOString(),
     }) },
@@ -434,7 +504,11 @@ test("renewable checkpoint lease expires inside the same protected polling attem
     repository,
     workflowRunId: "123456789",
     workflowRunAttempt: 2,
+    authoritySha,
+    authorityRef,
     candidateSha,
+    candidateTransformImageDigest,
+    releasePlanDigest,
   };
   const requestDigest = "1".repeat(64);
   const pressure = { maxConnections: 100, connections: 20, lockWaiters: 0, deadlocks: 0 };
@@ -468,25 +542,30 @@ test("renewable checkpoint lease expires inside the same protected polling attem
         return { rows: [] };
       }
       if (normalized.startsWith("insert into capacity_trust.transform_attestations")) {
-        observedLeaseSeconds.push(Number(parameters[7]));
+        observedLeaseSeconds.push(Number(parameters[11]));
         row ??= {
-          candidate_sha: parameters[3],
-          request_digest: parameters[4],
+          protocol_version: 2,
+          authority_sha: parameters[3],
+          authority_ref: parameters[4],
+          candidate_sha: parameters[5],
+          candidate_image_digest: parameters[6],
+          release_plan_digest: parameters[7],
+          request_digest: parameters[8],
           status: "running",
-          lease_token: parameters[6],
+          lease_token: parameters[10],
           checkpoint: null,
           envelope: null,
         };
         return { rows: [] };
       }
-      if (normalized.startsWith("select candidate_sha")) return { rows: row ? [row] : [] };
+      if (normalized.startsWith("select protocol_version")) return { rows: row ? [row] : [] };
       if (normalized.startsWith("select lease_token=")) {
         return { rows: [{ owns_lease: row?.lease_token === parameters[3] }] };
       }
       if (normalized.startsWith("update capacity_trust.transform_attestations set checkpoint=")) {
-        observedLeaseSeconds.push(Number(parameters[5]));
-        if (!row || row.lease_token !== parameters[6]) return { rows: [] };
-        row.checkpoint = JSON.parse(String(parameters[4]));
+        observedLeaseSeconds.push(Number(parameters[9]));
+        if (!row || row.lease_token !== parameters[10]) return { rows: [] };
+        row.checkpoint = JSON.parse(String(parameters[8]));
         return { rows: [{ checkpointed: 1 }] };
       }
       if (normalized.startsWith("update capacity_trust.transform_attestations set status='running'")) {
@@ -508,6 +587,36 @@ test("renewable checkpoint lease expires inside the same protected polling attem
   assert.equal(first.status, "acquired");
   assert.equal(first.status === "acquired" ? first.checkpoint : undefined, undefined);
   assert.ok(first.status === "acquired");
+  await assert.rejects(
+    () => store.reserve({ ...key, authoritySha: "c".repeat(40) }, "changed-authority-token-id", requestDigest),
+    /reserved with different inputs/u,
+  );
+  await assert.rejects(
+    () => store.reserve({
+      ...key,
+      authorityRef: "refs/tags/albert-release-authority-v2",
+    }, "changed-authority-ref-token-id", requestDigest),
+    /reserved with different inputs/u,
+  );
+  await assert.rejects(
+    () => store.reserve({ ...key, candidateSha: "c".repeat(40) }, "changed-candidate-token-id", requestDigest),
+    /reserved with different inputs/u,
+  );
+  await assert.rejects(
+    () => store.reserve({
+      ...key,
+      candidateTransformImageDigest: `sha256:${"8".repeat(64)}`,
+    }, "changed-image-token-id", requestDigest),
+    /reserved with different inputs/u,
+  );
+  await assert.rejects(
+    () => store.reserve({ ...key, releasePlanDigest: "6".repeat(64) }, "changed-plan-token-id", requestDigest),
+    /reserved with different inputs/u,
+  );
+  await assert.rejects(
+    () => store.reserve(key, "changed-request-token-id", "2".repeat(64)),
+    /reserved with different inputs/u,
+  );
   await store.checkpoint(key, first.leaseToken, checkpoint);
 
   leaseExpired = true;
@@ -546,7 +655,7 @@ test("HTTP surface enforces policy and never accepts a caller-authored pass payl
   }));
   assert.equal(response.status, 202);
   const pending = await response.json() as Readonly<Record<string, unknown>>;
-  assert.equal(pending.schemaVersion, 1);
+  assert.equal(pending.schemaVersion, 2);
   assert.equal(pending.status, "pending");
   assert.match(String(pending.attestationId), /^[a-f0-9]{64}$/u);
   assert.equal(pending.pollAfterSeconds, 15);

@@ -14,16 +14,23 @@ production environment and inside every signed envelope.
 - The Ed25519 private key, attestor-store URL, capacity observer URLs, GitHub
   read token, Fly read token, and Prometheus read token exist only in the
   attestor deployment secret manager.
-- Candidate CI receives only the attestor HTTPS origin. GitHub issues its OIDC
-  token directly for audience `albert-transform-capacity-attestor`.
-- The attestor policy pins repository, release workflow ref, release branch or
-  tag ref, staging cell, both capacity apps, exact floor, and corpus
+- Of the attestor trust material, the release-authority job receives only its
+  HTTPS origin. No candidate checkout receives the signer or observer
+  credentials. GitHub issues OIDC directly for audience
+  `albert-transform-capacity-attestor`.
+- The attestor policy pins repository, the immutable release-authority workflow
+  ref and tooling SHA, staging cell, both capacity apps, exact floor, and corpus
   fingerprint. Request JSON cannot broaden any value.
-- The attestor verifies GitHub's JWKS signature and token lifetime, `workflow_sha`,
-  run id/attempt, event, hosted runner, and `staging-capacity` subject. It then
-  checks the Actions jobs API `check_run_id` and parses the exact workflow at
-  the candidate SHA to prove that the named attestation job is the only job
-  allowed into `staging-capacity`.
+- Authority and candidate are deliberately different identities. GitHub OIDC,
+  the Actions run/job, and the workflow source bind to the protected authority
+  tag and SHA. The request separately binds the full candidate commit, exact
+  transform OCI digest, and release-plan digest that authority code is testing.
+- The attestor verifies GitHub's JWKS signature and token lifetime, `sha`,
+  `workflow_sha`, ref, run id/attempt, event, hosted runner, and
+  `staging-capacity` subject. It then checks the Actions jobs API
+  `check_run_id` and parses `.github/workflows/release-authority.yml` at the
+  authority SHA to prove that the named attestation job is the only job allowed
+  into `staging-capacity`.
 - GitHub, Fly Machines, Fly Prometheus, and direct read-only database
   observations are independent inputs. Candidate output is never accepted as
   a measurement or a pass document.
@@ -48,9 +55,12 @@ production environment and inside every signed envelope.
    - a Fly organization token that can list the two capacity apps and their
      Machines but cannot deploy or scale them; and
    - a Fly Prometheus read token for the capacity organization.
-5. Configure the GitHub `staging-capacity` environment with required reviewers
-   and ensure only the exact `attest-transform-fleet-capacity` job references
-   it. Branch/tag protection must protect the release ref.
+5. Configure the GitHub `staging-capacity` environment with required reviewers,
+   allow only tags matching `albert-release-authority-v*`, and ensure only the
+   exact `attest-transform-fleet-capacity` job in
+   `.github/workflows/release-authority.yml` references it. Protect the
+   authority tag namespace against candidate-controlled creation, update, and
+   deletion.
 
 ## Required attestor configuration
 
@@ -58,8 +68,9 @@ Non-secret values:
 
 ```text
 ALBERT_CAPACITY_ALLOWED_REPOSITORY=tomlidgett1/Albert
-ALBERT_CAPACITY_ALLOWED_WORKFLOW_REF=tomlidgett1/Albert/.github/workflows/release.yml@refs/heads/main
-ALBERT_CAPACITY_ALLOWED_RELEASE_REF=refs/heads/main
+ALBERT_CAPACITY_ALLOWED_WORKFLOW_REF=tomlidgett1/Albert/.github/workflows/release-authority.yml@refs/tags/albert-release-authority-v1
+ALBERT_CAPACITY_ALLOWED_AUTHORITY_REF=refs/tags/albert-release-authority-v1
+ALBERT_CAPACITY_ALLOWED_AUTHORITY_SHA=<40-character-commit-at-that-tag>
 ALBERT_CAPACITY_STAGING_CELL_ID=<approved-cell-id>
 ALBERT_CAPACITY_TRANSFORM_APP=<dedicated-transform-capacity-app>
 ALBERT_CAPACITY_AUTOSCALER_APP=<dedicated-capacity-autoscaler-app>
@@ -112,26 +123,35 @@ Do not use a mutable image tag as promotion evidence.
 
 ## Protected promotion flow
 
-1. Albert CI passes ordinary verification, quiesces the dedicated capacity
-   apps, applies candidate migrations to that isolated cell, verifies the
-   approved 20,000-tenant corpus, and deploys the exact candidate behind a
-   future barrier.
-2. The request client obtains GitHub OIDC and posts only public coordinates to
+1. The immutable authority workflow accepts a separate full candidate SHA and
+   content-addressed release plan. Albert CI passes ordinary verification,
+   quiesces the dedicated capacity apps, applies candidate migrations to that
+   isolated cell, verifies the approved 20,000-tenant corpus, and deploys the
+   release plan's exact transform image digest behind a future barrier.
+2. Authority-owned request code obtains GitHub OIDC and posts only public
+   coordinates to
    `POST /v1/transform-capacity-attestations`. The service immediately returns
    HTTP 202 and a deterministic opaque attestation id while observation runs;
    the client repeats the same authenticated POST at the reviewed 15-second
    interval with refreshed OIDC until it receives the completed envelope. Each
    HTTP exchange is bounded to 20 seconds, so neither Fly nor an intermediary
    must keep a silent 50-minute connection alive.
-3. The attestor reserves `(repository, run id, attempt)` durably, validates the
-   OIDC/check-run/workflow boundary, and independently observes the full run.
-4. It signs only if all schema gates pass: exact candidate Machines and image,
+3. The protocol-v2 request contains authority SHA/ref/workflow/run identity and
+   candidate SHA/transform-image/release-plan identity. The attestor reserves
+   the workflow attempt durably and stores the digest of the complete request;
+   any retry that changes either identity is a conflict. Legacy protocol-v1
+   rows remain readable for retention but can never satisfy a v2 request.
+4. The attestor validates the OIDC/check-run/workflow authority boundary and
+   independently observes the full candidate run. It signs only if all schema
+   gates pass: exact candidate Machines and image,
    20,000 distinct tenants, fixed corpus, queue drain, bounded leases,
    connection/pool/lock/deadlock limits, Prometheus floor, and five-minute
    autoscaler stability.
-5. Albert downloads the same-workflow envelope and production preflight
-   verifies it once before the first production mutation. Cleanup then stops
-   both capacity-only apps regardless of outcome.
+5. The schema-v2 envelope carries separate `authority` and `candidate` objects.
+   Authority-owned production preflight verifies the executing authority SHA,
+   ref, workflow and attempt plus the approved candidate SHA, immutable services
+   image digest, and release-plan digest before the first production mutation.
+   Cleanup then stops both capacity-only apps regardless of outcome.
 
 An HTTP 202 means the durable observation remains pending; 401 means identity
 failure; 403 means policy drift; 409 means a conflicting run identity; and 503
@@ -146,10 +166,11 @@ means measurement or a trusted dependency failed. None has a bypass.
   promotion, then remove the old key. Never distribute either private key to
   Albert CI.
 - A crashed observation remains leased for 55 minutes. A later authorized OIDC
-  poll for the exact same run may take over only after expiry; completed
-  evidence is idempotently returned and a measured failure is terminal for that
-  workflow attempt. A different SHA or request digest for the same run/attempt
-  is permanently rejected.
+  poll for the exact same authority and candidate identity may take over only
+  after expiry; completed evidence is idempotently returned and a measured
+  failure is terminal for that workflow attempt. A different authority SHA/ref,
+  candidate SHA/image/plan, or request digest for the same run/attempt is
+  permanently rejected.
 - Preserve signed envelopes and store rows for the release evidence retention
   period. They contain operational aggregates only, never customer rows or
   credentials.

@@ -27,7 +27,11 @@ import type {
   CanonicalTransformBatch,
 } from "../../services/sync-workers/src/canonical-contract.js";
 import { isCanonicalSourceReference } from "../../services/sync-workers/src/canonical-contract.js";
-import { isolateCanonicalMappings } from "../../services/sync-workers/src/canonical-pipeline.js";
+import {
+  assertCanonicalCommandAdmission,
+  assertCanonicalCommandAuthority,
+  isolateCanonicalMappings,
+} from "../../services/sync-workers/src/canonical-pipeline.js";
 
 type Fixture = Readonly<{ responses: Readonly<Record<string, unknown>> }>;
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -65,11 +69,71 @@ test("all 31 connector streams produce non-empty, schema-bounded canonical comma
         const commands = mapper(stream.id, row, context);
         assert.ok(commands.length > 0, `${manifest.id}.${stream.id} emitted no command`);
         assertCommandsWellFormed(commands, `${manifest.id}.${stream.id}`);
+        for (const command of commands) {
+          assert.doesNotThrow(
+            () => assertCanonicalCommandAdmission(command, stream),
+            `${manifest.id}.${stream.id}.${command.kind} is not admitted by its manifest`,
+          );
+        }
       }
       streamCount += 1;
     }
   }
   assert.equal(streamCount, 31);
+});
+
+test("every canonical command kind is denied when its exact target is undeclared", () => {
+  const commands: readonly CanonicalProjectionCommand[] = [
+    mapLightspeedCanonical("items", fixtureRow("lightspeed-r", "items"), context)
+      .find((command) => command.kind === "dimension")!,
+    mapLightspeedCanonical("sales", fixtureRow("lightspeed-r", "sales"), context)
+      .find((command) => command.kind === "fact")!,
+    mapLightspeedCanonical("items", fixtureRow("lightspeed-r", "items"), context)
+      .find((command) => command.kind === "category_assignment")!,
+    mapXeroCanonical("payments", fixtureRow("xero", "payments"), context)
+      .find((command) => command.kind === "event_link")!,
+    mapDeputyCanonical("contacts", fixtureRow("deputy", "contacts"), context)
+      .find((command) => command.kind === "identity_hint")!,
+    mapLightspeedCanonical("payment_types", fixtureRow("lightspeed-r", "payment_types"), context)
+      .find((command) => command.kind === "metadata")!,
+  ];
+  for (const command of commands) {
+    assert.ok(command);
+    assert.throws(
+      () => assertCanonicalCommandAdmission(command, {
+        canonicalTargets: ["legal_entity"],
+        authorityConcept: "statutory_finance",
+      }),
+      /canonical_target_manifest_mismatch/u,
+    );
+  }
+});
+
+test("Deputy identity-only tombstones remain inside each stream target declaration",()=>{
+  for(const stream of deputyManifest.streams){
+    const row={...fixtureRow("deputy",stream.id),tombstone:true} as Record<string,unknown>;
+    for(const field of deputyManifest.fieldCoverage.filter((entry)=>
+      entry.stream===stream.id&&entry.field!==stream.recordIdField&&
+      entry.disposition!=="unsupported")){
+      row[stagingColumnName(field.field)]=null;
+    }
+    const commands=mapDeputyCanonical(stream.id,row as CanonicalStagingRow,context);
+    assert.ok(commands.length>0);
+    for(const command of commands){
+      assert.doesNotThrow(()=>assertCanonicalCommandAdmission(command,stream));
+    }
+  }
+});
+
+test("fact command authority is bound to the exact producing stream", () => {
+  const sale = mapLightspeedCanonical("sales", fixtureRow("lightspeed-r", "sales"), context)
+    .find((command) => command.kind === "fact");
+  assert.ok(sale?.kind === "fact");
+  assert.doesNotThrow(() => assertCanonicalCommandAuthority(sale, "operational_sales"));
+  assert.throws(
+    () => assertCanonicalCommandAuthority(sale, "stock"),
+    /canonical_authority_manifest_mismatch/u,
+  );
 });
 
 test("email-less Deputy and Lightspeed workers retain resolvable location references", () => {
@@ -309,6 +373,7 @@ test("canonical mapping isolates malformed Xero and Lightspeed records from vali
       batchId:scenario.valid.payload_batch_id,
       syncRunId:scenario.valid.sync_run_id,
       connectionId:scenario.valid.connection_id,
+      connectionGeneration:1,
       connectorId:scenario.connectorId,
       mappingVersion:scenario.valid.mapping_version,
     };
@@ -446,7 +511,7 @@ test("Xero nested finance rows expand without floating point and preserve postin
       sourceObjectType: "Accounts",
       connectionId: "connection-xero",
       nullable: false,
-      lookup: { kind: "xero_gl_account_code", value: "090" },
+      lookup: { kind: "connector_natural_key", key: "gl_account_code", value: "090" },
     },
   });
 

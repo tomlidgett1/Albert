@@ -190,7 +190,7 @@ test("the Xero field catalogue is pinned to an immutable official OpenAPI revisi
 test("Xero payments are settlement evidence and never fabricate POS tender facts", () => {
   const payments = xeroManifest.streams.find((stream) => stream.id === "payments");
   assert.ok(payments);
-  assert.deepEqual(payments.canonicalTargets, ["event_link"]);
+  assert.deepEqual(payments.canonicalTargets, ["event_link","metadata"]);
   assert.equal(payments.canonicalTargets.includes("commerce_payment"), false);
   const paymentFields = xeroManifest.fieldCoverage.filter((field) => field.stream === "payments");
   assert.ok(paymentFields.filter((field) => field.disposition === "canonical").every((field) =>
@@ -233,6 +233,16 @@ test("all thirty-one V1 streams declare executable reconciliation policies", () 
     () => assertConnectorManifestReconciliationPolicy(incomplete),
     /missing a valid deletionStrategy/iu,
   );
+  for(const canonicalTargets of [[],["legal_entity","legal_entity"],["finance"]]){
+    const invalidTargets={
+      ...xeroManifest,
+      streams:[{...xeroManifest.streams[0],canonicalTargets}],
+    } as unknown as ConnectorManifest;
+    assert.throws(
+      ()=>assertConnectorManifestReconciliationPolicy(invalidTargets),
+      /unique, known canonical targets/iu,
+    );
+  }
 });
 
 test("reconciliation uses modification authority and unfiltered identity scans", async () => {
@@ -1044,7 +1054,10 @@ test("rotating refresh tokens are persisted with compare-and-swap before use", a
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.hostname === "identity.xero.com") {
         assert.equal(String(init?.body).includes("old-refresh"), true);
-        assert.equal(new Headers(init?.headers).get("authorization"), null);
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          `Basic ${Buffer.from("client:", "utf8").toString("base64")}`,
+        );
         assert.equal((init?.body as URLSearchParams).get("client_id"), "client");
         return Response.json({
           access_token: "new-access",
@@ -1225,11 +1238,13 @@ test("Lightspeed and Xero disconnect remotely before cryptographically destroyin
     vault: lightspeedVault,
     fetcher: async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      assert.equal(url.toString(), "https://cloud.lightspeedapp.com/auth/oauth/access_token");
+      assert.equal(url.toString(), "https://cloud.lightspeedapp.com/auth/oauth/revoke");
       assert.equal(init?.method, "POST");
       const body = init?.body as URLSearchParams;
+      assert.deepEqual([...body.keys()].sort(), ["client_id", "client_secret", "refresh_token"]);
+      assert.equal(body.get("client_id"), "lightspeed-client");
+      assert.equal(body.get("client_secret"), "lightspeed-secret");
       assert.equal(body.get("refresh_token"), "lightspeed-refresh");
-      assert.equal(body.get("grant_type"), "revoke_refresh_token");
       lightspeedRevoked = true;
       return new Response(null, { status: 204 });
     },

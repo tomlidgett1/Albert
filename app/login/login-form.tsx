@@ -55,11 +55,12 @@ export default function LoginForm({ authError = false }: Readonly<{ authError?: 
     const normalizedEmail = email.trim();
 
     if (mode === "sign-up") {
+      const redirectPath = getRedirectPath();
       const { data, error } = await supabase.auth.signUp({
         email: normalizedEmail,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dash`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectPath)}`,
           data: {
             organisation_name: organisationName.trim(),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne",
