@@ -48,7 +48,7 @@ const workspaceSchema = z.object({
       externalAccountId: z.string(),
       displayName: z.string(),
       metadata: z.record(z.string(), z.unknown()).optional(),
-    })).default([]),
+    })).nullable().default([]).transform((choices) => choices ?? []),
     expires_at: z.string(),
   })).default([]),
 });

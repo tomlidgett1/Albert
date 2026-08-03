@@ -125,6 +125,30 @@ test("fractional readiness is normalized once to UI percentages across every acc
   assert.ok(domainIds.some((id) => id.includes(connectionIds.xeroNewZealand)));
 });
 
+test("a pending OAuth session with no discovered accounts keeps connection controls available", () => {
+  const workspace = toConnectionsWorkspace({
+    tenant_id: "01J00000000000000000000001",
+    tenant_name: "Albert Retail Group",
+    connections: [],
+    dossier: null,
+    identity_review_tasks: [],
+    blocking_answers: {},
+    oauth_sessions: [{
+      oauth_session_id: "01J00000000000000000000020",
+      provider: "lightspeed-r",
+      status: "pending",
+      discovered_account_choices: null,
+      expires_at: "2099-01-01T00:00:00.000Z",
+    }],
+  }, "Australia/Melbourne");
+
+  assert.deepEqual(workspace.oauthSelections, []);
+  assert.equal(
+    workspace.providers.find(({ id }) => id === "lightspeed")?.connections.length,
+    0,
+  );
+});
+
 test("the Connections component exposes per-account manage, readiness, disconnect, and add-another actions", () => {
   assert.match(connectionsComponent, /provider\.connections\.map\(\(connection\)/u);
   assert.match(connectionsComponent, /if \(onManage\) onManage\(connection\.connectionId\)/u);
