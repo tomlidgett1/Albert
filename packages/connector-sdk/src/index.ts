@@ -37,15 +37,24 @@ export type ConnectorStream = Readonly<{
   label: string;
   domains: readonly string[];
   cursorKind: "high_water_mark" | "offset" | "page" | "none";
+  backfillStrategy: import("./contract.js").StreamContract["backfillStrategy"];
+  lateEditStrategy: import("./contract.js").StreamContract["lateEditStrategy"];
+  deletionStrategy: import("./contract.js").StreamContract["deletionStrategy"];
+  sourceTotalStrategy: import("./contract.js").StreamContract["sourceTotalStrategy"];
+  availability: "required" | "optional";
+  dependencies: readonly string[];
+  productDomains: import("./contract.js").StreamContract["productDomains"];
   /** Lower values are pulled first during a progressive initial backfill. */
   priority?: number;
 }>;
 
 export type ConnectorCapability = Readonly<{
-  id: string;
-  support: "full" | "partial" | "unavailable" | "unknown";
+  id: import("./capabilities.js").CapabilityId;
+  support: import("./capabilities.js").CapabilitySupport;
+  reasonCode: string;
   notes?: string;
   requiredScopes?: readonly string[];
+  coverage?: import("./capabilities.js").CapabilityCoverage;
 }>;
 
 export type AuthorizationRequest = Readonly<{
@@ -72,6 +81,17 @@ export type SyncRange = Readonly<{
   to: string;
 }>;
 
+export type ReconciliationExtractionPhase =
+  | "late_edits"
+  | "identity_snapshot"
+  | "verify_snapshot";
+
+export type ReconciliationRequest = Readonly<{
+  phase: ReconciliationExtractionPhase;
+  range: SyncRange;
+  cursor?: SyncCursor;
+}>;
+
 export type SyncCursor = Readonly<{
   value: string;
   sourceUpdatedAt?: string;
@@ -85,6 +105,21 @@ export type RawSourceRecord = Readonly<{
   payload: unknown;
   /** Typed staging projection. Raw values remain available in `payload`. */
   normalized?: SourceRecordProjection;
+  /**
+   * Marks an identity-only tombstone derived from a verified source webhook.
+   * The referenced webhook receipt retains the exact vendor payload; staging
+   * preserves prior source fields while applying this newer deletion state.
+   */
+  deletionSignal?: Readonly<{
+    kind: "verified_webhook_tombstone" | "reconciliation_tombstone";
+    webhookReceiptId?: string;
+    reconciliationSweepId?: string;
+    evidenceBatchIds?: readonly string[];
+    /** Compare-and-swap fence captured when an absence candidate was selected. */
+    expectedPayloadHash?: string;
+    expectedSourceUpdatedAt?: string | null;
+    expectedIngestedAt?: string;
+  }>;
   /**
    * Validation findings are always persisted with the immutable raw payload.
    * `schema_invalid` and `normalization_invalid` block staging. Additive
@@ -124,6 +159,34 @@ export type SyncPage = Readonly<{
   nextCursor: SyncCursor | null;
   sourceTotal?: number;
   hasMore: boolean;
+  /**
+   * The vendor returned a non-terminal page whose pagination identity cannot
+   * advance safely. Workers persist and quarantine the page, but must not
+   * commit a cursor or enqueue a successor. This is deliberately structured
+   * data rather than an exception so the malformed source rows are retained
+   * as governed remediation evidence before the run is blocked.
+   */
+  paginationBlock?: Readonly<{
+    code: "pagination_identity_invalid" | "pagination_not_advancing";
+    detail: string;
+  }>;
+  /** Required on the terminal page of a one-pass stream or oldest-history phase. */
+  coverage?: Readonly<{
+    boundaryKind:
+      | "verified_oldest"
+      | "verified_empty"
+      | "account_start"
+      | "vendor_retention"
+      | "snapshot_at"
+      | "window_exhausted";
+    lowerBound: string;
+    verification:
+      | "exhaustive_vendor_scan"
+      | "vendor_reported"
+      | "account_metadata"
+      | "point_in_time";
+    detail?: string;
+  }>;
 }>;
 
 export type WebhookEnvelope = Readonly<{
@@ -133,11 +196,25 @@ export type WebhookEnvelope = Readonly<{
   body: Uint8Array;
 }>;
 
+/**
+ * A source-owned deletion identity carried by a verified webhook. The signal
+ * is not treated as a replacement for polling; it lets ingestion materialise
+ * a tombstone when a subsequently queried Resource no longer exists.
+ */
+export type WebhookTombstoneSignal = Readonly<{
+  kind: "tombstone";
+  stream: string;
+  sourceObjectType: string;
+  sourceRecordId: string;
+  observedAt: string;
+}>;
+
 export type WebhookDisposition = Readonly<{
   accepted: boolean;
   dedupeKey?: string;
   streams: readonly string[];
   externalAccountIds?: readonly string[];
+  reconciliationSignals?: readonly WebhookTombstoneSignal[];
   reason?: string;
 }>;
 
@@ -149,6 +226,7 @@ export interface ConnectorPack {
   readonly id: ConnectorId;
   readonly version: string;
   readonly apiVersion: string;
+  readonly manifest: import("./contract.js").ConnectorManifest;
 
   authorize(request: AuthorizationRequest): Promise<AuthorizationRedirect>;
   check_connection(context: ConnectorContext): Promise<ConnectionHealth>;
@@ -164,6 +242,12 @@ export interface ConnectorPack {
     context: ConnectorContext,
     stream: ConnectorStream,
     cursor: SyncCursor,
+  ): Promise<SyncPage>;
+  /** Unfiltered identity scans and late-edit extraction; never a vendor write path. */
+  reconciliation_sync(
+    context: ConnectorContext,
+    stream: ConnectorStream,
+    request: ReconciliationRequest,
   ): Promise<SyncPage>;
   handle_webhook(
     context: ConnectorContext,
@@ -189,6 +273,7 @@ export function makeNamespacedSourceKey(
 }
 
 export * from "./contract.js";
+export * from "./capabilities.js";
 export * from "./cursor.js";
 export * from "./errors.js";
 export * from "./http.js";

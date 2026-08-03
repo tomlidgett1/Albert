@@ -45,6 +45,19 @@ export type CompiledSemanticQuery = Readonly<{
   metricIds: readonly string[];
   dimensions: readonly string[];
   resultColumns: readonly string[];
+  /**
+   * Trusted proof of the ordering applied by the outermost query before its
+   * row limit. Consumers may use this to substantiate a global highest/lowest
+   * claim; the returned row window alone is never sufficient evidence.
+   */
+  resultWindow: Readonly<{
+    requestedLimit: number;
+    orderedBeforeLimit: true;
+    orderBy: readonly Readonly<{
+      columnKey: string;
+      direction: "asc" | "desc";
+    }>[];
+  }>;
   sourceTables: readonly string[];
   resolvedTime: Readonly<{
     from: string;
@@ -59,7 +72,40 @@ export type CompiledSemanticQuery = Readonly<{
   }>;
   warnings: readonly string[];
   budget: Readonly<{ maxRows: number; estimatedCost: number }>;
+  /**
+   * Sanitised proof of the deterministic plan constraints enforced while
+   * compiling this query. This is safe to persist with public validation
+   * outcomes: it contains registry contract metadata, never SQL or values.
+   */
+  validationEvidence: CompiledSemanticValidationEvidence;
 }>;
+
+export type CompiledSemanticValidationEvidence = Readonly<{
+  planKind: "single_fact" | "aggregate_then_align";
+  factIds: readonly string[];
+  alignOn: readonly string[];
+  joins: readonly Readonly<{
+    factId: string;
+    dimension: string;
+    cardinality: "many_to_one" | "one_to_one";
+  }>[];
+  metrics: readonly Readonly<{
+    metricId: string;
+    baseFact: string;
+    grain: string;
+    aggregation: MetricContract["aggregation"];
+    authority: string;
+    testKinds: readonly string[];
+    dependencyMetricIds: readonly string[];
+    snapshotAccesses: readonly Readonly<{
+      factId: string;
+      field: string;
+      operation: string;
+    }>[];
+  }>[];
+}>;
+
+type CompiledSemanticQueryPlan = Omit<CompiledSemanticQuery, "validationEvidence">;
 
 type RenderedSingle = Readonly<{
   sql: string;
@@ -67,6 +113,7 @@ type RenderedSingle = Readonly<{
   metricAliases: ReadonlyMap<string, string>;
   dimensions: readonly string[];
   hiddenKeys: readonly string[];
+  validationAliases: readonly string[];
   table: string;
   requestedTime: ResolvedTimeRange;
   resolvedTime: CompiledSemanticQuery["resolvedTime"];
@@ -77,6 +124,7 @@ type RenderedCompositePlan = Readonly<{
   metricIds: readonly string[];
   metricAliases: ReadonlyMap<string, string>;
   resultMetricAliases: readonly string[];
+  validationAliases: readonly string[];
 }>;
 
 type IdentityResolutionJoin = Readonly<{
@@ -121,7 +169,11 @@ export function compileSemanticQuery(
 
   const params = new ParameterBuilder(context.tenantId);
   if (query.kind === "composite") {
-    return enforceCostBudget(compileComposite(query, topic, registry, context, params, maxRows), context.maxEstimatedCost);
+    const compiled = enforceCostBudget(
+      compileComposite(query, topic, registry, context, params, maxRows),
+      context.maxEstimatedCost,
+    );
+    return attachValidationEvidence(compiled, query, registry);
   }
   if (topic.composite) {
     throw new SemanticCompilerError("COMPOSITE_REQUIRED", `Topic ${topic.id} requires aggregate-then-align composite IR.`);
@@ -152,13 +204,17 @@ export function compileSemanticQuery(
         `CASE WHEN ${comparison} = 0 THEN NULL ELSE ((${current} - ${comparison}) * 100 / ${comparison}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
       ];
     });
+    const validationSelects = renderCombinedValidationSelects(
+      rendered.validationAliases,
+      ["current_period", "comparison_period"],
+    );
     const alignment = query.dimensions.length
       ? query.dimensions.map((dimension) =>
         `current_period.${quoteIdentifier(`__key_${dimension}`)} IS NOT DISTINCT FROM comparison_period.${quoteIdentifier(`__key_${dimension}`)}`,
       ).join(" AND ")
       : "TRUE";
     const limitParameter = params.add(query.limit);
-    const sql = `WITH current_period AS (\n${indent(rendered.sql)}\n),\ncomparison_period AS (\n${indent(prior.sql)}\n)\nSELECT\n  ${[...dimensionSelects, ...metricSelects].join(",\n  ")}\nFROM current_period\nFULL OUTER JOIN comparison_period ON ${alignment}\n${renderSort(query.sort, rendered.metricAliases)}LIMIT ${limitParameter}`;
+    const sql = `WITH current_period AS (\n${indent(rendered.sql)}\n),\ncomparison_period AS (\n${indent(prior.sql)}\n)\nSELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects].join(",\n  ")}\nFROM current_period\nFULL OUTER JOIN comparison_period ON ${alignment}\n${renderSort(query.sort, rendered.metricAliases)}LIMIT ${limitParameter}`;
     const comparisonColumns = [...rendered.metricAliases.values()].flatMap((alias) => [
       alias, `${alias}__comparison`, `${alias}__change`, `${alias}__change_pct`,
     ]);
@@ -170,39 +226,41 @@ export function compileSemanticQuery(
       comparisonFromBusinessDate: prior.resolvedTime.fromBusinessDate,
       comparisonToBusinessDate: prior.resolvedTime.toBusinessDate,
     };
-    return enforceCostBudget({
+    return attachValidationEvidence(enforceCostBudget({
       sql,
       parameters: params.values,
       topic: topic.id,
       metricIds: rendered.metricIds,
       dimensions: rendered.dimensions,
       resultColumns: [...rendered.dimensions, ...comparisonColumns],
+      resultWindow: compileResultWindow(query.sort, rendered.metricAliases, query.limit),
       sourceTables: [rendered.table],
       resolvedTime,
       warnings: timeWarnings(resolvedTime),
       budget: { maxRows, estimatedCost: estimateCost(query.metrics.length, query.dimensions.length, 2) },
-    }, context.maxEstimatedCost);
+    }, context.maxEstimatedCost), query, registry);
   }
   const limitParameter = params.add(query.limit);
   const sql = `${rendered.sql}\n${renderSort(query.sort, rendered.metricAliases)}LIMIT ${limitParameter}`;
-  return enforceCostBudget({
+  return attachValidationEvidence(enforceCostBudget({
     sql,
     parameters: params.values,
     topic: topic.id,
     metricIds: rendered.metricIds,
     dimensions: rendered.dimensions,
     resultColumns: [...rendered.dimensions, ...rendered.metricAliases.values()],
+    resultWindow: compileResultWindow(query.sort, rendered.metricAliases, query.limit),
     sourceTables: [rendered.table],
     resolvedTime: rendered.resolvedTime,
     warnings: timeWarnings(rendered.resolvedTime),
     budget: { maxRows, estimatedCost: estimateCost(query.metrics.length, query.dimensions.length, 1) },
-  }, context.maxEstimatedCost);
+  }, context.maxEstimatedCost), query, registry);
 }
 
 function enforceCostBudget(
-  compiled: CompiledSemanticQuery,
+  compiled: CompiledSemanticQueryPlan,
   configuredMaximum: number | undefined,
-): CompiledSemanticQuery {
+): CompiledSemanticQueryPlan {
   if (configuredMaximum === undefined) return compiled;
   if (!Number.isFinite(configuredMaximum) || configuredMaximum < 0) {
     throw new SemanticCompilerError("INVALID_IR", "Configured semantic query cost budget must be a finite non-negative number.", {
@@ -219,6 +277,161 @@ function enforceCostBudget(
   return compiled;
 }
 
+function attachValidationEvidence(
+  compiled: CompiledSemanticQueryPlan,
+  query: SemanticQuery,
+  registry: SemanticRegistry,
+): CompiledSemanticQuery {
+  const subqueries = query.kind === "composite" ? query.queries : [query];
+  const factIds = new Set<string>();
+  const joins = new Map<string, CompiledSemanticValidationEvidence["joins"][number]>();
+
+  for (const subquery of subqueries) {
+    const subtopic = requireTopic(registry, subquery.topic);
+    const metrics = resolveMetrics(subquery.metrics, subtopic, registry);
+    const subqueryFacts = new Set(metrics.map((metric) => metric.baseFact));
+    if (subqueryFacts.size !== 1) {
+      throw new SemanticCompilerError(
+        "CROSS_FACT_QUERY",
+        "Validation evidence cannot describe a subquery with multiple fact grains.",
+      );
+    }
+    const factId = [...subqueryFacts][0];
+    const fact = factId ? registry.facts.get(factId) : undefined;
+    if (!fact) throw new SemanticCompilerError("UNKNOWN_METRIC", `No fact model for ${String(factId)}.`);
+    factIds.add(fact.id);
+
+    for (const dimension of subquery.dimensions) {
+      if (dimension === "business_date" || dimension === "calendar_week") continue;
+      const join = fact.joins.find((candidate) =>
+        candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension));
+      if (!join) {
+        throw new SemanticCompilerError("ILLEGAL_JOIN", `No validation evidence for ${dimension} from ${fact.id}.`);
+      }
+      const item = Object.freeze({
+        factId: fact.id,
+        dimension,
+        cardinality: join.cardinality,
+      });
+      joins.set(`${item.factId}:${item.dimension}`, item);
+    }
+
+    // Identity resolution is also an executed join path. Include it in the
+    // proof even when the visible query has no dimension grouping.
+    for (const join of fact.joins.filter((candidate) => candidate.identityType)) {
+      const dimension = `identity:${join.identityType}`;
+      const item = Object.freeze({
+        factId: fact.id,
+        dimension,
+        cardinality: join.cardinality,
+      });
+      joins.set(`${item.factId}:${dimension}:${join.factKey}`, item);
+    }
+  }
+
+  const metricEvidence = [...new Set(compiled.metricIds)].map((metricId) => {
+    const metric = registry.metrics.get(metricId);
+    if (!metric) throw new SemanticCompilerError("UNKNOWN_METRIC", `No metric contract for ${metricId}.`);
+    return Object.freeze({
+      metricId: metric.id,
+      baseFact: metric.baseFact,
+      grain: metric.grain,
+      aggregation: metric.aggregation,
+      authority: metric.authority,
+      testKinds: Object.freeze([...new Set(metric.tests.map((test) => test.kind))].sort()),
+      dependencyMetricIds: Object.freeze(metricDependencies(metric, registry)),
+      snapshotAccesses: Object.freeze(snapshotAccesses(metric, registry)),
+    });
+  });
+
+  return Object.freeze({
+    ...compiled,
+    validationEvidence: Object.freeze({
+      planKind: query.kind === "composite" ? "aggregate_then_align" : "single_fact",
+      factIds: Object.freeze([...factIds]),
+      alignOn: Object.freeze(query.kind === "composite" ? [...query.alignOn] : []),
+      joins: Object.freeze([...joins.values()]),
+      metrics: Object.freeze(metricEvidence),
+    }),
+  });
+}
+
+function metricDependencies(
+  metric: MetricContract,
+  registry: SemanticRegistry,
+): string[] {
+  const found = new Set<string>();
+  const visit = (calculation: Calculation, stack: Set<string>): void => {
+    if (calculation.op === "metric") {
+      if (stack.has(calculation.metric)) {
+        throw new SemanticCompilerError("INVALID_IR", `Metric dependency cycle at ${calculation.metric}.`);
+      }
+      const dependency = registry.metrics.get(calculation.metric);
+      if (!dependency) throw new SemanticCompilerError("UNKNOWN_METRIC", `Unknown metric dependency ${calculation.metric}.`);
+      found.add(dependency.id);
+      stack.add(dependency.id);
+      visit(dependency.calculation, stack);
+      stack.delete(dependency.id);
+      return;
+    }
+    if (["add", "subtract", "multiply", "divide"].includes(calculation.op)) {
+      const binary = calculation as Extract<Calculation, { left: Calculation }>;
+      visit(binary.left, stack);
+      visit(binary.right, stack);
+      return;
+    }
+    if (calculation.op === "conditional") {
+      visit(calculation.value, stack);
+      visit(calculation.otherwise, stack);
+    }
+  };
+  visit(metric.calculation, new Set([metric.id]));
+  return [...found].sort();
+}
+
+function snapshotAccesses(
+  metric: MetricContract,
+  registry: SemanticRegistry,
+): CompiledSemanticValidationEvidence["metrics"][number]["snapshotAccesses"] {
+  const found = new Map<string, { factId: string; field: string; operation: string }>();
+  const visit = (contract: MetricContract, calculation: Calculation, stack: Set<string>): void => {
+    if (calculation.op === "metric") {
+      if (stack.has(calculation.metric)) {
+        throw new SemanticCompilerError("INVALID_IR", `Metric dependency cycle at ${calculation.metric}.`);
+      }
+      const dependency = registry.metrics.get(calculation.metric);
+      if (!dependency) throw new SemanticCompilerError("UNKNOWN_METRIC", `Unknown metric dependency ${calculation.metric}.`);
+      stack.add(dependency.id);
+      visit(dependency, dependency.calculation, stack);
+      stack.delete(dependency.id);
+      return;
+    }
+    if (["add", "subtract", "multiply", "divide"].includes(calculation.op)) {
+      const binary = calculation as Extract<Calculation, { left: Calculation }>;
+      visit(contract, binary.left, stack);
+      visit(contract, binary.right, stack);
+      return;
+    }
+    if (calculation.op === "conditional") {
+      visit(contract, calculation.value, stack);
+      visit(contract, calculation.otherwise, stack);
+      return;
+    }
+    if (!("field" in calculation) || !calculation.field) return;
+    const fact = registry.facts.get(contract.baseFact);
+    if (!fact?.snapshotFields.includes(calculation.field)) return;
+    const item = {
+      factId: fact.id,
+      field: calculation.field,
+      operation: calculation.op,
+    };
+    found.set(`${item.factId}:${item.field}:${item.operation}`, item);
+  };
+  visit(metric, metric.calculation, new Set([metric.id]));
+  return Object.freeze([...found.values()].sort((left, right) =>
+    `${left.factId}:${left.field}:${left.operation}`.localeCompare(`${right.factId}:${right.field}:${right.operation}`)));
+}
+
 function compileComposite(
   query: CompositeSemanticQuery,
   topic: TopicContract,
@@ -226,7 +439,7 @@ function compileComposite(
   context: CompilerContext,
   params: ParameterBuilder,
   maxRows: number,
-): CompiledSemanticQuery {
+): CompiledSemanticQueryPlan {
   if (!topic.composite) {
     throw new SemanticCompilerError("INVALID_IR", `Topic ${topic.id} is not a composite topic.`);
   }
@@ -254,7 +467,19 @@ function compileComposite(
       });
     }
     const subtopic = requireTopic(registry, subquery.topic);
-    if (subtopic.composite) throw new SemanticCompilerError("INVALID_ALIGNMENT", "Composite subqueries must be single-fact Topics.");
+    if (subtopic.composite) {
+      const componentMetrics = resolveMetrics(subquery.metrics, subtopic, registry);
+      const componentFacts = new Set(componentMetrics.map((metric) => metric.baseFact));
+      if (
+        componentFacts.size !== 1
+        || componentMetrics.some((metric) => metric.id.startsWith("composites."))
+      ) {
+        throw new SemanticCompilerError(
+          "INVALID_ALIGNMENT",
+          "A composite Topic subquery must select non-composite component metrics from exactly one fact.",
+        );
+      }
+    }
     checkRole(subtopic, context.role);
     checkCapabilities(subtopic.requiredCapabilities, context.capabilities, subtopic.id);
     return renderSingle({ ...subquery, kind: "single", sort: [], limit: maxRows }, subtopic, registry, context, params, false);
@@ -264,6 +489,18 @@ function compileComposite(
   }
   assertAlignedRequestedTimes(rendered);
   const compositeMetrics = resolveMetrics(query.metrics, topic, registry);
+  for (const metric of compositeMetrics) {
+    checkCapabilities(metric.requiredCapabilities, context.capabilities, metric.id);
+    validateTenantParameters(metric, context.tenantParameters ?? {});
+    const illegalDimensions = query.alignOn.filter((dimension) => !metric.allowedDimensions.includes(dimension));
+    if (illegalDimensions.length > 0) {
+      throw new SemanticCompilerError(
+        "ILLEGAL_DIMENSION",
+        `Dimensions ${illegalDimensions.join(", ")} are not approved for ${metric.id}.`,
+        { allowed: metric.allowedDimensions },
+      );
+    }
+  }
   const currentPlan = renderCompositePlan(rendered, query.alignOn, compositeMetrics, registry, "q");
   const resolvedTime = rendered[0]?.resolvedTime ?? {
     from: context.now,
@@ -308,11 +545,15 @@ function compileComposite(
         `CASE WHEN ${comparison} = 0 THEN NULL ELSE ((${current} - ${comparison}) * 100 / ${comparison}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
       ];
     });
+    const validationSelects = renderCombinedValidationSelects(
+      currentPlan.validationAliases,
+      ["current_composite", "comparison_composite"],
+    );
     const alignment = query.alignOn.map((dimension) =>
       `current_composite.${quoteIdentifier(`__key_${dimension}`)} IS NOT DISTINCT FROM comparison_composite.${quoteIdentifier(`__key_${dimension}`)}`,
     ).join(" AND ");
     const limitParameter = params.add(query.limit);
-    const sql = `WITH current_composite AS (\n${indent(currentPlan.sql)}\n),\ncomparison_composite AS (\n${indent(priorPlan.sql)}\n)\nSELECT\n  ${[...dimensionSelects, ...metricSelects].join(",\n  ")}\nFROM current_composite\nFULL OUTER JOIN comparison_composite ON ${alignment}\n${renderSort(query.sort, currentPlan.metricAliases)}LIMIT ${limitParameter}`;
+    const sql = `WITH current_composite AS (\n${indent(currentPlan.sql)}\n),\ncomparison_composite AS (\n${indent(priorPlan.sql)}\n)\nSELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects].join(",\n  ")}\nFROM current_composite\nFULL OUTER JOIN comparison_composite ON ${alignment}\n${renderSort(query.sort, currentPlan.metricAliases)}LIMIT ${limitParameter}`;
     const comparisonColumns = currentPlan.resultMetricAliases.flatMap((alias) => [
       alias, `${alias}__comparison`, `${alias}__change`, `${alias}__change_pct`,
     ]);
@@ -332,6 +573,7 @@ function compileComposite(
       metricIds: currentPlan.metricIds,
       dimensions: query.alignOn,
       resultColumns: [...query.alignOn, ...comparisonColumns],
+      resultWindow: compileResultWindow(query.sort, currentPlan.metricAliases, query.limit),
       sourceTables: rendered.map((item) => item.table),
       resolvedTime: comparedTime,
       warnings: [...new Set([...rendered, ...priorRendered].flatMap((item) => timeWarnings(item.resolvedTime)))],
@@ -348,6 +590,7 @@ function compileComposite(
     metricIds: currentPlan.metricIds,
     dimensions: query.alignOn,
     resultColumns: [...query.alignOn, ...currentPlan.resultMetricAliases],
+    resultWindow: compileResultWindow(query.sort, currentPlan.metricAliases, query.limit),
     sourceTables: rendered.map((item) => item.table),
     resolvedTime,
     warnings: [...new Set(rendered.flatMap((item) => timeWarnings(item.resolvedTime)))],
@@ -396,6 +639,17 @@ function renderCompositePlan(
   const componentSelects = [...componentByField.entries()].map(([alias, expression]) =>
     `${expression} AS ${quoteIdentifier(alias)}`,
   );
+  const validationSources = new Map<string, string[]>();
+  rendered.forEach((item, index) => {
+    for (const alias of item.validationAliases) {
+      const expressions = validationSources.get(alias) ?? [];
+      expressions.push(`${prefix}${index}.${quoteIdentifier(alias)}`);
+      validationSources.set(alias, expressions);
+    }
+  });
+  const validationSelects = [...validationSources.entries()].map(([alias, expressions]) =>
+    `${combineValidationExpressions(alias, expressions)} AS ${quoteIdentifier(alias)}`,
+  );
   const ctes = rendered.map((item, index) => `${prefix}${index} AS (\n${indent(item.sql)}\n)`).join(",\n");
   let from = `${prefix}0`;
   for (let index = 1; index < rendered.length; index += 1) {
@@ -408,10 +662,11 @@ function renderCompositePlan(
     from += `\nFULL OUTER JOIN ${prefix}${index} ON ${joins.join(" AND ")}`;
   }
   return {
-    sql: `WITH ${ctes}\nSELECT\n  ${[...keySelects, ...componentSelects, ...compositeSelects].join(",\n  ")}\nFROM ${from}`,
+    sql: `WITH ${ctes}\nSELECT\n  ${[...keySelects, ...componentSelects, ...compositeSelects, ...validationSelects].join(",\n  ")}\nFROM ${from}`,
     metricIds: [...metricAliases.keys()],
     metricAliases,
     resultMetricAliases: [...componentByField.keys(), ...compositeMetrics.map((metric) => shortMetricName(metric.id))],
+    validationAliases: [...validationSources.keys()],
   };
 }
 
@@ -520,19 +775,25 @@ function renderSingle(
       ...trustedMetricPredicates(metric, context, range, calendar, params),
       ...metricTimePredicates,
     ];
-    return `${renderCalculation(
-      metric.calculation,
-      metric.filters,
+    return `${renderMetricCalculation(
+      metric,
       fact,
       registry,
+      context,
       params,
-      new Set([metric.id]),
-      `f.${quoteIdentifier(metric.defaultTime)}`,
       trustedPredicates,
       { fromParameter, toParameter },
       identityJoins,
     )} AS ${quoteIdentifier(alias)}`;
   });
+  const validationSelects = metrics.flatMap((metric) => renderSliceValidationSelects(
+    metric,
+    fact,
+    registry,
+    params,
+    trustedMetricPredicates(metric, context, range, calendar, params),
+    identityJoins,
+  ));
   const where = [
     `f.${quoteIdentifier("tenant_id")} = $1`,
     // Lapse is an as-of population: eligible customers necessarily precede
@@ -545,17 +806,281 @@ function renderSingle(
   const identityJoinSql = renderIdentityResolutionJoins(identityJoins, "f");
   const dimensionJoinSql = joins.map((item) => `LEFT JOIN ${quoteQualified(item.join.table)} ${item.alias} ON ${item.alias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${item.alias}.${quoteIdentifier(item.join.dimensionKey)} = ${resolvedFactField(item.join.factKey, identityJoins, "f")}`).join("\n");
   const joinSql = [identityJoinSql, dimensionJoinSql].filter(Boolean).join("\n");
-  const sql = `SELECT\n  ${[...dimensionSelects, ...metricSelects].join(",\n  ")}\nFROM ${quoteQualified(fact.table)} f${joinSql ? `\n${joinSql}` : ""}\nWHERE ${where.join("\n  AND ")}\n${groupBy.length ? `GROUP BY ${groupBy.join(", ")}\n` : ""}${includeSort ? "" : ""}`;
+  const sql = `SELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects.map((item) => item.sql)].join(",\n  ")}\nFROM ${quoteQualified(fact.table)} f${joinSql ? `\n${joinSql}` : ""}\nWHERE ${where.join("\n  AND ")}\n${groupBy.length ? `GROUP BY ${groupBy.join(", ")}\n` : ""}${includeSort ? "" : ""}`;
   return {
     sql,
     metricIds: metrics.map((metric) => metric.id),
     metricAliases,
     dimensions: query.dimensions,
     hiddenKeys,
+    validationAliases: validationSelects.map((item) => item.alias),
     table: fact.table,
     requestedTime: requestedRange,
     resolvedTime: { ...range, compare: query.time.compare },
   };
+}
+
+type SliceValidationSelect = Readonly<{ alias: string; sql: string }>;
+
+function renderMetricCalculation(
+  metric: MetricContract,
+  fact: FactModel,
+  registry: SemanticRegistry,
+  context: CompilerContext,
+  params: ParameterBuilder,
+  trustedPredicates: readonly string[],
+  snapshotRange: Readonly<{ fromParameter: string; toParameter: string }>,
+  identityJoins: readonly IdentityResolutionJoin[],
+): string {
+  if (metric.id !== "inventory.stock_cover_days") {
+    return renderCalculation(
+      metric.calculation,
+      metric.filters,
+      fact,
+      registry,
+      params,
+      new Set([metric.id]),
+      `f.${quoteIdentifier(metric.defaultTime)}`,
+      trustedPredicates,
+      snapshotRange,
+      identityJoins,
+    );
+  }
+
+  if (metric.calculation.op !== "divide") {
+    throw new SemanticCompilerError("INVALID_IR", "Inventory stock cover must remain a ratio contract.");
+  }
+  const windowDays = tenantParameterDays(context, "stock_velocity_days");
+  const windowParameter = params.add(windowDays);
+  const numerator = renderCalculation(
+    metric.calculation.left,
+    metric.filters,
+    fact,
+    registry,
+    params,
+    new Set([metric.id]),
+    `f.${quoteIdentifier(metric.defaultTime)}`,
+    trustedPredicates,
+    snapshotRange,
+    identityJoins,
+  );
+  const filters = [
+    ...metric.filters.map((filter) => renderContractFilter(filter, params, identityJoins)),
+    ...trustedPredicates,
+    `f.${quoteIdentifier("business_date")} >= (CAST(${snapshotRange.toParameter} AS date) - CAST(${windowParameter} AS integer))`,
+    `f.${quoteIdentifier("business_date")} < CAST(${snapshotRange.toParameter} AS date)`,
+  ];
+  const dailyDemand = `(SUM(f.${quoteIdentifier("units_sold")}) FILTER (WHERE ${filters.join(" AND ")}) / CAST(${windowParameter} AS numeric))`;
+  return `(${numerator} / NULLIF(${dailyDemand}, 0))`;
+}
+
+function renderSliceValidationSelects(
+  metric: MetricContract,
+  fact: FactModel,
+  registry: SemanticRegistry,
+  params: ParameterBuilder,
+  trustedPredicates: readonly string[],
+  identityJoins: readonly IdentityResolutionJoin[],
+): readonly SliceValidationSelect[] {
+  const alias = shortMetricName(metric.id);
+  const basePredicates = [
+    ...metric.filters.map((filter) => renderContractFilter(filter, params, identityJoins)),
+    ...trustedPredicates,
+  ];
+  const fields = calculationFields(metric.calculation, registry, new Set([metric.id]))
+    .filter((field) => fact.fields.includes(field));
+  const selects: SliceValidationSelect[] = [];
+
+  if (metricNeedsCostCoverage(metric, registry, new Set([metric.id]))) {
+    const coverageFields = fields.filter(isCostCoverageField);
+    if (coverageFields.length > 0) {
+      const eligibility = coverageFields
+        .map((field) => costEligibilityPredicate(field, fact))
+        .filter((predicate): predicate is string => Boolean(predicate));
+      const eligiblePredicates = [
+        ...basePredicates,
+        eligibility.length > 0 ? `(${eligibility.join(" OR ")})` : "TRUE",
+      ];
+      const observedPredicates = [
+        ...eligiblePredicates,
+        ...coverageFields.map((field) => `${resolvedFactField(field, identityJoins, "f")} IS NOT NULL`),
+      ];
+      const eligibleAlias = `__coverage_eligible__${alias}`;
+      const observedAlias = `__coverage_observed__${alias}`;
+      selects.push(
+        {
+          alias: eligibleAlias,
+          sql: `COUNT(*) FILTER (WHERE ${eligiblePredicates.join(" AND ")}) AS ${quoteIdentifier(eligibleAlias)}`,
+        },
+        {
+          alias: observedAlias,
+          sql: `COUNT(*) FILTER (WHERE ${observedPredicates.join(" AND ")}) AS ${quoteIdentifier(observedAlias)}`,
+        },
+      );
+    }
+  }
+
+  if ((metric.unit === "currency" || metric.unit === "currency_per_unit") && fact.fields.includes("currency")) {
+    const contributors = fields.length > 0
+      ? `(${fields.map((field) => `${resolvedFactField(field, identityJoins, "f")} IS NOT NULL`).join(" OR ")})`
+      : "TRUE";
+    const predicates = [...basePredicates, contributors];
+    const currencyAlias = `__currency_codes__${alias}`;
+    const currency = resolvedFactField("currency", identityJoins, "f");
+    selects.push({
+      alias: currencyAlias,
+      sql: `STRING_AGG(DISTINCT ${currency}, ',' ORDER BY ${currency}) FILTER (WHERE ${predicates.join(" AND ")}) AS ${quoteIdentifier(currencyAlias)}`,
+    });
+  }
+  if (
+    fact.id === "commerce_payment"
+    && metric.tests.some((test) => test.kind === "settlement_bridge_coverage")
+  ) {
+    const eligibleAlias = `__settlement_eligible__${alias}`;
+    const linkedAlias = `__settlement_linked__${alias}`;
+    const eligiblePredicates = basePredicates.length > 0 ? basePredicates : ["TRUE"];
+    const linkedPredicates = [
+      ...eligiblePredicates,
+      `EXISTS (
+        SELECT 1
+        FROM core.event_link settlement_link
+        WHERE settlement_link.tenant_id=f.${quoteIdentifier("tenant_id")}
+          AND settlement_link.link_type='settlement_of'
+          AND settlement_link.from_object_type='BankTransactions'
+          AND settlement_link.to_object_type='SalePayment'
+          AND settlement_link.to_connection_id=f.${quoteIdentifier("primary_connection_id")}
+          AND settlement_link.to_source_record_id=f.${quoteIdentifier("primary_source_record_id")}
+      )`,
+    ];
+    selects.push(
+      {
+        alias: eligibleAlias,
+        sql: `COUNT(*) FILTER (WHERE ${eligiblePredicates.join(" AND ")}) AS ${quoteIdentifier(eligibleAlias)}`,
+      },
+      {
+        alias: linkedAlias,
+        sql: `COUNT(*) FILTER (WHERE ${linkedPredicates.join(" AND ")}) AS ${quoteIdentifier(linkedAlias)}`,
+      },
+    );
+  }
+  return selects;
+}
+
+function calculationFields(
+  calculation: Calculation,
+  registry: SemanticRegistry,
+  stack: Set<string>,
+): string[] {
+  switch (calculation.op) {
+    case "field": return [calculation.field];
+    case "literal": return [];
+    case "sum":
+    case "avg":
+    case "count":
+    case "count_distinct":
+    case "last_value":
+    case "min":
+    case "max": return calculation.field ? [calculation.field] : [];
+    case "add":
+    case "subtract":
+    case "multiply":
+    case "divide": return [
+      ...calculationFields(calculation.left, registry, stack),
+      ...calculationFields(calculation.right, registry, stack),
+    ];
+    case "conditional": return [
+      ...calculationFields(calculation.value, registry, stack),
+      ...calculationFields(calculation.otherwise, registry, stack),
+    ];
+    case "metric": {
+      if (stack.has(calculation.metric)) return [];
+      const dependency = registry.metrics.get(calculation.metric);
+      if (!dependency) return [];
+      stack.add(calculation.metric);
+      const fields = calculationFields(dependency.calculation, registry, stack);
+      stack.delete(calculation.metric);
+      return fields;
+    }
+  }
+}
+
+function metricNeedsCostCoverage(
+  metric: MetricContract,
+  registry: SemanticRegistry,
+  stack: Set<string>,
+): boolean {
+  if (
+    metric.tests.some((test) => test.kind === "cost_coverage")
+    || metric.requiredCapabilities.some((capability) => capability.endsWith(".cost"))
+  ) return true;
+  const dependencies = metricDependencyIds(metric.calculation);
+  for (const dependencyId of dependencies) {
+    if (stack.has(dependencyId)) continue;
+    const dependency = registry.metrics.get(dependencyId);
+    if (!dependency) continue;
+    stack.add(dependencyId);
+    const requiresCoverage = metricNeedsCostCoverage(dependency, registry, stack);
+    stack.delete(dependencyId);
+    if (requiresCoverage) return true;
+  }
+  return false;
+}
+
+function metricDependencyIds(calculation: Calculation): string[] {
+  switch (calculation.op) {
+    case "metric": return [calculation.metric];
+    case "add":
+    case "subtract":
+    case "multiply":
+    case "divide": return [...metricDependencyIds(calculation.left), ...metricDependencyIds(calculation.right)];
+    case "conditional": return [
+      ...metricDependencyIds(calculation.value),
+      ...metricDependencyIds(calculation.otherwise),
+    ];
+    default: return [];
+  }
+}
+
+function isCostCoverageField(field: string): boolean {
+  return field.includes("cost") || field === "stock_value" || field === "labour_cost";
+}
+
+function costEligibilityPredicate(field: string, fact: FactModel): string | undefined {
+  if (field === "labour_cost" && fact.fields.includes("worked_minutes")) {
+    return `f.${quoteIdentifier("worked_minutes")} > 0`;
+  }
+  if (field === "cost_of_goods_sold" && fact.fields.includes("units_sold")) {
+    return `f.${quoteIdentifier("units_sold")} <> 0`;
+  }
+  if (field === "stock_value" && fact.fields.includes("quantity_on_hand")) {
+    return `f.${quoteIdentifier("quantity_on_hand")} IS NOT NULL`;
+  }
+  return "TRUE";
+}
+
+function renderCombinedValidationSelects(
+  aliases: readonly string[],
+  sources: readonly string[],
+): string[] {
+  return aliases.map((alias) => {
+    const expressions = sources.map((source) => `${source}.${quoteIdentifier(alias)}`);
+    return `${combineValidationExpressions(alias, expressions)} AS ${quoteIdentifier(alias)}`;
+  });
+}
+
+function combineValidationExpressions(alias: string, expressions: readonly string[]): string {
+  if (
+    alias.startsWith("__coverage_eligible__")
+    || alias.startsWith("__coverage_observed__")
+    || alias.startsWith("__settlement_eligible__")
+    || alias.startsWith("__settlement_linked__")
+  ) {
+    return expressions.map((expression) => `COALESCE(${expression}, 0)`).join(" + ");
+  }
+  if (alias.startsWith("__currency_codes__")) {
+    return `CONCAT_WS(',', ${expressions.join(", ")})`;
+  }
+  throw new SemanticCompilerError("INVALID_IR", `Unknown internal validation projection ${alias}.`);
 }
 
 function renderCalculation(
@@ -614,8 +1139,8 @@ function renderCalculation(
           `${resolvedFactField(key, latestIdentityJoins, latestAlias)} IS NOT DISTINCT FROM ${resolvedFactField(key, identityJoins, "f")}`,
         );
         const latestJoinSql = renderIdentityResolutionJoins(latestIdentityJoins, latestAlias);
-        const latest = `(SELECT MAX(${latestAlias}.${quoteIdentifier(timeField)}) FROM ${quoteQualified(fact.table)} ${latestAlias}${latestJoinSql ? ` ${latestJoinSql}` : ""} WHERE ${latestAlias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${correlations.join(" AND ")} AND ${latestAlias}.${quoteIdentifier(timeField)} >= ${snapshotRange.fromParameter} AND ${latestAlias}.${quoteIdentifier(timeField)} < ${snapshotRange.toParameter})`;
-        const latestPredicates = [...predicates, `${orderByField} = ${latest}`];
+        const latest = `(SELECT MAX(${latestAlias}.${quoteIdentifier(timeField)}) FROM ${quoteQualified(fact.table)} ${latestAlias}${latestJoinSql ? ` ${latestJoinSql}` : ""} WHERE ${latestAlias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${correlations.join(" AND ")} AND ${latestAlias}.${quoteIdentifier(calculation.field)} IS NOT NULL AND ${latestAlias}.${quoteIdentifier(timeField)} >= ${snapshotRange.fromParameter} AND ${latestAlias}.${quoteIdentifier(timeField)} < ${snapshotRange.toParameter})`;
+        const latestPredicates = [...predicates, `${field} IS NOT NULL`, `${orderByField} = ${latest}`];
         return `SUM(${field}) FILTER (WHERE ${latestPredicates.join(" AND ")})`;
       }
       if (calculation.op === "count_distinct") return `COUNT(DISTINCT ${field})${filterSql}`;
@@ -879,13 +1404,34 @@ function timeParameterValues(field: string, range: ResolvedTimeRange): Readonly<
 }
 
 function renderSort(sort: readonly { metric: string; dir: "asc" | "desc" }[], aliases: ReadonlyMap<string, string>): string {
-  if (!sort.length) return "";
-  const clauses = sort.map((item) => {
+  const ordering = resolveResultOrdering(sort, aliases);
+  if (!ordering.length) return "";
+  const clauses = ordering.map((item) =>
+    `${quoteIdentifier(item.columnKey)} ${item.direction.toUpperCase()}`);
+  return `ORDER BY ${clauses.join(", ")}\n`;
+}
+
+function compileResultWindow(
+  sort: readonly { metric: string; dir: "asc" | "desc" }[],
+  aliases: ReadonlyMap<string, string>,
+  requestedLimit: number,
+): CompiledSemanticQuery["resultWindow"] {
+  return Object.freeze({
+    requestedLimit,
+    orderedBeforeLimit: true as const,
+    orderBy: Object.freeze(resolveResultOrdering(sort, aliases)),
+  });
+}
+
+function resolveResultOrdering(
+  sort: readonly { metric: string; dir: "asc" | "desc" }[],
+  aliases: ReadonlyMap<string, string>,
+): Readonly<{ columnKey: string; direction: "asc" | "desc" }>[] {
+  return sort.map((item) => {
     const resolved = [...aliases.entries()].find(([id, alias]) => id === item.metric || alias === item.metric);
     if (!resolved) throw new SemanticCompilerError("UNKNOWN_METRIC", `Sort metric ${item.metric} is not selected.`);
-    return `${quoteIdentifier(resolved[1])} ${item.dir.toUpperCase()}`;
+    return Object.freeze({ columnKey: resolved[1], direction: item.dir });
   });
-  return `ORDER BY ${clauses.join(", ")}\n`;
 }
 
 function timeWarnings(range: CompiledSemanticQuery["resolvedTime"]): readonly string[] {

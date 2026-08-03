@@ -35,7 +35,7 @@ export interface DurableCanonicalTransformQueue {
   ):Promise<void>;
   retryOrFail(
     claim:ClaimedCanonicalTransformJob,
-    error:Readonly<{code:string;retryable:boolean;detail?:string}>,
+    error:Readonly<{code:string;retryable:boolean}>,
     options:Readonly<{retryDelaySeconds:number;maxAttempts:number}>,
   ):Promise<"retry_wait"|"failed">;
   metrics():Promise<readonly CanonicalTransformQueueMetric[]>;

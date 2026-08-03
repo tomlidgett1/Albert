@@ -1,6 +1,8 @@
 import { createServer, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
-import { S3RawObjectStore } from "../../../packages/storage/src/index.js";
+import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
+import { S3RawDeletionObjectStore } from "../../../packages/storage/src/s3-deletion.js";
+import { SupabaseMachineSessionPool } from "../../../packages/storage/src/session-credentials.js";
 import { createServiceLogger, safeErrorEvidence } from "../../../packages/observability/src/index.js";
 import { loadDeletionWorkerConfig } from "./config.js";
 import { DeletionCredentialVault } from "./credential-vault.js";
@@ -8,11 +10,12 @@ import {
   deletionFailureEvidence,
   DeletionProcessor,
   ProductionCredentialRevoker,
+  type DeletionProcessOutcome,
 } from "./processor.js";
-import { RawStoragePurger } from "./raw-storage.js";
+import { LeaseBoundRawStoragePurger } from "./raw-storage.js";
 import { DeletionAnalyticalStore, DeletionControlStore } from "./store.js";
 import {
-  AesKeyWrapper,
+  AesKeyringWrapper,
   EnvelopeCryptography,
 } from "../../sync-workers/src/credential-vault.js";
 import { PgTransactionalDatabase } from "../../sync-workers/src/postgres.js";
@@ -41,7 +44,28 @@ function wait(delayMs: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+export type DeletionAttemptHealth = Readonly<{
+  lastCompletionAt: string | null;
+  lastErrorCode: string | null;
+}>;
+
+export function recordDeletionProcessOutcome(
+  current: DeletionAttemptHealth,
+  outcome: DeletionProcessOutcome,
+  completedAt = new Date().toISOString(),
+): DeletionAttemptHealth {
+  if (outcome.status === "completed") {
+    return Object.freeze({ lastCompletionAt: completedAt, lastErrorCode: null });
+  }
+  return Object.freeze({
+    lastCompletionAt: current.lastCompletionAt,
+    lastErrorCode: outcome.failure.code,
+  });
+}
+
 export async function runDeletionWorker(): Promise<void> {
+  const releaseSha = assertEmbeddedServiceBuildIdentity(process.env);
+  const deploymentId = process.env.ALBERT_DEPLOYMENT_ID?.trim() || null;
   const config = loadDeletionWorkerConfig();
   const controlDb = new PgTransactionalDatabase(config.controlPlaneDatabaseUrl, {
     applicationName: `albert-deletion-control/${config.serviceVersion}`,
@@ -53,13 +77,18 @@ export async function runDeletionWorker(): Promise<void> {
   });
   const control = new DeletionControlStore(controlDb, config.workerId);
   const analytical = new DeletionAnalyticalStore(analyticalDb);
-  const cryptography = new EnvelopeCryptography(new AesKeyWrapper(
-    config.tokenEncryptionKey,
-    config.tokenKeyReference,
-    config.tokenKeyVersion,
-  ));
-  const rawObjects = new S3RawObjectStore(config.rawStorage);
-  const raw = new RawStoragePurger(rawObjects);
+  const cryptography = new EnvelopeCryptography(new AesKeyringWrapper({
+    currentKeyReference: config.tokenKeyReference,
+    currentKeyVersion: config.tokenKeyVersion,
+    encodedKeys: config.tokenEncryptionKeys,
+  }));
+  const rawSessionPool = new SupabaseMachineSessionPool(config.rawStorage);
+  const rawObjects = new S3RawDeletionObjectStore(
+    config.rawStorage,
+    undefined,
+    { sessionPool: rawSessionPool },
+  );
+  const raw = new LeaseBoundRawStoragePurger(config.rawStorage, control, rawSessionPool);
   const processor = new DeletionProcessor(
     control,
     analytical,
@@ -70,7 +99,7 @@ export async function runDeletionWorker(): Promise<void> {
       config,
     ),
     config.proofHmacKey,
-    config.serviceVersion,
+    releaseSha,
   );
 
   const dependenciesReady = async () => {
@@ -102,9 +131,13 @@ export async function runDeletionWorker(): Promise<void> {
         lastClaimAt = new Date().toISOString();
         activeJobs += 1;
         try {
-          await processor.process(claim);
-          lastCompletionAt = new Date().toISOString();
-          lastErrorCode = null;
+          const outcome = await processor.process(claim);
+          const attemptHealth = recordDeletionProcessOutcome(
+            { lastCompletionAt, lastErrorCode },
+            outcome,
+          );
+          lastCompletionAt = attemptHealth.lastCompletionAt;
+          lastErrorCode = attemptHealth.lastErrorCode;
         } finally {
           activeJobs -= 1;
         }
@@ -122,8 +155,8 @@ export async function runDeletionWorker(): Promise<void> {
 
   const heartbeat = async () => {
     await control.heartbeat({
-      serviceVersion: config.serviceVersion,
-      deploymentId: process.env.ALBERT_DEPLOYMENT_ID?.trim() || null,
+      serviceVersion: releaseSha,
+      deploymentId,
       startedAt,
       activeJobs,
       metadata: { ready, lastClaimAt, lastCompletionAt, lastErrorCode, service: "deletion-worker" },
@@ -141,7 +174,14 @@ export async function runDeletionWorker(): Promise<void> {
         try {
           if (!ready) throw new Error("shutting_down");
           await dependenciesReady();
-          json(response, 200, { ready: true, workerId: config.workerId, activeJobs });
+          json(response, 200, {
+            ready: true,
+            runtime: "deletion-worker",
+            workerId: config.workerId,
+            activeJobs,
+            releaseSha,
+            deploymentId,
+          });
         } catch {
           json(response, 503, { ready: false });
         }

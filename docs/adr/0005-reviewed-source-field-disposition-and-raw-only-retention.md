@@ -34,6 +34,13 @@ outcomes distinctly.
   `TimeZone`; both spellings therefore have the same disposition and typed column.
 - Connector schemas remain permissive enough to capture additive response fields
   in raw storage, while normalization and typed projection remain fail closed.
+- The complete top-level field catalogue for each shipped resource is checked in
+  as reviewed source data and contract-tested against the manifest. Xero is pinned
+  to immutable official Accounting OpenAPI revision
+  `45ab7e8ceccbbbfb41a0487a47f9d1d00cbb4a0f`; Lightspeed R-Series is pinned to
+  the official V3 documentation build dated `2026-07-27T19:51:56Z`. Documented
+  fields outside V1 analytics receive an explicit raw-only `unsupported`
+  disposition and PII class instead of being mistaken for schema drift.
 - Canonical mappers accept only the generated typed columns plus lineage columns.
   Post-staging additions or source-identity mismatches fail closed.
 
@@ -68,6 +75,8 @@ record.
 
 - Legitimate Xero Payment and Deputy Leave responses do not fail because of
   reviewed variants or presentation-only metadata.
+- Full documented Xero and Lightspeed response objects can land even when they
+  contain fields that the smaller recorded fixtures do not exercise.
 - Typed staging, source exploration, semantic tools, and prompts cannot reach
   unsupported values.
 - New vendor fields still produce a visible schema-drift failure instead of being
@@ -95,6 +104,8 @@ record.
 ## References
 
 - [Xero Accounting API Payments](https://developer.xero.com/documentation/api/accounting/payments)
+- [Xero official Accounting OpenAPI pin](https://github.com/XeroAPI/Xero-OpenAPI/blob/45ab7e8ceccbbbfb41a0487a47f9d1d00cbb4a0f/xero_accounting.yaml)
+- [Lightspeed R-Series V3 endpoint reference](https://developers.lightspeedhq.com/retail/endpoints/Sale/)
 - [Deputy Leave resource](https://developer.deputy.com/docs/leave)
 - [Deputy leave-request response guide](https://developer.deputy.com/docs/adding-a-leave-request-for-an-employee)
 - [Albert V1 connector pack contract](../albert-v1-spec.md#the-connector-pack-contract)

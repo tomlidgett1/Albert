@@ -10,6 +10,7 @@ import {
 export type OpenAIAgentModelSettings = Readonly<{
   reasoning: Readonly<{
     effort: AgentRunPreferences["reasoningEffort"];
+    context: "current_turn";
   }>;
   /** Forwarded by the OpenAI provider adapter, separate from reasoning. */
   providerData: Readonly<{
@@ -28,7 +29,13 @@ export function buildOpenAIAgentRunConfig(input: unknown): OpenAIAgentRunConfig 
   return Object.freeze({
     model: preferences.model,
     modelSettings: Object.freeze({
-      reasoning: Object.freeze({ effort: preferences.reasoningEffort }),
+      // Albert persists only the governed, bounded narrative context. Keeping
+      // reasoning scoped to the current turn prevents the provider from
+      // expecting stored/encrypted reasoning items when `store` is disabled.
+      reasoning: Object.freeze({
+        effort: preferences.reasoningEffort,
+        context: "current_turn" as const,
+      }),
       providerData: Object.freeze(
         preferences.fastMode ? { service_tier: "fast" as const } : {},
       ),

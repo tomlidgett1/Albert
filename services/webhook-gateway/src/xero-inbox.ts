@@ -6,6 +6,10 @@ import {
 } from "../../../connectors/xero/webhooks.js";
 import type { TransactionalPostgres } from "../../sync-workers/src/database.js";
 import {
+  attestWebhookDocument,
+  type WebhookAttestor,
+} from "./attestation.js";
+import {
   encryptXeroWebhookBody,
   type XeroWebhookInboxKeyring,
 } from "./xero-crypto.js";
@@ -31,6 +35,8 @@ export type ClaimedXeroWebhook = Readonly<{
   eventCount: number;
   firstReceivedAt: string;
   attemptCount: number;
+  leaseToken: string;
+  leaseVersion: number;
 }>;
 
 export type XeroSequenceObservation = Readonly<{
@@ -51,7 +57,10 @@ export type XeroWebhookInboxHealth = Readonly<{
 }>;
 
 export class XeroWebhookInboxStore {
-  constructor(private readonly db: TransactionalPostgres) {}
+  constructor(
+    private readonly db: TransactionalPostgres,
+    private readonly attestor: WebhookAttestor,
+  ) {}
 
   async accept(input: Readonly<{
     inboxId: string;
@@ -68,30 +77,46 @@ export class XeroWebhookInboxStore {
     expiresAt: string;
     retainUntil: string;
   }>): Promise<Omit<AcceptedXeroWebhook, "intentToReceive">> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.accept",
+      input.inboxId,
+      {
+        version: 1,
+        operation: "xero.accept",
+        inboxId: input.inboxId,
+        bodySha256: input.bodySha256,
+        encryptionKeyId: input.encryptionKeyId,
+        nonceHex: Buffer.from(input.nonce).toString("hex"),
+        ciphertextSha256: createHash("sha256").update(input.ciphertext).digest("hex"),
+        authTagHex: Buffer.from(input.authTag).toString("hex"),
+        bodyBytes: input.bodyBytes,
+        firstEventSequence: input.firstEventSequence,
+        lastEventSequence: input.lastEventSequence,
+        eventCount: input.eventCount,
+        receivedAt: input.receivedAt,
+        expiresAt: input.expiresAt,
+        retainUntil: input.retainUntil,
+      },
+    );
     const result = await this.db.query<{
       inbox_id: string;
       status: AcceptedXeroWebhook["status"];
       created: boolean;
       delivery_count: number;
     }>(
-      `select * from control_plane.accept_xero_webhook_inbox(
-         $1, $2, $3, $4::bytea, $5::bytea, $6::bytea,
-         $7, $8, $9, $10, $11, $12, $13
+      `select * from control_plane.accept_attested_xero_webhook_inbox(
+         $1, $2, $3, $4, $5, $6::bytea, $7::bytea, $8::bytea
        )`,
       [
-        input.inboxId,
-        input.bodySha256,
-        input.encryptionKeyId,
+        document,
+        proof.issuedAt,
+        proof.nonce,
+        proof.keyId,
+        proof.signature,
         Buffer.from(input.nonce),
         Buffer.from(input.ciphertext),
         Buffer.from(input.authTag),
-        input.bodyBytes,
-        input.firstEventSequence,
-        input.lastEventSequence,
-        input.eventCount,
-        input.receivedAt,
-        input.expiresAt,
-        input.retainUntil,
       ],
     );
     const row = result.rows[0];
@@ -105,6 +130,12 @@ export class XeroWebhookInboxStore {
   }
 
   async claim(workerId: string, leaseSeconds: number): Promise<ClaimedXeroWebhook | null> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.claim",
+      workerId,
+      { version: 1, operation: "xero.claim", workerId, limit: 1, leaseSeconds },
+    );
     const result = await this.db.query<{
       inbox_id: string;
       body_sha256: string;
@@ -118,12 +149,24 @@ export class XeroWebhookInboxStore {
       event_count: number;
       first_received_at: string;
       attempt_count: number;
+      lease_token: string;
+      lease_version: string | number;
     }>(
-      "select * from control_plane.claim_xero_webhook_inbox($1, 1, $2)",
-      [workerId, leaseSeconds],
+      `select * from control_plane.claim_attested_xero_webhook_inbox(
+         $1, $2, $3, $4, $5
+       )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     const row = result.rows[0];
-    return row ? Object.freeze({
+    if (!row) return null;
+    if (!/^[A-Za-z0-9_-]{22}$/u.test(row.lease_token)) {
+      throw new Error("xero_lease_token_invalid");
+    }
+    const leaseVersion = Number(row.lease_version);
+    if (!Number.isSafeInteger(leaseVersion) || leaseVersion < 1) {
+      throw new Error("xero_lease_version_invalid");
+    }
+    return Object.freeze({
       inboxId: row.inbox_id,
       bodySha256: row.body_sha256,
       encryptionKeyId: row.encryption_key_id,
@@ -136,26 +179,63 @@ export class XeroWebhookInboxStore {
       eventCount: Number(row.event_count),
       firstReceivedAt: new Date(row.first_received_at).toISOString(),
       attemptCount: Number(row.attempt_count),
-    }) : null;
+      leaseToken: row.lease_token,
+      leaseVersion,
+    });
   }
 
-  async renew(inboxId: string, workerId: string, leaseSeconds: number): Promise<boolean> {
+  async renew(
+    inboxId: string,
+    workerId: string,
+    leaseToken: string,
+    leaseVersion: number,
+    leaseSeconds: number,
+  ): Promise<boolean> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.renew",
+      inboxId,
+      {
+        version: 1,
+        operation: "xero.renew",
+        inboxId,
+        workerId,
+        leaseToken,
+        leaseVersion,
+        leaseSeconds,
+      },
+    );
     const result = await this.db.query<{ renewed: boolean }>(
-      "select control_plane.renew_xero_webhook_inbox_lease($1, $2, $3) as renewed",
-      [inboxId, workerId, leaseSeconds],
+      `select control_plane.renew_attested_xero_webhook_inbox_lease(
+         $1, $2, $3, $4, $5
+       ) as renewed`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     return result.rows[0]?.renewed === true;
   }
 
-  async recordSequence(inboxId: string, workerId: string): Promise<XeroSequenceObservation> {
+  async recordSequence(
+    inboxId: string,
+    workerId: string,
+    leaseToken: string,
+    leaseVersion: number,
+  ): Promise<XeroSequenceObservation> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.sequence",
+      inboxId,
+      { version: 1, operation: "xero.sequence", inboxId, workerId, leaseToken, leaseVersion },
+    );
     const result = await this.db.query<{
       disposition: XeroSequenceObservation["disposition"];
       gap_id: string | null;
       gap_first_sequence: number | null;
       gap_last_sequence: number | null;
     }>(
-      "select * from control_plane.record_xero_webhook_sequence($1, $2)",
-      [inboxId, workerId],
+      `select * from control_plane.record_attested_xero_webhook_sequence(
+         $1, $2, $3, $4, $5
+       )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     const row = result.rows[0];
     if (!row) throw new Error("xero_sequence_record_failed");
@@ -171,18 +251,64 @@ export class XeroWebhookInboxStore {
     tenantId: string;
     connectionId: string;
     inboxId: string;
+    workerId: string;
+    leaseToken: string;
+    leaseVersion: number;
     streams: readonly string[];
   }>): Promise<void> {
+    const streams = [...input.streams];
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.connection",
+      input.inboxId,
+      {
+        version: 1,
+        operation: "xero.connection",
+        tenantId: input.tenantId,
+        connectionId: input.connectionId,
+        inboxId: input.inboxId,
+        workerId: input.workerId,
+        leaseToken: input.leaseToken,
+        leaseVersion: input.leaseVersion,
+        streams,
+      },
+    );
     await this.db.query(
-      "select * from control_plane.record_xero_webhook_connection_delivery($1, $2, $3, $4::text[])",
-      [input.tenantId, input.connectionId, input.inboxId, [...input.streams]],
+      `select * from control_plane.record_attested_xero_webhook_connection_delivery(
+         $1, $2, $3, $4, $5
+       )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
   }
 
-  async enqueueGapSweeps(gapId: string, observedAt: string): Promise<number> {
+  async enqueueGapSweeps(
+    gapId: string,
+    inboxId: string,
+    workerId: string,
+    leaseToken: string,
+    leaseVersion: number,
+    observedAt: string,
+  ): Promise<number> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.gap",
+      gapId,
+      {
+        version: 1,
+        operation: "xero.gap",
+        gapId,
+        inboxId,
+        workerId,
+        leaseToken,
+        leaseVersion,
+        observedAt,
+      },
+    );
     const result = await this.db.query<{ count: number }>(
-      "select control_plane.enqueue_xero_webhook_gap_sweeps($1, $2) as count",
-      [gapId, observedAt],
+      `select control_plane.enqueue_attested_xero_webhook_gap_sweeps(
+         $1, $2, $3, $4, $5
+       ) as count`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     return Number(result.rows[0]?.count ?? 0);
   }
@@ -190,47 +316,64 @@ export class XeroWebhookInboxStore {
   async complete(
     inboxId: string,
     workerId: string,
+    leaseToken: string,
+    leaseVersion: number,
     summary: Readonly<Record<string, string | number>>,
   ): Promise<void> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.complete",
+      inboxId,
+      {
+        version: 1,
+        operation: "xero.complete",
+        inboxId,
+        workerId,
+        leaseToken,
+        leaseVersion,
+        summary,
+      },
+    );
     await this.db.query(
-      "select control_plane.complete_xero_webhook_inbox($1, $2, $3::jsonb)",
-      [inboxId, workerId, JSON.stringify(summary)],
+      `select control_plane.complete_attested_xero_webhook_inbox(
+         $1, $2, $3, $4, $5
+       )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
   }
 
   async fail(input: Readonly<{
     inboxId: string;
     workerId: string;
+    leaseToken: string;
+    leaseVersion: number;
     errorCode: string;
     retryDelaySeconds: number;
     maxAttempts: number;
     permanent: boolean;
   }>): Promise<string> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.fail",
+      input.inboxId,
+      { version: 1, operation: "xero.fail", ...input },
+    );
     const result = await this.db.query<{ status: string }>(
-      `select control_plane.fail_xero_webhook_inbox(
-         $1, $2, $3, $4, $5, $6
+      `select control_plane.fail_attested_xero_webhook_inbox(
+         $1, $2, $3, $4, $5
        ) as status`,
-      [
-        input.inboxId,
-        input.workerId,
-        input.errorCode,
-        input.retryDelaySeconds,
-        input.maxAttempts,
-        input.permanent,
-      ],
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     return result.rows[0]?.status ?? "unknown";
   }
 
-  async purge(limit = 500): Promise<number> {
-    const result = await this.db.query<{ count: number }>(
-      "select control_plane.purge_xero_webhook_inbox($1) as count",
-      [limit],
-    );
-    return Number(result.rows[0]?.count ?? 0);
-  }
-
   async health(): Promise<XeroWebhookInboxHealth> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "xero.health",
+      "xero-inbox",
+      { version: 1, operation: "xero.health" },
+    );
     const result = await this.db.query<{
       pending_count: string | number;
       processing_count: string | number;
@@ -239,7 +382,12 @@ export class XeroWebhookInboxStore {
       expired_count: string | number;
       oldest_unprocessed_at: string | null;
       active_key_ids: string[];
-    }>("select * from control_plane.xero_webhook_inbox_health()");
+    }>(
+      `select * from control_plane.attested_xero_webhook_inbox_health(
+         $1, $2, $3, $4, $5
+       )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
+    );
     const row = result.rows[0];
     if (!row) throw new Error("xero_inbox_health_unavailable");
     return Object.freeze({

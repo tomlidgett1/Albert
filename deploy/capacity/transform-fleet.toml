@@ -1,0 +1,29 @@
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "Dockerfile.services"
+
+[env]
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  ALBERT_CAPACITY_ENVIRONMENT = "staging"
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_SNAPSHOT_CLAIM_BATCH_SIZE = "8"
+  ALBERT_SNAPSHOT_MAX_CLAIMS_PER_RUN = "20000"
+  ALBERT_TRANSFORM_WORKER_ID = "capacity-transform"
+  ALBERT_WORKER_CONCURRENCY = "8"
+  NODE_ENV = "production"
+
+[processes]
+  app = "node --enable-source-maps services/transform-capacity-harness.js"
+
+[[restart]]
+  policy = "no"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+  processes = ["app"]

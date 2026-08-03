@@ -369,7 +369,7 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
     question: "Which employees working today performed best over six months?",
     expectedRoute: "clarification",
     expectedState: "clarification",
-    rationale: "Best materially differs between sales, gross margin and sales per worked hour.",
+    rationale: "Best materially differs between net sales, gross profit and gross profit per worked hour.",
   },
   {
     id: "workforce-roster-vs-worked",
@@ -448,19 +448,9 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
   {
     id: "workforce-overtime",
     question: "Overtime hours last fortnight.",
-    expectedRoute: "semantic",
-    expectedState: "verified",
-    ir: {
-      topic: "workforce_labour",
-      metrics: ["overtime_hours"],
-      dimensions: [],
-      filters: [],
-      time: { field: "business_date", range: monthToDate, compare: "none" },
-      sort: [],
-      limit: 20,
-      parameters: {},
-    },
-    expectedRows: [{ overtime_hours: "2.0000" }],
+    expectedRoute: "unavailable",
+    expectedState: "unavailable",
+    rationale: "Deputy's pinned Timesheet projection does not expose a governed overtime duration. Albert must name that missing capability instead of treating a synthetic fixture value as observed overtime.",
   },
   {
     id: "workforce-sales-hour",
@@ -558,11 +548,11 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
     ir: {
       kind: "composite",
       topic: "reconciliation",
-      metrics: ["pos_to_ledger_variance"],
+      metrics: ["pos_to_bank_variance"],
       queries: [
         {
-          topic: "sales_performance",
-          metrics: ["gross_takings_inc_gst", "net_sales_ex_gst"],
+          topic: "reconciliation",
+          metrics: ["tender_amount"],
           dimensions: ["business_date", "location"],
           filters: [],
           time: { field: "business_date", range: fixtureYesterday, compare: "none" },
@@ -570,7 +560,7 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
         },
         {
           topic: "profitability_cash",
-          metrics: ["cash_receipts", "accrued_revenue"],
+          metrics: ["cash_receipts"],
           dimensions: ["business_date", "location"],
           filters: [],
           time: { field: "business_date", range: fixtureYesterday, compare: "none" },
@@ -585,8 +575,9 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
     expectedRows: [{
       business_date: "2026-03-01",
       location: "Carlton",
-      gross_takings_inc_gst: "165.0000",
+      tender_amount: "165.0000",
       cash_receipts: "165.0000",
+      pos_to_bank_variance: "0.0000",
     }],
     rationale: "The one-day window is intentionally Qualified; fixture receipt date and operational business date are explicitly aligned.",
   },
@@ -598,11 +589,11 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
     ir: {
       kind: "composite",
       topic: "reconciliation",
-      metrics: ["pos_to_ledger_variance"],
+      metrics: ["pos_to_bank_variance"],
       queries: [
         {
-          topic: "sales_performance",
-          metrics: ["gross_takings_inc_gst", "net_sales_ex_gst"],
+          topic: "reconciliation",
+          metrics: ["tender_amount"],
           dimensions: ["business_date", "location"],
           filters: [],
           time: { field: "business_date", range: fixtureTuesday, compare: "none" },
@@ -610,7 +601,7 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
         },
         {
           topic: "profitability_cash",
-          metrics: ["cash_receipts", "accrued_revenue"],
+          metrics: ["cash_receipts"],
           dimensions: ["business_date", "location"],
           filters: [],
           time: { field: "business_date", range: fixtureTuesday, compare: "none" },
@@ -625,8 +616,9 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
     expectedRows: [{
       business_date: "2026-02-10",
       location: "Carlton",
-      gross_takings_inc_gst: "165.0000",
+      tender_amount: "165.0000",
       cash_receipts: "150.0000",
+      pos_to_bank_variance: "15.0000",
     }],
     rationale: "Qualified: the fixture shows a $15 shortfall and the settlement/posting bridge coverage must be surfaced.",
   },
@@ -650,7 +642,6 @@ export const seedGoldenQuestions: readonly GoldenQuestion[] = [
       groupBy: [],
       filters: [{ field: "discount_reason", op: "eq", values: ["staff purchase"] }],
       limit: 20,
-      authorityConcept: "operational_sales",
       requestedMetricConcept: "staff_discount_usage",
     },
     expectedRows: [{ matching_sales: "2" }],

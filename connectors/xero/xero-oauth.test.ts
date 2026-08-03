@@ -40,7 +40,7 @@ class CaptureVault implements WorkerCredentialVault {
   async destroy(): Promise<void> {}
 }
 
-test("Xero OAuth is pinned to PKCE and never sends a client secret", async () => {
+test("Xero OAuth is pinned to the documented public-client PKCE exchange", async () => {
   const vault = new CaptureVault();
   let authorization = "";
   let body = "";
@@ -66,10 +66,7 @@ test("Xero OAuth is pinned to PKCE and never sends a client secret", async () =>
     codeVerifier: "v".repeat(64),
   });
 
-  assert.equal(
-    authorization,
-    `Basic ${Buffer.from("xero-client:", "utf8").toString("base64")}`,
-  );
+  assert.equal(authorization, "");
   assert.match(body, /client_id=xero-client/u);
   assert.match(body, /code_verifier=/u);
   assert.doesNotMatch(`${authorization}${body}`, /client-secret/iu);

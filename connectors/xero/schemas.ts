@@ -71,7 +71,10 @@ export const xeroPaymentSchema = z.object({
 
 export const xeroBankTransactionSchema = z.object({
   BankTransactionID: id,
-  Type: z.string(),
+  Type: z.enum([
+    "RECEIVE","RECEIVE-OVERPAYMENT","RECEIVE-PREPAYMENT","RECEIVE-TRANSFER",
+    "SPEND","SPEND-OVERPAYMENT","SPEND-PREPAYMENT","SPEND-TRANSFER",
+  ]),
   Date: scalar.optional(),
   Status: z.string().optional(),
   Total: scalar.optional(),
@@ -90,7 +93,7 @@ export const xeroManualJournalSchema = z.object({
 
 export const xeroJournalSchema = z.object({
   JournalID: id,
-  JournalNumber: z.coerce.number().int().nonnegative(),
+  JournalNumber: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   JournalDate: scalar.optional(),
   CreatedDateUTC: scalar.optional(),
   JournalLines: z.array(z.record(z.string(), z.unknown())).optional(),

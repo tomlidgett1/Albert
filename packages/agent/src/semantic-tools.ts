@@ -25,13 +25,109 @@ export const REMOTE_SEMANTIC_AGENT_TOOL_NAMES = [
 export type RemoteSemanticAgentToolName = (typeof REMOTE_SEMANTIC_AGENT_TOOL_NAMES)[number];
 
 /** Local presentation/interaction tools are never sent to the query service. */
-export const LOCAL_SEMANTIC_AGENT_TOOL_NAMES = ["ask_user", "make_chart"] as const;
+export const LOCAL_SEMANTIC_AGENT_TOOL_NAMES = [
+  "ask_user",
+  "publish_observation",
+  "make_chart",
+] as const;
 
 export const SEMANTIC_AGENT_TOOL_NAMES = [
   ...REMOTE_SEMANTIC_AGENT_TOOL_NAMES,
   ...LOCAL_SEMANTIC_AGENT_TOOL_NAMES,
 ] as const;
 export type SemanticAgentToolName = (typeof SEMANTIC_AGENT_TOOL_NAMES)[number];
+
+/**
+ * Clarification choices that may become durable tenant preferences. The model
+ * chooses only an opaque option id; trusted application code resolves the
+ * canonical label/key/value, and the database enforces the same vocabulary.
+ */
+export const ALBERT_PREFERENCE_OPTION_IDS = [
+  "sales.net_ex_gst",
+  "sales.gross_inc_gst",
+  "employee.net_sales",
+  "employee.gross_margin",
+  "employee.gross_profit_per_labour_hour",
+  "reconciliation.daily_summary",
+  "reconciliation.individual_transactions",
+  "reconciliation.unknown",
+  "finance.operational_gross_margin",
+  "finance.accounting_gross_profit",
+  "finance.accounting_net_profit",
+] as const;
+export type AlbertPreferenceOptionId = (typeof ALBERT_PREFERENCE_OPTION_IDS)[number];
+
+export type AlbertPreferenceOption = Readonly<{
+  id: AlbertPreferenceOptionId;
+  label: string;
+  preference: string;
+  value: string;
+}>;
+
+/**
+ * The model may choose only a non-quantitative, server-owned continuation.
+ * This prevents an interstitial narrative from smuggling an ungrounded figure
+ * into otherwise validated analytical evidence.
+ */
+export const OBSERVATION_NEXT_STEP_IDS = [
+  "compare_period",
+  "break_down_by_location",
+  "break_down_by_product",
+  "check_margin",
+  "check_labour",
+  "check_finance",
+  "inspect_exception",
+  "visualise_result",
+  "prepare_answer",
+] as const;
+export type ObservationNextStepId = (typeof OBSERVATION_NEXT_STEP_IDS)[number];
+
+export const claimAssertionSchema = z.enum([
+  "value",
+  "highest",
+  "lowest",
+  "greater_than",
+  "less_than",
+  "equal",
+]);
+
+export const claimCellReferenceSchema = z.object({
+  resultId: z.string().min(1).max(200),
+  rowIndex: z.number().int().min(0).max(100_000),
+  columnKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u),
+}).strict();
+
+export const evidenceClaimInputSchema = z.object({
+  statement: z.string().trim().min(1).max(600),
+  assertion: claimAssertionSchema,
+  refs: z.array(claimCellReferenceSchema).min(1).max(12),
+}).strict();
+export type EvidenceClaimInput = z.infer<typeof evidenceClaimInputSchema>;
+
+const preferenceOptionById: Readonly<Record<AlbertPreferenceOptionId, AlbertPreferenceOption>> = Object.freeze({
+  "sales.net_ex_gst": Object.freeze({ id: "sales.net_ex_gst", label: "Net sales (ex GST)", preference: "sales.default_metric", value: "commerce.net_sales_ex_gst" }),
+  "sales.gross_inc_gst": Object.freeze({ id: "sales.gross_inc_gst", label: "Gross takings (inc GST)", preference: "sales.default_metric", value: "commerce.gross_takings_inc_gst" }),
+  "employee.net_sales": Object.freeze({ id: "employee.net_sales", label: "Net sales", preference: "employee.performance_default", value: "commerce.net_sales_ex_gst" }),
+  "employee.gross_margin": Object.freeze({ id: "employee.gross_margin", label: "Gross profit", preference: "employee.performance_default", value: "commerce.gross_margin" }),
+  "employee.gross_profit_per_labour_hour": Object.freeze({ id: "employee.gross_profit_per_labour_hour", label: "Gross profit per worked hour", preference: "employee.performance_default", value: "composites.gross_profit_per_labour_hour" }),
+  "reconciliation.daily_summary": Object.freeze({ id: "reconciliation.daily_summary", label: "Daily summary journals", preference: "reconciliation.pos_posting_topology", value: "daily_summary_journals" }),
+  "reconciliation.individual_transactions": Object.freeze({ id: "reconciliation.individual_transactions", label: "Individual transactions", preference: "reconciliation.pos_posting_topology", value: "individual_transactions" }),
+  "reconciliation.unknown": Object.freeze({ id: "reconciliation.unknown", label: "I’m not sure", preference: "reconciliation.pos_posting_topology", value: "unknown" }),
+  "finance.operational_gross_margin": Object.freeze({ id: "finance.operational_gross_margin", label: "Operational gross margin", preference: "finance.profit_default", value: "commerce.gross_margin" }),
+  "finance.accounting_gross_profit": Object.freeze({ id: "finance.accounting_gross_profit", label: "Accounting gross profit", preference: "finance.profit_default", value: "finance.gross_profit_accounting" }),
+  "finance.accounting_net_profit": Object.freeze({ id: "finance.accounting_net_profit", label: "Accounting net profit", preference: "finance.profit_default", value: "finance.net_profit" }),
+});
+
+export function resolveAlbertPreferenceOption(id: AlbertPreferenceOptionId): AlbertPreferenceOption {
+  return preferenceOptionById[id];
+}
+
+export function isAllowlistedRememberedPreference(preference: string, value: unknown): value is string {
+  return typeof value === "string" && ALBERT_PREFERENCE_OPTION_IDS.some((id) => {
+    const option = preferenceOptionById[id];
+    return option.preference === preference && option.value === value;
+  });
+}
 
 const sourceFilterSchema = z.object({
   field: z.string().min(1),
@@ -53,8 +149,7 @@ export const sourceQuerySpecSchema = z.object({
   groupBy: z.array(z.string().min(1)).max(8).default([]),
   filters: z.array(sourceFilterSchema).max(20).default([]),
   limit: z.number().int().min(1).max(500).default(100),
-  authorityConcept: z.string().optional(),
-  requestedMetricConcept: z.string().optional(),
+  requestedMetricConcept: z.string().regex(/^[a-z][a-z0-9_.]{0,159}$/).optional(),
 }).strict();
 export type SourceQuerySpec = z.infer<typeof sourceQuerySpecSchema>;
 
@@ -93,17 +188,19 @@ export const semanticToolInputSchemas = Object.freeze({
   run_source_query: sourceQuerySpecSchema,
   get_data_health: z.object({ domain: z.string().trim().min(1).max(100) }).strict(),
   remember: z.object({
-    preference: z.string().trim().regex(/^[a-z][a-z0-9_.]{0,119}$/),
-    value: z.union([z.string().max(300), z.number(), z.boolean()]),
+    preference: z.enum(["sales.default_metric", "employee.performance_default", "reconciliation.pos_posting_topology", "finance.profit_default"]),
+    value: z.string().trim().min(1).max(300),
     explicitlyConfirmed: z.literal(true),
   }).strict(),
   ask_user: z.object({
     question: z.string().trim().min(1).max(300),
     options: z.array(z.object({
-      id: z.string().trim().min(1).max(80),
-      label: z.string().trim().min(1).max(120),
-      value: z.string().trim().min(1).max(200),
+      id: z.enum(ALBERT_PREFERENCE_OPTION_IDS),
     }).strict()).min(2).max(3),
+  }).strict(),
+  publish_observation: z.object({
+    claim: evidenceClaimInputSchema,
+    nextStep: z.enum(OBSERVATION_NEXT_STEP_IDS).optional(),
   }).strict(),
   make_chart: z.object({
     dataRef: z.string().min(1),
@@ -131,6 +228,14 @@ const definitionDetailSchema = z.object({
   label: z.string().min(1),
   definition: z.string().min(1),
 }).strict();
+const governedResultWindowSchema = z.object({
+  requestedLimit: z.number().int().min(1).max(1000),
+  orderedBeforeLimit: z.literal(true),
+  orderBy: z.array(z.object({
+    columnKey: z.string().min(1),
+    direction: z.enum(["asc", "desc"]),
+  }).strict()).max(5),
+}).strict();
 
 /**
  * One signed wire response for every remote semantic tool. Tool-specific
@@ -143,6 +248,15 @@ export const semanticToolResponseSchema = z.object({
   data: z.object({
     columns: z.array(z.string().min(1)),
     rows: z.array(z.record(z.string(), z.unknown())),
+    /**
+     * Row-parallel, tenant-scoped canonical values that may be copied into a
+     * later governed filter. They are deliberately separate from display
+     * rows so tables keep human labels while the agent never guesses an
+     * entity id from a label.
+     */
+    filterRefs: z.array(z.record(z.string().min(1), z.string().min(1))).optional(),
+    /** Compiler-owned ordering proof; absent for exploratory source queries. */
+    resultWindow: governedResultWindowSchema.optional(),
   }).strict().optional(),
   definition: z.unknown().optional(),
   capabilities: z.object({
@@ -151,6 +265,20 @@ export const semanticToolResponseSchema = z.object({
     required: z.array(z.string()),
     available: z.array(z.string()),
     missing: z.array(z.string()),
+    details: z.array(z.object({
+      id: z.string().min(1),
+      requiredForTopic: z.boolean(),
+      available: z.boolean(),
+      support: z.enum(["full", "partial", "unavailable", "unknown"]),
+      observations: z.array(z.object({
+        connectorId: z.string().min(1),
+        connectionId: z.string().min(1).optional(),
+        support: z.enum(["full", "partial", "unavailable", "unknown"]),
+        reasonCode: z.string().min(1).optional(),
+        reason: z.string().min(1).optional(),
+        coverage: z.record(z.string(), z.unknown()),
+      }).strict()),
+    }).strict()).default([]),
   }).strict().optional(),
   catalogue: z.object({
     topics: z.array(z.object({ id: z.string(), label: z.string(), description: z.string(), answerable: z.boolean() }).strict()),
@@ -174,6 +302,20 @@ export const semanticToolResponseSchema = z.object({
   }).strict().optional(),
   rememberedPreference: z.object({ preference: z.string(), overlayVersion: z.number().int().positive() }).strict().optional(),
   promotionCandidateId: z.string().min(1).optional(),
+  /**
+   * Server-side evidence receipt for an executed analytical query. The live
+   * conversation runtime records this receipt in the immutable answer
+   * artefact, but deliberately omits it from the tool result shown to the
+   * model and from the public trace.
+   */
+  queryAudit: z.object({
+    queryAuditId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    route: z.enum(["semantic", "source_exploration"]),
+    bundleHash: z.string().regex(/^[a-f0-9]{64}$/),
+    registryVersion: z.string().min(1).max(160),
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    compilerOutputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
   provenance: z.object({
     bundleHash: z.string().min(1),
     registryVersion: z.string().min(1),
@@ -202,6 +344,20 @@ export type GovernedResult = Readonly<{
   resultId: string;
   columns: readonly TraceTableColumn[];
   rows: readonly Readonly<Record<string, TraceCell>>[];
+  /** Exact canonical filter values, indexed in parallel with rows. */
+  filterRefs?: readonly Readonly<Record<string, string>>[];
+  /**
+   * Compiler-owned proof that an outer ORDER BY was applied before LIMIT.
+   * Ranking claims must fail closed when this proof is absent or mismatched.
+   */
+  resultWindow?: Readonly<{
+    requestedLimit: number;
+    orderedBeforeLimit: true;
+    orderBy: readonly Readonly<{
+      columnKey: string;
+      direction: "asc" | "desc";
+    }>[];
+  }>;
   provenance: TraceProvenance;
   validations: readonly Readonly<{
     name: string;
@@ -217,6 +373,7 @@ export type AgentToolContext = Readonly<{
   turnId: string;
   role: "owner" | "manager" | "bookkeeper" | "internal_operator";
   /** Signed server-side confirmation context; never accepted from model input. */
+  confirmedPreference?: string;
   confirmedValue?: string;
   abortSignal?: AbortSignal;
 }>;
@@ -238,6 +395,10 @@ export type SemanticToolOutputMap = {
   }>;
   get_data_health: NonNullable<SemanticToolResponse["dataHealth"]>;
   ask_user: Readonly<{ status: "awaiting_user" }>;
+  publish_observation: Readonly<{
+    status: "published";
+    text: string;
+  }>;
   remember: NonNullable<SemanticToolResponse["rememberedPreference"]>;
   make_chart: Readonly<{
     dataRef: string;

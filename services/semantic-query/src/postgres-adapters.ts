@@ -1,7 +1,17 @@
 import { ulid } from "ulid";
+import { isAllowlistedRememberedPreference } from "../../../packages/agent/src/semantic-tools.js";
 import type { SemanticRegistry } from "../../../packages/semantic-registry/src/index.js";
-import type { PgClientLike,PgPoolLike } from "./database.js";
+import type {
+  PgClientLike,
+  PgPoolLike,
+  SemanticAnalyticalCapabilityIssuer,
+} from "./database.js";
 import { serializePgVector,type EmbeddingProvider } from "./embeddings.js";
+import {
+  assertSourceFieldIsAccessible,
+  sourceAuthorityConceptsForRole,
+  sourceFieldIsAccessible,
+} from "./source-access-policy.js";
 import type {
   CatalogueSearchHit,
   CatalogueSearchProvider,
@@ -20,6 +30,7 @@ import type {
   TenantSemanticContextProvider,
   TrustedToolContext,
 } from "./types.js";
+import type { PostgresSemanticPromotionRelay } from "./promotion-relay.js";
 
 type Row=Readonly<Record<string,unknown>>;
 
@@ -30,7 +41,8 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
   ){}
 
   async load(context:TrustedToolContext):Promise<TenantSemanticContext>{
-    const overlayResult=await withControlPlaneRead(this.controlPlanePool,context.tenantId,(client)=>client.query(
+    const [overlayResult,progressiveCoverageResult,connectionInventoryResult]=await Promise.all([
+      withControlPlaneRead(this.controlPlanePool,context.tenantId,(client)=>client.query(
       `SELECT overlay.version::text AS version,overlay.overlay,
               coalesce((
                 SELECT dossier.content
@@ -40,38 +52,68 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
               ),'{}'::jsonb) AS dossier
        FROM control_plane.tenant_overlays AS overlay
        WHERE overlay.tenant_id=$1 AND overlay.status='published'
-       ORDER BY overlay.version DESC LIMIT 1`,[context.tenantId],
-    ));
+       ORDER BY overlay.version DESC LIMIT 1`,[context.tenantId])),
+      withControlPlaneRead(this.controlPlanePool,context.tenantId,(client)=>client.query(
+        `SELECT connection_id,stream,status,covered_from,covered_to,qualification
+           FROM control_plane.semantic_progressive_stream_coverage()`)),
+      withControlPlaneRead(this.controlPlanePool,context.tenantId,(client)=>client.query(
+        `SELECT connection_id,connector_id,display_name,connection_status,
+                auth_health,authority_eligible
+           FROM control_plane.semantic_connection_scopes()`)),
+    ]);
     const overlayRow=overlayResult.rows[0];
     if(!overlayRow)throw new Error(`No published tenant overlay exists for ${context.tenantId}.`);
     const overlay=asRecord(overlayRow.overlay,"tenant overlay");
 
     const [capabilityResult,statsResult,authorityResult,identityGraphResult]=await Promise.all([
-      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
-        `SELECT capability,connection_id,connector_id,available,reason_code,pack_version,source_watermark
+      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
+        `SELECT capability,connection_id,connector_id,available,support,reason_code,
+                reason_detail,coverage,pack_version,source_watermark
          FROM semantic_internal.tenant_capability
          WHERE tenant_id=$1`}),
-      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
+      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
         `SELECT DISTINCT ON (domain) domain,source_watermarks
          FROM quality.pipeline_stats
          WHERE tenant_id=$1
          ORDER BY domain,snapshot_at DESC`}),
-      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
-        `SELECT concept,authoritative_connection_id
+      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
+        `SELECT concept,scope_type,scope_id,authoritative_connection_id,
+                effective_from,effective_to
          FROM core.source_authority
-         WHERE tenant_id=$1 AND effective_from<=now() AND (effective_to IS NULL OR effective_to>now())
-         ORDER BY concept,effective_from DESC`}),
-      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
+         WHERE tenant_id=$1
+         ORDER BY concept,scope_type,scope_id,effective_from`}),
+      this.analyticalDatabase.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId],sql:
         `SELECT version::text AS version,graph_hash
          FROM semantic_internal.identity_graph_state
          WHERE tenant_id=$1`}),
     ]);
 
-    const capabilities=new Set<string>();const packVersions:Record<string,string>={};const sourceWatermarks:Record<string,string>={};
+    const capabilities=new Set<string>();const capabilityDetails:NonNullable<TenantSemanticContext["capabilityDetails"]>[number][]=[];const packVersions:Record<string,string>={};const sourceWatermarks:Record<string,string>={};
     const connectorByConnection=new Map<string,string>();
+    const connectionInventory=new Map(connectionInventoryResult.rows.map((row)=>{
+      const connectionId=requiredString(row.connection_id,"semantic connection id");
+      const connectorId=requiredString(row.connector_id,"semantic connector id");
+      connectorByConnection.set(connectionId,connectorId);
+      return [connectionId,Object.freeze({
+        connectorId,
+        label:requiredString(row.display_name,"semantic connection display name"),
+        connectionStatus:requiredString(row.connection_status,"semantic connection status"),
+        authHealth:requiredString(row.auth_health,"semantic connection auth health"),
+        authorityEligible:row.authority_eligible===true,
+      })] as const;
+    }));
     for(const row of capabilityResult.rows){
       const capability=requiredString(row.capability,"capability");const connector=requiredString(row.connector_id,"connector_id");const pack=requiredString(row.pack_version,"pack_version");
       if(row.available===true)capabilities.add(capability);
+      capabilityDetails.push(Object.freeze({
+        id:capability,connectorId:connector,
+        ...(typeof row.connection_id==="string"?{connectionId:row.connection_id}:{}),
+        available:row.available===true,
+        support:capabilitySupport(row.support,row.available),
+        ...(typeof row.reason_code==="string"&&row.reason_code?{reasonCode:row.reason_code}:{}),
+        ...(typeof row.reason_detail==="string"&&row.reason_detail?{reason:row.reason_detail}:{}),
+        coverage:Object.freeze(optionalRecord(row.coverage)),
+      }));
       if(packVersions[connector]&&packVersions[connector]!==pack)throw new Error(`Conflicting active pack versions for ${connector}.`);
       packVersions[connector]=pack;
       if(typeof row.connection_id==="string")connectorByConnection.set(row.connection_id,connector);
@@ -82,8 +124,27 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
       const values=asRecord(row.source_watermarks,"source_watermarks");
       for(const [key,value] of Object.entries(values))if(typeof value==="string")sourceWatermarks[key]=value;
     }
+    const authoritySelections:NonNullable<TenantSemanticContext["authoritySelections"]>[number][]=[];
     const authorityByConcept:Record<string,string>={};
-    for(const row of authorityResult.rows){const concept=requiredString(row.concept,"authority concept");if(!(concept in authorityByConcept))authorityByConcept[concept]=requiredString(row.authoritative_connection_id,"authoritative connection");}
+    const loadedAt=Date.now();
+    for(const row of authorityResult.rows){
+      const concept=requiredString(row.concept,"authority concept");
+      const connectionId=requiredString(row.authoritative_connection_id,"authoritative connection");
+      const effectiveFrom=requiredTimestamp(row.effective_from,"authority effective from");
+      const effectiveTo=row.effective_to===null||row.effective_to===undefined
+        ?undefined
+        :requiredTimestamp(row.effective_to,"authority effective to");
+      const scopeType=authorityScopeType(row.scope_type);
+      const controlEligible=connectionInventory.get(connectionId)?.authorityEligible===true;
+      authoritySelections.push(Object.freeze({
+        concept,scopeType,scopeId:requiredString(row.scope_id,"authority scope id"),
+        connectionId,effectiveFrom,...(effectiveTo?{effectiveTo}:{}),controlEligible,
+      }));
+      if(!(concept in authorityByConcept)&&controlEligible&&
+         Date.parse(effectiveFrom)<=loadedAt&&(!effectiveTo||Date.parse(effectiveTo)>loadedAt)){
+        authorityByConcept[concept]=connectionId;
+      }
+    }
     const identityGraphRow=identityGraphResult.rows[0];
     const identityGraphVersion=identityGraphRow
       ? boundedInteger(identityGraphRow.version,0,1,Number.MAX_SAFE_INTEGER,"identity graph version")
@@ -102,10 +163,13 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
       "commerce.net_sales_ex_gst","commerce.gross_takings_inc_gst",
     ]);
     copyAllowlistedDefault(defaults,rememberedPreferences,"employee.performance_default",[
-      "commerce.net_sales_ex_gst","commerce.gross_margin","composites.sales_per_labour_hour",
+      "commerce.net_sales_ex_gst","commerce.gross_margin","composites.gross_profit_per_labour_hour",
     ]);
     copyAllowlistedDefault(defaults,rememberedPreferences,"reconciliation.pos_posting_topology",[
       "daily_summary_journals","individual_transactions","unknown",
+    ]);
+    copyAllowlistedDefault(defaults,rememberedPreferences,"finance.profit_default",[
+      "commerce.gross_margin","finance.gross_profit_accounting","finance.net_profit",
     ]);
     if(overlay.tax_display_default==="inclusive"||overlay.tax_display_default==="exclusive")defaults.tax_display_default=overlay.tax_display_default;
     return {
@@ -119,15 +183,36 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
         lapsed_customer_days:boundedInteger(customerWindows.lapsed_days??overlay.lapsed_customer_days??overlay.churn_window_days,90,1,3660,"lapsed customer window"),
         stock_velocity_days:boundedInteger(overlay.stock_velocity_days,30,1,3660,"stock velocity window"),
       }),
-      capabilities,
+      capabilities,capabilityDetails:Object.freeze(capabilityDetails),
       overlayVersion:requiredString(overlayRow.version,"overlay version"),
       identityGraphVersion,identityGraphHash,
       defaults:Object.freeze(defaults),
       dossier:Object.freeze(parseDossier(overlayRow.dossier)),
       packVersions:Object.freeze(packVersions),sourceWatermarks:Object.freeze(sourceWatermarks),authorityByConcept:Object.freeze(authorityByConcept),
-      sourceDetails:Object.freeze([...connectorByConnection.entries()].flatMap(([connectionId,connectorId])=>{
-        const dataThrough=sourceWatermarks[connectionId];
-        return dataThrough?[Object.freeze({connectionId,connectorId,label:connectorLabel(connectorId),dataThrough})]:[];
+      authoritySelections:Object.freeze(authoritySelections),
+      sourceDetails:Object.freeze([...connectorByConnection.entries()].map(([connectionId,connectorId])=>{
+        const inventory=connectionInventory.get(connectionId);
+        return Object.freeze({
+          connectionId,connectorId,label:inventory?.label??connectorLabel(connectorId),
+          dataThrough:sourceWatermarks[connectionId]??"",
+          ...(inventory?{
+            connectionStatus:inventory.connectionStatus,authHealth:inventory.authHealth,
+            authorityEligible:inventory.authorityEligible,
+          }:{}),
+        });
+      })),
+      progressiveCoverage:Object.freeze(progressiveCoverageResult.rows.map((row)=>{
+        const status=requiredString(row.status,"progressive coverage status");
+        if(status!=="pending"&&status!=="queryable"&&status!=="degraded"&&status!=="superseded"){
+          throw new Error("progressive coverage status is invalid");
+        }
+        return Object.freeze({
+          connectionId:requiredString(row.connection_id,"progressive coverage connection"),
+          stream:requiredString(row.stream,"progressive coverage stream"),status,
+          coveredFrom:requiredTimestamp(row.covered_from,"progressive coverage start"),
+          coveredTo:requiredTimestamp(row.covered_to,"progressive coverage end"),
+          qualification:requiredString(row.qualification,"progressive coverage qualification"),
+        });
       })),
     };
   }
@@ -141,26 +226,22 @@ export class PostgresDataHealthProvider implements DataHealthProvider {
   constructor(private readonly database:SemanticReadDatabase,private readonly registry:SemanticRegistry){}
   async getForTopic(context:TrustedToolContext,topicId:string):Promise<DataHealthSnapshot>{
     const topic=this.registry.topics.get(topicId);if(!topic)throw new Error(`Unknown Topic ${topicId}.`);
-    const domains=new Set(topic.metrics.map((metricId)=>metricId.split(".")[0] as string));
-    domains.add("canonical");domains.add("semantic");
-    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,[...domains]],sql:
-      `SELECT DISTINCT ON (check_id) check_id,status,details,checked_at
-       FROM quality.check_result
-       WHERE tenant_id=$1 AND domain=ANY($2::text[])
-       ORDER BY check_id,checked_at DESC`});
+    const domains=topicQualityDomains(topic.baseFacts,topic.id);
+    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,[...domains],topic.requiredCapabilities],sql:
+      `SELECT check_id,domain,status,details,checked_at
+       FROM quality.current_scoped_health($1,$2::text[],$3::text[])`});
     if(!result.rows.length)return{status:"blocked",checks:[{checkId:"data_health_available",status:"blocked",details:{reason:"No quality snapshot exists for this Topic."}}]};
-    const checks=result.rows.map((row)=>({checkId:requiredString(row.check_id,"check id"),status:healthStatus(row.status),details:optionalRecord(row.details)}));
+    const checks=result.rows.map((row)=>({checkId:requiredString(row.check_id,"check id"),status:healthStatus(row.status),details:{...optionalRecord(row.details),domain:requiredString(row.domain,"quality domain")}}));
     return{status:worstHealth(checks.map((check)=>check.status)),checks};
   }
   async getForDomain(context:TrustedToolContext,domain:string):Promise<DataHealthSnapshot>{
     if(!/^[a-z][a-z0-9_.-]{0,99}$/.test(domain))throw new Error(`Invalid data-health domain ${domain}.`);
-    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,domain],sql:
-      `SELECT DISTINCT ON (check_id) check_id,status,details,checked_at
-       FROM quality.check_result
-       WHERE tenant_id=$1 AND domain=$2
-       ORDER BY check_id,checked_at DESC`});
+    const domains=domain==="canonical"||domain==="connector"?[domain]:["connector","canonical",domain];
+    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,domains],sql:
+      `SELECT check_id,domain,status,details,checked_at
+       FROM quality.current_health($1,$2::text[])`});
     if(!result.rows.length)return{status:"blocked",checks:[{checkId:"data_health_available",status:"blocked",details:{reason:`No quality snapshot exists for ${domain}.`}}]};
-    const checks=result.rows.map((row)=>({checkId:requiredString(row.check_id,"check id"),status:healthStatus(row.status),details:optionalRecord(row.details)}));
+    const checks=result.rows.map((row)=>({checkId:requiredString(row.check_id,"check id"),status:healthStatus(row.status),details:{...optionalRecord(row.details),domain:requiredString(row.domain,"quality domain")}}));
     return{status:worstHealth(checks.map((check)=>check.status)),checks};
   }
 }
@@ -168,24 +249,32 @@ export class PostgresDataHealthProvider implements DataHealthProvider {
 export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider {
   constructor(private readonly database:SemanticReadDatabase){}
   async listFields(context:TrustedToolContext,connectionId:string,sourceTable:string):Promise<readonly SourceField[]>{
-    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,connectionId,sourceTable],sql:
+    const authorityConcepts=sourceAuthorityConceptsForRole(context.role);
+    const piiPredicate=context.role==="bookkeeper"
+      ? "pii_class='none'"
+      : "pii_class NOT IN ('customer_contact','payroll','sensitive_personal')";
+    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,connectionId,sourceTable,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
        FROM semantic_internal.source_field_allowlist
        WHERE tenant_id=$1 AND connection_id=$2 AND source_table=$3 AND active
+         AND authority_concept=ANY($4::text[]) AND ${piiPredicate}
        ORDER BY source_field`});
-    return sourceFieldsFromRows(result.rows);
+    return sourceFieldsFromRows(result.rows).filter((field)=>sourceFieldIsAccessible(field,context.role));
   }
   async searchFields(context:TrustedToolContext,query:string,limit:number):Promise<readonly SourceField[]>{
-    const boundedLimit=Math.min(Math.max(limit,1),50);const pattern=`%${escapeLike(query)}%`;
-    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,pattern,boundedLimit],sql:
+    const boundedLimit=Math.min(Math.max(limit,1),50);const pattern=`%${escapeLike(query)}%`;const authorityConcepts=sourceAuthorityConceptsForRole(context.role);
+    const piiPredicate=context.role==="bookkeeper"
+      ? "pii_class='none'"
+      : "pii_class NOT IN ('customer_contact','payroll','sensitive_personal')";
+    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,pattern,boundedLimit,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
        FROM semantic_internal.source_field_allowlist
        WHERE tenant_id=$1 AND active
-         AND pii_class NOT IN ('customer_contact','payroll','sensitive_personal')
+         AND authority_concept=ANY($4::text[]) AND ${piiPredicate}
          AND (source_field ILIKE $2 ESCAPE '\\' OR documented_definition ILIKE $2 ESCAPE '\\' OR source_table ILIKE $2 ESCAPE '\\')
        ORDER BY source_field,connection_id
        LIMIT $3`});
-    return sourceFieldsFromRows(result.rows).filter((field)=>context.role!=="bookkeeper"||field.piiClass==="none");
+    return sourceFieldsFromRows(result.rows).filter((field)=>sourceFieldIsAccessible(field,context.role));
   }
   async resolveRankedFields(context:TrustedToolContext,references:readonly SourceFieldCatalogueReference[],limit:number):Promise<readonly SourceField[]>{
     const boundedLimit=Math.min(Math.max(Math.trunc(limit),1),50);
@@ -197,10 +286,11 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
     }
     if(!unique.size)return[];
     const ranked=[...unique.values()].slice(0,200).map((reference,index)=>({connector_id:reference.connectorId,source_table:reference.sourceTable,source_field:reference.sourceField,rank:index+1}));
+    const authorityConcepts=sourceAuthorityConceptsForRole(context.role);
     const piiPredicate=context.role==="bookkeeper"
       ? "field.pii_class='none'"
       : "field.pii_class NOT IN ('customer_contact','payroll','sensitive_personal')";
-    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,JSON.stringify(ranked),boundedLimit],sql:
+    const result=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,JSON.stringify(ranked),boundedLimit,authorityConcepts],sql:
       `WITH ranked AS (
          SELECT connector_id,source_table,source_field,rank
          FROM jsonb_to_recordset($2::jsonb) AS item(
@@ -215,24 +305,27 @@ export class PostgresSourceCatalogueProvider implements SourceCatalogueProvider 
          ON field.connector_id=ranked.connector_id
         AND field.source_table=ranked.source_table
         AND field.source_field=ranked.source_field
-       WHERE field.tenant_id=$1 AND field.active AND ${piiPredicate}
+       WHERE field.tenant_id=$1 AND field.active
+         AND field.authority_concept=ANY($4::text[]) AND ${piiPredicate}
        ORDER BY ranked.rank,field.connection_id
        LIMIT $3`});
-    return sourceFieldsFromRows(result.rows);
+    return sourceFieldsFromRows(result.rows).filter((field)=>sourceFieldIsAccessible(field,context.role));
   }
   async listFieldValues(context:TrustedToolContext,fieldId:string,query:string|undefined,limit:number):Promise<readonly Readonly<{value:string;count?:number}>[]>{
-    const metadata=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters:[context.tenantId,fieldId],sql:
+    const authorityConcepts=sourceAuthorityConceptsForRole(context.role);
+    const metadata=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters:[context.tenantId,fieldId,authorityConcepts],sql:
       `SELECT connection_id,connector_id,source_schema,source_table,source_field,field_type,pii_class,authority_concept,documented_definition,pack_version
        FROM semantic_internal.source_field_allowlist
        WHERE tenant_id=$1 AND active
+         AND authority_concept=ANY($3::text[])
          AND ('source:'||connection_id||':'||source_table||':'||source_field)=$2`});
     const fields=sourceFieldsFromRows(metadata.rows);if(fields.length!==1)throw new Error(`Source field ${fieldId} is unknown or ambiguous.`);
     const field=fields[0] as SourceField;
-    if(["customer_contact","payroll","sensitive_personal"].includes(field.piiClass)||(context.role==="bookkeeper"&&field.piiClass!=="none"))throw new Error(`Source field ${field.sourceField} is unavailable for this role or PII class.`);
+    assertSourceFieldIsAccessible(field,context.role);
     const parameters:unknown[]=[context.tenantId,field.connectionId];let predicate="";
     if(query){parameters.push(`%${escapeLike(query)}%`);predicate=` AND s.${quoteIdentifier(field.sourceField)}::text ILIKE $3 ESCAPE '\\'`;}
     parameters.push(Math.min(Math.max(limit,1),50));const limitParameter=`$${parameters.length}`;
-    const values=await this.database.queryAsSemanticRole({tenantId:context.tenantId,statementTimeoutMs:5_000,parameters,sql:
+    const values=await this.database.queryAsSemanticRole({tenantId:context.tenantId,capabilityEvidence:semanticCapabilityEvidence(context),statementTimeoutMs:5_000,parameters,sql:
       `SELECT s.${quoteIdentifier(field.sourceField)}::text AS value,count(*)::int AS count
        FROM ${quoteIdentifier(field.sourceSchema)}.${quoteIdentifier(field.sourceTable)} s
        WHERE s.tenant_id=$1 AND s.connection_id=$2${predicate}
@@ -334,7 +427,7 @@ export class PostgresCatalogueSearchProvider implements CatalogueSearchProvider 
 export class PostgresTenantPreferenceStore implements TenantPreferenceStore {
   constructor(private readonly controlPlanePool:PgPoolLike){}
   async remember(context:TrustedToolContext,preference:string,value:string|number|boolean):Promise<number>{
-    if(!/^[a-z][a-z0-9_.]{0,119}$/.test(preference))throw new Error(`Invalid tenant preference ${preference}.`);
+    if(!isAllowlistedRememberedPreference(preference,value))throw new Error(`Invalid tenant preference ${preference}.`);
     return withControlPlaneWrite(this.controlPlanePool,context.tenantId,async(client)=>{
       const currentResult=await client.query(
         `SELECT overlay_id,version,overlay
@@ -384,20 +477,23 @@ export class PostgresSemanticPublicationVerifier {
 }
 
 export class PostgresSemanticResultCache implements SemanticResultCache {
-  constructor(private readonly metadataPool:PgPoolLike){}
-  async get(key:string):Promise<SemanticToolResponse|undefined>{
+  constructor(
+    private readonly metadataPool:PgPoolLike,
+    private readonly capabilityIssuer?:SemanticAnalyticalCapabilityIssuer,
+  ){}
+  async get(key:string,context?:TrustedToolContext):Promise<SemanticToolResponse|undefined>{
     const {tenantId,bundleHash}=parseCacheKey(key);
-    return withSemanticMetadata(this.metadataPool,tenantId,async(client)=>{
+    return withSemanticMetadata(this.metadataPool,this.capabilityIssuer,tenantId,context&&semanticCapabilityEvidence(context),async(client)=>{
       const result=await client.query(
         `SELECT response FROM semantic_internal.result_cache
          WHERE tenant_id=$1 AND bundle_hash=$2 AND expires_at>now()`,[tenantId,bundleHash]);
       const row=result.rows[0];return row?parseSemanticResponse(row.response):undefined;
     });
   }
-  async set(key:string,value:SemanticToolResponse,ttlSeconds:number):Promise<void>{
+  async set(key:string,value:SemanticToolResponse,ttlSeconds:number,context?:TrustedToolContext):Promise<void>{
     const {tenantId,bundleHash}=parseCacheKey(key);
     if(!Number.isInteger(ttlSeconds)||ttlSeconds<1||ttlSeconds>86_400)throw new Error("Semantic cache TTL must be between 1 and 86400 seconds.");
-    await withSemanticMetadata(this.metadataPool,tenantId,(client)=>client.query(
+    await withSemanticMetadata(this.metadataPool,this.capabilityIssuer,tenantId,context&&semanticCapabilityEvidence(context),(client)=>client.query(
       `INSERT INTO semantic_internal.result_cache (tenant_id,bundle_hash,registry_version,response,expires_at)
        VALUES ($1,$2,$3,$4::jsonb,now()+($5::text||' seconds')::interval)
        ON CONFLICT (tenant_id,bundle_hash) DO UPDATE SET
@@ -408,29 +504,28 @@ export class PostgresSemanticResultCache implements SemanticResultCache {
 }
 
 export class PostgresSemanticAuditSink implements SemanticAuditSink {
-  constructor(private readonly metadataPool:PgPoolLike){}
+  constructor(
+    private readonly metadataPool:PgPoolLike,
+    private readonly capabilityIssuer?:SemanticAnalyticalCapabilityIssuer,
+    private readonly promotionRelay?:PostgresSemanticPromotionRelay,
+  ){}
   async append(record:SemanticAuditRecord):Promise<void>{
     if(!/^[a-f0-9]{64}$/.test(record.resultDigest))throw new Error("Semantic audit result digest is invalid.");
-    await withSemanticMetadata(this.metadataPool,record.tenantId,(client)=>client.query(
+    await withSemanticMetadata(this.metadataPool,this.capabilityIssuer,record.tenantId,{
+      conversationId:record.conversationId,turnId:record.turnId,
+    },(client)=>client.query(
       `INSERT INTO semantic_internal.query_audit (
          tenant_id,query_id,conversation_id,turn_id,actor_role,route,topic,bundle_hash,registry_version,ir,compiled_sql,
          parameter_count,result_digest,row_count,duration_ms,cache_hit,answer_state,validation
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`,
-      [record.tenantId,ulid(),record.conversationId,record.turnId,record.role,record.route,record.topic??null,record.bundleHash,record.registryVersion,
+      [record.tenantId,record.queryId,record.conversationId,record.turnId,record.role,record.route,record.topic??null,record.bundleHash,record.registryVersion,
        JSON.stringify(record.input),record.compiledSql,record.parameterCount,record.resultDigest,
        record.rowCount,record.durationMs,record.cacheHit,record.state,JSON.stringify(record.validation)],
     ));
   }
   async promoteSourceField(candidate:Parameters<SemanticAuditSink["promoteSourceField"]>[0]):Promise<string>{
-    const candidateId=ulid();
-    await withSemanticMetadata(this.metadataPool,candidate.context.tenantId,(client)=>client.query(
-      `INSERT INTO semantic_internal.promotion_candidate_outbox (
-         tenant_id,candidate_id,query_id,connection_id,connector_id,source_table,source_fields,question_digest,requested_metric_concept
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [candidate.context.tenantId,candidateId,candidate.context.turnId,candidate.connectionId,candidate.connectorId,candidate.sourceTable,
-       candidate.sourceFields.length?candidate.sourceFields:["*"],candidate.questionDigest,candidate.requestedMetricConcept??null],
-    ));
-    return candidateId;
+    if(!this.promotionRelay)throw new Error("The durable semantic promotion relay is unavailable.");
+    return this.promotionRelay.fileAndDeliver(candidate);
   }
 }
 
@@ -447,8 +542,52 @@ async function withControlPlaneGlobalRead<T>(pool:PgPoolLike,operation:(client:P
 async function withControlPlaneWrite<T>(pool:PgPoolLike,tenantId:string,operation:(client:PgClientLike)=>Promise<T>):Promise<T>{
   const client=await pool.connect();try{await client.query("BEGIN");await client.query("SET LOCAL ROLE albert_semantic_control");await client.query("SELECT set_config('albert.tenant_id',$1,true)",[tenantId]);const result=await operation(client);await client.query("COMMIT");return result;}catch(error){try{await client.query("ROLLBACK");}catch{}throw error;}finally{client.release();}
 }
-async function withSemanticMetadata<T>(pool:PgPoolLike,tenantId:string,operation:(client:PgClientLike)=>Promise<T>):Promise<T>{
-  const client=await pool.connect();try{await client.query("BEGIN");await client.query("SET LOCAL ROLE semantic_meta_rw");await client.query("SELECT set_config('albert.tenant_id',$1,true)",[tenantId]);const result=await operation(client);await client.query("COMMIT");return result;}catch(error){try{await client.query("ROLLBACK");}catch{}throw error;}finally{client.release();}
+async function withSemanticMetadata<T>(
+  pool:PgPoolLike,
+  capabilityIssuer:SemanticAnalyticalCapabilityIssuer|undefined,
+  tenantId:string,
+  evidence:Readonly<{conversationId:string;turnId:string}>|undefined,
+  operation:(client:PgClientLike)=>Promise<T>,
+):Promise<T>{
+  const capability=capabilityIssuer
+    ? await capabilityIssuer.issue({tenantId,scope:"semantic_metadata",evidence:requiredSemanticCapabilityEvidence(evidence)})
+    : undefined;
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SET LOCAL ROLE semantic_meta_rw");
+    if(capability)await client.query("SELECT set_config('albert.tenant_capability',$1,true)",[capability]);
+    else await client.query("SELECT set_config('albert.tenant_id',$1,true)",[tenantId]);
+    // A capability proves that the control plane considered this tenant live at
+    // issuance time. This transaction lock closes the remaining race: an
+    // already-issued capability cannot write metadata after analytical erasure
+    // has started, because deletion takes the matching exclusive lock.
+    await client.query(
+      "SELECT pg_advisory_xact_lock_shared(hashtextextended('deletion:'||$1,0))",
+      [tenantId],
+    );
+    const result=await operation(client);
+    await client.query("COMMIT");
+    return result;
+  }catch(error){
+    try{await client.query("ROLLBACK");}catch{}
+    throw error;
+  }finally{
+    client.release();
+  }
+}
+
+function semanticCapabilityEvidence(context:TrustedToolContext):Readonly<{conversationId:string;turnId:string}>{
+  return Object.freeze({conversationId:context.conversationId,turnId:context.turnId});
+}
+
+function requiredSemanticCapabilityEvidence(
+  evidence:Readonly<{conversationId:string;turnId:string}>|undefined,
+):Readonly<{conversationId:string;turnId:string}>{
+  if(!evidence?.conversationId?.trim()||!evidence.turnId?.trim()){
+    throw new Error("Semantic metadata access requires a durable conversation-turn lease.");
+  }
+  return evidence;
 }
 
 function parseCacheKey(key:string):{tenantId:string;bundleHash:string}{const separator=key.indexOf(":");if(separator<1)throw new Error("Semantic cache key is malformed.");const tenantId=key.slice(0,separator),bundleHash=key.slice(separator+1);if(!/^[a-f0-9]{64}$/.test(bundleHash))throw new Error("Semantic cache bundle hash is malformed.");return{tenantId,bundleHash};}
@@ -456,13 +595,29 @@ function parseSemanticResponse(value:unknown):SemanticToolResponse{const record=
 function asRecord(value:unknown,label:string):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw new Error(`${label} must be an object.`);return value as Record<string,unknown>;}
 function optionalRecord(value:unknown):Record<string,unknown>{return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}
 function requiredString(value:unknown,label:string):string{if(typeof value!=="string"||!value.trim())throw new Error(`${label} is missing.`);return value;}
+function requiredTimestamp(value:unknown,label:string):string{const parsed=value instanceof Date?value:new Date(String(value??""));if(!Number.isFinite(parsed.valueOf()))throw new Error(`${label} is invalid.`);return parsed.toISOString();}
 function optionalString(value:unknown):string|undefined{return typeof value==="string"&&value.trim()?value:undefined;}
 function boundedInteger(value:unknown,fallback:number,min:number,max:number,label:string):number{const result=value===undefined?fallback:Number(value);if(!Number.isInteger(result)||result<min||result>max)throw new Error(`${label} must be an integer between ${min} and ${max}.`);return result;}
+function capabilitySupport(value:unknown,available:unknown):"full"|"partial"|"unavailable"|"unknown"{if(value==="full"||value==="partial"||value==="unavailable"||value==="unknown")return value;return available===true?"full":"unknown";}
+function authorityScopeType(value:unknown):"tenant"|"account"|"location"|"legal_entity"{if(value==="tenant"||value==="account"||value==="location"||value==="legal_entity")return value;throw new Error(`Invalid source authority scope ${String(value)}.`);}
 function graphHash(value:unknown):string{const parsed=requiredString(value,"identity graph hash");if(!/^[a-f0-9]{32}$/.test(parsed))throw new Error("identity graph hash must be a lowercase MD5 digest.");return parsed;}
 function copyAllowlistedDefault(target:Record<string,string|number|boolean>,source:Record<string,unknown>,key:string,allowed:readonly string[]):void{const value=source[key];if(typeof value==="string"&&allowed.includes(value))target[key]=value;}
 function parseDossier(value:unknown):Record<string,string|number|boolean|readonly string[]>{const source=optionalRecord(value);const dossier:Record<string,string|number|boolean|readonly string[]>={};for(const [key,item] of Object.entries(source)){if(!/^[a-z][a-z0-9_]{0,79}$/.test(key))continue;if(typeof item==="string"&&item.length<=500){dossier[key]=item;continue;}if(typeof item==="number"&&Number.isFinite(item)){dossier[key]=item;continue;}if(typeof item==="boolean"){dossier[key]=item;continue;}if(Array.isArray(item)&&item.length<=50&&item.every((entry)=>typeof entry==="string"&&entry.length<=200))dossier[key]=Object.freeze([...item]);}return dossier;}
 function healthStatus(value:unknown):"passed"|"warning"|"failed"|"blocked"{if(value==="passed"||value==="warning"||value==="failed"||value==="blocked")return value;throw new Error(`Invalid health status ${String(value)}.`);}
 function worstHealth(values:readonly ReturnType<typeof healthStatus>[]):ReturnType<typeof healthStatus>{for(const status of ["blocked","failed","warning","passed"] as const)if(values.includes(status))return status;return"blocked";}
+function topicQualityDomains(baseFacts:readonly string[],topicId:string):ReadonlySet<string>{
+  const domains=new Set<string>(["connector","canonical"]);
+  for(const fact of baseFacts){
+    if(fact.startsWith("commerce_")||fact.startsWith("customer_"))domains.add("commerce");
+    if(fact.startsWith("inventory_"))domains.add("inventory");
+    if(fact.startsWith("workforce_"))domains.add("workforce");
+    if(fact.startsWith("finance_"))domains.add("finance");
+    if(fact==="workforce_sales_aligned"){domains.add("commerce");domains.add("workforce");}
+    if(fact==="reconciliation_aligned"){domains.add("commerce");domains.add("finance");domains.add("reconciliation");}
+  }
+  if(topicId==="reconciliation")domains.add("reconciliation");
+  return domains;
+}
 function sourceFieldType(value:unknown):SourceField["fieldType"]{if(value==="text"||value==="integer"||value==="decimal"||value==="boolean"||value==="date"||value==="timestamp")return value;throw new Error(`Invalid source field type ${String(value)}.`);}
 function piiClass(value:unknown):SourceField["piiClass"]{if(value==="none"||value==="business"||value==="customer_contact"||value==="payroll"||value==="sensitive_personal")return value;throw new Error(`Invalid PII class ${String(value)}.`);}
 function sourceFieldsFromRows(rows:readonly Row[]):SourceField[]{return rows.map((row)=>({connectionId:requiredString(row.connection_id,"connection id"),connectorId:requiredString(row.connector_id,"connector id"),sourceSchema:requiredString(row.source_schema,"source schema"),sourceTable:requiredString(row.source_table,"source table"),sourceField:requiredString(row.source_field,"source field"),fieldType:sourceFieldType(row.field_type),piiClass:piiClass(row.pii_class),...(typeof row.authority_concept==="string"?{authorityConcept:row.authority_concept}:{}),definition:requiredString(row.documented_definition,"source definition"),packVersion:requiredString(row.pack_version,"pack version")}));}

@@ -44,6 +44,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    // Match Next's public-variable contract for the browser environment.
+    // Server-only values remain workerd bindings and are never exposed here.
+    envPrefix: ["VITE_", "NEXT_PUBLIC_"],
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

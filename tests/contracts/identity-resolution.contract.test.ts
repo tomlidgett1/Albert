@@ -19,6 +19,10 @@ const identityEvidenceMigration = readFileSync(
   resolve("infra/migrations/analytical/0072_m4_identity_evidence_associations.sql"),
   "utf8",
 );
+const neutralScopeMigration = readFileSync(
+  resolve("infra/migrations/analytical/0076_m4_source_neutral_identity_scopes.sql"),
+  "utf8",
+);
 const canonicalPipeline = readFileSync(
   resolve("services/sync-workers/src/canonical-pipeline.ts"),
   "utf8",
@@ -85,6 +89,17 @@ test("identity lookup evidence enriches stable native subjects without connector
   assert.doesNotMatch(identityEvidenceMigration, /(?:deputy|lightspeed)/i);
   assert.doesNotMatch(identityEvidenceMigration, /JOIN core\.entity_resolution/i);
   assert.match(canonicalPipeline, /evidence_refs=excluded\.evidence_refs/);
+});
+
+test("worker name-plus-location suggestions use source-neutral location evidence", () => {
+  assert.match(neutralScopeMigration, /ADD COLUMN IF NOT EXISTS corroborating_scope_ref jsonb/u);
+  assert.match(neutralScopeMigration, /location_resolution\.entity_type='location'/u);
+  assert.match(neutralScopeMigration, /location_resolution\.resolved_entity_id/u);
+  assert.match(neutralScopeMigration, /location_name_address/u);
+  assert.match(neutralScopeMigration, /corroborating_scope_digest=calculated\.neutral_scope_digest/u);
+  assert.match(canonicalPipeline, /refresh_identity_scope_digests\(\$1\)[\s\S]*generate_identity_review_candidates\(\$1\)/u);
+  assert.match(canonicalPipeline, /apply_identity_decision\([\s\S]*refresh_identity_scope_digests\(\$1\)[\s\S]*generate_identity_review_candidates\(\$1\)[\s\S]*publishPendingControlProjections/u);
+  assert.match(canonicalPipeline, /corroboratingScopeRef\?null:command\.corroboratingScope/u);
 });
 
 test("semantic SQL resolves governed identity keys before aggregation and dimension joins", () => {

@@ -1,5 +1,7 @@
 import type { TransactionalPostgres } from "../../sync-workers/src/database.js";
+import type { MachineSessionIdentity } from "../../../packages/storage/src/session-credentials.js";
 import { asDeletionControl } from "./database-role.js";
+import type { RawStorageDeletionGrant } from "./raw-storage.js";
 
 export type DeletionScope = "connection" | "tenant";
 
@@ -16,6 +18,7 @@ export type DeletionClaim = Readonly<{
 export type RevocationTarget = Readonly<{
   tenantId: string;
   connectionId: string;
+  connectionGeneration: number;
   connectorId: "lightspeed-r" | "xero" | "deputy";
   credentialRef: string;
 }>;
@@ -52,9 +55,14 @@ function revocationTargets(value: unknown): readonly RevocationTarget[] {
     if (connectorId !== "lightspeed-r" && connectorId !== "xero" && connectorId !== "deputy") {
       throw new Error("deletion_revocation_connector_invalid");
     }
+    const connectionGeneration = Number(target.connectionGeneration);
+    if (!Number.isSafeInteger(connectionGeneration) || connectionGeneration < 1) {
+      throw new Error("deletion_revocation_generation_invalid");
+    }
     return Object.freeze({
       tenantId: requiredString(target.tenantId, "tenant"),
       connectionId: requiredString(target.connectionId, "connection"),
+      connectionGeneration,
       connectorId,
       credentialRef: requiredString(target.credentialRef, "credential"),
     });
@@ -212,6 +220,81 @@ export class DeletionControlStore {
     );
   }
 
+  async issueRawStorageSession(
+    claim: DeletionClaim,
+    operation: "purge" | "verify",
+    identity: MachineSessionIdentity,
+  ): Promise<RawStorageDeletionGrant> {
+    const result = await this.query<{
+      grant_id: unknown;
+      tenant_id: unknown;
+      scope: unknown;
+      connection_id: unknown;
+      operation: unknown;
+      expires_at: unknown;
+    }>(
+      `select * from control_plane.issue_raw_storage_deletion_session(
+         $1::bigint,$2::text,$3::text,$4::integer,$5::text,
+         $6::uuid,$7::uuid,$8::timestamptz
+       )`,
+      [
+        claim.messageId,claim.requestId,this.workerId,claim.readCount,operation,
+        identity.userId,identity.sessionId,identity.tokenExpiresAt.toISOString(),
+      ],
+    );
+    const row = result.rows[0];
+    const scope = row?.scope;
+    const returnedOperation = row?.operation;
+    const connectionId = row?.connection_id;
+    if (
+      typeof row?.grant_id !== "string" ||
+      typeof row.tenant_id !== "string" ||
+      (scope !== "tenant" && scope !== "connection") ||
+      (returnedOperation !== "purge" && returnedOperation !== "verify") ||
+      (connectionId !== null && typeof connectionId !== "string") ||
+      !(typeof row.expires_at === "string" || row.expires_at instanceof Date)
+    ) {
+      throw new Error("raw_deletion_session_grant_invalid");
+    }
+    return Object.freeze({
+      grantId: row.grant_id,
+      tenantId: row.tenant_id,
+      scope,
+      connectionId,
+      operation: returnedOperation,
+      expiresAt: new Date(row.expires_at).toISOString(),
+    });
+  }
+
+  async revokeRawStorageSession(claim: DeletionClaim, grantId: string): Promise<void> {
+    const result = await this.query<{ revoked: boolean }>(
+      `select control_plane.revoke_raw_storage_deletion_session(
+         $1::bigint,$2::text,$3::text,$4::integer,$5::text
+       ) as revoked`,
+      [claim.messageId,claim.requestId,this.workerId,claim.readCount,grantId],
+    );
+    if (result.rows[0]?.revoked !== true) {
+      throw new Error("raw_deletion_session_revocation_failed");
+    }
+  }
+
+  async issueAnalyticalCapability(
+    claim: DeletionClaim,
+    operation: "purge" | "verify",
+  ): Promise<string> {
+    const result = await this.query<{ capability: unknown }>(
+      `select control_plane.issue_deletion_analytical_capability(
+         $1::bigint,$2::text,$3::text,$4::integer,$5::text
+       ) as capability`,
+      [claim.messageId, claim.requestId, this.workerId, claim.readCount, operation],
+    );
+    const capability = result.rows[0]?.capability;
+    if (typeof capability !== "string" || capability.length < 100 || capability.length > 4096) {
+      throw new Error("analytical_deletion_capability_invalid");
+    }
+    return capability;
+  }
+
   async complete(claim: DeletionClaim, proof: Readonly<{
     proofId: string;
     tenantReferenceHash: string;
@@ -243,6 +326,8 @@ export class DeletionControlStore {
 
   async preflight(): Promise<void> {
     await this.query("select control_plane.assert_deletion_queue_ready()");
+    await this.query("select control_plane.assert_analytical_capability_issuer_ready()");
+    await this.query("select control_plane.assert_raw_storage_session_authority_ready('deletion')");
   }
 
   async heartbeat(input: Readonly<{
@@ -272,9 +357,11 @@ export class DeletionAnalyticalStore {
   private async execute(
     claim: DeletionClaim,
     operation: "purge" | "verify",
+    capability: string,
   ): Promise<Readonly<Record<string, unknown>>> {
     return this.db.transaction(async (client) => {
       await client.query("set local role deletion_rw");
+      await client.query("select set_config('albert.tenant_capability',$1,true)", [capability]);
       const functionName = claim.scope === "tenant"
         ? `deletion_internal.${operation}_tenant`
         : `deletion_internal.${operation}_connection`;
@@ -288,19 +375,20 @@ export class DeletionAnalyticalStore {
     });
   }
 
-  purge(claim: DeletionClaim) {
-    return this.execute(claim, "purge");
+  purge(claim: DeletionClaim, capability: string) {
+    return this.execute(claim, "purge", capability);
   }
 
-  verify(claim: DeletionClaim) {
-    return this.execute(claim, "verify");
+  verify(claim: DeletionClaim, capability: string) {
+    return this.execute(claim, "verify", capability);
   }
 
   async preflight(): Promise<void> {
     const result = await this.db.transaction(async (client) => {
       await client.query("set local role deletion_rw");
       return client.query<{ ready: boolean }>(
-        `select to_regprocedure('deletion_internal.purge_connection(text,text)') is not null ready`,
+        `select to_regprocedure('deletion_internal.purge_connection(text,text)') is not null
+             and capability_internal.assert_verifier_ready() ready`,
       );
     });
     if (result.rows[0]?.ready !== true) throw new Error("analytical_deletion_procedures_missing");

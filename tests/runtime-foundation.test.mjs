@@ -109,6 +109,7 @@ test("Fast mode is independent from model and reasoning effort", () => {
 
   assert.equal(standard.model, fast.model);
   assert.deepEqual(standard.modelSettings.reasoning, fast.modelSettings.reasoning);
+  assert.equal(fast.modelSettings.reasoning.context, "current_turn");
   assert.deepEqual(standard.modelSettings.providerData, {});
   assert.deepEqual(fast.modelSettings.providerData, { service_tier: "fast" });
 });
@@ -171,6 +172,7 @@ test("direct OpenAI Agents SDK adapter instantiates the selected current model",
 
   assert.equal(runtime.agent.model, "gpt-5.6-luna");
   assert.equal(runtime.agent.modelSettings.reasoning.effort, "low");
+  assert.equal(runtime.agent.modelSettings.reasoning.context, "current_turn");
   assert.deepEqual(runtime.agent.modelSettings.providerData, {
     service_tier: "fast",
   });
@@ -195,6 +197,20 @@ test("live agent uses local bounded conversation state and disables provider sto
     () => conversation.buildBoundedModelInput([{ role: "assistant", text: "stale" }], "new"),
     /does not end with the current user message/,
   );
+});
+
+test("completed model history receives the trusted current user message exactly once", () => {
+  const completed = [
+    { role: "user", text: "How were sales?" },
+    { role: "assistant", text: "Sales were supported by the governed result." },
+  ];
+  const context = conversation.appendCurrentUserMessage(completed, "Break that down by location.");
+  assert.deepEqual(context, [
+    ...completed,
+    { role: "user", text: "Break that down by location." },
+  ]);
+  assert.doesNotThrow(() => conversation.buildBoundedModelInput(context, "Break that down by location."));
+  assert.equal(completed.length, 2);
 });
 
 test("deterministic fixture emits ordered governed table, chart, and provenance", () => {

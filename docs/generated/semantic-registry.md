@@ -1,13 +1,13 @@
-# Semantic registry 1.1.0
+# Semantic registry 1.4.0
 
 Generated from the registry. Do not hand-edit counts.
 
 ## Counts
 
-- Metrics: 44
+- Metrics: 47
 - Topics: 7
-- commerce: 13
-- composites: 3
+- commerce: 14
+- composites: 5
 - customers: 6
 - finance: 9
 - inventory: 7
@@ -16,6 +16,7 @@ Generated from the registry. Do not hand-edit counts.
 ## Metrics
 
 - `commerce.gross_takings_inc_gst` — Completed sales including GST, net of refunds on the refund date.
+- `commerce.tender_amount` — Captured POS tender value, net of tender refunds, on the operational trading date.
 - `commerce.net_sales_ex_gst` — Completed sales excluding GST, with refunds subtracting when they occur.
 - `commerce.units_sold` — Signed units sold after refund quantities.
 - `commerce.transactions` — Distinct completed commercial orders.
@@ -36,7 +37,7 @@ Generated from the registry. Do not hand-edit counts.
 - `customers.lapsed_customers` — Identified customers whose last purchase precedes the tenant-defined lapse cutoff.
 - `inventory.stock_on_hand_units` — Latest quantity on hand in the selected period and grouping.
 - `inventory.stock_on_hand_value` — Latest cost value of stock on hand.
-- `inventory.stock_cover_days` — Latest stock units divided by average daily units sold over the tenant-approved velocity window.
+- `inventory.stock_cover_days` — Latest stock units divided by total trailing demand per calendar day over the tenant-approved velocity window.
 - `inventory.sell_through_rate` — Units sold divided by opening units plus received units.
 - `inventory.inventory_turns` — Cost of goods sold divided by average inventory value.
 - `inventory.days_out_of_stock` — Distinct days ending with zero or negative stock on hand.
@@ -58,7 +59,9 @@ Generated from the registry. Do not hand-edit counts.
 - `finance.payables_outstanding` — Outstanding supplier bill balance at the selected date.
 - `composites.labour_cost_pct_of_sales` — Labour cost divided by net sales excluding GST after independent aggregation and alignment.
 - `composites.sales_per_labour_hour` — Net sales excluding GST divided by worked hours after independent aggregation and alignment.
+- `composites.gross_profit_per_labour_hour` — Operational gross profit from POS line cost divided by worked hours after each fact is aggregated independently and aligned on canonical worker.
 - `composites.pos_to_ledger_variance` — Operational net sales less accrued ledger revenue after daily location aggregation and alignment.
+- `composites.pos_to_bank_variance` — Captured POS tenders less authoritative bank receipts after independent daily location aggregation and identity alignment.
 
 ## Topics
 

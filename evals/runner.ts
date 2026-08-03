@@ -74,9 +74,9 @@ export async function runSeedGoldenSuite(
   registryPath = resolve("packages/semantic-registry/registry/registry.yaml"),
 ): Promise<GoldenSuiteResult> {
   const registry = loadRegistryFile(registryPath);
-  if (registry.metrics.size !== 44 || registry.topics.size !== 7) {
+  if (registry.metrics.size !== 47 || registry.topics.size !== 7) {
     throw new Error(
-      `Golden runner requires the 44-contract/7-Topic registry; observed ${registry.metrics.size}/${registry.topics.size}.`,
+      `Golden runner requires the 47-contract/7-Topic registry; observed ${registry.metrics.size}/${registry.topics.size}.`,
     );
   }
 
@@ -156,12 +156,13 @@ async function runSemanticQuestion(
   }
   assertExpectedRows(question.id, response.data?.rows as readonly FixtureResultRow[], question.expectedRows);
 
+  const bundleSources = fixtureBundleSources(firstCompiled, registry);
   const expectedHash = semanticBundleHash({
     registryVersion: registry.version,
     overlayVersion: "fixture-overlay-v1",
     identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
-    packVersions: fixturePackVersions,
-    sourceWatermarks: fixtureWatermarks,
+    packVersions: bundleSources.packVersions,
+    sourceWatermarks: bundleSources.sourceWatermarks,
     ir,
   });
   if (response.provenance.bundleHash !== expectedHash) {
@@ -193,6 +194,35 @@ async function runSemanticQuestion(
     rows,
     comparisonRows,
     bundleHash: response.provenance.bundleHash,
+  };
+}
+
+function fixtureBundleSources(
+  compiled: CompiledSemanticQuery,
+  registry: SemanticRegistry,
+): Readonly<{
+  packVersions: Readonly<Record<string, string>>;
+  sourceWatermarks: Readonly<Record<string, string>>;
+}> {
+  const authorities = new Set(compiled.validationEvidence.metrics.map((metric) => metric.authority));
+  for (const dependencyId of compiled.validationEvidence.metrics.flatMap((metric) => metric.dependencyMetricIds)) {
+    const authority = registry.metrics.get(dependencyId)?.authority;
+    if (authority) authorities.add(authority);
+  }
+  const connectionIds = [...new Set([...authorities].flatMap((authority) => {
+    const connectionId = fixtureAuthorityByConcept[authority as keyof typeof fixtureAuthorityByConcept];
+    return connectionId ? [connectionId] : [];
+  }))];
+  const details = fixtureSourceDetails.filter((source) => connectionIds.includes(source.connectionId));
+  return {
+    packVersions: Object.fromEntries(details.map((source) => [
+      source.connectorId,
+      fixturePackVersions[source.connectorId as keyof typeof fixturePackVersions],
+    ])),
+    sourceWatermarks: Object.fromEntries(connectionIds.map((connectionId) => [
+      connectionId,
+      fixtureWatermarks[connectionId as keyof typeof fixtureWatermarks],
+    ])),
   };
 }
 
@@ -282,9 +312,8 @@ function createService(
           dossier: {},
           packVersions: fixturePackVersions,
           sourceWatermarks: fixtureWatermarks,
-          authorityByConcept: {
-            operational_sales: FIXTURE_LIGHTSPEED_CONNECTION_ID,
-          },
+          sourceDetails: fixtureSourceDetails,
+          authorityByConcept: fixtureAuthorityByConcept,
         };
       },
     },
@@ -316,6 +345,15 @@ function createService(
       async append() {},
       async promoteSourceField() { return "fixture-promotion"; },
     },
+    publicationEvidence: {
+      async inspect() {
+        return {
+          registryVersion: registry.version,
+          registryHash: "f".repeat(64),
+          activePublicationMatches: true,
+        };
+      },
+    },
     clock: () => new Date(FIXTURE_NOW),
   };
   return new DefaultSemanticToolExecutor(dependencies);
@@ -343,7 +381,7 @@ function allCapabilities(registry: SemanticRegistry): ReadonlySet<string> {
     [
       ...[...registry.metrics.values()].flatMap((metric) => metric.requiredCapabilities),
       ...[...registry.topics.values()].flatMap((topic) => topic.requiredCapabilities),
-    ],
+    ].filter((capability) => capability !== "workforce.time_entries.overtime"),
   );
 }
 
@@ -424,10 +462,30 @@ const fixturePackVersions = {
   deputy: "1.0.0",
 } as const;
 
+const FIXTURE_XERO_CONNECTION_ID = "01J00000000000000000000012";
+const FIXTURE_DEPUTY_CONNECTION_ID = "01J00000000000000000000013";
+
 const fixtureWatermarks = {
-  "lightspeed-r": "2026-03-15T11:00:00.000Z",
-  xero: "2026-03-15T10:30:00.000Z",
-  deputy: "2026-03-15T11:30:00.000Z",
+  [FIXTURE_LIGHTSPEED_CONNECTION_ID]: "2026-03-15T11:00:00.000Z",
+  [FIXTURE_XERO_CONNECTION_ID]: "2026-03-15T10:30:00.000Z",
+  [FIXTURE_DEPUTY_CONNECTION_ID]: "2026-03-15T11:30:00.000Z",
+} as const;
+
+const fixtureSourceDetails = [
+  { connectorId: "lightspeed-r", connectionId: FIXTURE_LIGHTSPEED_CONNECTION_ID, label: "Lightspeed", dataThrough: fixtureWatermarks[FIXTURE_LIGHTSPEED_CONNECTION_ID] },
+  { connectorId: "xero", connectionId: FIXTURE_XERO_CONNECTION_ID, label: "Xero", dataThrough: fixtureWatermarks[FIXTURE_XERO_CONNECTION_ID] },
+  { connectorId: "deputy", connectionId: FIXTURE_DEPUTY_CONNECTION_ID, label: "Deputy", dataThrough: fixtureWatermarks[FIXTURE_DEPUTY_CONNECTION_ID] },
+] as const;
+
+const fixtureAuthorityByConcept = {
+  operational_sales: FIXTURE_LIGHTSPEED_CONNECTION_ID,
+  product_master: FIXTURE_LIGHTSPEED_CONNECTION_ID,
+  customer_master: FIXTURE_LIGHTSPEED_CONNECTION_ID,
+  stock: FIXTURE_LIGHTSPEED_CONNECTION_ID,
+  statutory_finance: FIXTURE_XERO_CONNECTION_ID,
+  cash_settlement: FIXTURE_XERO_CONNECTION_ID,
+  planned_shifts: FIXTURE_DEPUTY_CONNECTION_ID,
+  worked_hours: FIXTURE_DEPUTY_CONNECTION_ID,
 } as const;
 
 const fixtureTenantParameters = {

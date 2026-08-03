@@ -8,7 +8,7 @@ BEGIN
     WHERE rolname = 'albert_control_migration_owner'
   ) THEN
     CREATE ROLE albert_control_migration_owner
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
   END IF;
 END;
 $$;
@@ -24,7 +24,7 @@ BEGIN
     WHERE rolname = 'albert_deletion_control'
   ) THEN
     CREATE ROLE albert_deletion_control
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
   END IF;
 END;
 $$;
@@ -69,7 +69,7 @@ BEGIN
     WHERE rolname = 'albert_transform_control'
   ) THEN
     CREATE ROLE albert_transform_control
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
   END IF;
 END;
 $$;
@@ -84,10 +84,33 @@ BEGIN
     WHERE rolname = 'albert_semantic_control'
   ) THEN
     CREATE ROLE albert_semantic_control
-      NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
   END IF;
 END;
 $$;
+
+-- The operator diagnostic service can only consume one-use reveal grants and
+-- record their outcomes. It has no direct table privileges in the control
+-- plane and is deliberately independent from the semantic-query identity.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'albert_operator_diagnostic_control'
+  ) THEN
+    CREATE ROLE albert_operator_diagnostic_control
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  END IF;
+END;
+$$;
+
+ALTER ROLE albert_control_migration_owner NOINHERIT;
+ALTER ROLE albert_deletion_control NOINHERIT;
+ALTER ROLE albert_sync_control NOINHERIT;
+ALTER ROLE albert_webhook_control NOINHERIT;
+ALTER ROLE albert_transform_control NOINHERIT;
+ALTER ROLE albert_semantic_control NOINHERIT;
+ALTER ROLE albert_operator_diagnostic_control NOINHERIT;
 
 DO $$
 BEGIN
@@ -119,6 +142,15 @@ $$;
 DO $$
 BEGIN
   EXECUTE format(
+    'GRANT CONNECT ON DATABASE %I TO albert_operator_diagnostic_control',
+    current_database()
+  );
+END;
+$$;
+
+DO $$
+BEGIN
+  EXECUTE format(
     'GRANT CONNECT ON DATABASE %I TO albert_deletion_control',
     current_database()
   );
@@ -135,14 +167,25 @@ END;
 $$;
 GRANT USAGE ON SCHEMA auth, extensions, storage
   TO albert_control_migration_owner;
+-- Public RPCs are migration-owned SECURITY DEFINER functions. Modern
+-- Supabase/PostgreSQL installations revoke CREATE on public from PUBLIC, so
+-- the DDL-only owner needs this explicit schema capability before migration
+-- 0002 can install the authenticated API boundary.
+GRANT USAGE, CREATE ON SCHEMA public
+  TO albert_control_migration_owner;
 GRANT USAGE ON SCHEMA extensions TO albert_semantic_control;
 GRANT REFERENCES ON TABLE auth.users TO albert_control_migration_owner;
+-- Organisation membership RPCs resolve an already-registered, confirmed user
+-- by email and return only the scoped member directory. The migration owner
+-- receives column-level reads rather than broad Auth administration rights.
+GRANT SELECT (id, email, email_confirmed_at) ON TABLE auth.users
+  TO albert_control_migration_owner;
 GRANT SELECT, INSERT, UPDATE ON TABLE storage.buckets
   TO albert_control_migration_owner;
 
 -- Extensions are enabled by the Supabase administrator before this bootstrap.
--- The migration owner can call pgmq, but cannot grant extension-owned objects
--- to runtime/browser roles. Runtime access is through SECURITY DEFINER wrappers.
+-- The migration owner can inspect pgmq and invoke only the fixed queue
+-- installer below. Runtime access is through SECURITY DEFINER wrappers.
 REVOKE ALL ON SCHEMA pgmq, cron FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON ALL TABLES IN SCHEMA pgmq, cron FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA pgmq, cron FROM PUBLIC, anon, authenticated, service_role;
@@ -150,6 +193,71 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA pgmq, cron FROM PUBLIC, anon, authenticate
 GRANT USAGE ON SCHEMA pgmq TO albert_control_migration_owner;
 GRANT SELECT ON TABLE pgmq.meta TO albert_control_migration_owner;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pgmq TO albert_control_migration_owner;
+
+-- pgmq.create() is security-invoker and alters the pgmq extension while it
+-- materialises queue tables, so a separate migration owner cannot call it on
+-- managed Supabase. Keep that extension-owner capability behind this
+-- administrator-owned, fixed-input installer rather than granting broad
+-- extension ownership to Albert's deployment role.
+CREATE OR REPLACE FUNCTION extensions.albert_install_foundation_queues()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pgmq
+AS $$
+DECLARE
+  queue text;
+BEGIN
+  FOREACH queue IN ARRAY ARRAY[
+    'albert_sync_high',
+    'albert_sync_standard',
+    'albert_sync_backfill',
+    'albert_sync_deadletter'
+  ] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pgmq.meta WHERE queue_name = queue) THEN
+      PERFORM pgmq.create(queue);
+    END IF;
+    EXECUTE format(
+      'GRANT ALL PRIVILEGES ON TABLE pgmq.%I, pgmq.%I TO albert_control_migration_owner',
+      'q_' || queue,
+      'a_' || queue
+    );
+    EXECUTE format(
+      'GRANT ALL PRIVILEGES ON SEQUENCE pgmq.%I TO albert_control_migration_owner',
+      'q_' || queue || '_msg_id_seq'
+    );
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_foundation_queues()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_foundation_queues()
+  TO albert_control_migration_owner;
+
+CREATE OR REPLACE FUNCTION extensions.albert_install_deletion_queue()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pgmq
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pgmq.meta WHERE queue_name = 'albert_deletion'
+  ) THEN
+    PERFORM pgmq.create('albert_deletion');
+  END IF;
+  GRANT ALL PRIVILEGES ON TABLE
+    pgmq.q_albert_deletion,
+    pgmq.a_albert_deletion
+  TO albert_control_migration_owner;
+  GRANT ALL PRIVILEGES ON SEQUENCE pgmq.q_albert_deletion_msg_id_seq
+  TO albert_control_migration_owner;
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_deletion_queue()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_deletion_queue()
+  TO albert_control_migration_owner;
 
 -- pg_cron records current_user as the job identity and later executes with
 -- that identity's permissions. The DDL owner is intentionally NOLOGIN, so it
@@ -219,6 +327,56 @@ REVOKE ALL ON FUNCTION extensions.albert_install_deletion_cron_job()
 GRANT EXECUTE ON FUNCTION extensions.albert_install_deletion_cron_job()
   TO albert_control_migration_owner;
 
+-- Installed after the conversation lease migration exists. A fixed command
+-- keeps crash recovery durable without granting the migration role arbitrary
+-- pg_cron scheduling authority.
+CREATE OR REPLACE FUNCTION extensions.albert_install_conversation_reaper_cron_job()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  PERFORM cron.schedule_in_database(
+    'albert-conversation-turn-reaper',
+    '* * * * *',
+    'SELECT control_plane.reap_expired_conversation_turns()',
+    current_database(),
+    'postgres',
+    true
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_conversation_reaper_cron_job()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_conversation_reaper_cron_job()
+  TO albert_control_migration_owner;
+
+-- Installed after the generation-fenced stream lifecycle exists. Recovery is
+-- reconstructed from immutable phase plans and never from process memory.
+CREATE OR REPLACE FUNCTION extensions.albert_install_sync_lifecycle_cron_job()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  PERFORM cron.schedule_in_database(
+    'albert-sync-lifecycle-recovery',
+    '*/5 * * * *',
+    'SELECT control_plane.recover_sync_stream_phases()',
+    current_database(),
+    'postgres',
+    true
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_sync_lifecycle_cron_job()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_sync_lifecycle_cron_job()
+  TO albert_control_migration_owner;
+
 -- The managed administrator may SET ROLE during deployment. Runtime roles are
 -- intentionally not granted this membership.
 GRANT albert_control_migration_owner TO postgres;
+GRANT albert_operator_diagnostic_control TO postgres;

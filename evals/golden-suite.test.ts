@@ -53,18 +53,27 @@ const compilerContext = {
 test("all 25 V1 seed questions run through the deterministic golden harness", async () => {
   const result = await runSeedGoldenSuite(registryPath);
 
-  assert.equal(result.metricCount, 44);
+  assert.equal(result.metricCount, 47);
   assert.equal(result.topicCount, 7);
   assert.equal(result.questionCount, 25);
   assert.equal(result.cases.length, 25);
   assert.equal(new Set(result.cases.map((item) => item.id)).size, 25);
-  assert.equal(result.executableCount, 22);
+  assert.equal(result.executableCount, 21);
   assert.deepEqual(result.executableGaps, []);
 
   for (const item of result.cases) {
     if (item.outcome === "passed") assert.match(item.bundleHash ?? "", /^[a-f0-9]{64}$/);
     if (item.outcome === "executable_gap") assert.ok(item.reason);
   }
+});
+
+test("golden capability expectations cannot invent unavailable Deputy overtime", () => {
+  const overtime = seedGoldenQuestions.find((item) => item.id === "workforce-overtime");
+  assert.equal(overtime?.expectedRoute, "unavailable");
+  assert.equal(overtime?.expectedState, "unavailable");
+  assert.equal(overtime?.ir, undefined);
+  assert.equal(overtime?.expectedRows, undefined);
+  assert.match(overtime?.rationale ?? "", /does not expose a governed overtime duration/u);
 });
 
 test("golden cases always declare a route, answer state and numeric rows when executable", () => {

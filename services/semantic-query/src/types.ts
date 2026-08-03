@@ -13,6 +13,7 @@ export type TrustedToolContext = Readonly<{
   role: SemanticRole;
   conversationId: string;
   turnId: string;
+  confirmedPreference?: string;
   confirmedValue?: string;
 }>;
 
@@ -24,6 +25,16 @@ export type TenantSemanticContext = Readonly<{
   weekStartsOn: number;
   tenantParameters: Readonly<Record<string, string | number | boolean>>;
   capabilities: ReadonlySet<string>;
+  capabilityDetails?: readonly Readonly<{
+    id: string;
+    connectorId: string;
+    connectionId?: string;
+    available?: boolean;
+    support: "full" | "partial" | "unavailable" | "unknown";
+    reasonCode?: string;
+    reason?: string;
+    coverage: Readonly<Record<string, unknown>>;
+  }>[];
   overlayVersion: string;
   identityGraphVersion: number;
   identityGraphHash: string;
@@ -32,11 +43,31 @@ export type TenantSemanticContext = Readonly<{
   packVersions: Readonly<Record<string, string>>;
   sourceWatermarks: Readonly<Record<string, string>>;
   authorityByConcept: Readonly<Record<string, string>>;
+  authoritySelections?: readonly Readonly<{
+    concept: string;
+    scopeType: "tenant" | "account" | "location" | "legal_entity";
+    scopeId: string;
+    connectionId: string;
+    effectiveFrom: string;
+    effectiveTo?: string;
+    controlEligible?: boolean;
+  }>[];
   sourceDetails?: readonly Readonly<{
     connectorId: string;
     connectionId: string;
     label: string;
     dataThrough: string;
+    connectionStatus?: string;
+    authHealth?: string;
+    authorityEligible?: boolean;
+  }>[];
+  progressiveCoverage?: readonly Readonly<{
+    connectionId: string;
+    stream: string;
+    status: "pending" | "queryable" | "degraded" | "superseded";
+    coveredFrom: string;
+    coveredTo: string;
+    qualification: string;
   }>[];
 }>;
 
@@ -47,6 +78,11 @@ export interface TenantSemanticContextProvider {
 export type DatabaseRow = Readonly<Record<string, unknown>>;
 export type DatabaseResult = Readonly<{ rows: readonly DatabaseRow[]; durationMs: number }>;
 
+export type SemanticCapabilityEvidence = Readonly<{
+  conversationId: string;
+  turnId: string;
+}>;
+
 /** Implementations must use a read-only transaction, SET LOCAL ROLE semantic_ro,
  * and set trusted `albert.tenant_id` before executing the statement. */
 export interface SemanticReadDatabase {
@@ -56,12 +92,13 @@ export interface SemanticReadDatabase {
     parameters: readonly unknown[];
     statementTimeoutMs: number;
     expectedIdentityGraph?: Readonly<{ version: number; hash: string }>;
+    capabilityEvidence?: SemanticCapabilityEvidence;
   }>): Promise<DatabaseResult>;
 }
 
 export interface SemanticResultCache {
-  get(key: string): Promise<SemanticToolResponse | undefined>;
-  set(key: string, value: SemanticToolResponse, ttlSeconds: number): Promise<void>;
+  get(key: string, context?: TrustedToolContext): Promise<SemanticToolResponse | undefined>;
+  set(key: string, value: SemanticToolResponse, ttlSeconds: number, context?: TrustedToolContext): Promise<void>;
 }
 
 export type SourceField = Readonly<{
@@ -122,7 +159,21 @@ export interface TenantPreferenceStore {
   remember(context: TrustedToolContext, preference: string, value: string | number | boolean): Promise<number>;
 }
 
+/** Exact, content-addressed active-publication proof supplied by the trusted
+ * service composition. Production derives this from the single published
+ * control-plane registry row; fixture executors must provide their own proof. */
+export type SemanticPublicationEvidence = Readonly<{
+  registryVersion: string;
+  registryHash: string;
+  activePublicationMatches: boolean;
+}>;
+
+export interface SemanticPublicationEvidenceProvider {
+  inspect(): Promise<SemanticPublicationEvidence>;
+}
+
 export type SemanticAuditRecord = Readonly<{
+  queryId: string;
   tenantId: string;
   conversationId: string;
   turnId: string;
@@ -145,6 +196,7 @@ export type SemanticAuditRecord = Readonly<{
 export interface SemanticAuditSink {
   append(record: SemanticAuditRecord): Promise<void>;
   promoteSourceField(candidate: Readonly<{
+    queryId: string;
     context: TrustedToolContext;
     connectionId: string;
     connectorId: string;
@@ -174,6 +226,7 @@ export type SemanticServiceDependencies = Readonly<{
   catalogueSearch?: CatalogueSearchProvider;
   dataHealth: DataHealthProvider;
   audit: SemanticAuditSink;
+  publicationEvidence?: SemanticPublicationEvidenceProvider;
   preferenceStore?: TenantPreferenceStore;
   clock?: () => Date;
   cacheTtlSeconds?: number;

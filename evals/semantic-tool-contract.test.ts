@@ -36,7 +36,8 @@ const trusted: AgentToolContext = {
   role: "owner",
   conversationId: "01J00000000000000000000002",
   turnId: "01J00000000000000000000003",
-  confirmedValue: "net_sales_ex_gst",
+  confirmedPreference: "employee.performance_default",
+  confirmedValue: "commerce.net_sales_ex_gst",
 };
 const sourceField: SourceField = {
   connectionId: "01J00000000000000000000011",
@@ -101,7 +102,12 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
       async append(record) { audits.push(record.route); },
       async promoteSourceField() { return "01J00000000000000000000021"; },
     },
-    preferenceStore: { async remember(_context, preference, value) { assert.equal(preference, "performance.default"); assert.equal(value, "net_sales_ex_gst"); return 2; } },
+    publicationEvidence: {
+      async inspect() {
+        return { registryVersion: registry.version, registryHash: "f".repeat(64), activePublicationMatches: true };
+      },
+    },
+    preferenceStore: { async remember(_context, preference, value) { assert.equal(preference, "employee.performance_default"); assert.equal(value, "commerce.net_sales_ex_gst"); return 2; } },
     clock: () => new Date(FIXTURE_NOW),
   };
   const baseExecutor = new DefaultSemanticToolExecutor(dependencies);
@@ -147,7 +153,6 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
       groupBy: [],
       filters: [],
       limit: 20,
-      authorityConcept: "operational_sales",
       requestedMetricConcept: "discount_reason_usage",
     }, trusted);
     const sourceTrace = adaptGovernedResult(source);
@@ -155,8 +160,8 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
     assert.equal(source.promotionCandidateId, "01J00000000000000000000021");
 
     const remembered = requireRememberedPreference(await client.execute("remember", {
-      preference: "performance.default",
-      value: "net_sales_ex_gst",
+      preference: "employee.performance_default",
+      value: "commerce.net_sales_ex_gst",
       explicitlyConfirmed: true,
     }, trusted));
     assert.equal(remembered.overlayVersion, 2);
@@ -165,7 +170,7 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
   }
   assert.deepEqual([...called].sort(), [...REMOTE_SEMANTIC_AGENT_TOOL_NAMES].sort());
   assert.deepEqual(audits.sort(), ["semantic", "source_exploration"]);
-  assert.doesNotThrow(() => semanticToolInputSchemas.ask_user.parse({ question: "Which lens?", options: [{ id: "a", label: "Sales", value: "sales" }, { id: "b", label: "Margin", value: "margin" }] }));
+  assert.doesNotThrow(() => semanticToolInputSchemas.ask_user.parse({ question: "Which lens?", options: [{ id: "employee.net_sales" }, { id: "employee.gross_margin" }] }));
   assert.doesNotThrow(() => semanticToolInputSchemas.make_chart.parse({ dataRef: "semantic:result", chartType: "bar", xKey: "location", yKey: "net_sales_ex_gst" }));
 });
 

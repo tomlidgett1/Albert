@@ -4,6 +4,11 @@ import {
   type ConnectorManifest,
   type FieldCoverage,
 } from "../../packages/connector-sdk/src/index.js";
+import {
+  LIGHTSPEED_R_DOCUMENTATION_BUILD,
+  LIGHTSPEED_R_DOCUMENTED_FIELDS,
+  type LightspeedRDocumentedStream,
+} from "./documented-fields.js";
 
 export const LIGHTSPEED_R_DEFAULT_SCOPES = [
   "employee:register_read",
@@ -18,34 +23,56 @@ export const LIGHTSPEED_R_DEFAULT_SCOPES = [
 ] as const;
 
 const coverage = (
-  stream: string,
+  stream: LightspeedRDocumentedStream,
   canonical: Readonly<Record<string, string>>,
   extensions: readonly string[] = [],
   pii: Readonly<Record<string, FieldCoverage["pii"]>> = {},
-): readonly FieldCoverage[] => [
-  ...Object.entries(canonical).map(([field, target]) => ({
+): readonly FieldCoverage[] => {
+  const explicitlyDispositioned = new Set([...Object.keys(canonical), ...extensions]);
+  return [
+    ...Object.entries(canonical).map(([field, target]) => ({
     stream,
     field,
     disposition: "canonical" as const,
     stagingType: inferStagingType("lightspeed-r", field, target),
     target,
     pii: pii[field] ?? ("none" as const),
-  })),
-  ...extensions.map((field) => ({
+    })),
+    ...extensions.map((field) => ({
     stream,
     field,
     disposition: "governed_extension" as const,
     stagingType: inferStagingType("lightspeed-r", field),
     target: `source_lightspeed.${stream}.${stagingColumnName(field)}`,
     pii: pii[field] ?? ("none" as const),
-  })),
-];
+    })),
+    ...LIGHTSPEED_R_DOCUMENTED_FIELDS[stream]
+      .filter((field) => !explicitlyDispositioned.has(field))
+      .map((field) => ({
+        stream,
+        field,
+        disposition: "unsupported" as const,
+        stagingType: inferStagingType("lightspeed-r", field),
+        reason: "Published by the pinned Lightspeed R-Series V3 documentation build but outside Albert V1 canonical and governed source-extension scope; retained only in immutable encrypted raw storage.",
+        pii: pii[field] ?? unsupportedPii(stream, field),
+      })),
+  ];
+};
+
+function unsupportedPii(
+  stream: LightspeedRDocumentedStream,
+  field: string,
+): FieldCoverage["pii"] {
+  if (/Note|Instructions|CustomFieldValues/u.test(field)) return "free_text_untrusted";
+  if (stream === "customers" && /CreditAccount/u.test(field)) return "customer_contact";
+  return "none";
+}
 
 export const lightspeedRManifest: ConnectorManifest = {
   id: "lightspeed-r",
   displayName: "Lightspeed Retail POS (R-Series)",
   packVersion: "1.0.0",
-  apiVersion: "R-Series API V3",
+  apiVersion: `R-Series API V3; documentation build ${LIGHTSPEED_R_DOCUMENTATION_BUILD}`,
   releasedAt: "2026-08-03",
   documentation: [
     "https://developers.lightspeedhq.com/retail/authentication/authentication-overview/",
@@ -72,25 +99,25 @@ export const lightspeedRManifest: ConnectorManifest = {
   ],
   oauth: {
     scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
-    readOnlyScopeExceptions: [
+    leastPrivilegeNotes: [
       "R-Series does not publish read-only variants for employees, shops, categories, purchase orders, payment types, or tax categories. Albert requests the narrowest documented scopes and contains no source write methods.",
     ],
     refreshTokenRotation: true,
     remoteRevocation: "supported",
   },
   streams: [
-    { id: "shops", resource: "Shop", endpoint: "Shop.json", recordIdField: "shopID", pagination: "vendor_cursor", canonicalTargets: ["location"] },
-    { id: "employees", resource: "Employee", endpoint: "Employee.json", recordIdField: "employeeID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["worker"] },
-    { id: "categories", resource: "Category", endpoint: "Category.json", recordIdField: "categoryID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["product_category"] },
-    { id: "items", resource: "Item", endpoint: "Item.json", recordIdField: "itemID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["product", "product_variant"] },
-    { id: "item_shops", resource: "ItemShop", endpoint: "ItemShop.json", recordIdField: "itemShopID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["inventory_balance_snapshot"] },
-    { id: "sales", resource: "Sale", endpoint: "Sale.json", recordIdField: "saleID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["commerce_order", "commerce_order_line", "commerce_payment", "commerce_refund_line"] },
-    { id: "customers", resource: "Customer", endpoint: "Customer.json", recordIdField: "customerID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["customer_account"] },
-    { id: "orders", resource: "Order", endpoint: "Order.json", recordIdField: "orderID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["purchase_order_line"] },
-    { id: "order_lines", resource: "OrderLine", endpoint: "OrderLine.json", recordIdField: "orderLineID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["purchase_order_line"] },
-    { id: "payment_types", resource: "PaymentType", endpoint: "PaymentType.json", recordIdField: "paymentTypeID", pagination: "vendor_cursor", canonicalTargets: ["commerce_payment"] },
-    { id: "tax_categories", resource: "TaxCategory", endpoint: "TaxCategory.json", recordIdField: "taxCategoryID", modifiedField: "timeStamp", pagination: "vendor_cursor", canonicalTargets: ["tax_code"] },
-    { id: "inventory_logs", resource: "InventoryLog", endpoint: "InventoryLog.json", recordIdField: "inventoryLogID", modifiedField: "createTime", pagination: "vendor_cursor", canonicalTargets: ["inventory_movement"] },
+    { id: "shops", resource: "Shop", endpoint: "Shop.json", recordIdField: "shopID", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["sales", "inventory", "products"], canonicalTargets: ["location"] },
+    { id: "employees", resource: "Employee", endpoint: "Employee.json", recordIdField: "employeeID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops"], productDomains: ["sales"], canonicalTargets: ["worker"] },
+    { id: "categories", resource: "Category", endpoint: "Category.json", recordIdField: "categoryID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["products", "sales", "inventory"], canonicalTargets: ["product_category"] },
+    { id: "items", resource: "Item", endpoint: "Item.json", recordIdField: "itemID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["categories"], productDomains: ["products", "sales", "inventory"], canonicalTargets: ["product", "product_variant"] },
+    { id: "item_shops", resource: "ItemShop", endpoint: "ItemShop.json", recordIdField: "itemShopID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "items"], productDomains: ["inventory"], canonicalTargets: ["inventory_balance_snapshot"] },
+    { id: "sales", resource: "Sale", endpoint: "Sale.json", recordIdField: "saleID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "employees", "items", "customers", "payment_types", "tax_categories"], productDomains: ["sales", "customers"], canonicalTargets: ["commerce_order", "commerce_order_line", "commerce_payment", "commerce_refund_line"] },
+    { id: "customers", resource: "Customer", endpoint: "Customer.json", recordIdField: "customerID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["customers"], canonicalTargets: ["customer_account"] },
+    { id: "orders", resource: "Order", endpoint: "Order.json", recordIdField: "orderID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["shops", "employees", "items"], productDomains: ["inventory"], canonicalTargets: ["purchase_order_line"] },
+    { id: "order_lines", resource: "OrderLine", endpoint: "OrderLine.json", recordIdField: "orderLineID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["orders", "items"], productDomains: ["inventory"], canonicalTargets: ["purchase_order_line"] },
+    { id: "payment_types", resource: "PaymentType", endpoint: "PaymentType.json", recordIdField: "paymentTypeID", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["sales"], canonicalTargets: ["commerce_payment"] },
+    { id: "tax_categories", resource: "TaxCategory", endpoint: "TaxCategory.json", recordIdField: "taxCategoryID", modifiedField: "timeStamp", pagination: "vendor_cursor", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["sales"], canonicalTargets: ["tax_code"] },
+    { id: "inventory_logs", resource: "InventoryLog", endpoint: "InventoryLog.json", recordIdField: "inventoryLogID", modifiedField: "createTime", pagination: "vendor_cursor", backfillStrategy: "time_windowed", lateEditStrategy: "append_only", deletionStrategy: "immutable_append_only", sourceTotalStrategy: "count_distinct_complete_scan", availability: "optional", dependencies: ["shops", "items"], productDomains: ["inventory"], canonicalTargets: ["inventory_movement"] },
   ],
   rateLimit: {
     algorithm: "vendor leaky bucket plus one-second burst limiter",
@@ -109,13 +136,62 @@ export const lightspeedRManifest: ConnectorManifest = {
     ],
   },
   capabilities: {
-    "connector.variant.r_series": "full",
-    "commerce.order_lines": "full",
-    "commerce.order_lines.worker_attribution": "full",
-    "commerce.order_lines.unit_cost": "full",
-    "inventory.current_stock": "full",
-    "inventory.historical_movements": "unknown",
-    "source.webhooks": "unavailable",
+    "connector.variant.r_series": {
+      support: "full", streams: ["shops"],
+      reason: "A successful R-Series Account and Shop extraction verifies the vendor variant.",
+    },
+    "commerce.orders": {
+      support: "full", streams: ["sales"],
+      reason: "Sale headers map to canonical commercial orders.",
+    },
+    "commerce.order_lines": {
+      support: "full", streams: ["sales"],
+      reason: "SaleLine observations map to canonical order lines.",
+    },
+    "commerce.order_lines.discounts": {
+      support: "full", streams: ["sales"],
+      reason: "SaleLine normal price, unit price and discount amount support governed discount measures.",
+    },
+    "commerce.refunds": {
+      support: "full", streams: ["sales"],
+      reason: "Negative or refund-linked SaleLine observations map to canonical refund lines.",
+    },
+    "commerce.payments": {
+      support: "full", streams: ["sales"],
+      reason: "Loaded SalePayments map to canonical tender events.",
+    },
+    "commerce.orders.customer": {
+      support: "full", streams: ["sales"], coverageFields: ["customerID"],
+      reason: "Sale customerID supports governed customer attribution; observed coverage is reported separately.",
+    },
+    "commerce.order_lines.worker_attribution": {
+      support: "full", streams: ["sales"], coverageFields: ["employeeID"],
+      reason: "Sale and SaleLine employee identifiers support worker attribution; observed coverage is reported separately.",
+    },
+    "commerce.order_lines.cost": {
+      support: "full", streams: ["sales"], coverageFields: ["SaleLines", "calcAvgCost"],
+      reason: "The product-cost scope and SaleLine cost fields support governed cost and margin measures.",
+    },
+    "inventory.balances": {
+      support: "full", streams: ["item_shops"],
+      reason: "ItemShop quantity on hand maps to canonical inventory balance snapshots.",
+    },
+    "inventory.cost": {
+      support: "partial", streams: ["item_shops"], coverageFields: ["averageCost", "totalValueAvgCost"], requiresObservedCoverage: true,
+      reason: "Inventory valuation is available where ItemShop cost or value fields are populated.",
+    },
+    "inventory.movements": {
+      support: "partial", streams: ["inventory_logs"],
+      reason: "InventoryLog supplies movement observations when enabled for the account.",
+    },
+    "inventory.stocktakes": {
+      support: "partial", streams: ["inventory_logs"], coverageFields: ["inventoryCountID"], requiresObservedCoverage: true, nonZeroCoverage: true,
+      reason: "Stocktake variance is available only for InventoryLog records carrying a non-zero inventoryCountID.",
+    },
+    "source.webhooks": {
+      support: "unavailable", streams: [],
+      reason: "R-Series does not expose a supported webhook path for these streams.",
+    },
   },
   identityRules: [
     "Employee work email exact within tenant, otherwise employee name plus shop is a deterministic suggestion requiring confirmation.",
@@ -126,6 +202,7 @@ export const lightspeedRManifest: ConnectorManifest = {
     "Sales are authoritative for operational_sales; employeeID supplies worker attribution.",
     "ItemShop is authoritative for current stock by item and shop.",
     "Negative SaleLine quantities and refund sales are reversal observations, never additional positive sales.",
+    "Order with loaded OrderLines is the sole complete purchase-order projection; standalone OrderLine is an identity and deletion-reconciliation stream.",
   ],
   fieldCoverage: [
     ...coverage("shops", {
@@ -221,9 +298,8 @@ export const lightspeedRManifest: ConnectorManifest = {
       "shippingVendorCost", "discountMoneyValue", "discountMoneyVendorValue", "discountPercentValue",
     ]),
     ...coverage("payment_types", {
-      paymentTypeID: "commerce_payment.payment_type_source_id", name: "commerce_payment.payment_type",
-      archived: "commerce_payment.payment_type_inactive",
-    }, ["requireCustomer", "internalReserved", "type", "refundAsPaymentTypeID"]),
+      paymentTypeID: "metadata.source_record_id",
+    }, ["name", "archived", "requireCustomer", "internalReserved", "type", "refundAsPaymentTypeID"]),
     ...coverage("tax_categories", {
       taxCategoryID: "tax_code.source_id", tax1Name: "tax_code.name", tax1Rate: "tax_code.rate",
       isTaxInclusive: "tax_code.inclusive", timeStamp: "tax_code.source_updated_at",

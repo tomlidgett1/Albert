@@ -18,10 +18,16 @@ export async function startSemanticNodeServer(options:Readonly<{
   port?:number;
   maxBodyBytes?:number;
   shutdownGraceMs?:number;
+  releaseSha?:string|null;
+  deploymentId?:string|null;
 }>):Promise<RunningSemanticNodeServer>{
   if(new TextEncoder().encode(options.signingSecret).byteLength<32)throw new Error("ALBERT_SEMANTIC_SIGNING_SECRET must be at least 32 bytes.");
   const host=options.host??"127.0.0.1";const port=options.port??8788;const maxBodyBytes=options.maxBodyBytes??1_048_576;
-  const toolHandler=createSemanticHttpHandler(options.composition.executor,{hmacSecret:options.signingSecret});
+  const toolHandler=createSemanticHttpHandler(options.composition.executor,{
+    hmacSecret:options.signingSecret,
+    answerArtifactFinalizer:options.composition.answerArtifactFinalizer,
+    modelUsageRecorder:options.composition.modelUsageRecorder,
+  });
   const sockets=new Set<Socket>();let closing=false;
   const server=createServer({maxHeaderSize:16*1024},async(request,response)=>{
     const correlationId=correlationIdFromHeader(typeof request.headers["x-request-id"]==="string"?request.headers["x-request-id"]:undefined);
@@ -29,7 +35,12 @@ export async function startSemanticNodeServer(options:Readonly<{
       if(request.method==="GET"&&request.url==="/healthz")return sendJson(response,closing?503:200,{status:closing?"stopping":"ok"},correlationId);
       if(request.method==="GET"&&request.url==="/readyz"){
         const readiness=await options.composition.readiness();
-        return sendJson(response,!closing&&readiness.ready?200:503,{status:!closing&&readiness.ready?"ready":"not_ready"},correlationId);
+        return sendJson(response,!closing&&readiness.ready?200:503,{
+          status:!closing&&readiness.ready?"ready":"not_ready",
+          runtime:"semantic-query",
+          releaseSha:options.releaseSha??null,
+          deploymentId:options.deploymentId??null,
+        },correlationId);
       }
       if(closing)return sendJson(response,503,{error:{code:"SHUTTING_DOWN",message:"Semantic service is stopping."}},correlationId);
       const body=await readBody(request,maxBodyBytes);

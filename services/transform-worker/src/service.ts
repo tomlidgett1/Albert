@@ -5,6 +5,7 @@ export type TransformWorkerHealth=Readonly<{
   ready:boolean;
   startedAt:string;
   workerId:string;
+  concurrency:number;
   activeJobs:number;
   lastClaimAt:string|null;
   lastCompletionAt:string|null;
@@ -47,14 +48,20 @@ export class CanonicalTransformWorkerService{
       emptyPollDelayMs?:number;
       snapshotIntervalMs?:number;
       identityProjectionIntervalMs?:number;
+      concurrency?:number;
     }>={},
   ){
     if(!workerId.trim())throw new Error("A stable transform worker id is required.");
+    const concurrency=options.concurrency??1;
+    if(!Number.isInteger(concurrency)||concurrency<1||concurrency>64){
+      throw new Error("Transform worker concurrency must be an integer between 1 and 64.");
+    }
   }
 
   health():TransformWorkerHealth{
     return Object.freeze({
       ready:this.ready,startedAt:this.startedAt,workerId:this.workerId,
+      concurrency:this.options.concurrency??1,
       activeJobs:this.activeJobs,lastClaimAt:this.lastClaimAt,
       lastCompletionAt:this.lastCompletionAt,lastSnapshotAt:this.lastSnapshotAt,
       lastIdentityProjectionAt:this.lastIdentityProjectionAt,
@@ -77,44 +84,55 @@ export class CanonicalTransformWorkerService{
     },this.options.identityProjectionIntervalMs??1_000);
     identityProjectionTimer.unref();
     try{
-      while(!signal.aborted){
-        let claim;
-        try{
-          claim=await this.queue.claim({
-            workerId:this.workerId,
-            mappingVersion:this.mappingVersion,
-            leaseSeconds:this.options.leaseSeconds??900,
-          });
-          this.lastErrorCode=null;
-        }catch{
-          this.lastErrorCode="transform_queue_claim_failed";
-          await wait(1_000,signal);
-          continue;
-        }
-        if(!claim){await wait(this.options.emptyPollDelayMs??500,signal);continue;}
-        this.lastClaimAt=new Date().toISOString();
-        this.activeJobs+=1;
-        const leaseSeconds=this.options.leaseSeconds??900;
-        const extension=setInterval(()=>{
-          void this.queue.extendLease(claim,leaseSeconds).catch(()=>{
-            this.lastErrorCode="transform_lease_extension_failed";
-          });
-        },Math.max(30_000,Math.floor(leaseSeconds*1_000/3)));
-        extension.unref();
-        try{
-          await this.processor.process(claim);
-          this.lastCompletionAt=new Date().toISOString();
-        }catch{
-          this.lastErrorCode="transform_job_processing_failed";
-        }finally{
-          clearInterval(extension);
-          this.activeJobs-=1;
-        }
-      }
+      await Promise.all(Array.from(
+        {length:this.options.concurrency??1},
+        ()=>this.runLane(signal),
+      ));
     }finally{
       clearInterval(snapshotTimer);
       clearInterval(identityProjectionTimer);
       this.ready=false;
+    }
+  }
+
+  private async runLane(signal:AbortSignal):Promise<void>{
+    while(!signal.aborted){
+      let claim;
+      try{
+        claim=await this.queue.claim({
+          workerId:this.workerId,
+          mappingVersion:this.mappingVersion,
+          leaseSeconds:this.options.leaseSeconds??900,
+        });
+      }catch{
+        this.lastErrorCode="transform_queue_claim_failed";
+        await wait(1_000,signal);
+        continue;
+      }
+      if(!claim){await wait(this.options.emptyPollDelayMs??500,signal);continue;}
+      this.lastClaimAt=new Date().toISOString();
+      this.activeJobs+=1;
+      const leaseSeconds=this.options.leaseSeconds??900;
+      const extension=setInterval(()=>{
+        void this.queue.extendLease(claim,leaseSeconds).catch(()=>{
+          this.lastErrorCode="transform_lease_extension_failed";
+        });
+      },Math.max(30_000,Math.floor(leaseSeconds*1_000/3)));
+      extension.unref();
+      try{
+        const outcome=await this.processor.process(claim);
+        if(outcome.status==="completed"){
+          this.lastCompletionAt=new Date().toISOString();
+          this.lastErrorCode=null;
+        }else{
+          this.lastErrorCode=outcome.failure.code;
+        }
+      }catch{
+        this.lastErrorCode="transform_job_processing_failed";
+      }finally{
+        clearInterval(extension);
+        this.activeJobs-=1;
+      }
     }
   }
 

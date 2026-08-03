@@ -5,10 +5,6 @@
 -- rerun against the CI database.
 BEGIN;
 
-CREATE ROLE albert_identity_test_runtime
-  NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-GRANT transform_rw TO albert_identity_test_runtime;
-
 -- Seed a cache row as the administrative test identity. The first real graph
 -- transition must invalidate it through the SECURITY DEFINER boundary.
 INSERT INTO semantic_internal.result_cache (
@@ -18,9 +14,50 @@ INSERT INTO semantic_internal.result_cache (
   '{"state":"verified","provenance":{}}'::jsonb,now()+interval '1 hour'
 );
 
+-- Exercise the exact production transform login and its signed tenant
+-- capability. The harness may read the test key only while it is still the
+-- administrative session; the constrained runtime receives only the bounded
+-- envelope through transaction-local state.
+SELECT set_config(
+  'albert.tenant_capability',
+  (
+    WITH active_key AS (
+      SELECT key_id,secret
+        FROM capability_internal.verification_keys
+       WHERE active_at<=clock_timestamp()
+         AND retire_at>clock_timestamp()+interval '5 minutes'
+       ORDER BY active_at DESC
+       LIMIT 1
+    ), capability AS (
+      SELECT jsonb_build_object(
+        'version',1,
+        'key_id',key_id,
+        'tenant_id','01H00000000000000000000901',
+        'audience','analytical:transform',
+        'scope','transform',
+        'subject','identity-resolution-sql',
+        'nonce','01H00000000000000000000999',
+        'issued_at',floor(extract(epoch FROM clock_timestamp()))::bigint,
+        'expires_at',floor(extract(epoch FROM clock_timestamp()))::bigint+300,
+        'evidence',jsonb_build_object('kind','identity_projection_sql')
+      ) AS payload,secret
+      FROM active_key
+    )
+    SELECT jsonb_build_object(
+      'payload',payload,
+      'signature',encode(
+        extensions.hmac(convert_to(payload::text,'utf8'),secret,'sha256'),
+        'hex'
+      )
+    )::text
+    FROM capability
+  ),
+  true
+);
+
 -- Run fixture writes and decisions as a constrained runtime login. This makes
 -- apply_identity_decision's session_user membership check executable in CI.
-SET SESSION AUTHORIZATION albert_identity_test_runtime;
+SET SESSION AUTHORIZATION albert_transform_analytical_runtime;
 SET ROLE transform_rw;
 SET LOCAL albert.tenant_id = '01H00000000000000000000901';
 
@@ -356,12 +393,13 @@ BEGIN
 END;
 $$;
 
--- The new identity tables obey the same tenant RLS fence as canonical facts.
+-- An unsigned tenant setting cannot override the signed production capability.
 SELECT set_config('albert.tenant_id','01H00000000000000000000902',true);
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM core.entity_resolution)<>0 THEN
-    RAISE EXCEPTION 'identity graph leaked through cross-tenant RLS';
+  IF core.current_tenant_id()<>'01H00000000000000000000901'
+     OR (SELECT count(*) FROM core.entity_resolution)<>2 THEN
+    RAISE EXCEPTION 'unsigned tenant context overrode the signed identity boundary';
   END IF;
 END;
 $$;
@@ -405,5 +443,103 @@ BEGIN
   END;
 END;
 $$;
+
+-- An email-less cross-source worker fallback becomes reachable immediately
+-- after its two native locations are associated. A same-name worker in a
+-- different, unassociated location must not receive a review card.
+SET SESSION AUTHORIZATION albert_transform_analytical_runtime;
+SET ROLE transform_rw;
+SET LOCAL albert.tenant_id = '01H00000000000000000000901';
+
+INSERT INTO core.location (tenant_id,id,name,timezone,sync_run_id) VALUES
+  ('01H00000000000000000000901','01H00000000000000000000982','Carlton Shop','Australia/Melbourne','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000983','Carlton Company','Australia/Melbourne','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000984','Richmond Company','Australia/Melbourne','01H00000000000000000000941');
+
+INSERT INTO core.worker (tenant_id,id,display_name,sync_run_id) VALUES
+  ('01H00000000000000000000901','01H00000000000000000000914','Jamie Example','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000915','Jamie Example','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000916','Jamie Example','01H00000000000000000000941');
+
+INSERT INTO core.entity_source_link (
+  tenant_id,link_id,entity_type,canonical_entity_id,connection_id,
+  source_object_type,source_record_id,match_method,match_status,
+  confidence_band,evidence,valid_from,sync_run_id
+) VALUES
+  ('01H00000000000000000000901','01H00000000000000000000934','location','01H00000000000000000000982','01H00000000000000000000924','Shop','shop-carlton','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000935','location','01H00000000000000000000983','01H00000000000000000000925','Company','company-carlton','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000936','location','01H00000000000000000000984','01H00000000000000000000926','Company','company-richmond','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000937','worker','01H00000000000000000000914','01H00000000000000000000924','Employee','worker-lightspeed','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000938','worker','01H00000000000000000000915','01H00000000000000000000925','Employee','worker-deputy-carlton','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941'),
+  ('01H00000000000000000000901','01H00000000000000000000939','worker','01H00000000000000000000916','01H00000000000000000000926','Employee','worker-deputy-richmond','external_id','accepted','high','{}','1970-01-01T00:00:00Z','01H00000000000000000000941');
+
+INSERT INTO semantic_internal.canonical_record_state (
+  tenant_id,canonical_table,canonical_id,source_updated_at,payload_hash,
+  batch_id,sync_run_id,connection_id,source_object_type,source_record_id,mapping_version
+) VALUES
+  ('01H00000000000000000000901','location','01H00000000000000000000982','2026-08-03T00:00:00Z',repeat('a',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000924','Shop','shop-carlton','m2-v1'),
+  ('01H00000000000000000000901','location','01H00000000000000000000983','2026-08-03T00:00:00Z',repeat('b',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000925','Company','company-carlton','m2-v1'),
+  ('01H00000000000000000000901','location','01H00000000000000000000984','2026-08-03T00:00:00Z',repeat('c',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000926','Company','company-richmond','m2-v1'),
+  ('01H00000000000000000000901','worker','01H00000000000000000000914','2026-08-03T00:00:00Z',repeat('d',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000924','Employee','worker-lightspeed','m2-v1'),
+  ('01H00000000000000000000901','worker','01H00000000000000000000915','2026-08-03T00:00:00Z',repeat('e',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000925','Employee','worker-deputy-carlton','m2-v1'),
+  ('01H00000000000000000000901','worker','01H00000000000000000000916','2026-08-03T00:00:00Z',repeat('f',64),'01H00000000000000000000942','01H00000000000000000000941','01H00000000000000000000926','Employee','worker-deputy-richmond','m2-v1');
+
+INSERT INTO semantic_internal.identity_observation (
+  tenant_id,observation_id,entity_type,connection_id,source_object_type,
+  source_record_id,deterministic_key_digests,normalized_name_digest,
+  corroborating_scope_ref,evidence_refs,linkable,sync_run_id,active
+) VALUES
+  ('01H00000000000000000000901','01H00000000000000000000991','location','01H00000000000000000000924','Shop','shop-carlton','{}',NULL,NULL,'[]',true,'01H00000000000000000000941',true),
+  ('01H00000000000000000000901','01H00000000000000000000992','location','01H00000000000000000000925','Company','company-carlton','{}',NULL,NULL,'[]',true,'01H00000000000000000000941',true),
+  ('01H00000000000000000000901','01H00000000000000000000993','location','01H00000000000000000000926','Company','company-richmond','{}',NULL,NULL,'[]',true,'01H00000000000000000000941',true),
+  ('01H00000000000000000000901','01H00000000000000000000994','worker','01H00000000000000000000924','Employee','worker-lightspeed','{}',repeat('9',64),'{"source_object_type":"Shop","source_record_id":"shop-carlton"}','[]',true,'01H00000000000000000000941',true),
+  ('01H00000000000000000000901','01H00000000000000000000995','worker','01H00000000000000000000925','Employee','worker-deputy-carlton','{}',repeat('9',64),'{"source_object_type":"Company","source_record_id":"company-carlton"}','[]',true,'01H00000000000000000000941',true),
+  ('01H00000000000000000000901','01H00000000000000000000996','worker','01H00000000000000000000926','Employee','worker-deputy-richmond','{}',repeat('9',64),'{"source_object_type":"Company","source_record_id":"company-richmond"}','[]',true,'01H00000000000000000000941',true);
+
+DO $$
+DECLARE
+  candidates jsonb:=jsonb_build_array(
+    jsonb_build_object('canonical_entity_id','01H00000000000000000000982','connection_id','01H00000000000000000000924','source_object_type','Shop','source_record_id','shop-carlton','label','Carlton Shop'),
+    jsonb_build_object('canonical_entity_id','01H00000000000000000000983','connection_id','01H00000000000000000000925','source_object_type','Company','source_record_id','company-carlton','label','Carlton Company')
+  );
+  generated bigint;
+BEGIN
+  PERFORM semantic_internal.refresh_identity_scope_digests('01H00000000000000000000901');
+  generated:=semantic_internal.generate_identity_review_candidates('01H00000000000000000000901');
+  IF generated<>0 THEN
+    RAISE EXCEPTION 'provider-local location IDs unexpectedly matched before association';
+  END IF;
+
+  PERFORM semantic_internal.apply_identity_decision(
+    '01H00000000000000000000901','01H00000000000000000000955',
+    '01H00000000000000000000965',1,'accepted','location',candidates,
+    '00000000-0000-4000-8000-000000000001','2026-08-03T00:00:04Z'
+  );
+  -- This is the exact post-decision sequence executed by the transform worker,
+  -- inside the same analytical transaction.
+  PERFORM semantic_internal.refresh_identity_scope_digests('01H00000000000000000000901');
+  generated:=semantic_internal.generate_identity_review_candidates('01H00000000000000000000901');
+  IF generated<>1 THEN
+    RAISE EXCEPTION 'location association did not immediately generate one worker review card: %',generated;
+  END IF;
+  IF (SELECT count(*) FROM semantic_internal.identity_review_projection_outbox
+       WHERE tenant_id='01H00000000000000000000901' AND entity_type='worker'
+         AND confidence_band='medium')<>1 THEN
+    RAISE EXCEPTION 'expected exactly one medium worker review projection';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM semantic_internal.identity_review_projection_outbox AS projection,
+         jsonb_array_elements(projection.candidate_links) AS candidate
+     WHERE projection.tenant_id='01H00000000000000000000901'
+       AND projection.entity_type='worker'
+       AND candidate->>'connection_id'='01H00000000000000000000926'
+  ) THEN
+    RAISE EXCEPTION 'same-name worker in a different location received a review card';
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
 
 ROLLBACK;

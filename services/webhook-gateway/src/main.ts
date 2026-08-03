@@ -1,16 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
-import {
-  S3RawObjectStore,
-  WebhookRawWriter,
-} from "../../../packages/storage/src/index.js";
+import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
+import { S3RawIngestionObjectStore } from "../../../packages/storage/src/s3-ingestion.js";
+import { SupabaseMachineSessionPool } from "../../../packages/storage/src/session-credentials.js";
 import { PgTransactionalDatabase } from "../../sync-workers/src/postgres.js";
 import { loadWebhookGatewayConfig } from "./config.js";
 import { DeputyWebhookResolver, DeputyWebhookVerifier } from "./deputy.js";
 import { WebhookGatewayHandler } from "./handler.js";
 import { WebhookStore } from "./store.js";
+import { attestWebhookDocument, createWebhookAttestor } from "./attestation.js";
 import { XeroWebhookInboxStore, XeroWebhookIngress } from "./xero-inbox.js";
 import { XeroWebhookProcessor } from "./xero-processor.js";
+import { LeaseBoundWebhookRawWriter } from "./raw-storage.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -98,6 +99,7 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 }
 
 export async function runWebhookGateway(): Promise<void> {
+  const releaseSha = assertEmbeddedServiceBuildIdentity(process.env);
   const config = loadWebhookGatewayConfig();
   // Keep Xero's latency-bounded durable ACK pool isolated from background
   // leases and fan-out. Pool saturation in object routing must never make the
@@ -116,11 +118,24 @@ export async function runWebhookGateway(): Promise<void> {
     connectionTimeoutMs: 3_000,
     statementTimeoutMs: 14_000,
   });
-  const rawObjectStore = new S3RawObjectStore(config.rawStorage);
-  const rawWriter = new WebhookRawWriter(rawObjectStore);
-  const routeStore = new WebhookStore(processorDatabase);
-  const ingressInbox = new XeroWebhookInboxStore(ingressDatabase);
-  const processorInbox = new XeroWebhookInboxStore(processorDatabase);
+  const rawSessionPool = new SupabaseMachineSessionPool(config.rawStorage);
+  const rawObjectStore = new S3RawIngestionObjectStore(
+    config.rawStorage,
+    undefined,
+    { sessionPool: rawSessionPool },
+  );
+  const attestor = createWebhookAttestor({
+    keyId: config.webhookAttestationKeyId,
+    encodedSecret: config.webhookAttestationSecret,
+  });
+  const routeStore = new WebhookStore(processorDatabase, attestor);
+  const rawWriter = new LeaseBoundWebhookRawWriter(
+    config.rawStorage,
+    routeStore,
+    rawSessionPool,
+  );
+  const ingressInbox = new XeroWebhookInboxStore(ingressDatabase, attestor);
+  const processorInbox = new XeroWebhookInboxStore(processorDatabase, attestor);
   const xeroIngress = new XeroWebhookIngress({
     signingKey: config.xeroWebhookSigningKey,
     keyring: config.xeroWebhookInboxKeyring,
@@ -143,7 +158,7 @@ export async function runWebhookGateway(): Promise<void> {
     store: routeStore,
     xero: xeroIngress,
     deputy: {
-      resolver: new DeputyWebhookResolver(processorDatabase),
+      resolver: new DeputyWebhookResolver(processorDatabase, attestor),
       verifier: new DeputyWebhookVerifier({
         encryptionKey: config.deputyWebhookEncryptionKey,
         keyId: config.deputyWebhookEncryptionKeyId,
@@ -154,14 +169,30 @@ export async function runWebhookGateway(): Promise<void> {
     raw: rawWriter,
   });
   const dependenciesReady = async () => {
+    const deputyKeyIds = [...config.deputyWebhookEncryptionKeys.keys()].sort();
+    const { document, proof } = attestWebhookDocument(
+      attestor,
+      "system.ready",
+      attestor.keyId,
+      {
+        version: 1,
+        operation: "system.ready",
+        attestationKeyId: attestor.keyId,
+        deputyKeyIds,
+      },
+    );
     await Promise.all([
       ingressDatabase.ping(),
-      processorDatabase.query("select control_plane.assert_webhook_gateway_ready()"),
       processorDatabase.query(
-        "select control_plane.assert_deputy_webhook_gateway_ready($1::text[])",
-        [[...config.deputyWebhookEncryptionKeys.keys()]],
+        `select control_plane.assert_attested_webhook_gateway_ready(
+           $1, $2, $3, $4, $5
+         )`,
+        [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
       ),
       rawObjectStore.ready(),
+      processorDatabase.query(
+        "select control_plane.assert_raw_storage_session_authority_ready('webhook')",
+      ),
       xeroProcessor.assertReady(),
     ]);
   };
@@ -193,7 +224,12 @@ export async function runWebhookGateway(): Promise<void> {
       if (request.method === "GET" && pathname === "/readyz") {
         try {
           await dependenciesReady();
-          json(response, 200, { ready: true });
+          json(response, 200, {
+            ready: true,
+            runtime: "webhook-gateway",
+            releaseSha,
+            deploymentId: config.deploymentId ?? null,
+          });
         } catch {
           json(response, 503, { ready: false });
         }

@@ -7,8 +7,11 @@ import {
 } from "../../../packages/canonical-schema/src/index.js";
 import {
   buildStagingContracts,
+  stagingColumnName,
+  stagingSchema,
   type ConnectorId,
   type ConnectorManifest,
+  type FieldCoverage,
   type StagingFieldContract,
   type StagingStreamContract,
 } from "../../../packages/connector-sdk/src/index.js";
@@ -33,6 +36,44 @@ const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
 const manifestsByConnector = new Map(manifests.map((manifest) => [manifest.id, manifest]));
 const stagingContracts = buildStagingContracts(manifests);
 const stagingByStream = new Map(stagingContracts.map((contract) => [`${contract.connectorId}:${contract.stream}`, contract]));
+const sourceAuthorityByStream = Object.freeze({
+  "lightspeed-r": Object.freeze({
+    shops: "operational_sales",
+    employees: "operational_sales",
+    categories: "product_master",
+    items: "product_master",
+    item_shops: "stock",
+    sales: "operational_sales",
+    customers: "customer_master",
+    orders: "stock",
+    order_lines: "stock",
+    payment_types: "operational_sales",
+    tax_categories: "operational_sales",
+    inventory_logs: "stock",
+  }),
+  xero: Object.freeze({
+    organisation: "statutory_finance",
+    accounts: "statutory_finance",
+    contacts: "statutory_finance",
+    invoices: "statutory_finance",
+    credit_notes: "statutory_finance",
+    payments: "cash_settlement",
+    bank_transactions: "cash_settlement",
+    manual_journals: "statutory_finance",
+    journals: "statutory_finance",
+    tax_rates: "statutory_finance",
+    tracking_categories: "statutory_finance",
+  }),
+  deputy: Object.freeze({
+    companies: "planned_shifts",
+    operational_units: "planned_shifts",
+    employees: "worked_hours",
+    rosters: "planned_shifts",
+    timesheets: "worked_hours",
+    leave: "worked_hours",
+    contacts: "worked_hours",
+  }),
+} satisfies Readonly<Record<ConnectorId, Readonly<Record<string, SourceAuthorityConcept>>>>);
 type TableConfig = Readonly<{
   rank: number;
   columns: ReadonlySet<string>;
@@ -84,7 +125,7 @@ const defaultFactAuthority: Partial<Record<CanonicalProjectionTable, SourceAutho
   commerce_refund_line: "operational_sales",
   inventory_movement: "stock",
   inventory_balance_snapshot: "stock",
-  purchase_order_line: "product_master",
+  purchase_order_line: "stock",
   finance_journal_line: "statutory_finance",
   finance_invoice_line: "statutory_finance",
   finance_bank_transaction: "cash_settlement",
@@ -97,14 +138,129 @@ export type CanonicalTransformResult = Readonly<{
   batchId: string;
   replayed: boolean;
   stagedRows: number;
+  quarantinedRows: number;
   commandCount: number;
   canonicalRows: number;
   metadataRows: number;
   qualityStatus: "passed" | "warning" | "failed" | "blocked";
+  partialQualityStatus: "passed" | "warning" | "failed" | "blocked";
+  completeQualityStatus: "passed" | "warning" | "failed" | "blocked";
   dataReadyThrough: string | null;
 }>;
 
+export type ReadinessQualityEvidence = Readonly<{
+  checkId: string;
+  status: CanonicalTransformResult["qualityStatus"] | null;
+  blocksPartialReadiness: boolean;
+}>;
+
+/**
+ * Resolve quality against the readiness tier being claimed. Bounded recent
+ * coverage may carry disclosed full-history/reconciliation limitations, while
+ * complete coverage remains gated by every mandatory readiness check.
+ */
+export function resolveReadinessQualityStatus(
+  evidence: readonly ReadinessQualityEvidence[],
+  backfillComplete: boolean,
+): CanonicalTransformResult["qualityStatus"] {
+  if (evidence.length === 0) return "blocked";
+  let failed = false;
+  let warning = false;
+  for (const check of evidence) {
+    const blocksThisTier = backfillComplete || check.blocksPartialReadiness;
+    if (check.status === null || check.status === "blocked") {
+      if (blocksThisTier) return "blocked";
+      warning = true;
+      continue;
+    }
+    if (check.status === "failed") {
+      if (blocksThisTier) failed = true;
+      else warning = true;
+      continue;
+    }
+    if (check.status === "warning") warning = true;
+  }
+  return failed ? "failed" : warning ? "warning" : "passed";
+}
+
+export type TransformCapabilityEvidence =
+  | Readonly<{
+    kind:"canonical_transform";
+    tenantId:string;
+    transformJobId:string;
+    workerId:string;
+    leaseToken:string;
+  }>
+  | Readonly<{
+    kind:"identity_projection";
+    tenantId:string;
+    projectionId:string;
+    workerId:string;
+    leaseToken:string;
+  }>
+  | Readonly<{
+    kind:"pipeline_snapshot";
+    tenantId:string;
+    authorizationId:string;
+    workerId:string;
+    leaseToken:string;
+  }>;
+
 export type CanonicalMapperRegistry = Readonly<Record<ConnectorId, CanonicalStreamMapper>>;
+
+export type IsolatedCanonicalMapping = Readonly<{
+  accepted: readonly Readonly<{
+    row: CanonicalStagingRow;
+    commands: readonly CanonicalProjectionCommand[];
+  }>[];
+  rejected: readonly Readonly<{
+    row: CanonicalStagingRow;
+    errorCode: string;
+    errorSummary: string;
+  }>[];
+}>;
+
+/**
+ * A typed source row is the atomic mapping boundary. Vendor data defects are
+ * retained as explicit rejections while valid peer rows continue through the
+ * same batch. Lineage mismatches remain systemic and are never downgraded to a
+ * quarantine record.
+ */
+export function isolateCanonicalMappings(
+  rows: readonly CanonicalStagingRow[],
+  job: CanonicalTransformBatch,
+  stream: string,
+  mappingVersion: string,
+  mapper: CanonicalStreamMapper,
+  context: CanonicalMappingContext,
+): IsolatedCanonicalMapping {
+  const accepted: Array<{
+    row: CanonicalStagingRow;
+    commands: readonly CanonicalProjectionCommand[];
+  }> = [];
+  const rejected: Array<{
+    row: CanonicalStagingRow;
+    errorCode: string;
+    errorSummary: string;
+  }> = [];
+  for (const row of rows) {
+    assertStagingLineage(row, job, mappingVersion);
+    try {
+      const commands = mapper(stream, row, context);
+      if (!Array.isArray(commands) || commands.length === 0) {
+        throw new Error(`canonical_mapper_empty:${job.connectorId}:${stream}:${row.source_record_id}`);
+      }
+      accepted.push({ row, commands });
+    } catch (error) {
+      const failure = canonicalMappingFailure(error);
+      rejected.push({ row, ...failure });
+    }
+  }
+  return Object.freeze({
+    accepted: Object.freeze(accepted),
+    rejected: Object.freeze(rejected),
+  });
+}
 
 export class CanonicalTransformPipeline {
   constructor(
@@ -117,12 +273,54 @@ export class CanonicalTransformPipeline {
     if (!mappingVersion.trim()) throw new Error("A canonical mapping version is required.");
   }
 
+  private async withTransformAuthorization<T>(
+    authorization:TransformCapabilityEvidence|undefined,
+    operation:(capability:string|undefined)=>Promise<T>,
+  ):Promise<T>{
+    if(!authorization)return operation(undefined);
+    return this.control.transaction(async(client)=>{
+      await establishControlWorkerRole(client);
+      const query=authorization.kind==="canonical_transform"
+        ? {
+          sql:`select control_plane.issue_transform_job_analytical_capability(
+                 $1::text,$2::text,$3::text,$4::text
+               ) as capability`,
+          values:[authorization.tenantId,authorization.transformJobId,
+            authorization.workerId,authorization.leaseToken] as const,
+        }
+        : authorization.kind==="identity_projection"
+          ? {
+            sql:`select control_plane.issue_identity_projection_analytical_capability(
+                   $1::text,$2::text,$3::text,$4::text
+                 ) as capability`,
+            values:[authorization.tenantId,authorization.projectionId,
+              authorization.workerId,authorization.leaseToken] as const,
+          }
+          : {
+            sql:`select control_plane.issue_transform_maintenance_analytical_capability(
+                   $1::text,$2::text,$3::text
+                 ) as capability`,
+            values:[authorization.authorizationId,authorization.workerId,
+              authorization.leaseToken] as const,
+          };
+      const result=await client.query<{capability:unknown}>(query.sql,query.values);
+      const capability=result.rows[0]?.capability;
+      if(typeof capability!=="string"||capability.length<100||capability.length>4096){
+        throw new Error("transform_analytical_capability_invalid");
+      }
+      // Keep the evidence rows locked until the analytical callback commits.
+      // Reconnect/deletion therefore cannot invalidate the generation midway.
+      return operation(capability);
+    });
+  }
+
   async transformBatch(
     job: CanonicalTransformBatch,
     stream: string,
     domains: readonly string[],
     backfillComplete: boolean,
     publishControl = true,
+    authorization?:TransformCapabilityEvidence,
   ): Promise<CanonicalTransformResult> {
     if(job.mappingVersion!==this.mappingVersion){
       throw new Error(`canonical_mapping_version_mismatch:${job.mappingVersion}`);
@@ -133,11 +331,14 @@ export class CanonicalTransformPipeline {
     if (!mapper) throw new Error(`canonical_mapper_missing:${job.connectorId}`);
     const mappingContext = await loadMappingContext(this.control, job);
 
-    const result = await this.analytical.transaction(async (client) => {
-      await establishTransformScope(client, job.tenantId);
+    const result = await this.withTransformAuthorization(authorization,(capability)=>
+      this.analytical.transaction(async (client) => {
+      await establishTransformScope(client, job.tenantId,capability);
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`canonical:${job.tenantId}`]);
       const existing = await client.query<TransformCommitRow>(
-        `select staged_rows, command_count, canonical_rows, metadata_rows, quality_status, data_ready_through
+        `select staged_rows, quarantined_rows, command_count, canonical_rows,
+                metadata_rows, quality_status,partial_quality_status,
+                complete_quality_status,data_ready_through
            from semantic_internal.canonical_transform_commits
           where tenant_id=$1 and batch_id=$2 and mapping_version=$3
           for update`,
@@ -146,16 +347,19 @@ export class CanonicalTransformPipeline {
       if (existing.rows[0]) return transformResult(job.batchId, true, existing.rows[0]);
 
       await assertLandingCommit(client, job, stream, this.mappingVersion);
-      await publishAuthorityDefaults(client, job, this.clock().toISOString());
+      await publishAuthorityDefaults(client, job);
       const rows = await loadStagingRows(client, contract, job, this.mappingVersion);
-      const commands = rows.flatMap((row) => {
-        assertStagingLineage(row, job, this.mappingVersion);
-        const mapped = mapper(stream, row, mappingContext);
-        if (!Array.isArray(mapped) || mapped.length === 0) {
-          throw new Error(`canonical_mapper_empty:${job.connectorId}:${stream}:${row.source_record_id}`);
-        }
-        return mapped.map((command) => ({ command, row }));
-      });
+      const isolated = isolateCanonicalMappings(
+        rows,job,stream,this.mappingVersion,mapper,mappingContext,
+      );
+      for (const rejection of isolated.rejected) {
+        await recordCanonicalMappingQuarantine(
+          client,job,stream,rejection.row,rejection.errorCode,rejection.errorSummary,
+        );
+      }
+      const commands = isolated.accepted.flatMap(({ row,commands: mapped }) =>
+        mapped.map((command) => ({ command,row }))
+      );
       commands.sort((left, right) => commandRank(left.command) - commandRank(right.command));
 
       let canonicalRows = 0;
@@ -183,97 +387,185 @@ export class CanonicalTransformPipeline {
         }
       }
 
+      // Healing happens only after every projection command for the accepted
+      // rows has succeeded in this transaction. A later failure rolls back the
+      // canonical writes and leaves the prior dead-letter record open.
+      for (const accepted of isolated.accepted) {
+        await resolveCanonicalMappingQuarantine(client,job,stream,accepted.row);
+      }
+
       await publishCapabilities(client, job, manifest, stream, rows);
       await publishSourceAllowlist(client, job, manifest, contract);
       await generateIdentitySuggestions(client, job.tenantId);
-      const readyThrough = latestSourceTimestamp(rows);
+      const acceptedRows = isolated.accepted.map(({ row }) => row);
+      const readyThrough = latestSourceTimestamp(acceptedRows);
       const snapshotAt = this.clock().toISOString();
-      await client.query("select quality.run_all_invariants($1,$2)", [job.tenantId, job.syncRunId]);
       const dateBounds = canonicalDateBounds(appliedCommands,previouslyMaterializedDates);
       if (dateBounds) {
         await ensureCalendarDays(client,dateBounds);
         await refreshMarts(client, job.tenantId, dateBounds);
+        await client.query(
+          "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
+          [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
+        );
       }
+      // Invariants must observe the newly refreshed marts and settlement links,
+      // never the prior committed analytical state.
+      await client.query("select quality.run_all_invariants($1,$2)", [job.tenantId, job.syncRunId]);
+      await client.query(
+        "select quality.record_canonical_mapping_quality($1,$2,$3::bigint,$4::bigint)",
+        [job.tenantId,job.syncRunId,rows.length,isolated.rejected.length],
+      );
       await client.query(
         "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb)",
         [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough })],
       );
-      const qualityStatus = await overallQualityStatus(client, job.tenantId, job.syncRunId);
-      await enqueueReadinessProjection(client, job, domains, backfillComplete, qualityStatus, readyThrough, snapshotAt);
+      const qualityStatuses = await readinessQualityStatuses(client,job.tenantId,job.syncRunId);
+      const qualityStatus=backfillComplete
+        ? qualityStatuses.complete
+        : qualityStatuses.partial;
+      await enqueueReadinessProjection(
+        client,job,domains,backfillComplete,qualityStatuses,readyThrough,snapshotAt,
+      );
       await client.query(
         `insert into semantic_internal.canonical_transform_commits (
            tenant_id,batch_id,sync_run_id,connection_id,connector_id,stream,mapping_version,
-           staged_rows,command_count,canonical_rows,metadata_rows,quality_status,data_ready_through,completed_at
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now())`,
-        [job.tenantId,job.batchId,job.syncRunId,job.connectionId,job.connectorId,stream,this.mappingVersion,rows.length,commands.length,canonicalRows,metadataRows,qualityStatus,readyThrough],
+           staged_rows,quarantined_rows,command_count,canonical_rows,metadata_rows,
+           quality_status,partial_quality_status,complete_quality_status,
+           data_ready_through,completed_at
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())`,
+        [job.tenantId,job.batchId,job.syncRunId,job.connectionId,job.connectorId,stream,
+          this.mappingVersion,rows.length,isolated.rejected.length,commands.length,
+          canonicalRows,metadataRows,qualityStatus,qualityStatuses.partial,
+          qualityStatuses.complete,readyThrough],
       );
       return {
-        batchId:job.batchId,replayed:false,stagedRows:rows.length,commandCount:commands.length,
-        canonicalRows,metadataRows,qualityStatus,dataReadyThrough:readyThrough,
+        batchId:job.batchId,replayed:false,stagedRows:rows.length,
+        quarantinedRows:isolated.rejected.length,commandCount:commands.length,
+        canonicalRows,metadataRows,qualityStatus,
+        partialQualityStatus:qualityStatuses.partial,
+        completeQualityStatus:qualityStatuses.complete,
+        dataReadyThrough:readyThrough,
       } satisfies CanonicalTransformResult;
-    });
+    }));
 
     if(publishControl){
-      await this.publishPendingControlProjections(job.tenantId, job.batchId);
-      await this.refreshDossier(job.tenantId);
+      await this.publishPendingControlProjections(job.tenantId, job.batchId,authorization);
+      await this.refreshDossier(job.tenantId,authorization);
     }
     return result;
   }
 
-  async publishPendingControlProjections(tenantId: string, batchId?: string): Promise<void> {
-    const pending = await this.analytical.transaction(async (client) => {
-      await establishTransformScope(client, tenantId);
-      const filter = batchId ? " and batch_id=$2" : "";
-      const parameters = batchId ? [tenantId,batchId] : [tenantId];
-      const readiness = await client.query<ReadinessProjectionRow>(
-        `select * from semantic_internal.readiness_projection_outbox where tenant_id=$1 and published_at is null${filter} order by created_at`,
-        parameters,
-      );
-      const reviews = await client.query<IdentityReviewProjectionRow>(
-        "select * from semantic_internal.identity_review_projection_outbox where tenant_id=$1 and published_at is null order by created_at",
-        [tenantId],
-      );
-      const stats = await client.query<PipelineStatProjectionRow>(
-        "select * from semantic_internal.pipeline_table_stats_projection_outbox where tenant_id=$1 and published_at is null order by snapshot_at,schema_name,table_name",
-        [tenantId],
-      );
-      return { readiness: readiness.rows, reviews: reviews.rows, stats: stats.rows };
-    });
-    if (!pending.readiness.length && !pending.reviews.length && !pending.stats.length) return;
+  async publishPendingControlProjections(
+    tenantId:string,
+    batchId?:string,
+    authorization?:TransformCapabilityEvidence,
+  ):Promise<void>{
+    await this.withTransformAuthorization(authorization,async(capability)=>{
+      const pending=await this.analytical.transaction(async(client)=>{
+        await establishTransformScope(client,tenantId,capability);
+        const filter=batchId?" and batch_id=$2":"";
+        const parameters=batchId?[tenantId,batchId]:[tenantId];
+        const readiness=await client.query<ReadinessProjectionRow>(
+          `select * from semantic_internal.readiness_projection_outbox where tenant_id=$1 and published_at is null${filter} order by created_at`,
+          parameters,
+        );
+        const reviews=await client.query<IdentityReviewProjectionRow>(
+          "select * from semantic_internal.identity_review_projection_outbox where tenant_id=$1 and published_at is null order by created_at",
+          [tenantId],
+        );
+        const stats=await client.query<PipelineStatProjectionRow>(
+          "select * from semantic_internal.pipeline_table_stats_projection_outbox where tenant_id=$1 and published_at is null order by snapshot_at,schema_name,table_name",
+          [tenantId],
+        );
+        return{readiness:readiness.rows,reviews:reviews.rows,stats:stats.rows};
+      });
+      if(!pending.readiness.length&&!pending.reviews.length&&!pending.stats.length)return;
 
-    await this.control.transaction(async (client) => {
-      await establishControlTransformScope(client,tenantId);
-      for (const row of pending.readiness) await projectReadiness(client, row);
-      for (const row of pending.reviews) await projectIdentityReview(client, row);
-      for (const row of pending.stats) await projectPipelineStat(client, row);
-    });
-    await this.analytical.transaction(async (client) => {
-      await establishTransformScope(client, tenantId);
-      const publishedAt = this.clock().toISOString();
-      if (pending.readiness.length) await markPublished(client,"readiness_projection_outbox","projection_id",pending.readiness.map((row)=>row.projection_id),publishedAt);
-      if (pending.reviews.length) await markPublished(client,"identity_review_projection_outbox","projection_id",pending.reviews.map((row)=>row.projection_id),publishedAt);
-      if (pending.stats.length) await markPublished(client,"pipeline_table_stats_projection_outbox","projection_id",pending.stats.map((row)=>row.projection_id),publishedAt);
+      await this.control.transaction(async(client)=>{
+        await establishControlTransformScope(client,tenantId);
+        for(const row of pending.readiness)await projectReadiness(client,row);
+        for(const row of pending.reviews)await projectIdentityReview(client,row);
+        for(const row of pending.stats)await projectPipelineStat(client,row);
+        await client.query("select control_plane.retain_pipeline_history($1::text)",[tenantId]);
+      });
+      await this.analytical.transaction(async(client)=>{
+        await establishTransformScope(client,tenantId,capability);
+        const publishedAt=this.clock().toISOString();
+        if(pending.readiness.length)await markPublished(client,"readiness_projection_outbox","projection_id",pending.readiness.map((row)=>row.projection_id),publishedAt);
+        if(pending.reviews.length)await markPublished(client,"identity_review_projection_outbox","projection_id",pending.reviews.map((row)=>row.projection_id),publishedAt);
+        if(pending.stats.length)await markPublished(client,"pipeline_table_stats_projection_outbox","projection_id",pending.stats.map((row)=>row.projection_id),publishedAt);
+        await client.query("select semantic_internal.retain_pipeline_history($1::text)",[tenantId]);
+      });
     });
   }
 
-  async snapshotAllTenants():Promise<number>{
-    const tenants=await this.control.transaction(async(client)=>{
-      await establishControlWorkerRole(client);
-      return client.query<{tenant_id:string;source_watermarks:Record<string,string|null>}>(
-        "select tenant_id,source_watermarks from control_plane.canonical_transform_tenant_watermarks()",
-      );
-    });
-    const snapshotAt=this.clock().toISOString();
-    for(const tenant of tenants.rows){
-      await this.analytical.transaction(async(client)=>{
-        await establishTransformScope(client,tenant.tenant_id);
-        await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))",[`canonical:${tenant.tenant_id}`]);
-        await client.query("select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb)",[tenant.tenant_id,snapshotAt,[],JSON.stringify(tenant.source_watermarks)]);
-      });
-      await this.publishPendingControlProjections(tenant.tenant_id);
-      await this.refreshDossier(tenant.tenant_id);
+  async snapshotAllTenants(
+    workerId:string,
+    options:Readonly<{claimBatchSize?:number;maxClaims?:number}>={},
+  ):Promise<number>{
+    if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(workerId)){
+      throw new Error("transform_snapshot_worker_id_invalid");
     }
-    return tenants.rows.length;
+    const claimBatchSize=options.claimBatchSize??8;
+    const maxClaims=options.maxClaims??20_000;
+    if(!Number.isInteger(claimBatchSize)||claimBatchSize<1||claimBatchSize>100){
+      throw new Error("transform_snapshot_claim_batch_size_invalid");
+    }
+    if(!Number.isInteger(maxClaims)||maxClaims<1||maxClaims>100_000){
+      throw new Error("transform_snapshot_max_claims_invalid");
+    }
+    const snapshotAt=this.clock().toISOString();
+    let completed=0;
+    let claimedCount=0;
+    let firstFailure:unknown;
+    while(claimedCount<maxClaims){
+      const claims=await this.control.transaction(async(client)=>{
+        await establishControlWorkerRole(client);
+        return client.query<TransformMaintenanceClaimRow>(
+          `select authorization_id,tenant_id,lease_token,expires_at,source_watermarks
+             from control_plane.claim_transform_maintenance_leases($1::text,$2::integer)`,
+          [workerId,Math.min(claimBatchSize,maxClaims-claimedCount)],
+        );
+      });
+      if(claims.rows.length===0)break;
+      claimedCount+=claims.rows.length;
+      const outcomes=await Promise.allSettled(claims.rows.map(async(claim)=>{
+        const authorization:TransformCapabilityEvidence=Object.freeze({
+          kind:"pipeline_snapshot",tenantId:claim.tenant_id,
+          authorizationId:claim.authorization_id,workerId,leaseToken:claim.lease_token,
+        });
+        await this.withTransformAuthorization(authorization,(capability)=>
+          this.analytical.transaction(async(client)=>{
+            await establishTransformScope(client,claim.tenant_id,capability);
+            await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))",[`canonical:${claim.tenant_id}`]);
+            await client.query(
+              "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb)",
+              [claim.tenant_id,snapshotAt,[],JSON.stringify(claim.source_watermarks)],
+            );
+          }),
+        );
+        await this.publishPendingControlProjections(claim.tenant_id,undefined,authorization);
+        await this.refreshDossier(claim.tenant_id,authorization);
+        await this.control.transaction(async(client)=>{
+          await establishControlWorkerRole(client);
+          await client.query(
+            "select control_plane.complete_transform_maintenance($1::text,$2::text,$3::text)",
+            [claim.authorization_id,workerId,claim.lease_token],
+          );
+        });
+      }));
+      for(const outcome of outcomes){
+        if(outcome.status==="fulfilled")completed+=1;
+        else firstFailure??=outcome.reason;
+      }
+    }
+    await this.control.transaction(async(client)=>{
+      await establishControlWorkerRole(client);
+      await client.query("select control_plane.retain_transform_maintenance_history()");
+    });
+    if(firstFailure)throw firstFailure;
+    return completed;
   }
 
   async reconcileIdentityDecisions(workerId:string,limit=25):Promise<number>{
@@ -297,20 +589,33 @@ export class CanonicalTransformPipeline {
       const claim=claimed.rows[0];
       if(!claim)break;
       try{
-        const applied=await this.analytical.transaction(async(client)=>{
-          await establishTransformScope(client,claim.tenant_id);
-          return client.query<{result:unknown}>(
-            `select semantic_internal.apply_identity_decision(
-               $1::text,$2::text,$3::text,$4::integer,$5::text,$6::text,
-               $7::jsonb,$8::uuid,$9::timestamptz
-             ) as result`,
-            [
-              claim.tenant_id,claim.decision_id,claim.identity_review_task_id,
-              Number(claim.decision_version),claim.decision,claim.entity_type,
-              JSON.stringify(claim.candidate_links),claim.decided_by,isoOrNull(claim.decided_at),
-            ],
-          );
+        const authorization:TransformCapabilityEvidence=Object.freeze({
+          kind:"identity_projection",tenantId:claim.tenant_id,
+          projectionId:claim.projection_id,workerId,leaseToken:claim.lease_token,
         });
+        const applied=await this.withTransformAuthorization(authorization,(capability)=>
+          this.analytical.transaction(async(client)=>{
+            await establishTransformScope(client,claim.tenant_id,capability);
+            const result=await client.query<{result:unknown}>(
+              `select semantic_internal.apply_identity_decision(
+                 $1::text,$2::text,$3::text,$4::integer,$5::text,$6::text,
+                 $7::jsonb,$8::uuid,$9::timestamptz
+               ) as result`,
+              [
+                claim.tenant_id,claim.decision_id,claim.identity_review_task_id,
+                Number(claim.decision_version),claim.decision,claim.entity_type,
+                JSON.stringify(claim.candidate_links),claim.decided_by,isoOrNull(claim.decided_at),
+              ],
+            );
+            // A confirmed location association can unlock email-less worker
+            // suggestions immediately. Refresh and generate in the same
+            // analytical transaction as the graph decision.
+            await client.query("select semantic_internal.refresh_identity_scope_digests($1)",[claim.tenant_id]);
+            await client.query("select semantic_internal.generate_identity_review_candidates($1)",[claim.tenant_id]);
+            return result;
+          }),
+        );
+        await this.publishPendingControlProjections(claim.tenant_id,undefined,authorization);
         await this.control.transaction(async(client)=>{
           await establishControlWorkerRole(client);
           await client.query(
@@ -357,7 +662,90 @@ export class CanonicalTransformPipeline {
     }));
   }
 
-  async refreshDossier(tenantId:string):Promise<boolean>{
+  async transformMaintenanceMetrics():Promise<Readonly<{
+    dueTenants:number;
+    activeLeases:number;
+    completed24h:number;
+    completedP95Ms:number;
+  }>>{
+    const result=await this.control.transaction(async(client)=>{
+      await establishControlWorkerRole(client);
+      return client.query<{
+        due_tenants:string|number;
+        active_leases:string|number;
+        completed_24h:string|number;
+        completed_p95_ms:string|number;
+      }>(
+        "select * from control_plane.transform_maintenance_metrics()",
+      );
+    });
+    const row=result.rows[0];
+    return Object.freeze({
+      dueTenants:Number(row?.due_tenants??0),
+      activeLeases:Number(row?.active_leases??0),
+      completed24h:Number(row?.completed_24h??0),
+      completedP95Ms:Number(row?.completed_p95_ms??0),
+    });
+  }
+
+  async transformCapacityRunMetrics(
+    workerId:string,
+    startedAt:string,
+  ):Promise<Readonly<{completed:number;completedP95Ms:number}>>{
+    if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(workerId)){
+      throw new Error("transform_capacity_worker_id_invalid");
+    }
+    if(!Number.isFinite(Date.parse(startedAt))){
+      throw new Error("transform_capacity_started_at_invalid");
+    }
+    const result=await this.control.transaction(async(client)=>{
+      await establishControlWorkerRole(client);
+      return client.query<{
+        completed_count:string|number;
+        completed_p95_ms:string|number;
+      }>(
+        "select * from control_plane.transform_capacity_run_metrics($1::text,$2::timestamptz)",
+        [workerId,startedAt],
+      );
+    });
+    const row=result.rows[0];
+    return Object.freeze({
+      completed:Number(row?.completed_count??0),
+      completedP95Ms:Number(row?.completed_p95_ms??0),
+    });
+  }
+
+  async recordTransformCapacityParticipant(input:Readonly<{
+    runId:string;
+    participantId:string;
+    workerId:string;
+    releaseSha:string;
+    startedAt:string;
+    completedAt:string;
+    completedClaims:number;
+    controlPoolAcquireP95Ms:number;
+    analyticalPoolAcquireP95Ms:number;
+    errorCount:0|1;
+  }>):Promise<void>{
+    const result=await this.control.transaction(async(client)=>{
+      await establishControlWorkerRole(client);
+      return client.query(
+        `select control_plane.record_transform_capacity_participant(
+           $1::text,$2::text,$3::text,$4::text,$5::timestamptz,$6::timestamptz,
+           $7::integer,$8::numeric,$9::numeric,$10::integer
+         )`,
+        [input.runId,input.participantId,input.workerId,input.releaseSha,
+          input.startedAt,input.completedAt,input.completedClaims,
+          input.controlPoolAcquireP95Ms,input.analyticalPoolAcquireP95Ms,input.errorCount],
+      );
+    });
+    void result;
+  }
+
+  async refreshDossier(
+    tenantId:string,
+    authorization?:TransformCapabilityEvidence,
+  ):Promise<boolean>{
     const timezoneResult=await this.control.transaction(async(client)=>{
       await establishControlTransformScope(client,tenantId);
       return client.query<{timezone:string|null}>(
@@ -373,8 +761,9 @@ export class CanonicalTransformPipeline {
     try{new Intl.DateTimeFormat("en-AU",{timeZone:timezone}).format(new Date(0));}
     catch{throw new Error("dossier_timezone_invalid");}
 
-    const source=await this.analytical.transaction(async(client)=>{
-      await establishTransformScope(client,tenantId);
+    const source=await this.withTransformAuthorization(authorization,(capability)=>
+      this.analytical.transaction(async(client)=>{
+      await establishTransformScope(client,tenantId,capability);
       return client.query<DossierSourceRow>(
         `with location_summary as (
            select coalesce(array_agg(name order by name),'{}'::text[]) as names,
@@ -452,7 +841,7 @@ export class CanonicalTransformPipeline {
            cross join seasonality left join xero_summary on true`,
         [tenantId,timezone],
       );
-    });
+    }));
     const draft=buildDossierDraft(source.rows[0]);
     if(!draft)return false;
     const published=await this.control.transaction(async(client)=>{
@@ -470,8 +859,8 @@ export class CanonicalTransformPipeline {
 
 function config(rank:number,fact:boolean,columns:readonly string[]):TableConfig{return{rank,fact,columns:new Set(columns)};}
 
-type TransformCommitRow={staged_rows:string|number;command_count:string|number;canonical_rows:string|number;metadata_rows:string|number;quality_status:CanonicalTransformResult["qualityStatus"];data_ready_through:string|Date|null};
-type ReadinessProjectionRow={projection_id:string;tenant_id:string;batch_id:string;connection_id:string;domain:string;state:string;progress:string|number;data_ready_through:string|Date|null;backfill_complete:boolean;reason_code:string|null;reason_detail:string|null;evaluated_at:string|Date};
+type TransformCommitRow={staged_rows:string|number;quarantined_rows:string|number;command_count:string|number;canonical_rows:string|number;metadata_rows:string|number;quality_status:CanonicalTransformResult["qualityStatus"];partial_quality_status:CanonicalTransformResult["qualityStatus"];complete_quality_status:CanonicalTransformResult["qualityStatus"];data_ready_through:string|Date|null};
+type ReadinessProjectionRow={projection_id:string;tenant_id:string;batch_id:string;connection_id:string;domain:string;state:string;progress:string|number;data_ready_through:string|Date|null;backfill_complete:boolean;partial_quality_status:string;complete_quality_status:string;reason_code:string|null;reason_detail:string|null;evaluated_at:string|Date};
 type IdentityReviewProjectionRow={projection_id:string;tenant_id:string;task_id:string;entity_type:string;confidence_band:string;candidate_links:unknown;evidence:unknown};
 type IdentityDecisionProjectionRow={
   tenant_id:string;projection_id:string;decision_id:string;identity_review_task_id:string;
@@ -481,6 +870,10 @@ type IdentityDecisionProjectionRow={
 };
 type IdentityDecisionProjectionMetricRow={status:string;job_count:string|number;oldest_age_seconds:string|number};
 export type IdentityDecisionProjectionMetric=Readonly<{status:string;jobCount:number;oldestAgeSeconds:number}>;
+type TransformMaintenanceClaimRow={
+  authorization_id:string;tenant_id:string;lease_token:string;
+  expires_at:string|Date;source_watermarks:Record<string,string|null>;
+};
 type PipelineStatProjectionRow={projection_id:string;tenant_id:string;snapshot_at:string|Date;schema_name:string;table_name:string;row_count:string|number;max_event_at:string|Date|null;max_ingested_at:string|Date|null;invariant_status:unknown};
 type DossierSourceRow={
   location_names:string[]|null;locations_observed_at:string|Date|null;
@@ -652,13 +1045,29 @@ function monthName(value:string|Date|null):string|null{
   return new Intl.DateTimeFormat("en-AU",{month:"long",timeZone:"UTC"}).format(new Date(iso));
 }
 
-function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null};}
+function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),quarantinedRows:Number(row.quarantined_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,partialQualityStatus:row.partial_quality_status,completeQualityStatus:row.complete_quality_status,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null};}
 
-async function establishTransformScope(client:PostgresQueryClient,tenantId:string):Promise<void>{
+async function establishTransformScope(
+  client:PostgresQueryClient,
+  tenantId:string,
+  capability?:string,
+):Promise<void>{
   await client.query("set local role transform_rw");
+  if(capability){
+    await client.query("select set_config('albert.tenant_capability',$1,true)",[capability]);
+  }
   await client.query("select set_config('albert.tenant_id',$1,true)",[tenantId]);
-  const role=await client.query<{role_name:string;tenant_scope:string|null}>("select current_user as role_name,current_setting('albert.tenant_id',true) as tenant_scope");
+  const role=await client.query<{role_name:string;tenant_scope:string|null}>(
+    "select current_user as role_name,core.current_tenant_id() as tenant_scope",
+  );
   if(role.rows[0]?.role_name!=="transform_rw"||role.rows[0]?.tenant_scope!==tenantId)throw new Error("transform_scope_not_established");
+  // Serialize every analytical transform transaction against the exclusive
+  // tenant lock used by purge. This also fences a still-valid capability that
+  // was issued just before deletion began.
+  await client.query(
+    "select pg_advisory_xact_lock_shared(hashtextextended('deletion:'||$1,0))",
+    [tenantId],
+  );
 }
 
 async function establishControlTransformScope(client:PostgresQueryClient,tenantId:string):Promise<void>{
@@ -754,6 +1163,23 @@ function assertStagingLineage(
   )throw new Error(`canonical_staging_lineage_mismatch:${row.namespaced_source_key}`);
 }
 
+function canonicalMappingFailure(error:unknown):Readonly<{
+  errorCode:string;
+  errorSummary:string;
+}>{
+  const message=error instanceof Error?error.message:"canonical_mapping_rejected";
+  const sourceCode=(message.split(":",1)[0]??"canonical_mapping_rejected")
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g,"_")
+    .replace(/^[^a-z]+/,"")
+    .slice(0,100);
+  const stableCode=sourceCode||"mapping_rejected";
+  return Object.freeze({
+    errorCode:`canonical.${stableCode}`,
+    errorSummary:`Canonical mapper rejected this typed source record (${stableCode}).`,
+  });
+}
+
 async function assertLandingCommit(client:PostgresQueryClient,job:CanonicalTransformBatch,stream:string,mappingVersion:string):Promise<void>{
   const landed=await client.query<{staged_record_count:string|number}>(
     `select landing.staged_record_count
@@ -789,6 +1215,44 @@ async function loadStagingRows(client:PostgresQueryClient,contract:StagingStream
   return [...result.rows];
 }
 
+async function recordCanonicalMappingQuarantine(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  stream:string,
+  row:CanonicalStagingRow,
+  errorCode:string,
+  errorSummary:string,
+):Promise<void>{
+  await client.query(
+    `select semantic_internal.record_canonical_mapping_quarantine(
+       $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,
+       $7::text,$8::text,$9::text,$10::text,$11::text,$12::text
+     )`,
+    [
+      job.tenantId,job.connectionId,job.syncRunId,job.batchId,stream,
+      row.source_object_type,row.source_record_id,row.payload_hash,
+      row.mapping_version,errorCode,"$mapper",errorSummary,
+    ],
+  );
+}
+
+async function resolveCanonicalMappingQuarantine(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  stream:string,
+  row:CanonicalStagingRow,
+):Promise<void>{
+  await client.query(
+    `select semantic_internal.resolve_canonical_mapping_quarantine(
+       $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text
+     )`,
+    [
+      job.tenantId,job.connectionId,job.syncRunId,job.batchId,stream,
+      row.source_object_type,row.source_record_id,row.payload_hash,
+    ],
+  );
+}
+
 function commandRank(command:CanonicalProjectionCommand):number{
   if(command.kind==="dimension"||command.kind==="fact")return tableColumns[command.table].rank;
   if(command.kind==="category_assignment")return 60;
@@ -818,12 +1282,24 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
   if(!command.sourceObjectType.trim()||!command.sourceRecordId.trim())throw new Error("canonical_source_identity_missing");
   const entries=Object.entries(command.values);
   if(!entries.length)throw new Error(`canonical_values_empty:${command.table}`);
+  if(command.updateOnly&&!command.tombstone)throw new Error(`canonical_update_only_without_tombstone:${command.table}`);
   for(const [column] of entries)if(!table.columns.has(column))throw new Error(`canonical_field_unsupported:${command.table}.${column}`);
   if(command.tombstone&&table.fact&&!entries.some(([column])=>column==="voided"||column==="status"||column==="order_status")){
     throw new Error(`canonical_tombstone_unrepresented:${command.table}`);
   }
-  if(table.fact)await assertAuthority(client,job,command);
   const id=canonicalId(job.tenantId,command.table,job.connectionId,command.sourceObjectType,command.sourceRecordId);
+  let persisted:Readonly<Record<string,unknown>>|undefined;
+  if(command.updateOnly){
+    const existing=await client.query<Record<string,unknown>>(
+      `select * from core.${quoteIdentifier(command.table)} where tenant_id=$1 and id=$2`,
+      [job.tenantId,id],
+    );
+    persisted=existing.rows[0];
+    if(!persisted)return{applied:false,previousDates:[]};
+  }
+  const resolved:Record<string,unknown>={};
+  for(const [column,value] of entries)resolved[column]=await resolveValue(client,job,value);
+  if(table.fact)await assertAuthority(client,job,row,command,resolved,persisted);
   if(!await claimCanonicalRecordVersion(
     client,job,row,command.table,id,command.sourceObjectType,command.sourceRecordId,
   ))return{applied:false,previousDates:[]};
@@ -839,14 +1315,32 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
     const prior=dateOnlyOrNull(previous.rows[0]?.event_date);
     if(prior)previousDates.push(prior);
   }
-  const resolved:Record<string,unknown>={};
-  for(const [column,value] of entries)resolved[column]=await resolveValue(client,job,value);
+  if(command.updateOnly){
+    const mutable=Object.keys(resolved);
+    const updated=await client.query<{id:string}>(
+      `update core.${quoteIdentifier(command.table)} set
+         ${mutable.map((column,index)=>`${quoteIdentifier(column)}=$${index+3}`).join(",")},
+         sync_run_id=$${mutable.length+3},updated_at=now()
+       where tenant_id=$1 and id=$2
+       returning id`,
+      [job.tenantId,id,...Object.values(resolved),row.sync_run_id],
+    );
+    if(!updated.rows[0])return{applied:false,previousDates};
+    if(command.table==="legal_entity"&&job.connectorId==="xero"){
+      await publishXeroLegalEntityAuthorityDefaults(client,job,row.sync_run_id,id);
+    }
+    if(command.entityType)await upsertDirectEntityLink(client,job,row,command,id);
+    return{applied:true,previousDates};
+  }
   const values:Record<string,unknown>={tenant_id:job.tenantId,id,...resolved,sync_run_id:row.sync_run_id};
   if(table.fact){values.primary_connection_id=job.connectionId;values.primary_source_record_id=command.sourceRecordId;values.source_updated_at=isoOrNull(row.source_updated_at);}
   const columns=Object.keys(values);const parameters=Object.values(values);
   const mutable=columns.filter((column)=>!['tenant_id','id','primary_connection_id','primary_source_record_id','sync_run_id'].includes(column));
   const conflict=mutable.length?`do update set ${mutable.map((column)=>`${quoteIdentifier(column)}=excluded.${quoteIdentifier(column)}`).join(",")},updated_at=now()`:"do nothing";
   await client.query(`insert into core.${quoteIdentifier(command.table)} (${columns.map(quoteIdentifier).join(",")}) values (${columns.map((_,index)=>`$${index+1}`).join(",")}) on conflict (tenant_id,id) ${conflict}`,parameters);
+  if(command.table==="legal_entity"&&job.connectorId==="xero"){
+    await publishXeroLegalEntityAuthorityDefaults(client,job,row.sync_run_id,id);
+  }
   if(command.entityType)await upsertDirectEntityLink(client,job,row,command,id);
   if(command.table==="commerce_order")await upsertOrderObservation(client,job,row,command,id);
   if(command.table==="commerce_order_line")await upsertOrderLineObservation(client,job,row,command,id);
@@ -856,6 +1350,31 @@ async function executeUpsert(client:PostgresQueryClient,job:CanonicalTransformBa
 async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBatch,value:unknown):Promise<unknown>{
   if(!isCanonicalSourceReference(value))return value;
   const ref=value.sourceRef;const connectionId=ref.connectionId??job.connectionId;
+  if(ref.lookup?.kind==="employment_episode_on"){
+    if(ref.table!=="employment_episode")throw new Error("canonical_employment_episode_lookup_scope_invalid");
+    const businessDate=dateOnlyOrNull(ref.lookup.businessDate);
+    if(!businessDate)throw new Error("canonical_employment_episode_lookup_date_invalid");
+    const workerId=canonicalId(
+      job.tenantId,"worker",connectionId,
+      ref.lookup.workerSourceObjectType,ref.lookup.workerSourceRecordId,
+    );
+    const matched=await client.query<{id:string}>(
+      `select episode.id
+         from core.employment_episode episode
+        where episode.tenant_id=$1 and episode.worker_id=$2
+          and episode.effective_from<=$3::date
+          and (episode.effective_to is null or episode.effective_to>$3::date)
+        order by episode.effective_from desc,episode.id
+        limit 2`,
+      [job.tenantId,workerId,businessDate],
+    );
+    if(matched.rows.length===1)return matched.rows[0]!.id;
+    if(ref.nullable&&matched.rows.length===0)return null;
+    throw new Error(matched.rows.length
+      ? `canonical_employment_episode_ambiguous:${ref.lookup.workerSourceRecordId}:${businessDate}`
+      : `canonical_employment_episode_missing:${ref.lookup.workerSourceRecordId}:${businessDate}`
+    );
+  }
   if(ref.lookup?.kind==="xero_gl_account_code"){
     if(ref.table!=="gl_account"||connectionId!==job.connectionId)throw new Error("canonical_natural_key_scope_invalid");
     const matched=await client.query<{source_record_id:string;source_object_type:string}>(
@@ -870,7 +1389,6 @@ async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBat
       const row=matched.rows[0]!;const id=canonicalId(job.tenantId,"gl_account",connectionId,row.source_object_type,row.source_record_id);
       const exists=await client.query<{present:number}>("select 1 as present from core.gl_account where tenant_id=$1 and id=$2",[job.tenantId,id]);
       if(exists.rows[0])return id;
-      if(ref.nullable)return null;
       throw new Error(`canonical_reference_missing:gl_account:${ref.lookup.value}`);
     }
     if(ref.nullable&&matched.rows.length===0)return null;
@@ -884,7 +1402,6 @@ async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBat
   const target=tableColumns[ref.table];if(!target||ref.table==="calendar_day")throw new Error(`canonical_reference_table_unsupported:${ref.table}`);
   const exists=await client.query<{present:number}>(`select 1 as present from core.${quoteIdentifier(ref.table)} where tenant_id=$1 and id=$2`,[job.tenantId,id]);
   if(exists.rows[0])return id;
-  if(ref.nullable)return null;
   throw new Error(`canonical_reference_missing:${ref.table}:${ref.sourceObjectType}:${ref.sourceRecordId}`);
 }
 
@@ -947,24 +1464,134 @@ async function claimCanonicalRecordVersion(
   return Boolean(claimed.rows[0]);
 }
 
-async function assertAuthority(client:PostgresQueryClient,job:CanonicalTransformBatch,command:CanonicalUpsertCommand):Promise<void>{
+type ResolvedAuthorityScope=Readonly<{
+  type:"account"|"location"|"legal_entity";
+  id:string;
+}>;
+
+async function assertAuthority(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  row:CanonicalStagingRow,
+  command:CanonicalUpsertCommand,
+  resolved:Readonly<Record<string,unknown>>,
+  persisted:Readonly<Record<string,unknown>>|undefined,
+):Promise<void>{
   const concept=command.authorityConcept??defaultFactAuthority[command.table];
   if(!concept)throw new Error(`canonical_authority_undefined:${command.table}`);
-  const result=await client.query<{authoritative_connection_id:string}>(
-    `select authoritative_connection_id from core.source_authority
-      where tenant_id=$1 and concept=$2 and scope_type='tenant' and scope_id=$1 and effective_to is null`,
-    [job.tenantId,concept],
+  const scope=await resolvedAuthorityScope(client,job,command,resolved,persisted);
+  const effectiveAt=authorityEffectiveAt(command,resolved,persisted,row);
+  await client.query(
+    `select core.install_default_source_authority(
+       $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::timestamptz
+     )`,
+    [job.tenantId,concept,scope.type,scope.id,job.connectionId,row.sync_run_id,new Date(0).toISOString()],
   );
-  if(result.rows.length!==1||result.rows[0]?.authoritative_connection_id!==job.connectionId)throw new Error(`canonical_non_authoritative:${concept}:${job.connectionId}`);
+  await client.query(
+    `select core.assert_source_authority(
+       $1::text,$2::text,$3::text,$4::text,$5::text,$6::timestamptz
+     )`,
+    [job.tenantId,concept,scope.type,scope.id,job.connectionId,effectiveAt],
+  );
 }
 
-async function publishAuthorityDefaults(client:PostgresQueryClient,job:CanonicalTransformBatch,effectiveFrom:string):Promise<void>{
+function authorityEffectiveAt(
+  command:CanonicalUpsertCommand,
+  resolved:Readonly<Record<string,unknown>>,
+  persisted:Readonly<Record<string,unknown>>|undefined,
+  row:CanonicalStagingRow,
+):string{
+  const preferredColumns:Partial<Record<CanonicalProjectionTable,readonly string[]>>={
+    commerce_order:["ordered_at"],commerce_order_line:["ordered_at"],
+    commerce_payment:["paid_at"],commerce_refund_line:["refunded_at"],
+    inventory_movement:["occurred_at"],inventory_balance_snapshot:["snapshot_at"],
+    purchase_order_line:["ordered_at"],finance_journal_line:["posted_at"],
+    finance_invoice_line:["issued_at"],finance_bank_transaction:["transaction_at"],
+    workforce_shift:["starts_at"],workforce_time_entry:["starts_at"],
+    workforce_leave:["starts_at"],
+  };
+  for(const column of preferredColumns[command.table]??[]){
+    const value=Object.prototype.hasOwnProperty.call(resolved,column)
+      ?resolved[column]
+      :persisted?.[column];
+    const timestamp=isoOrNull(value);
+    if(timestamp)return timestamp;
+  }
+  return thisInstant(row);
+}
+
+async function resolvedAuthorityScope(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  command:CanonicalUpsertCommand,
+  resolved:Readonly<Record<string,unknown>>,
+  persisted:Readonly<Record<string,unknown>>|undefined,
+):Promise<ResolvedAuthorityScope>{
+  const value=(column:string):unknown=>Object.prototype.hasOwnProperty.call(resolved,column)
+    ?resolved[column]
+    :persisted?.[column];
+  if(command.table==="finance_journal_line"||command.table==="finance_invoice_line"||
+     command.table==="finance_bank_transaction"){
+    return {type:"legal_entity",id:requiredResolvedScopeId(command.table,"legal_entity_id",value("legal_entity_id"))};
+  }
+  if(command.table==="commerce_order"||command.table==="commerce_order_line"||
+     command.table==="commerce_payment"||command.table==="commerce_refund_line"||
+     command.table==="workforce_shift"||command.table==="workforce_time_entry"){
+    return {type:"location",id:requiredResolvedScopeId(command.table,"location_id",value("location_id"))};
+  }
+  if(command.table==="workforce_leave"){
+    const locationId=value("location_id");
+    return typeof locationId==="string"&&locationId
+      ?{type:"location",id:locationId}
+      :{type:"account",id:job.connectionId};
+  }
+  if(command.table==="inventory_movement"||command.table==="inventory_balance_snapshot"||
+     command.table==="purchase_order_line"){
+    const scopedStockLocationId=value("stock_location_id");
+    if((scopedStockLocationId===null||scopedStockLocationId===undefined)&&command.table==="purchase_order_line"){
+      return {type:"account",id:job.connectionId};
+    }
+    const stockLocationId=requiredResolvedScopeId(command.table,"stock_location_id",scopedStockLocationId);
+    const location=await client.query<{location_id:string}>(
+      `select location_id from core.stock_location where tenant_id=$1 and id=$2`,
+      [job.tenantId,stockLocationId],
+    );
+    const locationId=location.rows[0]?.location_id;
+    if(!locationId)throw new Error(`canonical_authority_scope_missing:${command.table}:location_id`);
+    return {type:"location",id:locationId};
+  }
+  throw new Error(`canonical_authority_scope_undefined:${command.table}`);
+}
+
+function requiredResolvedScopeId(table:CanonicalProjectionTable,column:string,value:unknown):string{
+  if(typeof value!=="string"||!value.trim())throw new Error(`canonical_authority_scope_missing:${table}:${column}`);
+  return value;
+}
+
+async function publishAuthorityDefaults(client:PostgresQueryClient,job:CanonicalTransformBatch):Promise<void>{
+  if(job.connectorId==="xero")return;
   for(const concept of defaultAuthority[job.connectorId]){
-    const id=deterministicCanonicalId(["authority-v1",job.tenantId,concept,"tenant",job.tenantId]);
     await client.query(
-      `insert into core.source_authority (tenant_id,id,concept,scope_type,scope_id,authoritative_connection_id,effective_from,sync_run_id)
-       values ($1,$2,$3,'tenant',$1,$4,$5,$6) on conflict do nothing`,
-      [job.tenantId,id,concept,job.connectionId,effectiveFrom,job.syncRunId],
+      `select core.install_default_source_authority(
+         $1::text,$2::text,'account'::text,$3::text,$3::text,$4::text,$5::timestamptz
+       )`,
+      [job.tenantId,concept,job.connectionId,job.syncRunId,new Date(0).toISOString()],
+    );
+  }
+}
+
+async function publishXeroLegalEntityAuthorityDefaults(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  syncRunId:string,
+  legalEntityId:string,
+):Promise<void>{
+  for(const concept of defaultAuthority.xero){
+    await client.query(
+      `select core.install_default_source_authority(
+         $1::text,$2::text,'legal_entity'::text,$3::text,$4::text,$5::text,$6::timestamptz
+       )`,
+      [job.tenantId,concept,legalEntityId,job.connectionId,syncRunId,new Date(0).toISOString()],
     );
   }
 }
@@ -1034,12 +1661,22 @@ async function persistIdentityHint(client:PostgresQueryClient,job:CanonicalTrans
   const observationId=deterministicCanonicalId(["identity-observation-v1",job.tenantId,command.entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId]);
   const keys=Object.fromEntries(Object.entries(command.deterministicKeys).filter((entry):entry is [string,string]=>Boolean(entry[1])).map(([key,value])=>[key,identityDigest(job.tenantId,value)]));
   const evidenceRefs=normalizedIdentityEvidenceRefs(command);
+  const corroboratingScopeRef=normalizedCorroboratingScopeRef(command);
   await client.query(
-    `insert into semantic_internal.identity_observation (tenant_id,observation_id,entity_type,connection_id,source_object_type,source_record_id,external_id_digest,deterministic_key_digests,normalized_name_digest,corroborating_scope_digest,evidence_refs,linkable,sync_run_id,source_updated_at,active)
-     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11::jsonb,$12,$13,$14,$15)
-     on conflict (tenant_id,observation_id) do update set external_id_digest=excluded.external_id_digest,deterministic_key_digests=excluded.deterministic_key_digests,normalized_name_digest=excluded.normalized_name_digest,corroborating_scope_digest=excluded.corroborating_scope_digest,evidence_refs=excluded.evidence_refs,linkable=excluded.linkable,sync_run_id=excluded.sync_run_id,source_updated_at=excluded.source_updated_at,active=excluded.active`,
-    [job.tenantId,observationId,command.entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId,command.externalId?identityDigest(job.tenantId,`${job.connectorId}:${command.sourceObjectType}:${command.externalId}`):null,JSON.stringify(keys),command.normalizedName?identityDigest(job.tenantId,command.normalizedName):null,command.corroboratingScope?identityDigest(job.tenantId,`${job.connectorId}:${command.corroboratingScope}`):null,JSON.stringify(evidenceRefs),command.evidenceOnly!==true,row.sync_run_id,isoOrNull(row.source_updated_at),!row.tombstone],
+    `insert into semantic_internal.identity_observation (tenant_id,observation_id,entity_type,connection_id,source_object_type,source_record_id,external_id_digest,deterministic_key_digests,normalized_name_digest,corroborating_scope_digest,corroborating_scope_ref,evidence_refs,linkable,sync_run_id,source_updated_at,active)
+     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16)
+     on conflict (tenant_id,observation_id) do update set external_id_digest=excluded.external_id_digest,deterministic_key_digests=excluded.deterministic_key_digests,normalized_name_digest=excluded.normalized_name_digest,corroborating_scope_digest=excluded.corroborating_scope_digest,corroborating_scope_ref=excluded.corroborating_scope_ref,evidence_refs=excluded.evidence_refs,linkable=excluded.linkable,sync_run_id=excluded.sync_run_id,source_updated_at=excluded.source_updated_at,active=excluded.active`,
+    [job.tenantId,observationId,command.entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId,command.externalId?identityDigest(job.tenantId,`${job.connectorId}:${command.sourceObjectType}:${command.externalId}`):null,JSON.stringify(keys),command.normalizedName?identityDigest(job.tenantId,command.normalizedName):null,corroboratingScopeRef?null:command.corroboratingScope?identityDigest(job.tenantId,`${job.connectorId}:${command.corroboratingScope}`):null,corroboratingScopeRef?JSON.stringify(corroboratingScopeRef):null,JSON.stringify(evidenceRefs),command.evidenceOnly!==true,row.sync_run_id,isoOrNull(row.source_updated_at),!row.tombstone],
   );
+}
+
+function normalizedCorroboratingScopeRef(command:CanonicalIdentityHintCommand):Readonly<{source_object_type:string;source_record_id:string}>|null{
+  const ref=command.corroboratingScopeRef;if(!ref)return null;
+  const sourceObjectType=ref.sourceObjectType.trim();const sourceRecordId=ref.sourceRecordId.trim();
+  if(!sourceObjectType||sourceObjectType.length>160||!sourceRecordId||sourceRecordId.length>500){
+    throw new Error("identity_corroborating_scope_reference_invalid");
+  }
+  return Object.freeze({source_object_type:sourceObjectType,source_record_id:sourceRecordId});
 }
 
 function normalizedIdentityEvidenceRefs(command:CanonicalIdentityHintCommand):readonly Readonly<{source_object_type:string;source_record_id:string}>[]{
@@ -1064,51 +1701,116 @@ function normalizedIdentityEvidenceRefs(command:CanonicalIdentityHintCommand):re
 function identityDigest(tenantId:string,value:string):string{return createHash("sha256").update(`${tenantId}\u001f${value.trim().toLowerCase()}`).digest("hex");}
 
 async function generateIdentitySuggestions(client:PostgresQueryClient,tenantId:string):Promise<void>{
+  await client.query("select semantic_internal.refresh_identity_scope_digests($1)",[tenantId]);
   await client.query("select semantic_internal.generate_identity_review_candidates($1)",[tenantId]);
 }
 
 async function publishCapabilities(client:PostgresQueryClient,job:CanonicalTransformBatch,manifest:ConnectorManifest,stream:string,rows:readonly CanonicalStagingRow[]):Promise<void>{
   const through=latestSourceTimestamp(rows);
   for(const [capability,declared] of Object.entries(manifest.capabilities)){
-    const relevant=capabilityRelevantToStream(job.connectorId,capability,stream);
-    if(!relevant)continue;
-    const available=declared==="full"||declared==="partial";
+    if(!declared.streams.includes(stream))continue;
+    const eligibleRows=rows.filter((row)=>!row.tombstone);
+    const coverageFields=Object.fromEntries((declared.coverageFields??[]).map((sourceField)=>{
+      const field=stagingColumnName(sourceField);
+      const observedRecords=eligibleRows.filter((row)=>observedCapabilityValue(row[field],declared.nonZeroCoverage===true)).length;
+      return [sourceField,Object.freeze({
+        observedRecords,
+        eligibleRecords:eligibleRows.length,
+        ratio:eligibleRows.length===0?0:observedRecords/eligibleRows.length,
+      })];
+    }));
+    const nonNullRecords=eligibleRows.filter((row)=>(declared.coverageFields??[]).some((sourceField)=>
+      observedCapabilityValue(row[stagingColumnName(sourceField)],declared.nonZeroCoverage===true),
+    )).length;
+    const coverage={
+      stream,
+      observedRecords:eligibleRows.length,
+      eligibleRecords:eligibleRows.length,
+      nonNullRecords,
+      ratio:eligibleRows.length===0?0:nonNullRecords/eligibleRows.length,
+      fields:coverageFields,
+    };
+    const support=observedCapabilitySupport(declared.support,declared.requiresObservedCoverage===true,nonNullRecords);
+    const available=support==="full"||support==="partial";
+    const reasonCode=support==="unavailable"
+      ? declared.support==="unavailable"?"connector_unavailable":"required_fields_not_observed"
+      : support==="partial"?"partial_coverage":"canonical_stream_observed";
     await client.query(
-      `insert into semantic_internal.tenant_capability (tenant_id,capability,source_key,connection_id,connector_id,available,reason_code,pack_version,source_watermark,evaluated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
-       on conflict (tenant_id,capability,source_key) do update set available=excluded.available,reason_code=excluded.reason_code,pack_version=excluded.pack_version,source_watermark=greatest(semantic_internal.tenant_capability.source_watermark,excluded.source_watermark),evaluated_at=now()`,
-      [job.tenantId,capability,`${job.connectorId}:${job.connectionId}`,job.connectionId,job.connectorId,available,available?(declared==="partial"?"partial_coverage":null):declared==="unknown"?"live_probe_required":"connector_unavailable",manifest.packVersion,through],
+      `insert into semantic_internal.tenant_capability (
+         tenant_id,capability,source_key,connection_id,connector_id,available,
+         support,reason_code,reason_detail,coverage,pack_version,source_watermark,evaluated_at
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,now())
+       on conflict (tenant_id,capability,source_key) do update set
+         available=excluded.available,support=excluded.support,
+         reason_code=excluded.reason_code,reason_detail=excluded.reason_detail,
+         coverage=excluded.coverage,pack_version=excluded.pack_version,
+         source_watermark=greatest(semantic_internal.tenant_capability.source_watermark,excluded.source_watermark),
+         evaluated_at=now()`,
+      [job.tenantId,capability,`${job.connectorId}:${job.connectionId}:canonical:${stream}`,job.connectionId,job.connectorId,available,support,reasonCode,declared.reason,JSON.stringify(coverage),manifest.packVersion,through],
     );
   }
 }
 
-function capabilityRelevantToStream(connectorId:ConnectorId,capability:string,stream:string):boolean{
-  const exact:Record<string,readonly string[]>={
-    "lightspeed-r:commerce.order_lines":["sales"],"lightspeed-r:commerce.order_lines.worker_attribution":["sales","employees"],"lightspeed-r:commerce.order_lines.unit_cost":["sales","items"],"lightspeed-r:inventory.current_stock":["item_shops"],"lightspeed-r:inventory.historical_movements":["inventory_logs"],
-    "xero:finance.settings":["organisation","accounts","tax_rates"],"xero:finance.invoices":["invoices","credit_notes"],"xero:finance.payments":["payments"],"xero:finance.bank_transactions":["bank_transactions"],"xero:finance.general_ledger":["journals","manual_journals"],
-    "deputy:workforce.rosters":["rosters"],"deputy:workforce.timesheets":["timesheets"],"deputy:workforce.timesheets.cost":["timesheets"],"deputy:workforce.leave":["leave"],
-  };
-  const streams=exact[`${connectorId}:${capability}`];return streams?streams.includes(stream):capability.startsWith("source.webhooks")&&stream===requireManifest(connectorId).streams[0]?.id;
+function observedCapabilitySupport(
+  declared:"full"|"partial"|"unavailable"|"unknown",
+  requiresObservedCoverage:boolean,
+  observedRecords:number,
+):"full"|"partial"|"unavailable"{
+  if(declared==="unavailable")return"unavailable";
+  if(requiresObservedCoverage&&observedRecords===0)return"unavailable";
+  if(declared==="partial")return"partial";
+  return"full";
 }
 
-async function publishSourceAllowlist(client:PostgresQueryClient,job:CanonicalTransformBatch,manifest:ConnectorManifest,contract:StagingStreamContract):Promise<void>{
+function observedCapabilityValue(value:unknown,nonZero:boolean):boolean{
+  if(value===null||value===undefined)return false;
+  if(typeof value==="string"&&value.trim()==="")return false;
+  if(!nonZero)return true;
+  if(typeof value==="number")return value!==0;
+  if(typeof value==="string")return !/^(?:0+(?:\.0+)?|false|null)$/iu.test(value.trim());
+  return value!==false;
+}
+
+export async function publishSourceAllowlist(client:PostgresQueryClient,job:CanonicalTransformBatch,manifest:ConnectorManifest,contract:StagingStreamContract):Promise<void>{
   const coverage=new Map(manifest.fieldCoverage.filter((field)=>field.stream===contract.stream).map((field)=>[field.field,field]));
+  // A pack publication is an exact snapshot, not an additive patch. Retire the
+  // previous stream set first so removed, unsupported or newly sensitive fields
+  // cannot survive under an older safe classification. This runs in the same
+  // canonical transaction as the governed reactivation below.
+  await client.query(
+    `update semantic_internal.source_field_allowlist
+        set active=false,deactivated_at=now(),
+            deactivation_reason='pack_reclassified_or_removed',pack_version=$6
+      where tenant_id=$1 and connection_id=$2 and connector_id=$3
+        and source_schema=$4 and source_table=$5 and active`,
+    [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,manifest.packVersion],
+  );
   for(const field of contract.fields){
     const declared=coverage.get(field.sourceField);
-    if(!declared||declared.disposition!=="governed_extension"||field.type==="jsonb")continue;
+    if(!declared||declared.disposition!=="governed_extension"||field.type==="jsonb"||!explorationSafePii(declared.pii))continue;
     const target=declared.target??`${contract.schema}.${contract.table}.${field.column}`;
     await client.query(
-      `insert into semantic_internal.source_field_allowlist (tenant_id,connection_id,connector_id,source_schema,source_table,source_field,field_type,disposition,pii_class,authority_concept,documented_definition,pack_version,active)
-       values ($1,$2,$3,$4,$5,$6,$7,'governed_source_extension',$8,$9,$10,$11,true)
-       on conflict (tenant_id,connection_id,source_table,source_field) do update set field_type=excluded.field_type,pii_class=excluded.pii_class,authority_concept=excluded.authority_concept,documented_definition=excluded.documented_definition,pack_version=excluded.pack_version,active=true`,
-      [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,field.column,sourceFieldType(field),sourcePiiClass(field),sourceAuthorityForField(job.connectorId,target),`${manifest.displayName} ${contract.stream}.${field.sourceField}. ${target}.`,manifest.packVersion],
+      `insert into semantic_internal.source_field_allowlist (tenant_id,connection_id,connector_id,source_schema,source_table,source_field,field_type,disposition,pii_class,authority_concept,documented_definition,pack_version,active,deactivated_at,deactivation_reason)
+       values ($1,$2,$3,$4,$5,$6,$7,'governed_source_extension',$8,$9,$10,$11,true,null,null)
+       on conflict (tenant_id,connection_id,source_table,source_field) do update set connector_id=excluded.connector_id,source_schema=excluded.source_schema,field_type=excluded.field_type,pii_class=excluded.pii_class,authority_concept=excluded.authority_concept,documented_definition=excluded.documented_definition,pack_version=excluded.pack_version,active=true,deactivated_at=null,deactivation_reason=null`,
+      [job.tenantId,job.connectionId,job.connectorId,contract.schema,contract.table,field.column,sourceFieldType(field),sourcePiiClass(field),sourceAuthorityForField(job.connectorId,contract.stream,target),`${manifest.displayName} ${contract.stream}.${field.sourceField}. ${target}.`,manifest.packVersion],
     );
   }
 }
 
 function sourceFieldType(field:StagingFieldContract):string{return field.type==="numeric"?"decimal":field.type==="timestamptz"?"timestamp":field.type;}
+function explorationSafePii(value:FieldCoverage["pii"]):boolean{return value==="none"||value==="business_contact";}
 function sourcePiiClass(field:StagingFieldContract):string{if(field.pii==="none")return"none";if(field.pii==="business_contact")return"business";if(field.pii==="payroll_sensitive")return"payroll";if(field.pii==="free_text_untrusted")return"sensitive_personal";return"customer_contact";}
-function sourceAuthorityForField(connectorId:ConnectorId,target:string):SourceAuthorityConcept|undefined{if(target.includes("inventory"))return"stock";if(target.includes("workforce_shift"))return"planned_shifts";if(target.includes("workforce_"))return"worked_hours";if(target.includes("finance_")||connectorId==="xero")return"statutory_finance";if(target.includes("product"))return"product_master";if(target.includes("customer"))return"customer_master";if(target.includes("commerce"))return"operational_sales";return undefined;}
+export function sourceAuthorityForField(connectorId:ConnectorId,stream:string,target:string):SourceAuthorityConcept{
+  const connectorAuthorities:Readonly<Record<string,SourceAuthorityConcept>>=sourceAuthorityByStream[connectorId];
+  const authority=connectorAuthorities[stream];
+  if(!authority)throw new Error(`source_authority_unmapped:${connectorId}:${stream}`);
+  const expectedSourcePrefix=`${stagingSchema(connectorId)}.${stream}.`;
+  if(target.startsWith("source_")&&!target.startsWith(expectedSourcePrefix)){
+    throw new Error(`source_authority_target_mismatch:${connectorId}:${stream}:${target}`);
+  }
+  return authority;
+}
 
 type DateBounds=Readonly<{from:string;to:string}>;
 
@@ -1161,38 +1863,110 @@ async function ensureCalendarDays(client:PostgresQueryClient,bounds:DateBounds):
   );
 }
 
-async function overallQualityStatus(client:PostgresQueryClient,tenantId:string,runId:string):Promise<CanonicalTransformResult["qualityStatus"]>{
-  const result=await client.query<{status:string}>(`select case when bool_or(status='blocked') then 'blocked' when bool_or(status='failed') then 'failed' when bool_or(status='warning') then 'warning' else 'passed' end status from quality.check_result where tenant_id=$1 and run_id=$2`,[tenantId,runId]);
-  const status=result.rows[0]?.status;if(status==="passed"||status==="warning"||status==="failed"||status==="blocked")return status;return"blocked";
+async function readinessQualityStatuses(client:PostgresQueryClient,tenantId:string,runId:string):Promise<Readonly<{
+  partial:CanonicalTransformResult["qualityStatus"];
+  complete:CanonicalTransformResult["qualityStatus"];
+}>>{
+  const result=await client.query<{
+    check_id:string;status:string|null;blocks_partial_readiness:boolean;
+  }>(
+    `select expectation.check_id,result.status,
+            expectation.blocks_partial_readiness
+       from quality.check_expectation expectation
+       left join quality.check_result result
+         on result.tenant_id=$1
+        and result.run_id=$2
+        and result.check_id=expectation.check_id
+        and result.domain=expectation.domain
+      where expectation.required
+        and expectation.blocks_readiness
+      order by expectation.domain,expectation.check_id`,
+    [tenantId,runId],
+  );
+  const evidence=result.rows.map((row):ReadinessQualityEvidence=>({
+    checkId:row.check_id,
+    status:row.status==="passed"||row.status==="warning"||row.status==="failed"||row.status==="blocked"
+      ? row.status
+      : null,
+    blocksPartialReadiness:row.blocks_partial_readiness,
+  }));
+  return Object.freeze({
+    partial:resolveReadinessQualityStatus(evidence,false),
+    complete:resolveReadinessQualityStatus(evidence,true),
+  });
 }
 
-async function enqueueReadinessProjection(client:PostgresQueryClient,job:CanonicalTransformBatch,domains:readonly string[],backfillComplete:boolean,qualityStatus:CanonicalTransformResult["qualityStatus"],readyThrough:string|null,snapshotAt:string):Promise<void>{
+async function enqueueReadinessProjection(client:PostgresQueryClient,job:CanonicalTransformBatch,domains:readonly string[],backfillComplete:boolean,qualityStatuses:Readonly<{partial:CanonicalTransformResult["qualityStatus"];complete:CanonicalTransformResult["qualityStatus"]}>,readyThrough:string|null,snapshotAt:string):Promise<void>{
+  const qualityStatus=backfillComplete?qualityStatuses.complete:qualityStatuses.partial;
   for(const domain of [...new Set(domains)]){
     if(!/^[a-z][a-z0-9_]*$/.test(domain))throw new Error(`canonical_domain_invalid:${domain}`);
     const state=qualityStatus==="blocked"?"blocked":qualityStatus==="failed"?"degraded":backfillComplete?"ready_complete":"ready_partial";
     const progress=backfillComplete?1:0.8;const projectionId=deterministicCanonicalId(["readiness-v1",job.tenantId,job.batchId,domain]);
-    await client.query(`insert into semantic_internal.readiness_projection_outbox (tenant_id,projection_id,batch_id,connection_id,domain,state,progress,data_ready_through,backfill_complete,reason_code,reason_detail,evaluated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict (tenant_id,projection_id) do nothing`,[job.tenantId,projectionId,job.batchId,job.connectionId,domain,state,progress,readyThrough,backfillComplete,qualityStatus==="passed"?null:`quality_${qualityStatus}`,qualityStatus==="passed"?null:`Canonical quality outcome: ${qualityStatus}.`,snapshotAt]);
+    await client.query(`insert into semantic_internal.readiness_projection_outbox (tenant_id,projection_id,batch_id,connection_id,domain,state,progress,data_ready_through,backfill_complete,partial_quality_status,complete_quality_status,reason_code,reason_detail,evaluated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (tenant_id,projection_id) do nothing`,[job.tenantId,projectionId,job.batchId,job.connectionId,domain,state,progress,readyThrough,backfillComplete,qualityStatuses.partial,qualityStatuses.complete,qualityStatus==="passed"?null:`quality_${qualityStatus}`,qualityStatus==="passed"?null:`Canonical quality outcome: ${qualityStatus}.`,snapshotAt]);
   }
 }
 
 async function projectReadiness(client:PostgresQueryClient,row:ReadinessProjectionRow):Promise<void>{
   const connection=await client.query<{connector_key:ConnectorId}>("select connector_key from control_plane.connections where tenant_id=$1 and connection_id=$2",[row.tenant_id,row.connection_id]);
   const connectorId=connection.rows[0]?.connector_key;if(!connectorId)throw new Error("readiness_connection_missing");
-  const required=requireManifest(connectorId).streams.filter((stream)=>stream.canonicalTargets.includes(row.domain)).map((stream)=>stream.id);
+  const domainStreams=requireManifest(connectorId).streams.filter((stream)=>stream.productDomains.includes(
+    row.domain as (typeof stream.productDomains)[number],
+  ));
+  const requiredCandidates=domainStreams.filter((stream)=>stream.availability!=="optional").map((stream)=>stream.id);
+  const required=requiredCandidates.length?requiredCandidates:domainStreams.map((stream)=>stream.id);
   if(!required.length)throw new Error(`readiness_domain_not_declared:${connectorId}:${row.domain}`);
-  const cursors=await client.query<{stream:string;backfill_complete:boolean;source_watermark:string|Date|null}>(
-    "select stream,backfill_complete,source_watermark from control_plane.stream_cursors where tenant_id=$1 and connection_id=$2 and stream=any($3::text[])",
-    [row.tenant_id,row.connection_id,required],
+  const partialQuality=qualityStatus(row.partial_quality_status);
+  const completeQuality=qualityStatus(row.complete_quality_status);
+  const snapshotResult=await client.query<{snapshot:unknown}>(
+    "select control_plane.sync_readiness_inputs($1,$2,$3::text[],$4,$5,$6) snapshot",
+    [row.tenant_id,row.connection_id,required,row.batch_id,partialQuality,completeQuality],
   );
-  const byStream=new Map(cursors.rows.map((cursor)=>[cursor.stream,cursor]));
-  const complete=required.every((stream)=>byStream.get(stream)?.backfill_complete===true);
-  const completedCount=required.filter((stream)=>byStream.get(stream)?.backfill_complete===true).length;
-  const watermarks=required.map((stream)=>isoOrNull(byStream.get(stream)?.source_watermark)).filter((value):value is string=>Boolean(value)).sort();
-  const failed=row.state==="blocked"||row.state==="degraded";
-  const state=failed?row.state:complete?"ready_complete":"ready_partial";
-  const progress=failed?Number(row.progress):complete?1:Math.min(0.95,Math.max(Number(row.progress),completedCount/required.length));
-  const dataReadyThrough=watermarks.length===required.length?watermarks[0]!:isoOrNull(row.data_ready_through);
-  await client.query(`insert into control_plane.readiness (tenant_id,connection_id,domain,state,progress,data_ready_through,backfill_complete,reason_code,reason_detail,evaluated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (tenant_id,connection_id,domain) do update set state=excluded.state,progress=excluded.progress,data_ready_through=excluded.data_ready_through,backfill_complete=excluded.backfill_complete,reason_code=excluded.reason_code,reason_detail=excluded.reason_detail,evaluated_at=excluded.evaluated_at`,[row.tenant_id,row.connection_id,row.domain,state,progress,dataReadyThrough,complete,row.reason_code,row.reason_detail,isoOrNull(row.evaluated_at)]);
+  const snapshot=asJsonObject(snapshotResult.rows[0]?.snapshot);
+  const streamInputs=Array.isArray(snapshot.streams)
+    ? snapshot.streams.map((value)=>asJsonObject(value))
+    : [];
+  if(streamInputs.length!==required.length)throw new Error("readiness_stream_snapshot_incomplete");
+  const generation=Number(snapshot.connectionGeneration);
+  if(!Number.isSafeInteger(generation)||generation<1)throw new Error("readiness_generation_invalid");
+  const progressiveResult=await client.query<{
+    stream:string;status:string;covered_from:string|Date;covered_to:string|Date;
+    qualification:string;
+  }>(
+    `select stream,status,covered_from,covered_to,qualification
+       from control_plane.progressive_stream_coverage
+      where tenant_id=$1 and connection_id=$2 and connection_generation=$3
+        and phase='recent' and stream=any($4::text[])
+      order by stream`,
+    [row.tenant_id,row.connection_id,generation,required],
+  );
+  const progressiveActive=progressiveResult.rows.length>0;
+  const progressiveQueryable=!progressiveActive||(
+    progressiveResult.rows.length===required.length&&
+    progressiveResult.rows.every((coverage)=>coverage.status==="queryable"||coverage.status==="superseded")
+  );
+  const complete=streamInputs.every((stream)=>stream.backfillComplete===true);
+  const completedCount=streamInputs.filter((stream)=>stream.backfillComplete===true).length;
+  const watermarks=streamInputs.map((stream)=>typeof stream.sourceWatermark==="string"?isoOrNull(stream.sourceWatermark):null).filter((value):value is string=>Boolean(value)).sort();
+  const worst=typeof snapshot.worstState==="string"?snapshot.worstState:"blocked";
+  if(!["blocked","degraded","incomplete","warning","passed"].includes(worst))throw new Error("readiness_worst_state_invalid");
+  const anyQueryable=progressiveQueryable&&streamInputs.some((stream)=>stream.transformStatus==="succeeded");
+  const state=worst==="blocked"?"blocked":worst==="degraded"?"degraded":
+    worst==="incomplete"?(anyQueryable?"ready_partial":"transforming"):
+      complete?"ready_complete":"ready_partial";
+  const progress=worst==="blocked"||worst==="degraded"?Number(row.progress):complete?1:
+    Math.min(0.95,Math.max(Number(row.progress),completedCount/required.length));
+  const progressiveFrom=progressiveQueryable&&progressiveActive
+    ? progressiveResult.rows.map((coverage)=>requiredTimestamp(coverage.covered_from,"progressive start")).sort().at(-1)??null:null;
+  const progressiveTo=progressiveQueryable&&progressiveActive
+    ? progressiveResult.rows.map((coverage)=>requiredTimestamp(coverage.covered_to,"progressive end")).sort()[0]??null:null;
+  const dataReadyThrough=progressiveTo??(watermarks.length===required.length?watermarks[0]!:isoOrNull(row.data_ready_through));
+  const reasonCode=!progressiveQueryable?"dependency_phase_incomplete":worst==="passed"&&progressiveActive?"covered_range_qualified":worst==="passed"?null:`sync_${worst}`;
+  const reasonDetail=!progressiveQueryable
+    ? "Recent data remains unavailable until every required page and declared master dependency is transformed."
+    : progressiveActive
+      ? "Recent data is queryable only inside the disclosed covered range while deeper history continues."
+      : worst==="passed"?null:`Worst required-stream outcome for connection generation ${String(snapshot.connectionGeneration)}: ${worst}.`;
+  await client.query(`insert into control_plane.readiness (tenant_id,connection_id,domain,state,progress,data_ready_through,backfill_complete,reason_code,reason_detail,evaluated_at,covered_from,covered_to,coverage_qualification,reconciliation_status) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (tenant_id,connection_id,domain) do update set state=excluded.state,progress=excluded.progress,data_ready_through=excluded.data_ready_through,backfill_complete=excluded.backfill_complete,reason_code=excluded.reason_code,reason_detail=excluded.reason_detail,evaluated_at=excluded.evaluated_at,covered_from=excluded.covered_from,covered_to=excluded.covered_to,coverage_qualification=excluded.coverage_qualification,reconciliation_status=excluded.reconciliation_status`,[row.tenant_id,row.connection_id,row.domain,state,progress,dataReadyThrough,complete,reasonCode,reasonDetail,isoOrNull(row.evaluated_at),progressiveFrom,progressiveTo,progressiveActive?"Recent data is available only for the disclosed covered range while deeper history continues.":null,progressiveActive?"scheduled":null]);
 }
 async function projectIdentityReview(client:PostgresQueryClient,row:IdentityReviewProjectionRow):Promise<void>{await client.query(`insert into control_plane.identity_review_tasks (tenant_id,identity_review_task_id,entity_type,status,confidence_band,candidate_links,evidence) values ($1,$2,$3,'proposed',$4,$5::jsonb,$6::jsonb) on conflict (tenant_id,identity_review_task_id) do nothing`,[row.tenant_id,row.task_id,row.entity_type,row.confidence_band,JSON.stringify(row.candidate_links),JSON.stringify(row.evidence)]);}
 async function projectPipelineStat(client:PostgresQueryClient,row:PipelineStatProjectionRow):Promise<void>{await client.query(`insert into control_plane.pipeline_stats (tenant_id,snapshot_at,schema_name,table_name,row_count,max_event_at,max_ingested_at,invariant_status) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) on conflict (tenant_id,snapshot_at,schema_name,table_name) do nothing`,[row.tenant_id,isoOrNull(row.snapshot_at),row.schema_name,row.table_name,Number(row.row_count),isoOrNull(row.max_event_at),isoOrNull(row.max_ingested_at),JSON.stringify(row.invariant_status)]);}
@@ -1203,25 +1977,73 @@ function asJsonObject(value:unknown):Readonly<Record<string,unknown>>{
   if(value&&typeof value==="object"&&!Array.isArray(value))return value as Readonly<Record<string,unknown>>;
   throw new Error("identity_projection_result_invalid");
 }
-function identityProjectionFailure(error:unknown):Readonly<{
-  code:string;detail:string;retryable:boolean;retryDelaySeconds:number;
+const identityProjectionDatabaseFailures:Readonly<
+  Record<string,Readonly<{code:string;retryable:boolean}>>
+>=Object.freeze({
+  "22000":Object.freeze({code:"identity_projection_payload_conflict",retryable:false}),
+  "22023":Object.freeze({code:"identity_projection_invalid",retryable:false}),
+  "23503":Object.freeze({code:"identity_projection_integrity_violation",retryable:false}),
+  "23505":Object.freeze({code:"identity_projection_integrity_violation",retryable:false}),
+  "40001":Object.freeze({code:"identity_projection_database_conflict",retryable:true}),
+  "40P01":Object.freeze({code:"identity_projection_database_conflict",retryable:true}),
+  "42501":Object.freeze({code:"identity_projection_permission_denied",retryable:false}),
+  "57P01":Object.freeze({code:"identity_projection_database_unavailable",retryable:true}),
+  "08000":Object.freeze({code:"identity_projection_database_unavailable",retryable:true}),
+  "08003":Object.freeze({code:"identity_projection_database_unavailable",retryable:true}),
+  "08006":Object.freeze({code:"identity_projection_database_unavailable",retryable:true}),
+  P0002:Object.freeze({code:"identity_projection_candidate_stale",retryable:false}),
+});
+const trustedIdentityProjectionFailures:Readonly<
+  Record<string,Readonly<{retryable:boolean}>>
+>=Object.freeze({
+  identity_projection_result_invalid:Object.freeze({retryable:false}),
+  transform_analytical_capability_invalid:Object.freeze({retryable:false}),
+  transform_control_database_role_not_ready:Object.freeze({retryable:false}),
+  transform_control_scope_not_established:Object.freeze({retryable:false}),
+  transform_scope_not_established:Object.freeze({retryable:false}),
+});
+
+/** Persist only bounded operational codes; exception messages may contain source PII or credentials. */
+export function identityProjectionFailure(error:unknown):Readonly<{
+  code:string;retryable:boolean;retryDelaySeconds:number;
 }>{
   const record=error&&typeof error==="object"?error as Readonly<Record<string,unknown>>:{};
   const pgCode=typeof record.code==="string"?record.code:"";
-  const message=(error instanceof Error?error.message:"identity projection failed")
-    .replace(/[\u0000-\u001f\u007f]/g," ").slice(0,500);
-  const permanent=new Set(["22000","22023","P0002"]).has(pgCode)
-    || /(invalid|payload changed|candidate .*missing|no longer active|baseline is missing|review card is stale|source-owned link)/iu.test(message);
-  const normalized=(message.split(":",1)[0]||"identity_projection_failed")
-    .replace(/[^a-z0-9_.-]/giu,"_").toLowerCase().slice(0,120);
+  const databaseFailure=identityProjectionDatabaseFailures[pgCode];
+  if(databaseFailure){
+    return Object.freeze({
+      ...databaseFailure,
+      retryDelaySeconds:databaseFailure.retryable?15:1,
+    });
+  }
+  const name=typeof record.name==="string"?record.name:"";
+  if(name==="AbortError"||name==="TimeoutError"){
+    return Object.freeze({
+      code:"identity_projection_timeout",retryable:true,retryDelaySeconds:15,
+    });
+  }
+  if(name==="TypeError"||name==="SyntaxError"){
+    return Object.freeze({
+      code:"identity_projection_internal_error",retryable:false,retryDelaySeconds:1,
+    });
+  }
+  const candidate=error instanceof Error
+    ?error.message.split(":",1)[0]!.trim().toLowerCase()
+    :"";
+  const trusted=trustedIdentityProjectionFailures[candidate];
+  if(trusted){
+    return Object.freeze({
+      code:candidate,retryable:trusted.retryable,
+      retryDelaySeconds:trusted.retryable?15:1,
+    });
+  }
   return Object.freeze({
-    code:normalized||"identity_projection_failed",
-    detail:message,
-    retryable:!permanent,
-    retryDelaySeconds:15,
+    code:"unexpected_identity_projection_failure",retryable:true,retryDelaySeconds:15,
   });
 }
 function isoOrNull(value:unknown):string|null{if(value===null||value===undefined)return null;const date=new Date(value as string|number|Date);return Number.isNaN(date.valueOf())?null:date.toISOString();}
+function qualityStatus(value:unknown):CanonicalTransformResult["qualityStatus"]{if(value==="passed"||value==="warning"||value==="failed"||value==="blocked")return value;throw new Error("readiness_quality_status_invalid");}
+function requiredTimestamp(value:unknown,label:string):string{const parsed=isoOrNull(value);if(!parsed)throw new Error(`${label} is invalid`);return parsed;}
 function dateOnly(value:string|Date):string{return(value instanceof Date?value.toISOString():String(value)).slice(0,10);}
 function dateOnlyOrNull(value:unknown):string|null{
   if(value===null||value===undefined)return null;

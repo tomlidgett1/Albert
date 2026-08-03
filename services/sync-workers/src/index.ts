@@ -1,5 +1,6 @@
 export * from "./analytical-store.js";
 export * from "./canonical-contract.js";
+export * from "./connector-quality.js";
 export * from "./control-plane-store.js";
 export * from "./config.js";
 export * from "./connector-factory.js";
@@ -9,4 +10,5 @@ export * from "./oauth-session-store.js";
 export * from "./oauth-http.js";
 export * from "./postgres.js";
 export * from "./service.js";
+export * from "./token-kek-rotation.js";
 export * from "./worker.js";

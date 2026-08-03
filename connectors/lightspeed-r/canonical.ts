@@ -46,7 +46,7 @@ export const mapLightspeedCanonical: CanonicalStreamMapper = (stream, row, conte
     case "sales": return mapSale(row, context);
     case "customers": return mapCustomer(row);
     case "orders": return mapOrder(row, context);
-    case "order_lines": return mapOrderLine(row, context);
+    case "order_lines": return mapOrderLine(row);
     case "payment_types": return mapPaymentType(row);
     case "tax_categories": return mapTaxCategory(row);
     case "inventory_logs": return mapInventoryLog(row, context);
@@ -98,7 +98,9 @@ function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionComm
       externalId: id,
       deterministicKeys: { work_email: email },
       normalizedName: normalizedName(displayName),
-      corroboratingScope: scope ?? undefined,
+      corroboratingScopeRef: scope
+        ? { sourceObjectType: "Shop", sourceRecordId: scope }
+        : undefined,
     }),
   ];
 }
@@ -160,16 +162,23 @@ function mapItemShop(row: CanonicalStagingRow, context: CanonicalMappingContext)
   const id = requiredIdentifier(row.item_shop_id, "item_shops.item_shop_id");
   const itemId = requiredIdentifier(row.item_id, "item_shops.item_id");
   const shopId = requiredIdentifier(row.shop_id, "item_shops.shop_id");
-  const snapshotAt = requiredInstant(row.time_stamp ?? row.source_updated_at, "item_shops.time_stamp");
+  // ItemShop is a mutable current-balance resource. Its vendor timeStamp is a
+  // change timestamp, not the time Albert observed the balance. Reconciliation
+  // sweeps deliberately re-observe every row and preserve one snapshot a day.
+  const snapshotAt = requiredInstant(
+    row.ingested_at ?? row.time_stamp ?? row.source_updated_at,
+    "item_shops.ingested_at",
+  );
+  const snapshotDate = localCalendarDate(snapshotAt, context.timezone);
   const quantity = decimalOrZero(row.qoh, "item_shops.qoh");
   const unitCost = optionalDecimal(row.average_cost, "item_shops.average_cost");
   const stockValue = optionalDecimal(row.total_value_avg_cost, "item_shops.total_value_avg_cost")
     ?? (unitCost ? Decimal4.from(quantity).multiply(unitCost).toString() : null);
-  return [fact("inventory_balance_snapshot", row.source_object_type, id, {
+  return [fact("inventory_balance_snapshot", "ItemShopDailySnapshot", `${id}#snapshot:${snapshotDate}`, {
     product_variant_id: sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant" }),
     stock_location_id: sourceRef("stock_location", "Shop", shopId, row),
     snapshot_at: snapshotAt,
-    snapshot_date: localCalendarDate(snapshotAt, context.timezone),
+    snapshot_date: snapshotDate,
     quantity_on_hand: quantity,
     unit_cost: unitCost,
     stock_value: stockValue,
@@ -472,52 +481,37 @@ function mapOrder(row: CanonicalStagingRow, context: CanonicalMappingContext): r
       unit_cost: unitCost?.toString() ?? null,
       total_cost: totalCost instanceof Decimal4 ? totalCost.toString() : totalCost,
       currency: optionalText(row.vendor_currency_code)?.toUpperCase() ?? context.baseCurrency,
-    }, "product_master", row.tombstone);
+    }, "stock", row.tombstone);
   });
 }
 
-function mapOrderLine(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
+function mapOrderLine(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
   const id = requiredIdentifier(row.order_line_id, "order_lines.order_line_id");
-  const orderId = requiredIdentifier(row.order_id, "order_lines.order_id");
-  const itemId = requiredIdentifier(row.item_id, "order_lines.item_id");
-  const orderedAt = requiredInstant(
-    row.create_time ?? row.time_stamp ?? row.source_updated_at,
-    "order_lines.ordered_at",
-  );
-  const quantity = decimalOrZero(row.quantity, "order_lines.quantity");
-  const received = optionalDecimal(row.num_received, "order_lines.num_received")
-    ?? optionalDecimal(row.checked_in, "order_lines.checked_in")
-    ?? "0.0000";
-  const unitCost = optionalDecimal(row.vendor_cost ?? row.price, "order_lines.unit_cost");
-  const totalCost = optionalDecimal(row.total, "order_lines.total")
-    ?? (unitCost ? Decimal4.from(unitCost).multiply(quantity).toString() : null);
-  const receivedAt = Decimal4.from(received).scaled > 0n
-    ? optionalInstant(row.time_stamp ?? row.source_updated_at)
-    : null;
-  const status = row.tombstone
-    ? "cancelled"
-    : Decimal4.from(received).compare(quantity) >= 0 ? "completed"
-      : Decimal4.from(received).scaled > 0n ? "partially_received" : "open";
-  return [fact("purchase_order_line", row.source_object_type, id, {
-    purchase_order_ref: orderId,
-    line_number: stablePositiveInteger(id),
-    supplier_id: null,
-    product_variant_id: sourceRef("product_variant", "Item", itemId, row, {
-      entityType: "product_variant",
-      nullable: true,
-    }),
-    stock_location_id: null,
-    ordered_at: orderedAt,
-    expected_at: null,
-    received_at: receivedAt,
-    business_date: localCalendarDate(orderedAt, context.timezone),
-    status,
-    ordered_quantity: quantity,
-    received_quantity: received,
-    unit_cost: unitCost,
-    total_cost: totalCost,
-    currency: context.baseCurrency,
-  }, "product_master", row.tombstone)];
+  requiredIdentifier(row.order_id, "order_lines.order_id");
+  requiredIdentifier(row.item_id, "order_lines.item_id");
+  if (row.tombstone) {
+    return [{
+      kind: "fact",
+      table: "purchase_order_line",
+      sourceObjectType: row.source_object_type,
+      sourceRecordId: id,
+      values: { status: "cancelled" },
+      authorityConcept: "stock",
+      tombstone: true,
+      updateOnly: true,
+    }];
+  }
+  // Order.json is requested with the OrderLines relation and is the sole
+  // materialising projection. It carries supplier, shop, lifecycle dates,
+  // status and currency that the standalone OrderLine endpoint cannot. The
+  // standalone stream remains an identity/deletion sweep, so arrival order can
+  // never erase complete purchase-order truth with null placeholders.
+  return [{
+    kind: "metadata",
+    sourceObjectType: row.source_object_type,
+    sourceRecordId: id,
+    classification: "lookup_only",
+  }];
 }
 
 function mapPaymentType(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
@@ -625,6 +619,7 @@ function identityHint(
     deterministicKeys: Readonly<Record<string, string | undefined>>;
     normalizedName?: string;
     corroboratingScope?: string;
+    corroboratingScopeRef?: Readonly<{ sourceObjectType: string; sourceRecordId: string }>;
   }>,
 ): CanonicalProjectionCommand {
   return { kind: "identity_hint", entityType, sourceObjectType, sourceRecordId, ...fields };

@@ -89,6 +89,7 @@ export function ModelRunControls({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning`}
+        data-testid="model-run-controls-trigger"
         onClick={() => setOpen((current) => !current)}
       >
         <span className={styles.modelControlsSpark} aria-hidden="true">✦</span>
@@ -131,6 +132,7 @@ export function ModelRunControls({
                   type="button"
                   role="radio"
                   aria-checked={selected}
+                  data-model-id={model.id}
                   onClick={() => updateModel(model.id)}
                 >
                   <span className={styles.modelControlsModelMark} aria-hidden="true">
@@ -161,6 +163,7 @@ export function ModelRunControls({
               className={!value.fastMode ? styles.modelControlsSegmentActive : ""}
               type="button"
               aria-pressed={!value.fastMode}
+              data-processing-speed="standard"
               onClick={() => onChange({ ...value, fastMode: false })}
             >
               Standard
@@ -169,13 +172,14 @@ export function ModelRunControls({
               className={value.fastMode ? styles.modelControlsSegmentActive : ""}
               type="button"
               aria-pressed={value.fastMode}
+              data-processing-speed="fast"
               onClick={() => onChange({ ...value, fastMode: true })}
             >
               Fast
             </button>
           </div>
           <p className={styles.modelControlsHint}>
-            Fast uses OpenAI&apos;s priority processing tier without changing the model or reasoning level.
+            Fast uses OpenAI&apos;s Fast processing tier without changing the model or reasoning level.
           </p>
         </fieldset>
 
@@ -188,6 +192,7 @@ export function ModelRunControls({
                 key={effort}
                 type="button"
                 aria-pressed={effort === value.reasoningEffort}
+                data-reasoning-effort={effort}
                 title={`${effort} reasoning`}
                 onClick={() => updateReasoning(effort)}
               >

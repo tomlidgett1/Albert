@@ -16,10 +16,10 @@ const capabilities=new Set([...registry.metrics.values()].flatMap((metric)=>metr
 const context={tenantId:FIXTURE_TENANT_ID,role:"owner" as const,capabilities,now:FIXTURE_NOW,timezone:"Australia/Melbourne",tradingDayCutoff:"00:00",fiscalYearStartMonth:7,fiscalYearStartDay:1,weekStartsOn:1,tenantParameters:{active_customer_days:90,lapsed_customer_days:180,stock_velocity_days:30}};
 const march={type:"absolute" as const,from:"2026-03-01T00:00:00.000Z",to:"2026-04-01T00:00:00.000Z"};
 
-test("registry publishes the generated 44-contract, 7-Topic model",()=>{
-  assert.equal(registry.metrics.size,44);assert.equal(registry.topics.size,7);
+test("registry publishes the generated 47-contract, 7-Topic model",()=>{
+  assert.equal(registry.metrics.size,47);assert.equal(registry.topics.size,7);
   const domains=[...registry.metrics].reduce<Record<string,number>>((counts,[id])=>{const domain=id.split(".")[0] as string;counts[domain]=(counts[domain]??0)+1;return counts;},{});
-  assert.deepEqual(domains,{commerce:13,customers:6,inventory:7,workforce:6,finance:9,composites:3});
+  assert.deepEqual(domains,{commerce:14,customers:6,inventory:7,workforce:6,finance:9,composites:5});
 });
 
 test("canonical executable declarations contain exactly sixteen dimensions and thirteen facts",()=>{
@@ -59,6 +59,43 @@ test("composites aggregate independently then full-outer-align",()=>{
   assert.match(compiled.sql,/WITH q0 AS/);assert.match(compiled.sql,/FULL OUTER JOIN q1/);assert.equal(compiled.sourceTables.length,2);
   const salesPosition=compiled.sql.indexOf('FROM "mart"."commerce_sales_event"');const labourPosition=compiled.sql.indexOf('FROM "mart"."workforce_day_worker_location"');const alignmentPosition=compiled.sql.indexOf("FULL OUTER JOIN q1");
   assert.ok(salesPosition>=0&&labourPosition>=0&&alignmentPosition>salesPosition&&alignmentPosition>labourPosition);
+});
+
+test("flagship gross profit per worked hour is governed, capability-gated and denominator-safe",()=>{
+  const query={
+    kind:"composite" as const,topic:"workforce_sales",metrics:["gross_profit_per_labour_hour"],queries:[
+      {topic:"sales_performance",metrics:["gross_margin"],dimensions:["worker"],filters:[],time:{field:"business_date",range:march,compare:"none" as const},parameters:{}},
+      {topic:"workforce_labour",metrics:["worked_hours"],dimensions:["worker"],filters:[],time:{field:"business_date",range:march,compare:"none" as const},parameters:{}},
+    ],alignOn:["worker"],sort:[{metric:"gross_profit_per_labour_hour",dir:"desc" as const}],limit:20,parameters:{},
+  };
+  const compiled=compileSemanticQuery(query,registry,context);
+  assert.deepEqual(compiled.sourceTables,["mart.commerce_sales_event","mart.workforce_day_worker_location"]);
+  assert.match(compiled.sql,/FULL OUTER JOIN q1/u);
+  assert.match(compiled.sql,/"gross_margin"[^\n]*\/ NULLIF\([^\n]*"worked_hours"[^\n]*, 0\)/u);
+  assert.doesNotMatch(compiled.sql,/commerce_order_line[\s\S]*JOIN[\s\S]*workforce_time_entry/iu);
+  assert.ok(compiled.resultColumns.includes("gross_profit_per_labour_hour"));
+  const evidence=compiled.validationEvidence.metrics.find((metric)=>metric.metricId==="composites.gross_profit_per_labour_hour");
+  assert.ok(evidence);
+  assert.ok(evidence.testKinds.includes("aggregate_then_align"));
+  assert.ok(evidence.testKinds.includes("cost_coverage"));
+  assert.ok(evidence.testKinds.includes("worker_attribution_coverage"));
+  assert.deepEqual(evaluateFixtureQuery(query,registry,retailFixtureRows),[
+    {worker:"Jo",gross_margin:"30.0000",worked_hours:"5.0000",gross_profit_per_labour_hour:"6.0000"},
+    {worker:"Sam",gross_margin:"96.0000",worked_hours:"18.0000",gross_profit_per_labour_hour:"5.3333"},
+  ]);
+
+  const missingWorkerAttribution=new Set(context.capabilities);
+  missingWorkerAttribution.delete("commerce.order_lines.worker_attribution");
+  assert.throws(
+    ()=>compileSemanticQuery(query,registry,{...context,capabilities:missingWorkerAttribution}),
+    (error)=>error instanceof SemanticCompilerError&&error.code==="MISSING_CAPABILITY",
+  );
+  const missingCost=new Set(context.capabilities);
+  missingCost.delete("commerce.order_lines.cost");
+  assert.throws(
+    ()=>compileSemanticQuery(query,registry,{...context,capabilities:missingCost}),
+    (error)=>error instanceof SemanticCompilerError&&error.code==="MISSING_CAPABILITY",
+  );
 });
 
 test("semantic bundle hashes are canonical and sensitive to watermarks and identity graph state",()=>{

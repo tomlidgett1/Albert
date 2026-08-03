@@ -11,9 +11,10 @@ Pinned against official Xero documentation retrieved **2026-08-03**:
 - [July 2026 changelog](https://developer.xero.com/changelog)
 - [Official Accounting API SDK reference](https://xeroapi.github.io/xero-node/accounting/index.html)
 
-The default integration is a public PKCE client. A confidential web client is
-also supported explicitly, but never inferred. Refresh tokens rotate on every
-refresh and the encrypted credential vault must compare-and-swap the new pair;
+Albert V1 supports only Xero's public **Auth Code with PKCE** grant. Registering
+a confidential client or supplying a client secret is rejected rather than
+silently changing the OAuth boundary. Refresh tokens rotate on every refresh
+and the encrypted credential vault must compare-and-swap the new pair;
 Xero's documented 30-minute old-token grace window is only a recovery window,
 not normal operation. Disconnect deletes the selected Xero connection by its
 connection ID (without surprising the user by revoking unrelated tenants) and

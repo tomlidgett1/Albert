@@ -110,11 +110,15 @@ class SharedMemoryLeaseStore implements CredentialRefreshLeaseStore {
 }
 
 const shortLeaseOptions = {
-  leaseDurationMs: 90,
-  renewalIntervalMs: 25,
-  operationTimeoutMs: 1_000,
-  storeTimeoutMs: 50,
-  maximumPollMs: 10,
+  // Node's test runner executes the full contract suite concurrently. Keep the
+  // lease short enough to exercise hand-off, but comfortably above scheduler
+  // stalls caused by hundreds of parallel tests so this remains a protocol
+  // assertion rather than an event-loop timing lottery.
+  leaseDurationMs: 500,
+  renewalIntervalMs: 100,
+  operationTimeoutMs: 3_000,
+  storeTimeoutMs: 250,
+  maximumPollMs: 20,
   random: () => 0,
 } as const;
 

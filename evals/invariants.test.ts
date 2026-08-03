@@ -82,6 +82,11 @@ test("permanent invariant 1/5: tenant isolation survives compiler, database and 
       async append(record) { audits.push(record); },
       async promoteSourceField() { return "promotion-tenant-isolation"; },
     },
+    publicationEvidence: {
+      async inspect() {
+        return { registryVersion: registry.version, registryHash: "f".repeat(64), activePublicationMatches: true };
+      },
+    },
     clock: () => new Date(FIXTURE_NOW),
   };
   const service = new DefaultSemanticToolExecutor(dependencies);
@@ -188,7 +193,7 @@ test("permanent invariant 4/5: semantic contracts are versioned when meaning cha
 
   assertVersionedContracts("metric", baseline.metrics, registryDocument.metrics);
   assertVersionedContracts("topic", baseline.topics, registryDocument.topics);
-  assert.equal(registry.metrics.size, 44);
+  assert.equal(registry.metrics.size, 47);
   assert.equal(registry.topics.size, 7);
 });
 
@@ -289,7 +294,13 @@ function tenantSemanticContext(overlayVersion: string) {
     defaults: {},
     dossier: {},
     packVersions: { fixture: "1.0.0" },
-    sourceWatermarks: { fixture: "2026-03-15T11:00:00.000Z" },
+    sourceWatermarks: { "connection-a": "2026-03-15T11:00:00.000Z" },
+    sourceDetails: [{
+      connectorId: "fixture",
+      connectionId: "connection-a",
+      label: "Fixture source",
+      dataThrough: "2026-03-15T11:00:00.000Z",
+    }],
     authorityByConcept: { operational_sales: "connection-a" },
   };
 }

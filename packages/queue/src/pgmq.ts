@@ -1,4 +1,5 @@
 import {
+  asSyncFailureCode,
   parseSyncJob,
   type ClaimedSyncJob,
   type DurableSyncQueue,
@@ -138,13 +139,12 @@ export class PgmqDurableSyncQueue implements DurableSyncQueue {
 
   async retryOrFail(
     claim: ClaimedSyncJob,
-    error: Readonly<{ code: string; retryable: boolean; detail?: string }>,
+    error: Readonly<{ code: string; retryable: boolean }>,
     options: Readonly<{ retryDelaySeconds: number; maxAttempts: number }>,
   ) {
     const safeError = {
-      code: error.code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 120),
+      code: asSyncFailureCode(error.code),
       retryable: error.retryable,
-      ...(error.detail ? { detail: error.detail.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) } : {}),
     };
     const result = await this.db.query<{ outcome: "retry_wait" | "failed" }>(
       `select control_plane.retry_or_fail_sync_job(
@@ -171,14 +171,11 @@ export class PgmqDurableSyncQueue implements DurableSyncQueue {
 
   async defer(
     claim: ClaimedSyncJob,
-    reason: Readonly<{ code: string; detail?: string }>,
+    reason: Readonly<{ code: string }>,
     delaySeconds: number,
   ): Promise<string> {
     const safeReason = {
-      code: reason.code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 120),
-      ...(reason.detail
-        ? { detail: reason.detail.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 500) }
-        : {}),
+      code: asSyncFailureCode(reason.code),
     };
     const result = await this.db.query<{ visibility_deadline: string | Date }>(
       `select control_plane.defer_sync_job(

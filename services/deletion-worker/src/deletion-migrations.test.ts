@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("deletion migrations contain durable queue fencing and all-store purge procedures", async () => {
-  const [control, analytical, bootstrap, config, store, databaseRole] = await Promise.all([
+  const [control, durableDisconnect, analytical, bootstrap, config, store, databaseRole] = await Promise.all([
     readFile(new URL("../../../infra/migrations/control-plane/0006_m8_deletion_lifecycle.sql", import.meta.url), "utf8"),
+    readFile(new URL("../../../infra/migrations/control-plane/0020_m8_durable_disconnect_intent.sql", import.meta.url), "utf8"),
     readFile(new URL("../../../infra/migrations/analytical/0060_m8_deletion_procedures.sql", import.meta.url), "utf8"),
     readFile(new URL("../../../infra/bootstrap/control_plane_role.sql", import.meta.url), "utf8"),
     readFile(new URL("./config.ts", import.meta.url), "utf8"),
@@ -37,8 +38,30 @@ test("deletion migrations contain durable queue fencing and all-store purge proc
     "deletion_internal.verify_tenant",
     "canonical_record_state",
   ]) assert.match(analytical, new RegExp(required.replaceAll(".", "\\.")));
+  assert.match(
+    analytical,
+    /DELETE FROM core\.order_source_observation[\s\S]*observation\.connection_id=p_connection_id/u,
+  );
+  assert.match(
+    analytical,
+    /DELETE FROM core\.order_line_source_observation[\s\S]*observation\.connection_id=p_connection_id/u,
+  );
+  assert.match(
+    analytical,
+    /DELETE FROM quality\.connector_check_observation[\s\S]*connection_id=p_connection_id/u,
+  );
+  assert.match(
+    analytical,
+    /verify_connection[\s\S]*core\.order_source_observation[\s\S]*core\.order_line_source_observation[\s\S]*quality\.connector_check_observation/u,
+  );
   assert.match(control, /credential_destruction_due_at/);
   assert.match(control, /remote_revocation_grace_expired/);
+  assert.match(durableDisconnect, /remote_revocation_status IN \([\s\S]*'pending'/);
+  assert.match(
+    durableDisconnect,
+    /WHERE status IN \('queued', 'running', 'retry_wait', 'failed'\)[\s\S]*credential_destruction_due_at <= p_now/,
+  );
+  assert.doesNotMatch(durableDisconnect, /WHERE scope = 'tenant'/);
   assert.match(bootstrap, /CREATE ROLE albert_deletion_control[\s\S]*NOLOGIN/);
   assert.match(control, /TO albert_deletion_control/);
   assert.match(control, /REVOKE ALL ON TABLE[\s\S]*FROM PUBLIC,anon,authenticated,service_role,albert_deletion_control/);

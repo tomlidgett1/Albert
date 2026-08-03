@@ -30,6 +30,7 @@ import {
   type OAuthCredentialSecret,
   type OAuthExchangeResult,
   type RawSourceRecord,
+  type ReconciliationRequest,
   type SyncCursor,
   type SyncPage,
   type SyncRange,
@@ -43,7 +44,7 @@ import { buildLightspeedRAuthorizationUrl } from "./oauth-public";
 import { lightspeedSchemas, type LightspeedStreamId } from "./schemas";
 
 const TOKEN_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/token";
-const REVOCATION_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/revoke";
+const REVOCATION_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/access_token";
 const API_ORIGIN = "https://api.lightspeedapp.com";
 
 const tokenSchema = z.object({
@@ -117,6 +118,16 @@ function latestTimestamp(values: readonly (string | undefined)[], fallback?: str
   }, fallback);
 }
 
+function oldestRecordTimestamp(records: readonly RawSourceRecord[], fallback?: string): string | undefined {
+  return records.flatMap((record) => [
+    record.sourceUpdatedAt,
+    ...Object.values(record.normalized?.timestamps ?? {}).map((value) => value.utc ?? undefined),
+  ]).reduce<string | undefined>((oldest, value) => {
+    if (!value || !Number.isFinite(Date.parse(value))) return oldest;
+    return !oldest || Date.parse(value) < Date.parse(oldest) ? value : oldest;
+  }, fallback);
+}
+
 export class LightspeedRConnector implements OAuthConnectorPack {
   readonly id = "lightspeed-r" as const;
   readonly version = lightspeedRManifest.packVersion;
@@ -128,6 +139,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
   private readonly buckets = new Map<string, AdaptiveLeakyBucket>();
   private readonly refreshes = new Map<string, Promise<VersionedCredential>>();
   private readonly successfulStreams = new Set<string>();
+  private readonly observedStocktakes = new Set<string>();
 
   constructor(config: LightspeedRConnectorConfig) {
     this.config = {
@@ -150,7 +162,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       );
     }
     if (!request.codeChallenge) {
-      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed OAuth requires a PKCE code challenge.");
+      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed R-Series PKCE requires a code challenge.");
     }
     return {
       url: buildLightspeedRAuthorizationUrl({
@@ -168,13 +180,14 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     request: AuthorizationCodeExchange,
   ): Promise<OAuthExchangeResult> {
     if (!request.codeVerifier) {
-      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed OAuth requires the original PKCE verifier.");
+      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed R-Series PKCE requires the original code verifier.");
     }
     const body = new URLSearchParams({
       client_id: this.config.clientId,
       client_secret: this.config.clientSecret,
       grant_type: "authorization_code",
       code: required(request.code, "Lightspeed authorization code"),
+      redirect_uri: required(request.redirectUri, "Lightspeed redirect URI"),
       code_verifier: request.codeVerifier,
     });
     const { value } = await requestJson<unknown>(
@@ -292,8 +305,15 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       .map((stream) => ({
         id: stream.id,
         label: stream.resource,
-        domains: stream.canonicalTargets,
+        domains: stream.productDomains,
         cursorKind: stream.modifiedField ? "high_water_mark" as const : "none" as const,
+        backfillStrategy: stream.backfillStrategy,
+        lateEditStrategy: stream.lateEditStrategy,
+        deletionStrategy: stream.deletionStrategy,
+        sourceTotalStrategy: stream.sourceTotalStrategy,
+        availability: stream.availability ?? "required",
+        dependencies: stream.dependencies,
+        productDomains: stream.productDomains,
         priority: streamPriority[stream.id as LightspeedStreamId],
       }))
       .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0));
@@ -314,6 +334,24 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     cursor: SyncCursor,
   ): Promise<SyncPage> {
     return this.sync(context, stream, "incremental", cursor);
+  }
+
+  async reconciliation_sync(
+    context: ConnectorContext,
+    stream: ConnectorStream,
+    request: ReconciliationRequest,
+  ): Promise<SyncPage> {
+    if (request.phase === "late_edits" && stream.lateEditStrategy === "append_only") {
+      return { records: [], nextCursor: null, hasMore: false, sourceTotal: 0 };
+    }
+    return this.sync(
+      context,
+      stream,
+      "reconciliation",
+      request.cursor,
+      request.range,
+      request.phase,
+    );
   }
 
   async handle_webhook(
@@ -352,6 +390,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
               client_id: this.config.clientId,
               client_secret: this.config.clientSecret,
               refresh_token: current.secret.refreshToken,
+              grant_type: "revoke_refresh_token",
             }),
             signal: context.abortSignal,
           },
@@ -370,52 +409,67 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     const credential = await this.readCredential(context);
     const scopes = new Set(credential.secret.scopes);
     const has = (...requiredScopes: string[]) => requiredScopes.every((scope) => scopes.has(scope));
+    const scopeCapability = (
+      id: ConnectorCapability["id"],
+      requiredScopes: readonly string[],
+    ): ConnectorCapability => ({
+      id,
+      support: requiredScopes.every((scope) => scopes.has(scope)) ? "full" : "unavailable",
+      reasonCode: requiredScopes.every((scope) => scopes.has(scope))
+        ? "required_scopes_granted"
+        : "required_scope_missing",
+      requiredScopes,
+    });
+    const inventoryLogObserved = this.successfulStreams.has(`${context.connectionId}:inventory_logs`);
     return [
       {
         id: "connector.variant.r_series",
         support: "full",
+        reasonCode: "r_series_account_verified",
         notes: "A successful V3 Account discovery is the fail-fast R-Series verification. X-Series uses a different OAuth and API host.",
       },
+      scopeCapability("commerce.orders", ["employee:register_read"]),
+      scopeCapability("commerce.order_lines", ["employee:register_read"]),
+      scopeCapability("commerce.order_lines.discounts", ["employee:register_read"]),
+      scopeCapability("commerce.refunds", ["employee:register_read"]),
+      scopeCapability("commerce.payments", ["employee:register_read"]),
+      scopeCapability("commerce.orders.customer", ["employee:register_read", "employee:customers_read"]),
+      scopeCapability("commerce.order_lines.worker_attribution", ["employee:register_read", "employee:admin_employees"]),
+      scopeCapability("commerce.order_lines.cost", ["employee:product_cost"]),
+      scopeCapability("inventory.balances", ["employee:inventory_read"]),
+      scopeCapability("inventory.cost", ["employee:inventory_read", "employee:product_cost"]),
       {
-        id: "commerce.order_lines",
-        support: has("employee:register_read") ? "full" : "unavailable",
-        requiredScopes: ["employee:register_read"],
-      },
-      {
-        id: "commerce.order_lines.worker_attribution",
-        support: has("employee:register_read", "employee:admin_employees") ? "full" : "unavailable",
-        requiredScopes: ["employee:register_read", "employee:admin_employees"],
-      },
-      {
-        id: "commerce.order_lines.unit_cost",
-        support: has("employee:product_cost") ? "full" : "unavailable",
-        requiredScopes: ["employee:product_cost"],
-      },
-      {
-        id: "inventory.current_stock",
-        support: has("employee:inventory_read") ? "full" : "unavailable",
-        requiredScopes: ["employee:inventory_read"],
-      },
-      {
-        id: "inventory.historical_movements",
+        id: "inventory.movements",
         support: !has("employee:inventory_read", "employee:product_cost")
           ? "unavailable"
-          : this.successfulStreams.has(`${context.connectionId}:inventory_logs`)
+          : inventoryLogObserved
             ? "partial"
             : "unknown",
+        reasonCode: !has("employee:inventory_read", "employee:product_cost")
+          ? "required_scope_missing"
+          : inventoryLogObserved ? "live_stream_observed" : "live_probe_required",
         requiredScopes: ["employee:inventory_read", "employee:product_cost"],
         notes: "InventoryLog becomes Partial only after a live extraction succeeds because its documented employee:inventory_log right is absent from the public OAuth scope allow-list and source retention is merchant-dependent.",
       },
-      { id: "source.webhooks", support: "unavailable" },
+      {
+        id: "inventory.stocktakes",
+        support: this.observedStocktakes.has(context.connectionId) ? "partial" : inventoryLogObserved ? "unavailable" : "unknown",
+        reasonCode: this.observedStocktakes.has(context.connectionId)
+          ? "stocktake_records_observed"
+          : inventoryLogObserved ? "stocktake_records_not_observed" : "live_probe_required",
+        notes: "Stocktake variance is gated on live InventoryLog rows with a non-zero inventoryCountID.",
+      },
+      { id: "source.webhooks", support: "unavailable", reasonCode: "connector_webhooks_unsupported" },
     ];
   }
 
   private async sync(
     context: ConnectorContext,
     stream: ConnectorStream,
-    mode: "initial" | "incremental",
+    mode: "initial" | "incremental" | "reconciliation",
     cursor?: SyncCursor,
     range?: SyncRange,
+    reconciliationPhase?: ReconciliationRequest["phase"],
   ): Promise<SyncPage> {
     const contract = this.manifest.streams.find((candidate) => candidate.id === stream.id);
     if (!contract || !(contract.id in lightspeedSchemas)) {
@@ -438,7 +492,9 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       url.searchParams.set("limit", "100");
       url.searchParams.set(
         "sort",
-        streamId === "inventory_logs"
+        mode === "reconciliation" && reconciliationPhase !== "late_edits"
+          ? contract.recordIdField
+          : streamId === "inventory_logs"
           ? contract.recordIdField
           : contract.modifiedField ?? contract.recordIdField,
       );
@@ -458,12 +514,19 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       }
       if (streamId === "inventory_logs" && typeof state?.continuation === "number") {
         url.searchParams.set(contract.recordIdField, `>,${state.continuation}`);
-      } else if (contract.modifiedField && mode === "initial" && range) {
+      } else if (
+        contract.modifiedField && range &&
+        (
+          (mode === "initial" && contract.backfillStrategy !== "snapshot") ||
+          (mode === "reconciliation" && reconciliationPhase === "late_edits" &&
+            contract.lateEditStrategy === "modified_field")
+        )
+      ) {
         url.searchParams.set(
           contract.modifiedField,
           `><,${lightspeedTime(range.from)},${lightspeedTime(range.to)}`,
         );
-      } else if (contract.modifiedField && state?.watermark) {
+      } else if (mode === "incremental" && contract.modifiedField && state?.watermark) {
         // Inclusive boundaries deliberately provide at-least-once delivery.
         url.searchParams.set(contract.modifiedField, `>=,${lightspeedTime(state.watermark)}`);
       }
@@ -483,9 +546,16 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       records.map((record) => record.sourceUpdatedAt),
       state?.watermark ?? (mode === "initial" && !next ? range?.to : undefined),
     );
+    const oldestObservedAt = oldestRecordTimestamp(records, state?.oldestObservedAt);
     const inventoryIds = streamId === "inventory_logs"
       ? records.map((record) => Number(record.sourceRecordId)).filter(Number.isSafeInteger)
       : [];
+    if (streamId === "inventory_logs" && records.some((record) => {
+      const value = record.normalized?.fields.inventoryCountID;
+      return value !== undefined && value !== null && String(value) !== "0" && String(value).trim() !== "";
+    })) {
+      this.observedStocktakes.add(context.connectionId);
+    }
     const inventoryCheckpoint = inventoryIds.length > 0
       ? Math.max(...inventoryIds)
       : streamId === "inventory_logs" && typeof state?.continuation === "number"
@@ -498,13 +568,33 @@ export class LightspeedRConnector implements OAuthConnectorPack {
         v: 1,
         connector: this.id,
         stream: stream.id,
-        mode,
+        mode: mode === "reconciliation" ? "reconciliation" : mode,
         watermark,
+        oldestObservedAt,
         continuation: next ?? inventoryCheckpoint,
         rangeFrom: range?.from ?? state?.rangeFrom,
         rangeTo: range?.to ?? state?.rangeTo,
       }),
       hasMore: Boolean(next),
+      ...(mode === "initial" && !next && range
+        ? { coverage: contract.backfillStrategy === "snapshot"
+            ? {
+                boundaryKind: "snapshot_at" as const,
+                lowerBound: range.to,
+                verification: "point_in_time" as const,
+              }
+            : Date.parse(range.from) <= Date.parse("1970-01-01T00:00:00.000Z")
+              ? {
+                  boundaryKind: oldestObservedAt ? "verified_oldest" as const : "verified_empty" as const,
+                  lowerBound: oldestObservedAt ?? range.to,
+                  verification: "exhaustive_vendor_scan" as const,
+                }
+              : {
+                  boundaryKind: "window_exhausted" as const,
+                  lowerBound: range.from,
+                  verification: "exhaustive_vendor_scan" as const,
+                } }
+        : {}),
     };
   }
 

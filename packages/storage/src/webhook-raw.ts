@@ -15,6 +15,47 @@ export type WebhookRawReceipt = Readonly<{
   compressedBytes: number;
 }>;
 
+export type WebhookRawWriteAuthority = Readonly<{
+  verificationReference: string;
+  xeroLeaseOwner?: string;
+  xeroLeaseToken?: string;
+  xeroLeaseVersion?: number;
+}>;
+
+export type WebhookRawWriteInput = Readonly<{
+  tenantId: string;
+  connectionId: string;
+  receiptId: string;
+  connectorKey: "xero" | "deputy";
+  receivedAt: string;
+  body: Uint8Array;
+  authority?: WebhookRawWriteAuthority;
+}>;
+
+export function buildWebhookRawObjectKey(input: Omit<WebhookRawWriteInput, "body">): string {
+  if (
+    !ULID_PATTERN.test(input.tenantId) ||
+    !ULID_PATTERN.test(input.connectionId) ||
+    !ULID_PATTERN.test(input.receiptId) ||
+    !CONNECTORS.has(input.connectorKey)
+  ) {
+    throw new Error("webhook_raw_identity_invalid");
+  }
+  const date = new Date(input.receivedAt);
+  if (!Number.isFinite(date.valueOf())) throw new Error("webhook_received_at_invalid");
+  return [
+    "tenant",
+    input.tenantId,
+    "connection",
+    input.connectionId,
+    "stream",
+    `webhook_${input.connectorKey}`,
+    "date",
+    date.toISOString().slice(0, 10),
+    `batch-${input.receiptId}.json.gz`,
+  ].join("/");
+}
+
 /** Writes the exact signed vendor bytes, gzip-compressed, to a service-only bucket. */
 export class WebhookRawWriter {
   constructor(
@@ -24,37 +65,10 @@ export class WebhookRawWriter {
     if (bucket !== "raw-payloads") throw new Error("Webhook raw data must use raw-payloads.");
   }
 
-  async put(input: Readonly<{
-    tenantId: string;
-    connectionId: string;
-    receiptId: string;
-    connectorKey: "xero" | "deputy";
-    receivedAt: string;
-    body: Uint8Array;
-  }>): Promise<WebhookRawReceipt> {
-    if (
-      !ULID_PATTERN.test(input.tenantId) ||
-      !ULID_PATTERN.test(input.connectionId) ||
-      !ULID_PATTERN.test(input.receiptId) ||
-      !CONNECTORS.has(input.connectorKey)
-    ) {
-      throw new Error("webhook_raw_identity_invalid");
-    }
-    const date = new Date(input.receivedAt);
-    if (!Number.isFinite(date.valueOf())) throw new Error("webhook_received_at_invalid");
+  async put(input: WebhookRawWriteInput): Promise<WebhookRawReceipt> {
     const bodySha256 = sha256(input.body);
     const compressed = gzipSync(input.body, { level: 9 });
-    const objectKey = [
-      "tenant",
-      input.tenantId,
-      "connection",
-      input.connectionId,
-      "stream",
-      `webhook_${input.connectorKey}`,
-      "date",
-      date.toISOString().slice(0, 10),
-      `batch-${input.receiptId}.json.gz`,
-    ].join("/");
+    const objectKey = buildWebhookRawObjectKey(input);
     const result = await this.objectStore.putIfAbsent({
       key:objectKey,
       body:compressed,
@@ -71,6 +85,6 @@ export class WebhookRawWriter {
   }
 }
 
-/** Kept as a source-compatible type alias while deployments migrate from the
- * Supabase REST adapter to storage-only S3 credentials. */
+/** Source-compatible alias; production injects the ADR 0031 webhook-purpose
+ * S3 ingestion adapter backed by a short-lived, RLS-scoped Auth session. */
 export { WebhookRawWriter as SupabaseWebhookRawWriter };

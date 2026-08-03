@@ -44,7 +44,7 @@ function fixtureRecords(
 test("typed staging migration is generated exactly from every connector field contract", () => {
   const contracts = buildStagingContracts(manifests);
   assert.equal(contracts.length, 30);
-  assert.equal(manifests.reduce((count, manifest) => count + manifest.fieldCoverage.length, 0), 546);
+  assert.equal(manifests.reduce((count, manifest) => count + manifest.fieldCoverage.length, 0), 743);
   for (const manifest of manifests) {
     for (const stream of manifest.streams) {
       const contract = contracts.find(
@@ -150,6 +150,11 @@ test("typed staging rejects drift, lossy decimals, invalid dates, and wrong JSON
 class RecordingDatabase implements TransactionalPostgres {
   readonly calls: Array<Readonly<{ sql: string; values: readonly unknown[] }>> = [];
 
+  constructor(
+    private readonly reconciliationFenceMatches = false,
+    private readonly quarantineResolutionMatches = false,
+  ) {}
+
   async transaction<T>(work: (client: RecordingDatabase) => Promise<T>): Promise<T> {
     return work(this);
   }
@@ -159,6 +164,21 @@ class RecordingDatabase implements TransactionalPostgres {
     values: readonly unknown[] = [],
   ): Promise<Readonly<{ rows: readonly Row[] }>> {
     this.calls.push({ sql, values });
+    if (/select 1 from ingestion\.source_records source/iu.test(sql)) {
+      const rows: readonly Record<string, unknown>[] = this.reconciliationFenceMatches
+        ? [{ matched: true }]
+        : [];
+      // A Postgres client resolves the caller-selected structural row type at
+      // runtime. Keep the fixture value unknown at that boundary instead of
+      // pretending the concrete mock row is assignable to every possible Row.
+      return { rows: rows as unknown as readonly Row[] };
+    }
+    if (/update ingestion\.quarantine_records/iu.test(sql)) {
+      const rows: readonly Record<string, unknown>[] = this.quarantineResolutionMatches
+        ? [{ source_object_type: values[3], source_record_id: values[5] }]
+        : [];
+      return { rows: rows as unknown as readonly Row[] };
+    }
     return { rows: [] };
   }
 }
@@ -172,6 +192,7 @@ function jobAndManifest(): Readonly<{ job: SyncJob; manifest: RawBatchManifest }
     type: "IncrementalSync",
     tenantId: "tenant-typed-staging",
     connectionId,
+    connectionGeneration: 1,
     connectorId: "lightspeed-r",
     externalAccountReference: "account-101",
     syncRunId,
@@ -226,6 +247,7 @@ test("landing atomically writes the generic lineage seam and physical typed stre
 
   assert.equal(result.stagedRecordCount, 1);
   assert.deepEqual(result.quarantined, []);
+  assert.deepEqual(result.resolved, []);
   assert.ok(db.calls.some((call) => /insert into ingestion\.source_records/iu.test(call.sql)));
   const typedInsert = db.calls.find(
     (call) => /insert into "source_lightspeed"\."sales"/iu.test(call.sql),
@@ -258,4 +280,126 @@ test("malformed normalized rows are quarantined before either staging table is w
   assert.ok(db.calls.some((call) => /insert into ingestion\.quarantine_records/iu.test(call.sql)));
   assert.ok(!db.calls.some((call) => /insert into ingestion\.source_records/iu.test(call.sql)));
   assert.ok(!db.calls.some((call) => /insert into "source_lightspeed"\."sales"/iu.test(call.sql)));
+});
+
+test("a corrected valid replay resolves its prior analytical quarantine identity", async () => {
+  const db = new RecordingDatabase(false,true);
+  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.0.0");
+  const {job,manifest}=jobAndManifest();
+  const result = await store.land(job,manifest,[{
+    sourceObjectType:"Sale",
+    sourceRecordId:"sale-repaired",
+    sourceUpdatedAt:"2026-08-03T00:00:00.000Z",
+    payload:{saleID:"sale-repaired",total:"10.0000"},
+    normalized:projectSourceRecord({
+      schemaVersion:"1.0.0",
+      fields:{saleID:"sale-repaired",shopID:"101",total:"10.0000"},
+    }),
+    payloadHash:"f".repeat(64),
+  }]);
+
+  assert.deepEqual(result.resolved,[{
+    sourceObjectType:"Sale",
+    sourceRecordId:"sale-repaired",
+  }]);
+  const resolution = db.calls.find((call) => /update ingestion\.quarantine_records/iu.test(call.sql));
+  assert.ok(resolution);
+  assert.match(resolution.sql,/status='resolved'/iu);
+  assert.match(resolution.sql,/replayed_in_sync_run_id=\$5/iu);
+  assert.match(resolution.sql,/status='open'/iu);
+});
+
+test("a duplicate identity with any invalid replay row cannot resolve quarantine", async () => {
+  const db = new RecordingDatabase(false,true);
+  const store = new AnalyticalLandingStore(db,"lightspeed-r/1.0.0");
+  const {job,manifest}=jobAndManifest();
+  const valid = {
+    sourceObjectType:"Sale",
+    sourceRecordId:"sale-duplicate",
+    payload:{saleID:"sale-duplicate",total:"10.0000"},
+    normalized:projectSourceRecord({
+      schemaVersion:"1.0.0",
+      fields:{saleID:"sale-duplicate",shopID:"101",total:"10.0000"},
+    }),
+    payloadHash:"a".repeat(64),
+  };
+  const invalid = {
+    ...valid,
+    normalized:projectSourceRecord({
+      schemaVersion:"1.0.0",
+      fields:{saleID:"sale-duplicate",shopID:"101",total:"1.23456"},
+    }),
+    payloadHash:"b".repeat(64),
+  };
+
+  const result=await store.land(job,manifest,[valid,invalid]);
+
+  assert.equal(result.resolved.length,0);
+  assert.equal(db.calls.some((call) => /update ingestion\.quarantine_records/iu.test(call.sql)),false);
+});
+
+test("reconciliation tombstones compare-and-swap the selected source version before staging", async () => {
+  const { job: baseJob, manifest } = jobAndManifest();
+  const job: SyncJob = {
+    schemaVersion: 1,
+    type: "ReconciliationSweep",
+    tenantId: baseJob.tenantId,
+    connectionId: baseJob.connectionId,
+    connectionGeneration: 1,
+    connectorId: "lightspeed-r",
+    externalAccountReference: baseJob.externalAccountReference,
+    syncRunId: baseJob.syncRunId,
+    batchId: baseJob.batchId,
+    requestedAt: "2026-08-03T00:00:00.000Z",
+    reconciliationSweepId: ulid(),
+    phase: "apply_tombstones",
+    stream: "sales",
+    lookbackFrom: "2026-07-27T00:00:00.000Z",
+    lookbackTo: "2026-08-03T00:00:00.000Z",
+  };
+  const record = {
+    sourceObjectType: "Sale",
+    sourceRecordId: "sale-deleted",
+    sourceUpdatedAt: "2026-08-03T00:00:00.000Z",
+    payload: { kind: "albert_reconciliation_tombstone" },
+    normalized: projectSourceRecord({
+      schemaVersion: "1.0.0",
+      fields: { saleID: "sale-deleted", total: "10.0000" },
+      tombstone: true,
+    }),
+    deletionSignal: {
+      kind: "reconciliation_tombstone" as const,
+      reconciliationSweepId: job.reconciliationSweepId,
+      evidenceBatchIds: [ulid(),ulid()],
+      expectedPayloadHash: "f".repeat(64),
+      expectedSourceUpdatedAt: "2026-08-02T00:00:00.000Z",
+      expectedIngestedAt: "2026-08-02T01:00:00.000Z",
+    },
+    payloadHash: "e".repeat(64),
+  };
+
+  const matched = new RecordingDatabase(true);
+  await new AnalyticalLandingStore(matched,"lightspeed-r/1.0.0").land(
+    job,manifest,[record],
+  );
+  const fenceIndex = matched.calls.findIndex((call) =>
+    /select 1 from ingestion\.source_records source/iu.test(call.sql)
+  );
+  const sourceWriteIndex = matched.calls.findIndex((call) =>
+    /insert into ingestion\.source_records/iu.test(call.sql)
+  );
+  assert.ok(fenceIndex >= 0 && sourceWriteIndex > fenceIndex);
+  assert.match(matched.calls[fenceIndex]!.sql,/for update/iu);
+
+  const changed = new RecordingDatabase(false);
+  await assert.rejects(
+    new AnalyticalLandingStore(changed,"lightspeed-r/1.0.0").land(job,manifest,[record]),
+    /reconciliation_source_version_changed/iu,
+  );
+  assert.equal(changed.calls.some((call) =>
+    /insert into ingestion\.source_records/iu.test(call.sql)
+  ),false);
+  assert.equal(changed.calls.some((call) =>
+    /insert into "source_lightspeed"\."sales"/iu.test(call.sql)
+  ),false);
 });

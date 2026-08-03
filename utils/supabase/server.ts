@@ -1,7 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { assertRuntimeEnvironment } from "../../packages/config/src/env";
 
 export async function createClient() {
+  assertRuntimeEnvironment("web");
   const cookieStore = await cookies();
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabasePublishableKey =

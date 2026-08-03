@@ -59,6 +59,7 @@ export function createTraceSseResponse(
 
 export type LiveTraceSseOptions = Readonly<{
   conversationId: string;
+  turnId: string;
   signal?: AbortSignal;
   run: (emit: (event: TraceEvent) => void, signal: AbortSignal) => Promise<void>;
 }>;
@@ -111,6 +112,7 @@ export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Respon
       "Content-Type": "text/event-stream; charset=utf-8",
       "X-Accel-Buffering": "no",
       "X-Albert-Conversation-Id": options.conversationId,
+      "X-Albert-Turn-Id": options.turnId,
     },
   });
 }

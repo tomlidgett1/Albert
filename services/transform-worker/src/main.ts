@@ -1,5 +1,6 @@
 import { createServer,type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
+import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
 import { mapDeputyCanonical } from "../../../connectors/deputy/canonical.js";
 import { mapLightspeedCanonical } from "../../../connectors/lightspeed-r/canonical.js";
 import { mapXeroCanonical } from "../../../connectors/xero/canonical.js";
@@ -39,15 +40,19 @@ async function closeServer(server:ReturnType<typeof createServer>):Promise<void>
   await new Promise<void>((resolve)=>server.close(()=>resolve()));
 }
 
+function prometheusLabel(value:string):string{return JSON.stringify(value);}
+
 export async function runTransformWorker():Promise<void>{
+  const releaseSha=assertEmbeddedServiceBuildIdentity(process.env);
+  const deploymentId=process.env.ALBERT_DEPLOYMENT_ID?.trim()||null;
   const config=loadTransformWorkerConfig();
   const controlDatabase=new PgTransactionalDatabase(config.controlPlaneDatabaseUrl,{
     applicationName:`albert-transform-control/${config.serviceVersion}`,
-    maxConnections:6,
+    maxConnections:config.workerConcurrency+4,
   });
   const transformDatabase=new PgTransactionalDatabase(config.transformDatabaseUrl,{
     applicationName:`albert-transform/${config.serviceVersion}`,
-    maxConnections:8,
+    maxConnections:config.workerConcurrency+4,
   });
   const queue=new PostgresCanonicalTransformQueue(controlDatabase);
   const pipeline=new CanonicalTransformPipeline(
@@ -66,11 +71,14 @@ export async function runTransformWorker():Promise<void>{
     config.mappingVersion,
     queue,
     processor,
-    ()=>pipeline.snapshotAllTenants(),
+    ()=>pipeline.snapshotAllTenants(config.workerId,{
+      claimBatchSize:config.snapshotClaimBatchSize,
+      maxClaims:config.snapshotMaxClaimsPerRun,
+    }),
     ()=>pipeline.reconcileIdentityDecisions(config.workerId),
     {
       leaseSeconds:900,emptyPollDelayMs:500,snapshotIntervalMs:3_600_000,
-      identityProjectionIntervalMs:1_000,
+      identityProjectionIntervalMs:1_000,concurrency:config.workerConcurrency,
     },
   );
 
@@ -78,6 +86,11 @@ export async function runTransformWorker():Promise<void>{
     await Promise.all([
       queue.preflight(),
       pipeline.identityDecisionProjectionMetrics(),
+      pipeline.transformMaintenanceMetrics(),
+      controlDatabase.transaction(async(client)=>{
+        await client.query("set local role albert_transform_control");
+        await client.query("select control_plane.assert_analytical_capability_issuer_ready()");
+      }),
       transformDatabase.transaction(async(client)=>{
         await client.query("set local role transform_rw");
         const role=await client.query<{role_name:string;can_transform:boolean}>(
@@ -88,6 +101,7 @@ export async function runTransformWorker():Promise<void>{
           throw new Error("transform_database_role_not_ready");
         }
         await client.query("select semantic_internal.assert_transform_runtime_boundary()");
+        await client.query("select capability_internal.assert_verifier_ready()");
       }),
     ]);
   };
@@ -105,7 +119,14 @@ export async function runTransformWorker():Promise<void>{
         if(health.ready){
           try{
             await dependenciesReady();
-            json(response,200,{ready:true,workerId:health.workerId,activeJobs:health.activeJobs});
+            json(response,200,{
+              ready:true,
+              runtime:"transform-worker",
+              workerId:health.workerId,
+              activeJobs:health.activeJobs,
+              releaseSha,
+              deploymentId,
+            });
             return;
           }catch{
             // Emit only the non-sensitive readiness state.
@@ -117,10 +138,11 @@ export async function runTransformWorker():Promise<void>{
       if(request.method==="GET"&&pathname==="/v1/metrics"){
         const health=service.health();
         try{
-          const [queueMetrics,identityDecisionProjections]=await Promise.all([
+          const [queueMetrics,identityDecisionProjections,maintenance]=await Promise.all([
             queue.metrics(),pipeline.identityDecisionProjectionMetrics(),
+            pipeline.transformMaintenanceMetrics(),
           ]);
-          json(response,200,{worker:health,queue:queueMetrics,identityDecisionProjections});
+          json(response,200,{worker:health,queue:queueMetrics,identityDecisionProjections,maintenance});
         }
         catch{json(response,503,{worker:health,queue:[]});}
         return;
@@ -137,13 +159,80 @@ export async function runTransformWorker():Promise<void>{
   server.maxRequestsPerSocket=1_000;
   server.maxHeadersCount=100;
 
+  const metricsServer=createServer({maxHeaderSize:4*1024},(request,response)=>{
+    void (async()=>{
+      const pathname=new URL(request.url??"/","http://transform-worker-metrics.internal").pathname;
+      if(request.method!=="GET"||pathname!=="/metrics"){
+        response.writeHead(404,{"content-type":"text/plain; charset=utf-8"});
+        response.end("not found\n");
+        return;
+      }
+      const [queueMetrics,identityDecisionProjections,maintenance]=await Promise.all([
+        queue.metrics(),pipeline.identityDecisionProjectionMetrics(),
+        pipeline.transformMaintenanceMetrics(),
+      ]);
+      const health=service.health();
+      const runnable=queueMetrics.filter((metric)=>metric.status==="queued"||metric.status==="retry_wait");
+      const queueDepth=runnable.reduce((total,metric)=>total+metric.jobCount,0);
+      const oldestAge=runnable.reduce((oldest,metric)=>Math.max(oldest,metric.oldestAgeSeconds),0);
+      const identityPending=identityDecisionProjections.filter((metric)=>
+        metric.status==="queued"||metric.status==="running"||metric.status==="retry_wait"
+      );
+      const lines=[
+        "# HELP albert_transform_worker_active_jobs Jobs currently executing in this Machine.",
+        "# TYPE albert_transform_worker_active_jobs gauge",
+        `albert_transform_worker_active_jobs ${health.activeJobs}`,
+        "# HELP albert_transform_worker_concurrency Configured execution lanes in this Machine.",
+        "# TYPE albert_transform_worker_concurrency gauge",
+        `albert_transform_worker_concurrency ${health.concurrency}`,
+        "# HELP albert_transform_queue_depth Total runnable canonical transformation jobs.",
+        "# TYPE albert_transform_queue_depth gauge",
+        `albert_transform_queue_depth ${queueDepth}`,
+        "# HELP albert_transform_queue_oldest_age_seconds Age of the oldest runnable transformation job.",
+        "# TYPE albert_transform_queue_oldest_age_seconds gauge",
+        `albert_transform_queue_oldest_age_seconds ${oldestAge}`,
+        "# HELP albert_transform_queue_sla_breached Whether runnable work exceeds the configured queue SLO.",
+        "# TYPE albert_transform_queue_sla_breached gauge",
+        `albert_transform_queue_sla_breached ${oldestAge>config.queueSlaSeconds?1:0}`,
+        ...queueMetrics.map((metric)=>
+          `albert_transform_queue_jobs{status=${prometheusLabel(metric.status)}} ${metric.jobCount}`
+        ),
+        `albert_identity_projection_pending ${identityPending.reduce((total,metric)=>total+metric.jobCount,0)}`,
+        `albert_identity_projection_oldest_age_seconds ${identityPending.reduce((oldest,metric)=>Math.max(oldest,metric.oldestAgeSeconds),0)}`,
+        `albert_transform_maintenance_due ${maintenance.dueTenants}`,
+        `albert_transform_maintenance_active_leases ${maintenance.activeLeases}`,
+        `albert_transform_maintenance_completed_24h ${maintenance.completed24h}`,
+        `albert_transform_maintenance_completed_p95_ms ${maintenance.completedP95Ms}`,
+        "",
+      ];
+      const payload=lines.join("\n");
+      response.writeHead(200,{
+        "cache-control":"no-store","content-length":Buffer.byteLength(payload),
+        "content-type":"text/plain; version=0.0.4; charset=utf-8",
+        "x-content-type-options":"nosniff",
+      });
+      response.end(payload);
+    })().catch(()=>{
+      if(!response.headersSent)response.writeHead(503,{"content-type":"text/plain; charset=utf-8"});
+      response.end("metrics unavailable\n");
+    });
+  });
+  metricsServer.headersTimeout=5_000;
+  metricsServer.requestTimeout=10_000;
+  metricsServer.keepAliveTimeout=5_000;
+  metricsServer.maxRequestsPerSocket=200;
+  metricsServer.maxHeadersCount=32;
+
   const abort=new AbortController();
   let shuttingDown=false;
   const beginShutdown=()=>{
     if(shuttingDown)return;
     shuttingDown=true;
     abort.abort();
-    void closeServer(server);
+    void Promise.allSettled([
+      ...(server.listening?[closeServer(server)]:[]),
+      ...(metricsServer.listening?[closeServer(metricsServer)]:[]),
+    ]);
   };
   process.once("SIGINT",beginShutdown);
   process.once("SIGTERM",beginShutdown);
@@ -173,7 +262,7 @@ export async function runTransformWorker():Promise<void>{
   };
 
   try{
-    await listen(server,config.port);
+    await Promise.all([listen(server,config.port),listen(metricsServer,config.metricsPort)]);
     logger.info("worker_started",{port:config.port,workerId:config.workerId,mappingVersion:config.mappingVersion});
     const heartbeatTimer=setInterval(()=>void heartbeat().catch(()=>undefined),15_000);
     heartbeatTimer.unref();
@@ -187,6 +276,7 @@ export async function runTransformWorker():Promise<void>{
     process.off("SIGINT",beginShutdown);
     process.off("SIGTERM",beginShutdown);
     if(server.listening)await closeServer(server);
+    if(metricsServer.listening)await closeServer(metricsServer);
     await Promise.allSettled([controlDatabase.close(),transformDatabase.close()]);
   }
 }

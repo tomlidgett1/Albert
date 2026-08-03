@@ -6,8 +6,19 @@ kill_timeout = 120
   dockerfile = "Dockerfile.services"
 
 [env]
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_METRICS_PORT = "9091"
+  ALBERT_QUEUE_SLA_SECONDS = "300"
+  ALBERT_WORKER_CONCURRENCY = "8"
+  ALBERT_WORKER_ID = "sync-worker"
   NODE_ENV = "production"
   PORT = "8080"
+  SUPABASE_STORAGE_S3_REGION = "ap-southeast-2"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
 
 [processes]
   app = "node --enable-source-maps services/sync-worker.js"
@@ -31,6 +42,13 @@ kill_timeout = 120
     method = "GET"
     path = "/readyz"
     timeout = "8s"
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    timeout = "5s"
 
 [[restart]]
   policy = "always"

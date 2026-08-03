@@ -30,7 +30,6 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
       return new XeroConnector({
         clientId: this.config.xeroClientId,
         oauthMode: "pkce",
-        webhookSigningKey: this.config.xeroWebhookSigningKey,
         vault,
       });
     }

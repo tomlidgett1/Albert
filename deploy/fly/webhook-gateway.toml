@@ -6,11 +6,13 @@ kill_timeout = 120
   dockerfile = "Dockerfile.services"
 
 [env]
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   NODE_ENV = "production"
   WEBHOOK_GATEWAY_PORT = "8081"
   ALBERT_WEBHOOK_WORKER_ID = "webhook-gateway"
-  WEBHOOK_INBOX_ENCRYPTED_RETENTION_DAYS = "32"
-  WEBHOOK_INBOX_METADATA_RETENTION_DAYS = "40"
+  SUPABASE_STORAGE_S3_REGION = "ap-southeast-2"
+  WEBHOOK_INBOX_ENCRYPTED_RETENTION_DAYS = "3"
+  WEBHOOK_INBOX_METADATA_RETENTION_DAYS = "14"
   WEBHOOK_INBOX_PERSISTENCE_TIMEOUT_MS = "3500"
   WEBHOOK_INBOX_LEASE_SECONDS = "90"
   WEBHOOK_INBOX_POLL_MS = "500"
@@ -40,6 +42,13 @@ kill_timeout = 120
     method = "GET"
     path = "/readyz"
     timeout = "8s"
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    timeout = "5s"
 
 [[restart]]
   policy = "always"

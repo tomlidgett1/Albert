@@ -24,7 +24,7 @@ The current Xero webhook schema has an app-level envelope with `firstEventSequen
 
 ### Lease, partition and route asynchronously
 
-- An always-on loop claims one item with `FOR UPDATE SKIP LOCKED`, a 30–300 second renewable lease, bounded attempts and exponential retry. An expired lease is reclaimable after a crash. Graceful shutdown stops new claims and waits for the active lease before closing database and Storage clients.
+- An always-on loop claims one item with `FOR UPDATE SKIP LOCKED`, a 30–300 second renewable lease, bounded attempts and exponential retry. Every claim rotates a random 128-bit lease token and increments a lease version. Every subsequent control-plane mutation must present an independent signed document containing the exact worker, token and version and revalidate the unexpired lease. An expired lease is reclaimable after a crash without allowing its stale worker to keep writing. Graceful shutdown stops new claims and waits for the active lease before closing database and Storage clients.
 - The processor decrypts and authenticates the body, verifies its hash, revalidates the schema, and compares event count and sequence metadata with the inbox row before any tenant operation.
 - Events are partitioned first by Xero `tenantId`, then by category. `CONTACT`, `INVOICE`, and `CREDITNOTE` map only to `contacts`, `invoices`, and `credit_notes`. Subscription events are acknowledged but do not enter an accounting connection stream.
 - Only an active Xero connection whose `external_account_reference` exactly equals that partition's Xero tenant ID is resolved. Each tenant/category partition is serialized independently and written under only that Albert tenant and connection's immutable raw prefix. The original multi-organisation body is never copied into a tenant object.
@@ -39,9 +39,9 @@ The current Xero webhook schema has an app-level envelope with `firstEventSequen
 
 ### Bound retention and privileges
 
-- Unprocessed encrypted bodies expire after 32 days, exceeding Xero's documented 31-day replay period without becoming unbounded. Successful processing cryptographically erases nonce, ciphertext and authentication tag immediately. A minute-cadence bounded sweep also erases terminal-failure ciphertext at the 32-day cryptographic deadline even when webhook traffic is idle. Non-payload operational metadata remains for 40 days and is purged in bounded batches.
+- Unprocessed encrypted bodies expire after three days (configurable only from one to seven days). Successful processing cryptographically erases nonce, ciphertext and authentication tag immediately; permanent or exhausted failures do the same instead of retaining source payloads for operator inspection. A minute-cadence bounded sweep erases any remaining ciphertext at the cryptographic deadline even when webhook traffic is idle. Tenant-neutral, non-payload operational metadata remains for 14 days by default and is bounded to 30 days. The shorter privacy window deliberately does not mirror Xero's longer vendor replay horizon: scheduled polling and reconciliation sweeps, not retained webhook payloads, are the completeness mechanism.
 - Rotation uses one current encryption key ID plus at most four explicitly configured decrypt-only previous keys. Readiness fails if a still-active inbox item references an unavailable key.
-- `albert_webhook_control` has no OAuth token-reference or envelope access, no direct Xero inbox/sequence table grants, and no generic queue function. It receives only the Deputy fixed wrappers, the Xero inbox/sequence/routing wrappers and one webhook readiness wrapper. `service_role`, browsers, semantic, transform and deletion runtimes receive none of them.
+- `albert_webhook_control` has no OAuth token-reference or envelope access, no direct Xero inbox/sequence table grants, and no generic queue function. It receives only proof-gated, exact-document webhook procedures; all original Xero lifecycle functions, direct Deputy resolver/readiness functions, and direct enqueue functions are revoked. `service_role`, browsers, semantic, transform and deletion runtimes receive none of them.
 - Persisted failures contain a bounded internal error code only. Logs contain inbox/attempt/disposition metadata, never plaintext body, tenant event content, signature, ciphertext, nonce, tag or raw database error messages.
 
 ## Consequences
@@ -68,7 +68,7 @@ The current Xero webhook schema has an app-level envelope with `firstEventSequen
 - Store the original body beneath every matching tenant: rejected because each copy would contain other organisations' events and violate tenant isolation.
 - Store plaintext temporarily in Postgres: rejected because delivery content can contain customer/accounting identifiers and the ingress database is a public-edge trust zone.
 - Detect gaps independently per connection: rejected because app-wide sequence numbers can legitimately skip between two payloads containing the same organisation.
-- Drop payloads after a few failed attempts and rely only on nightly polling: rejected because it destroys auditability and turns a transient implementation failure into an invisible freshness gap.
+- Drop payloads without first persisting bounded failure evidence and scheduling reconciliation: rejected because it would turn an implementation failure into an invisible freshness gap. Permanent failures erase ciphertext immediately but retain non-payload status evidence and are recovered through governed polling/reconciliation.
 - Give the webhook role generic `enqueue_sync_job` access: rejected because a compromised edge could construct work for arbitrary tenant/connection pairs. Fixed wrappers validate connector, connection, receipt, stream and identity internally.
 
 ## References

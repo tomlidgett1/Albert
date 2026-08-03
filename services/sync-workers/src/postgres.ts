@@ -9,6 +9,7 @@ export type PostgresPoolOptions = Readonly<{
   connectionTimeoutMs?: number;
   idleTimeoutMs?: number;
   statementTimeoutMs?: number;
+  onPoolAcquire?: (elapsedMs: number) => void;
 }>;
 
 function poolConfig(connectionString: string, options: PostgresPoolOptions): PoolConfig {
@@ -41,9 +42,11 @@ class PgQueryClient implements PostgresQueryClient {
 export class PgTransactionalDatabase implements TransactionalPostgres {
   private readonly pool: Pool;
   private readonly assumedRoleSql: string | null;
+  private readonly onPoolAcquire: ((elapsedMs: number) => void) | undefined;
 
   constructor(connectionString: string, options: PostgresPoolOptions) {
     this.pool = new Pool(poolConfig(connectionString, options));
+    this.onPoolAcquire = options.onPoolAcquire;
     if (options.assumedRole && !/^[a-z_][a-z0-9_]{0,62}$/.test(options.assumedRole)) {
       throw new Error("PostgreSQL assumed role is invalid.");
     }
@@ -60,7 +63,9 @@ export class PgTransactionalDatabase implements TransactionalPostgres {
   }
 
   async transaction<T>(work: (client: PostgresQueryClient) => Promise<T>): Promise<T> {
+    const acquireStartedAt = performance.now();
     const client = await this.pool.connect();
+    this.onPoolAcquire?.(performance.now() - acquireStartedAt);
     try {
       await client.query("begin");
       if (this.assumedRoleSql) await client.query(this.assumedRoleSql);

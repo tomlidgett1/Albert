@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import {
@@ -31,6 +31,7 @@ import {
   type OAuthCredentialSecret,
   type OAuthExchangeResult,
   type RawSourceRecord,
+  type ReconciliationRequest,
   type SyncCursor,
   type SyncPage,
   type SyncRange,
@@ -137,12 +138,39 @@ function latestTimestamp(values: readonly (string | undefined)[], fallback?: str
   }, fallback);
 }
 
+function oldestRecordTimestamp(records: readonly RawSourceRecord[], fallback?: string): string | undefined {
+  return records.flatMap((record) => [
+    record.sourceUpdatedAt,
+    ...Object.values(record.normalized?.timestamps ?? {}).map((value) => value.utc ?? undefined),
+  ]).reduce<string | undefined>((oldest, value) => {
+    if (!value || !Number.isFinite(Date.parse(value))) return oldest;
+    return !oldest || Date.parse(value) < Date.parse(oldest) ? value : oldest;
+  }, fallback);
+}
+
 function xeroDateTime(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) {
     throw new ConnectorError("CURSOR_INVALID", "Xero sync time is invalid.");
   }
   return `DateTime(${date.getUTCFullYear()},${date.getUTCMonth() + 1},${date.getUTCDate()},${date.getUTCHours()},${date.getUTCMinutes()},${date.getUTCSeconds()})`;
+}
+
+function extendXeroScanDigest(
+  priorDigest: string | undefined,
+  records: readonly RawSourceRecord[],
+): string {
+  const hash=createHash("sha256");
+  hash.update(priorDigest ?? "xero-bounded-page-scan-v1");
+  for (const record of records) {
+    for (const value of [record.sourceObjectType,record.sourceRecordId,record.payloadHash]) {
+      hash.update(String(Buffer.byteLength(value,"utf8")));
+      hash.update(":");
+      hash.update(value);
+      hash.update(";");
+    }
+  }
+  return hash.digest("hex");
 }
 
 function basicAuth(clientId: string, clientSecret = ""): string {
@@ -221,7 +249,6 @@ export class XeroConnector implements OAuthConnectorPack {
       {
         method: "POST",
         headers: {
-          authorization: basicAuth(this.config.clientId),
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },
@@ -267,16 +294,28 @@ export class XeroConnector implements OAuthConnectorPack {
 
   async discover_accounts(context: ConnectorContext): Promise<readonly ConnectionDiscovery[]> {
     const credential = await this.validCredential(context);
-    const { value } = await this.concurrency.run(() => requestJson<unknown>(
+    const execute = (accessToken: string) => this.concurrency.run(() => requestJson<unknown>(
       this.fetcher,
       CONNECTIONS_ENDPOINT,
       {
         method: "GET",
-        headers: { authorization: `Bearer ${credential.secret.accessToken}`, accept: "application/json" },
+        headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
         signal: context.abortSignal,
       },
       withVendorRateBudget(this.config.retry, context.vendorRateBudget),
     ));
+    let value: unknown;
+    try {
+      ({ value } = await execute(credential.secret.accessToken));
+    } catch (error) {
+      if (!(error instanceof ConnectorHttpError) || error.status !== 401) throw error;
+      // Access tokens can be revoked before their advertised expiry. Route the
+      // recovery through the same durable, fenced refresh lease as all other
+      // Xero calls so multiple worker replicas cannot spend one rotating
+      // refresh token concurrently.
+      const refreshed = await this.refreshCredential(credential, context.abortSignal);
+      ({ value } = await execute(refreshed.secret.accessToken));
+    }
     const parsed = z.array(connectionSchema).safeParse(value);
     if (!parsed.success) {
       throw new ConnectorError("REMOTE_RESPONSE_INVALID", "Xero returned invalid connection metadata.", {
@@ -343,8 +382,15 @@ export class XeroConnector implements OAuthConnectorPack {
       .map((stream) => ({
         id: stream.id,
         label: stream.id.replaceAll("_", " "),
-        domains: stream.canonicalTargets,
+        domains: stream.productDomains,
         cursorKind: stream.pagination === "offset" ? "offset" as const : "high_water_mark" as const,
+        backfillStrategy: stream.backfillStrategy,
+        lateEditStrategy: stream.lateEditStrategy,
+        deletionStrategy: stream.deletionStrategy,
+        sourceTotalStrategy: stream.sourceTotalStrategy,
+        availability: stream.availability ?? "required",
+        dependencies: stream.dependencies,
+        productDomains: stream.productDomains,
         priority: streamPriority[stream.id as XeroStreamId],
       }))
       .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0));
@@ -365,6 +411,24 @@ export class XeroConnector implements OAuthConnectorPack {
     cursor: SyncCursor,
   ): Promise<SyncPage> {
     return this.sync(context, stream, "incremental", cursor);
+  }
+
+  async reconciliation_sync(
+    context: ConnectorContext,
+    stream: ConnectorStream,
+    request: ReconciliationRequest,
+  ): Promise<SyncPage> {
+    if (request.phase === "late_edits" && stream.lateEditStrategy === "append_only") {
+      return { records: [], nextCursor: null, hasMore: false, sourceTotal: 0 };
+    }
+    return this.sync(
+      context,
+      stream,
+      "reconciliation",
+      request.cursor,
+      request.range,
+      request.phase,
+    );
   }
 
   async handle_webhook(
@@ -491,25 +555,40 @@ export class XeroConnector implements OAuthConnectorPack {
       capability("finance.payments", has("accounting.payments.read"), ["accounting.payments.read"]),
       capability("finance.bank_transactions", has("accounting.banktransactions.read"), ["accounting.banktransactions.read"]),
       {
-        id: "finance.general_ledger",
+        id: "finance.journals",
         support: !has("accounting.journals.read")
           ? "unavailable"
           : this.successfulStreams.has(ledgerKey) ? "full" : "unknown",
+        reasonCode: !has("accounting.journals.read")
+          ? "required_scope_missing"
+          : this.successfulStreams.has(ledgerKey) ? "live_stream_observed" : "live_probe_required",
         requiredScopes: ["accounting.journals.read"],
         notes: "Journals require an Advanced-tier, certified Xero app. Until a live endpoint probe succeeds, ledger-backed answers must remain Unavailable rather than silently partial.",
       },
-      { id: "source.webhooks.contacts", support: "full" },
-      { id: "source.webhooks.invoices", support: "full" },
-      { id: "source.webhooks.credit_notes", support: "full" },
+      {
+        id: "finance.journals.tax",
+        support: !has("accounting.journals.read")
+          ? "unavailable"
+          : this.successfulStreams.has(ledgerKey) ? "full" : "unknown",
+        reasonCode: !has("accounting.journals.read")
+          ? "required_scope_missing"
+          : this.successfulStreams.has(ledgerKey) ? "live_stream_observed" : "live_probe_required",
+        requiredScopes: ["accounting.journals.read"],
+        notes: "Journal line TaxAmount and TaxType are projected only after the live Advanced Journals probe succeeds.",
+      },
+      { id: "source.webhooks.contacts", support: "full", reasonCode: "vendor_webhook_documented" },
+      { id: "source.webhooks.invoices", support: "full", reasonCode: "vendor_webhook_documented" },
+      { id: "source.webhooks.credit_notes", support: "full", reasonCode: "vendor_webhook_documented" },
     ];
   }
 
   private async sync(
     context: ConnectorContext,
     stream: ConnectorStream,
-    mode: "initial" | "incremental",
+    mode: "initial" | "incremental" | "reconciliation",
     cursor?: SyncCursor,
     range?: SyncRange,
+    reconciliationPhase?: ReconciliationRequest["phase"],
   ): Promise<SyncPage> {
     const contract = this.manifest.streams.find((candidate) => candidate.id === stream.id);
     if (!contract || !(contract.id in xeroSchemas)) {
@@ -518,6 +597,12 @@ export class XeroConnector implements OAuthConnectorPack {
     const streamId = contract.id as XeroStreamId;
     const account = await this.discover_account(context);
     const state = cursor ? decodeCursor(cursor, { connector: this.id, stream: stream.id }) : undefined;
+    const currentSecond = new Date(
+      Math.floor((this.config.now?.() ?? Date.now()) / 1_000) * 1_000,
+    ).toISOString();
+    const scanUpperBound = mode === "reconciliation" && reconciliationPhase === "late_edits"
+      ? range?.to ?? currentSecond
+      : state?.scanUpperBound ?? currentSecond;
     const url = new URL(`/api.xro/2.0/${contract.endpoint}`, ACCOUNTING_ORIGIN);
     const headers: Record<string, string> = {
       accept: "application/json",
@@ -529,17 +614,62 @@ export class XeroConnector implements OAuthConnectorPack {
       page = typeof state?.continuation === "number" ? state.continuation : 1;
       url.searchParams.set("page", String(page));
       url.searchParams.set("pageSize", String(PAGE_SIZE));
+      if (contract.modifiedField) {
+        // The pinned Accounting OpenAPI exposes `order` on every paged V1
+        // stream. A total source-time/native-ID order plus an immutable
+        // run-start upper bound prevents mutable page membership from skipping
+        // records while an incremental scan is in flight.
+        url.searchParams.set(
+          "order",
+          `${contract.modifiedField} ASC,${contract.recordIdField} ASC`,
+        );
+      }
     } else if (contract.pagination === "offset") {
       offset = typeof state?.continuation === "number" ? state.continuation : 0;
       url.searchParams.set("offset", String(offset));
     }
-    if (mode === "incremental" && state?.watermark && streamId !== "journals") {
-      headers["if-modified-since"] = new Date(state.watermark).toUTCString();
+    // Archived contacts are part of deletion/merge truth and must remain in
+    // both initial and incremental extraction. Without this documented flag,
+    // Albert can retain a contact that the source has already archived.
+    if (streamId === "contacts") url.searchParams.set("includeArchived", "true");
+    if (
+      streamId !== "journals" &&
+      (
+        (mode === "incremental" && state?.watermark) ||
+        (mode === "reconciliation" && reconciliationPhase === "late_edits" &&
+          contract.lateEditStrategy === "modified_field" && range)
+      )
+    ) {
+      // Reconciliation deliberately uses source modification time even for
+      // invoice/payment streams whose initial history is sliced by business date.
+      headers["if-modified-since"] = new Date(
+        mode === "incremental" ? state!.watermark! : range!.from,
+      ).toUTCString();
+      if (!contract.modifiedField || !scanUpperBound) {
+        throw new ConnectorError(
+          "CONFIGURATION_INVALID",
+          "Xero modified-time sync requires a fixed upper bound and source field.",
+        );
+      }
+      url.searchParams.set(
+        "where",
+        `${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`,
+      );
     } else if (mode === "initial" && range && eventDateField[streamId]) {
       const field = eventDateField[streamId];
       url.searchParams.set(
         "where",
-        `${field}>=${xeroDateTime(range.from)}&&${field}<${xeroDateTime(range.to)}`,
+        `${field}>=${xeroDateTime(range.from)}&&${field}<${xeroDateTime(range.to)}`+
+          (contract.pagination === "page" && contract.modifiedField
+            ? `&&${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`
+            : ""),
+      );
+    } else if (
+      mode === "initial" && contract.pagination === "page" && contract.modifiedField
+    ) {
+      url.searchParams.set(
+        "where",
+        `${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`,
       );
     }
 
@@ -569,42 +699,130 @@ export class XeroConnector implements OAuthConnectorPack {
       records.map((record) => record.sourceUpdatedAt),
       state?.observedWatermark ?? state?.watermark,
     );
+    const oldestObservedAt = oldestRecordTimestamp(records, state?.oldestObservedAt);
 
     let hasMore = false;
+    let vendorHasMore = false;
+    let verificationRestart = false;
     let continuation: number | undefined;
+    let paginationBlock: SyncPage["paginationBlock"];
+    let scanDigest: string | undefined;
+    let scanCount: number | undefined;
+    let verificationDigest: string | undefined;
+    let verificationCount: number | undefined;
     if (contract.pagination === "page") {
+      if (
+        (state?.scanDigest !== undefined && !/^[0-9a-f]{64}$/u.test(state.scanDigest)) ||
+        (state?.verificationDigest !== undefined && !/^[0-9a-f]{64}$/u.test(state.verificationDigest)) ||
+        (state?.scanCount !== undefined && (!Number.isSafeInteger(state.scanCount) || state.scanCount < 0)) ||
+        (state?.verificationCount !== undefined &&
+          (!Number.isSafeInteger(state.verificationCount) || state.verificationCount < 0))
+      ) {
+        throw new ConnectorError("CURSOR_INVALID", "The Xero page verification cursor is invalid.");
+      }
       // Xero recommends requesting pages until an empty page is observed.
-      hasMore = records.length > 0;
-      continuation = hasMore ? page + 1 : undefined;
+      vendorHasMore = records.length > 0;
+      scanDigest = extendXeroScanDigest(state?.scanDigest,records);
+      scanCount = (state?.scanCount ?? 0)+records.length;
+      verificationDigest=state?.verificationDigest;
+      verificationCount=state?.verificationCount;
+      if (!vendorHasMore && (scanCount>0 || verificationDigest!==undefined)) {
+        const consecutivePassMatches = verificationDigest!==undefined &&
+          verificationCount===scanCount && verificationDigest===scanDigest;
+        if (!consecutivePassMatches) {
+          // Page-number result sets are mutable even under a stable order: a
+          // record changed after page one can leave the bounded set and shift a
+          // later row behind the current offset. Require two identical ordered
+          // passes before advancing the lower watermark. The restart cursor is
+          // durable, so a worker crash cannot skip the verification pass.
+          verificationRestart=true;
+          verificationDigest=scanDigest;
+          verificationCount=scanCount;
+        }
+      }
+      hasMore=vendorHasMore||verificationRestart;
+      continuation=vendorHasMore?page+1:undefined;
     } else if (contract.pagination === "offset") {
       const journalNumbers = rawRecords
         .map((raw) => raw && typeof raw === "object" ? Number((raw as Record<string, unknown>).JournalNumber) : Number.NaN)
-        .filter(Number.isFinite);
-      const maxJournal = journalNumbers.length > 0 ? Math.max(...journalNumbers) : offset;
+        .filter((value) => Number.isSafeInteger(value) && value >= 0);
+      const maxJournal = journalNumbers.length > 0 ? Math.max(...journalNumbers) : undefined;
       // Xero explicitly warns that a partial Journals page is not an end signal.
       hasMore = records.length > 0;
-      // Persist the high journal number even on the last page for the next incremental.
-      continuation = maxJournal;
+      if (hasMore && maxJournal === undefined) {
+        paginationBlock = {
+          code: "pagination_identity_invalid",
+          detail: "Xero returned a non-empty Journals page without a valid JournalNumber.",
+        };
+      } else if (hasMore && maxJournal !== undefined && maxJournal <= offset) {
+        paginationBlock = {
+          code: "pagination_not_advancing",
+          detail: "Xero returned a Journals page that did not advance beyond the requested offset.",
+        };
+      } else {
+        // Persist the high journal number even on the last page for the next incremental.
+        continuation = maxJournal ?? offset;
+      }
+      vendorHasMore=hasMore;
     }
-    this.successfulStreams.add(`${context.connectionId}:${streamId}`);
+    if (!paginationBlock) this.successfulStreams.add(`${context.connectionId}:${streamId}`);
     return {
       records,
-      nextCursor: encodeCursor({
+      nextCursor: paginationBlock ? null : encodeCursor({
         v: 1,
         connector: this.id,
         stream: stream.id,
-        mode,
+        mode: mode === "reconciliation" ? "reconciliation" : mode,
         watermark: hasMore
           ? state?.watermark
           : mode === "initial"
             ? range?.to ?? observedWatermark
-            : observedWatermark,
+            : scanUpperBound ?? observedWatermark,
         observedWatermark: hasMore ? observedWatermark : undefined,
+        oldestObservedAt,
         continuation,
+        scanUpperBound: hasMore && contract.pagination === "page"
+          ? scanUpperBound
+          : undefined,
+        scanDigest: contract.pagination === "page" && vendorHasMore
+          ? scanDigest
+          : undefined,
+        scanCount: contract.pagination === "page" && vendorHasMore
+          ? scanCount
+          : undefined,
+        verificationDigest: contract.pagination === "page" && hasMore
+          ? verificationDigest
+          : undefined,
+        verificationCount: contract.pagination === "page" && hasMore
+          ? verificationCount
+          : undefined,
         rangeFrom: range?.from ?? state?.rangeFrom,
-        rangeTo: range?.to ?? state?.rangeTo,
+        rangeTo: mode === "incremental"
+          ? undefined
+          : range?.to ?? state?.rangeTo,
       }),
       hasMore,
+      ...(paginationBlock ? { paginationBlock } : {}),
+      ...(mode === "initial" && !hasMore && range
+        ? { coverage: contract.backfillStrategy === "snapshot"
+            ? {
+                boundaryKind: "snapshot_at" as const,
+                lowerBound: range.to,
+                verification: "point_in_time" as const,
+              }
+            : contract.backfillStrategy === "exhaustive_offset" ||
+                Date.parse(range.from) <= Date.parse("1970-01-01T00:00:00.000Z")
+              ? {
+                  boundaryKind: oldestObservedAt ? "verified_oldest" as const : "verified_empty" as const,
+                  lowerBound: oldestObservedAt ?? range.to,
+                  verification: "exhaustive_vendor_scan" as const,
+                }
+              : {
+                  boundaryKind: "window_exhausted" as const,
+                  lowerBound: range.from,
+                  verification: "exhaustive_vendor_scan" as const,
+                } }
+        : {}),
     };
   }
 
@@ -664,7 +882,8 @@ export class XeroConnector implements OAuthConnectorPack {
     ];
     const updatedRaw = fields.UpdatedDateUTCString ?? fields[contract.modifiedField ?? ""];
     const updated = normalizeTimestamp(updatedRaw);
-    const status = typeof fields.Status === "string" ? fields.Status.toUpperCase() : "";
+    const statusValue = fields.Status ?? fields.ContactStatus;
+    const status = typeof statusValue === "string" ? statusValue.toUpperCase() : "";
     return {
       sourceObjectType: contract.resource,
       sourceRecordId: String(fields[contract.recordIdField]),
@@ -763,7 +982,6 @@ export class XeroConnector implements OAuthConnectorPack {
       {
         method: "POST",
         headers: {
-          authorization: basicAuth(this.config.clientId),
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },
@@ -812,11 +1030,16 @@ export class XeroConnector implements OAuthConnectorPack {
 }
 
 function capability(
-  id: string,
+  id: ConnectorCapability["id"],
   available: boolean,
   requiredScopes: readonly string[],
 ): ConnectorCapability {
-  return { id, support: available ? "full" : "unavailable", requiredScopes };
+  return {
+    id,
+    support: available ? "full" : "unavailable",
+    reasonCode: available ? "required_scopes_granted" : "required_scope_missing",
+    requiredScopes,
+  };
 }
 
 async function requestJsonOrEmpty(

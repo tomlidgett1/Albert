@@ -40,6 +40,7 @@ export type TypedStagingRecord = Readonly<{
   payloadBatchId: string;
   syncRunId: string;
   tombstone: boolean;
+  preserveExistingFields?: boolean;
   mappingVersion: string;
   values: Readonly<Record<string, unknown>>;
 }>;
@@ -99,12 +100,20 @@ export async function upsertTypedStagingRecord(
     ...commonColumns.map((column) => commonColumnCast(column)),
     ...record.contract.fields.map((field) => field.type),
   ];
+  const table = `${quoteIdentifier(record.contract.schema)}.${quoteIdentifier(record.contract.table)}`;
+  const sourceFieldColumns = new Set(record.contract.fields.map((field) => field.column));
   const assignments = columns
     .filter((column) => column !== "tenant_id" && column !== "namespaced_source_key")
-    .map((column) => `${quoteIdentifier(column)} = excluded.${quoteIdentifier(column)}`);
+    .map((column) => {
+      const quoted = quoteIdentifier(column);
+      return record.preserveExistingFields && sourceFieldColumns.has(column)
+        ? `${quoted} = coalesce(${table}.${quoted}, excluded.${quoted})`
+        : `${quoted} = excluded.${quoted}`;
+    });
   assignments.push("ingested_at = now()");
 
-  const table = `${quoteIdentifier(record.contract.schema)}.${quoteIdentifier(record.contract.table)}`;
+  const preserveDailyObservation = record.contract.connectorId === "lightspeed-r"
+    && record.contract.stream === "item_shops";
   const placeholders = casts.map((cast, index) => `$${index + 1}${sqlCast(cast)}`);
   await client.query(
     `insert into ${table} (${columns.map(quoteIdentifier).join(", ")})
@@ -139,6 +148,7 @@ export async function upsertTypedStagingRecord(
        ${table}.payload_hash <> excluded.payload_hash
        or ${table}.source_version is distinct from excluded.source_version
        or ${table}.mapping_version <> excluded.mapping_version
+       ${preserveDailyObservation ? `or ${table}.payload_batch_id <> excluded.payload_batch_id` : ""}
      )`,
     [...commonValues, ...fieldValues],
   );

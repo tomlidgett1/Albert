@@ -29,6 +29,7 @@ import {
   type OAuthCredentialSecret,
   type OAuthExchangeResult,
   type RawSourceRecord,
+  type ReconciliationRequest,
   type SyncCursor,
   type SyncPage,
   type SyncRange,
@@ -41,10 +42,6 @@ import { DEPUTY_DEFAULT_SCOPES, deputyManifest } from "./manifest";
 import { buildDeputyAuthorizationUrl } from "./oauth-public";
 import { deputySchemas, type DeputyStreamId } from "./schemas";
 import {
-  DEPUTY_WEBHOOK_TOPICS,
-  deputyWebhookHeaderValue,
-  parseCreatedDeputyWebhookId,
-  parseDeputyVendorWebhooks,
   parseDeputyWebhook,
   type DeputyWebhookVerificationMaterial,
 } from "./webhooks";
@@ -109,10 +106,50 @@ function normalizeEndpoint(value: string): string {
   return hostname;
 }
 
+function canonicalDeputyPaginationId(value: unknown): string | undefined {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined;
+  }
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,39})$/u.test(value)) {
+    return undefined;
+  }
+  try {
+    return BigInt(value).toString(10);
+  } catch {
+    return undefined;
+  }
+}
+
+function deputyPaginationIdFromRaw(raw: unknown): string | undefined {
+  return raw && typeof raw === "object"
+    ? canonicalDeputyPaginationId((raw as Record<string, unknown>).Id)
+    : undefined;
+}
+
+function maximumDeputyPaginationId(values: readonly string[]): string | undefined {
+  return values.reduce<string | undefined>((maximum, value) =>
+    maximum === undefined || BigInt(value) > BigInt(maximum) ? value : maximum, undefined);
+}
+
+function deputyPaginationQueryValue(value: string): string | number {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) ? numeric : value;
+}
+
 function latestTimestamp(values: readonly (string | undefined)[], fallback?: string): string | undefined {
   return values.reduce<string | undefined>((latest, value) => {
     if (!value || !Number.isFinite(Date.parse(value))) return latest;
     return !latest || Date.parse(value) > Date.parse(latest) ? value : latest;
+  }, fallback);
+}
+
+function oldestRecordTimestamp(records: readonly RawSourceRecord[], fallback?: string): string | undefined {
+  return records.flatMap((record) => [
+    record.sourceUpdatedAt,
+    ...Object.values(record.normalized?.timestamps ?? {}).map((value) => value.utc ?? undefined),
+  ]).reduce<string | undefined>((oldest, value) => {
+    if (!value || !Number.isFinite(Date.parse(value))) return oldest;
+    return !oldest || Date.parse(value) < Date.parse(oldest) ? value : oldest;
   }, fallback);
 }
 
@@ -132,7 +169,6 @@ export class DeputyConnector implements OAuthConnectorPack {
   private readonly refreshes = new Map<string, Promise<VersionedCredential>>();
   private readonly successfulStreams = new Set<string>();
   private readonly observedTimesheetCost = new Set<string>();
-  private readonly provisionedWebhooks = new Set<string>();
 
   constructor(config: DeputyConnectorConfig) {
     this.config = {
@@ -266,8 +302,15 @@ export class DeputyConnector implements OAuthConnectorPack {
       .map((stream) => ({
         id: stream.id,
         label: stream.id.replaceAll("_", " "),
-        domains: stream.canonicalTargets,
+        domains: stream.productDomains,
         cursorKind: "high_water_mark" as const,
+        backfillStrategy: stream.backfillStrategy,
+        lateEditStrategy: stream.lateEditStrategy,
+        deletionStrategy: stream.deletionStrategy,
+        sourceTotalStrategy: stream.sourceTotalStrategy,
+        availability: stream.availability ?? "required",
+        dependencies: stream.dependencies,
+        productDomains: stream.productDomains,
         priority: streamPriority[stream.id as DeputyStreamId],
       }))
       .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0));
@@ -288,6 +331,21 @@ export class DeputyConnector implements OAuthConnectorPack {
     cursor: SyncCursor,
   ): Promise<SyncPage> {
     return this.sync(context, stream, "incremental", cursor);
+  }
+
+  async reconciliation_sync(
+    context: ConnectorContext,
+    stream: ConnectorStream,
+    request: ReconciliationRequest,
+  ): Promise<SyncPage> {
+    return this.sync(
+      context,
+      stream,
+      "reconciliation",
+      request.cursor,
+      request.range,
+      request.phase,
+    );
   }
 
   async handle_webhook(
@@ -315,65 +373,6 @@ export class DeputyConnector implements OAuthConnectorPack {
     };
   }
 
-  /**
-   * Install or reconcile Albert-owned webhook configuration. This is the sole
-   * Deputy write path and is limited to the documented Webhook resource; no
-   * source business object is ever mutated.
-   */
-  async provision_webhooks(
-    context: ConnectorContext,
-    input: Readonly<{ callbackUrl: string; customHeaderSecret: string }>,
-  ): Promise<Readonly<{ vendorWebhookIds: Readonly<Record<string, string>> }>> {
-    const callback = new URL(input.callbackUrl);
-    if (
-      callback.protocol !== "https:" || callback.username || callback.password ||
-      callback.search || callback.hash || callback.toString().length > 2_000
-    ) {
-      throw new ConnectorError("CONFIGURATION_INVALID", "Deputy webhook callback URL must be a clean HTTPS URL.");
-    }
-    const headerValue = deputyWebhookHeaderValue(input.customHeaderSecret);
-    const credential = await this.validCredential(context);
-    const endpoint = normalizeEndpoint(String(credential.secret.metadata.endpoint ?? ""));
-    const resourceUrl = new URL(`https://${endpoint}/api/v1/resource/Webhook`);
-    const queryUrl = new URL(`${resourceUrl.toString()}/QUERY`);
-    const { value: existingValue } = await this.apiJson<unknown>(context, credential, queryUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        search: { s1: { field: "Address", data: callback.toString(), type: "eq" } },
-        sort: { Id: "asc" },
-        start: 0,
-        max: 500,
-      }),
-    });
-    const existing = parseDeputyVendorWebhooks(existingValue);
-    const installedEntries = await Promise.all(DEPUTY_WEBHOOK_TOPICS.map(async (topic) => {
-      const current = existing.find((hook) => hook.topic === topic);
-      if (
-        current && current.enabled && current.type === "URL" &&
-        current.address === callback.toString() && current.headers === headerValue
-      ) {
-        return [topic, current.id] as const;
-      }
-      const { value } = await this.apiJson<unknown>(context, credential, resourceUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          ...(current ? { Id: current.id } : {}),
-          Topic: topic,
-          Enabled: 1,
-          Type: "URL",
-          Address: callback.toString(),
-          Headers: headerValue,
-        }),
-      });
-      return [topic, current?.id ?? parseCreatedDeputyWebhookId(value)] as const;
-    }));
-    const installed = Object.fromEntries(installedEntries);
-    this.provisionedWebhooks.add(context.connectionId);
-    return Object.freeze({ vendorWebhookIds: Object.freeze(installed) });
-  }
-
   async refresh_credentials(context: ConnectorContext): Promise<{ credentialRef: string }> {
     const current = await this.readCredential(context);
     return { credentialRef: (await this.refreshCredential(current, context.abortSignal)).credentialRef };
@@ -389,35 +388,45 @@ export class DeputyConnector implements OAuthConnectorPack {
     context: ConnectorContext,
   ): Promise<readonly ConnectorCapability[]> {
     const success = (stream: DeputyStreamId) => this.successfulStreams.has(`${context.connectionId}:${stream}`);
-    const webhookConfigured = this.provisionedWebhooks.has(context.connectionId);
     return [
       {
-        id: "workforce.rosters",
+        id: "workforce.shifts",
         support: success("rosters") ? "full" : "unknown",
+        reasonCode: success("rosters") ? "live_stream_observed" : "live_probe_required",
         notes: "Confirmed after the first successful live Resource query.",
       },
       {
-        id: "workforce.timesheets",
+        id: "workforce.time_entries",
         support: success("timesheets") ? "full" : "unknown",
+        reasonCode: success("timesheets") ? "live_stream_observed" : "live_probe_required",
         notes: "Confirmed after the first successful live Resource query.",
       },
       {
-        id: "workforce.timesheets.cost",
+        id: "workforce.time_entries.cost",
         support: this.observedTimesheetCost.has(context.connectionId)
           ? "full"
           : success("timesheets") ? "partial" : "unknown",
+        reasonCode: this.observedTimesheetCost.has(context.connectionId)
+          ? "cost_fields_observed"
+          : success("timesheets") ? "cost_fields_not_observed" : "live_probe_required",
         notes: "Cost availability depends on payroll visibility and data state; answers must disclose coverage.",
+      },
+      {
+        id: "workforce.time_entries.overtime",
+        support: "unavailable",
+        reasonCode: "overtime_duration_not_projected",
+        notes: "The pinned Timesheet projection does not expose governed overtime duration; Albert never treats a synthetic zero as observed overtime.",
       },
       {
         id: "workforce.leave",
         support: success("leave") ? "full" : "unknown",
+        reasonCode: success("leave") ? "live_stream_observed" : "live_probe_required",
       },
       {
         id: "source.webhooks",
-        support: webhookConfigured ? "full" : "unavailable",
-        notes: webhookConfigured
-          ? "Albert provisioned per-connection authenticated webhooks for every required Deputy topic."
-          : "Webhook capability becomes full only after per-connection vendor provisioning succeeds.",
+        support: "partial",
+        reasonCode: "optional_operator_installation_required",
+        notes: "Albert never creates or updates Deputy Webhook resources. Optional connection-bound ingress requires explicit owner or operator installation; polling and reconciliation provide completeness without it.",
       },
     ];
   }
@@ -425,9 +434,10 @@ export class DeputyConnector implements OAuthConnectorPack {
   private async sync(
     context: ConnectorContext,
     stream: ConnectorStream,
-    mode: "initial" | "incremental",
+    mode: "initial" | "incremental" | "reconciliation",
     cursor?: SyncCursor,
     range?: SyncRange,
+    reconciliationPhase?: ReconciliationRequest["phase"],
   ): Promise<SyncPage> {
     const contract = this.manifest.streams.find((candidate) => candidate.id === stream.id);
     if (!contract || !(contract.id in deputySchemas)) {
@@ -449,9 +459,13 @@ export class DeputyConnector implements OAuthConnectorPack {
       searchIndex += 1;
       search[`s${searchIndex}`] = { field, data, type };
     };
-    if (mode === "incremental" && state?.watermark) {
-      addSearch("Modified", state.watermark, "ge");
-      addSearch("Modified", syncUpperBound, "lt");
+    if (
+      (mode === "incremental" && state?.watermark) ||
+      (mode === "reconciliation" && reconciliationPhase === "late_edits" && range)
+    ) {
+      // Modified, not Date/StartTime/DateStart, is the late-edit authority.
+      addSearch("Modified", mode === "incremental" ? state!.watermark : range!.from, "ge");
+      addSearch("Modified", mode === "incremental" ? syncUpperBound : range!.to, "lt");
     } else if (mode === "initial" && range) {
       if (streamId === "rosters") {
         addSearch("Date", range.from.slice(0, 10), "ge");
@@ -464,11 +478,16 @@ export class DeputyConnector implements OAuthConnectorPack {
         addSearch("DateStart", range.to.slice(0, 10), "lt");
       }
     }
-    if (state?.continuation !== undefined) {
-      const numericId = Number(state.continuation);
+    const priorPaginationId = state?.continuation === undefined
+      ? undefined
+      : canonicalDeputyPaginationId(state.continuation);
+    if (state?.continuation !== undefined && priorPaginationId === undefined) {
+      throw new ConnectorError("CURSOR_INVALID", "The stored Deputy pagination identity is invalid.");
+    }
+    if (priorPaginationId !== undefined) {
       addSearch(
         "Id",
-        Number.isSafeInteger(numericId) ? numericId : String(state.continuation),
+        deputyPaginationQueryValue(priorPaginationId),
         "gt",
       );
     }
@@ -507,33 +526,80 @@ export class DeputyConnector implements OAuthConnectorPack {
     })) {
       this.observedTimesheetCost.add(context.connectionId);
     }
-    const hasMore = records.length === 500;
+    const hasMore = array.data.length === 500;
+    const maximumSourceId = maximumDeputyPaginationId(
+      array.data.flatMap((raw) => {
+        const value = deputyPaginationIdFromRaw(raw);
+        return value === undefined ? [] : [value];
+      }),
+    );
+    let paginationBlock: SyncPage["paginationBlock"];
+    if (hasMore && maximumSourceId === undefined) {
+      paginationBlock = {
+        code: "pagination_identity_invalid",
+        detail: "Deputy returned a full Resource page without a valid numeric Id.",
+      };
+    } else if (
+      hasMore &&
+      maximumSourceId !== undefined &&
+      priorPaginationId !== undefined &&
+      BigInt(maximumSourceId) <= BigInt(priorPaginationId)
+    ) {
+      paginationBlock = {
+        code: "pagination_not_advancing",
+        detail: "Deputy returned a Resource page that did not advance beyond the requested Id.",
+      };
+    }
     const observedWatermark = latestTimestamp(
       records.map((record) => record.sourceUpdatedAt),
       state?.observedWatermark ?? state?.watermark,
     );
-    this.successfulStreams.add(`${context.connectionId}:${streamId}`);
-    const lastSourceId = records.at(-1)?.sourceRecordId;
+    const oldestObservedAt = oldestRecordTimestamp(records, state?.oldestObservedAt);
+    if (!paginationBlock) this.successfulStreams.add(`${context.connectionId}:${streamId}`);
+    const continuation = maximumSourceId === undefined
+      ? undefined
+      : deputyPaginationQueryValue(maximumSourceId);
     return {
       records,
-      nextCursor: encodeCursor({
+      nextCursor: paginationBlock ? null : encodeCursor({
         v: 1,
         connector: this.id,
         stream: stream.id,
-        mode,
+        mode: mode === "reconciliation" ? "reconciliation" : mode,
         watermark: hasMore
           ? state?.watermark
           : mode === "initial"
             ? range?.to ?? observedWatermark
             : syncUpperBound,
         observedWatermark: hasMore ? observedWatermark : undefined,
-        continuation: hasMore ? lastSourceId : undefined,
+        oldestObservedAt,
+        continuation: hasMore ? continuation : undefined,
         rangeFrom: range?.from ?? state?.rangeFrom,
         rangeTo: mode === "incremental"
           ? hasMore ? syncUpperBound : undefined
           : range?.to ?? state?.rangeTo,
       }),
       hasMore,
+      ...(paginationBlock ? { paginationBlock } : {}),
+      ...(mode === "initial" && !hasMore && range
+        ? { coverage: contract.backfillStrategy === "snapshot"
+            ? {
+                boundaryKind: "snapshot_at" as const,
+                lowerBound: range.to,
+                verification: "point_in_time" as const,
+              }
+            : Date.parse(range.from) <= Date.parse("1970-01-01T00:00:00.000Z")
+              ? {
+                  boundaryKind: oldestObservedAt ? "verified_oldest" as const : "verified_empty" as const,
+                  lowerBound: oldestObservedAt ?? range.to,
+                  verification: "exhaustive_vendor_scan" as const,
+                }
+              : {
+                  boundaryKind: "window_exhausted" as const,
+                  lowerBound: range.from,
+                  verification: "exhaustive_vendor_scan" as const,
+                } }
+        : {}),
     };
   }
 

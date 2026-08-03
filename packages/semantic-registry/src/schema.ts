@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CAPABILITY_IDS } from "../../connector-sdk/src/capabilities.js";
 
 export const roleSchema = z.enum(["owner", "manager", "bookkeeper", "internal_operator"]);
 export type SemanticRole = z.infer<typeof roleSchema>;
@@ -65,7 +66,7 @@ export const metricContractSchema = z.object({
   unit: z.enum(["currency", "units", "count", "percent", "hours", "days", "currency_per_unit"]),
   authority: z.string().min(1),
   allowedDimensions: z.array(z.string().min(1)).min(1),
-  requiredCapabilities: z.array(z.string().min(1)),
+  requiredCapabilities: z.array(z.enum(CAPABILITY_IDS)),
   tenantParameters: z.array(z.string().min(1)),
   tests: z.array(z.object({ kind: z.string(), target: z.string().optional(), tolerance: z.string().optional() }).strict()),
 }).strict();
@@ -103,7 +104,7 @@ export const topicSchema = z.object({
   approvedDimensions: z.array(z.string().min(1)).min(1),
   metrics: z.array(z.string().min(1)).min(1),
   defaultFilters: z.array(filterContractSchema),
-  requiredCapabilities: z.array(z.string().min(1)),
+  requiredCapabilities: z.array(z.enum(CAPABILITY_IDS)),
   freshnessMinutes: z.number().int().positive(),
   roles: z.array(roleSchema).min(1),
   composite: z.boolean(),

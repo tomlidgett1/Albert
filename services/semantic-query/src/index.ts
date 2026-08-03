@@ -1,4 +1,6 @@
 export * from "./bundle.js";
+export * from "./answer-artifact-finalizer.js";
+export * from "./model-usage-recorder.js";
 export * from "./cache.js";
 export * from "./composition.js";
 export * from "./database.js";
@@ -6,6 +8,8 @@ export * from "./embeddings.js";
 export * from "./http.js";
 export * from "./node-server.js";
 export * from "./postgres-adapters.js";
+export * from "./promotion-relay.js";
 export * from "./service.js";
+export * from "./source-access-policy.js";
 export * from "./source-query.js";
 export * from "./types.js";

@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
 import { createServiceLogger,safeErrorEvidence } from "../../../packages/observability/src/index.js";
+import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
+import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
 import { createPostgresSemanticComposition,type ClosablePgPool,type SemanticServiceComposition } from "./composition.js";
 import { OpenAIEmbeddingProvider } from "./embeddings.js";
 import { startSemanticNodeServer } from "./node-server.js";
@@ -10,6 +13,17 @@ const logger=createServiceLogger("semantic-query");
 type PgModule=Readonly<{Pool:new(options:Readonly<{connectionString:string;max?:number;application_name?:string}>)=>ClosablePgPool}>;
 
 export async function startSemanticServiceFromEnvironment(environment:NodeJS.ProcessEnv=process.env):Promise<Readonly<{close:()=>Promise<void>;url:string}>>{
+  const releaseSha=assertEmbeddedServiceBuildIdentity(environment);
+  assertProductionRuntimeBoundary(environment,{
+    label:"semantic query",controlProject:true,analyticalRegion:true,
+    storageRegion:false,modelDataResidency:true,lightspeedProduct:false,
+    databaseLogins:{
+      CONTROL_PLANE_DATABASE_URL:"albert_semantic_control_runtime",
+      ANALYTICAL_DATABASE_URL:"albert_semantic_read_runtime",
+      ALBERT_SEMANTIC_METADATA_DATABASE_URL:"albert_semantic_metadata_runtime",
+    },
+    distinctDatabaseVariables:["CONTROL_PLANE_DATABASE_URL","ANALYTICAL_DATABASE_URL"],
+  });
   const signingSecret=required(environment,"ALBERT_SEMANTIC_SIGNING_SECRET");
   if(new TextEncoder().encode(signingSecret).byteLength<32)throw new Error("ALBERT_SEMANTIC_SIGNING_SECRET must be at least 32 bytes.");
   const composition=environment.ALBERT_SEMANTIC_COMPOSITION_MODULE
@@ -20,6 +34,8 @@ export async function startSemanticServiceFromEnvironment(environment:NodeJS.Pro
     host:environment.ALBERT_SEMANTIC_HOST??"127.0.0.1",
     port:integerEnvironment(environment.ALBERT_SEMANTIC_PORT,8788),
     shutdownGraceMs:integerEnvironment(environment.ALBERT_SEMANTIC_SHUTDOWN_GRACE_MS,10_000),
+    releaseSha,
+    deploymentId:environment.ALBERT_DEPLOYMENT_ID?.trim()||null,
   });
 }
 
@@ -31,7 +47,21 @@ async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEn
   const semanticMetadataPool=new pg.Pool({connectionString:required(environment,"ALBERT_SEMANTIC_METADATA_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_SEMANTIC_METADATA_POOL_SIZE,4),application_name:"albert-semantic-metadata"});
   try{
     const embeddingProvider=new OpenAIEmbeddingProvider({apiKey:required(environment,"OPENAI_API_KEY"),baseURL:required(environment,"OPENAI_BASE_URL"),timeoutMs:integerEnvironment(environment.ALBERT_EMBEDDING_TIMEOUT_MS,20_000)});
-    return createPostgresSemanticComposition({registryPath:resolve(environment.ALBERT_SEMANTIC_REGISTRY_PATH??"packages/semantic-registry/registry/registry.yaml"),controlPlanePool,analyticalReadPool,semanticMetadataPool,embeddingProvider,cacheTtlSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_CACHE_TTL_SECONDS,300),statementTimeoutMs:integerEnvironment(environment.ALBERT_SEMANTIC_STATEMENT_TIMEOUT_MS,10_000)});
+    const relayEnvironment={...environment,ALBERT_SEMANTIC_RELAY_WORKER_ID:environment.ALBERT_SEMANTIC_RELAY_WORKER_ID??"semantic-promotion-relay"};
+    return createPostgresSemanticComposition({
+      registryPath:resolve(environment.ALBERT_SEMANTIC_REGISTRY_PATH??"packages/semantic-registry/registry/registry.yaml"),
+      controlPlanePool,analyticalReadPool,semanticMetadataPool,embeddingProvider,
+      cacheTtlSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_CACHE_TTL_SECONDS,300),
+      statementTimeoutMs:integerEnvironment(environment.ALBERT_SEMANTIC_STATEMENT_TIMEOUT_MS,10_000),
+      promotionRelayWorkerId:loadReplicaWorkerId(
+        relayEnvironment,"ALBERT_SEMANTIC_RELAY_WORKER_ID",
+        "ALBERT_SEMANTIC_RELAY_WORKER_ID is required.",
+      ),
+      promotionRelayPollIntervalMs:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_POLL_INTERVAL_MS,5_000),
+      promotionRelayTenantBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_TENANT_BATCH_SIZE,10),
+      promotionRelayCandidateBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_CANDIDATE_BATCH_SIZE,20),
+      promotionRelayLeaseSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_LEASE_SECONDS,90),
+    });
   }catch(error){await Promise.all([controlPlanePool.end?.(),analyticalReadPool.end?.(),semanticMetadataPool.end?.()]);throw error;}
 }
 

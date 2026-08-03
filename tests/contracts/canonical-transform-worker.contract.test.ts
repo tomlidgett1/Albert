@@ -23,6 +23,11 @@ test("transform configuration has an isolated two-database process boundary",()=
   } as unknown as NodeJS.ProcessEnv);
   assert.equal(config.workerId,"canonical-1");
   assert.equal(config.mappingVersion,"m2-v1");
+  assert.equal(config.workerConcurrency,8);
+  assert.equal(config.queueSlaSeconds,120);
+  assert.equal(config.snapshotClaimBatchSize,8);
+  assert.equal(config.snapshotMaxClaimsPerRun,20_000);
+  assert.equal(config.metricsPort,9091);
   assert.equal("analyticalDatabaseUrl" in config,false);
   assert.equal("tokenEncryptionKey" in config,false);
   assert.throws(()=>loadTransformWorkerConfig({
@@ -34,6 +39,18 @@ test("transform configuration has an isolated two-database process boundary",()=
     TRANSFORM_DATABASE_URL:"postgresql://transform.invalid/albert",
     ALBERT_TRANSFORM_WORKER_ID:"canonical-1",
   } as unknown as NodeJS.ProcessEnv),/TRANSFORM_CONTROL_PLANE_DATABASE_URL/);
+  assert.equal(loadTransformWorkerConfig({
+    TRANSFORM_CONTROL_PLANE_DATABASE_URL:"postgresql://transform-control.invalid/albert",
+    TRANSFORM_DATABASE_URL:"postgresql://transform.invalid/albert",
+    ALBERT_TRANSFORM_WORKER_ID:"canonical-1",
+    FLY_MACHINE_ID:"90801abcdef123",
+  } as unknown as NodeJS.ProcessEnv).workerId,"canonical-1:90801abcdef123");
+  assert.throws(()=>loadTransformWorkerConfig({
+    TRANSFORM_CONTROL_PLANE_DATABASE_URL:"postgresql://transform-control.invalid/albert",
+    TRANSFORM_DATABASE_URL:"postgresql://transform.invalid/albert",
+    ALBERT_TRANSFORM_WORKER_ID:"canonical-1",
+    ALBERT_WORKER_CONCURRENCY:"65",
+  } as unknown as NodeJS.ProcessEnv),/ALBERT_WORKER_CONCURRENCY/);
 });
 
 test("canonical queue parses a fenced, typed claim and never accepts malformed domains",async()=>{

@@ -472,22 +472,7 @@ CREATE TRIGGER vendor_rate_budgets_touch_updated_at
   BEFORE UPDATE ON control_plane.vendor_rate_budgets
   FOR EACH ROW EXECUTE FUNCTION control_plane.touch_updated_at();
 
-DO $$
-DECLARE
-  queue text;
-BEGIN
-  FOREACH queue IN ARRAY ARRAY[
-    'albert_sync_high',
-    'albert_sync_standard',
-    'albert_sync_backfill',
-    'albert_sync_deadletter'
-  ] LOOP
-    IF NOT EXISTS (SELECT 1 FROM pgmq.meta WHERE queue_name = queue) THEN
-      PERFORM pgmq.create(queue);
-    END IF;
-  END LOOP;
-END;
-$$;
+SELECT extensions.albert_install_foundation_queues();
 
 CREATE OR REPLACE FUNCTION control_plane.assert_pgmq_ready()
 RETURNS void
@@ -1065,22 +1050,22 @@ DECLARE
   candidate record;
   enqueued_count integer := 0;
   schedule_date text := to_char(p_now AT TIME ZONE 'UTC', 'YYYY-MM-DD');
+  sweep_id text;
 BEGIN
   FOR candidate IN
     SELECT connection.tenant_id, connection.connection_id,
-           connection.connector_key, connection.external_account_reference,
-           cursor.stream
+           connection.connector_key, connection.external_account_reference
     FROM control_plane.connections AS connection
-    JOIN control_plane.oauth_token_refs AS token
-      ON token.tenant_id = connection.tenant_id
-     AND token.connection_id = connection.connection_id
-    JOIN control_plane.stream_cursors AS cursor
-      ON cursor.tenant_id = connection.tenant_id
-     AND cursor.connection_id = connection.connection_id
     WHERE connection.status IN ('connected', 'degraded')
       AND connection.external_account_reference IS NOT NULL
-    ORDER BY connection.tenant_id, connection.connection_id, cursor.stream
+      AND EXISTS (
+        SELECT 1 FROM control_plane.oauth_token_refs AS token
+         WHERE token.tenant_id=connection.tenant_id
+           AND token.connection_id=connection.connection_id
+      )
+    ORDER BY connection.tenant_id, connection.connection_id
   LOOP
+    sweep_id := control_plane.generate_ulid();
     PERFORM control_plane.enqueue_sync_job(
       jsonb_build_object(
         'schemaVersion', 1,
@@ -1089,15 +1074,16 @@ BEGIN
         'connectionId', candidate.connection_id,
         'connectorId', candidate.connector_key,
         'externalAccountReference', candidate.external_account_reference,
-        'syncRunId', control_plane.generate_ulid(),
+        'syncRunId', sweep_id,
         'batchId', control_plane.generate_ulid(),
         'requestedAt', p_now,
-        'stream', candidate.stream,
+        'reconciliationSweepId', sweep_id,
+        'phase', 'late_edits',
         'lookbackFrom', p_now - interval '7 days',
         'lookbackTo', p_now
       ),
       'standard',
-      'reconcile:' || candidate.connection_id || ':' || candidate.stream || ':' || schedule_date,
+      'reconcile-coordinator:' || candidate.connection_id || ':' || schedule_date,
       0
     );
     enqueued_count := enqueued_count + 1;

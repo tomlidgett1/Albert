@@ -2,7 +2,6 @@ import { cookies } from "next/headers";
 import { buildDeputyAuthorizationUrl } from "../../../connectors/deputy/oauth-public.js";
 import { buildLightspeedRAuthorizationUrl } from "../../../connectors/lightspeed-r/oauth-public.js";
 import { buildXeroAuthorizationUrl } from "../../../connectors/xero/oauth-public.js";
-import { xeroRequestedScopes } from "../../../connectors/xero/manifest.js";
 import {
   createNonce,
   signInternalRequest,
@@ -50,11 +49,12 @@ function requiredEnvironment(name: string): string {
 
 function publicOrigin(): URL {
   const origin = new URL(requiredEnvironment("ALBERT_PUBLIC_ORIGIN"));
-  const localHttp = origin.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname);
+  const localHttp = process.env.NODE_ENV !== "production" && origin.protocol === "http:" &&
+    ["localhost", "127.0.0.1"].includes(origin.hostname);
   if (origin.protocol !== "https:" && !localHttp) throw new OAuthFlowError("The public OAuth origin must use HTTPS.", 503);
-  origin.pathname = "/";
-  origin.search = "";
-  origin.hash = "";
+  if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+    throw new OAuthFlowError("The public OAuth origin must be a clean origin.", 503);
+  }
   return origin;
 }
 
@@ -100,7 +100,7 @@ export async function beginOAuthFlow(input: Readonly<{
   const codeVerifier = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(48)));
   const redirectUri = new URL(`/api/oauth/${input.provider}/callback`, publicOrigin()).toString();
   const connector = providerToConnector[input.provider];
-  const result = await callWorker<{ oauthSessionId: string }>("/v1/oauth/start", {
+  const result = await callWorker<{ oauthSessionId: string; scopes: string[] }>("/v1/oauth/start", {
     tenantId: input.tenantId,
     userId: input.userId,
     provider: connector,
@@ -111,6 +111,12 @@ export async function beginOAuthFlow(input: Readonly<{
   });
   if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(result.oauthSessionId)) {
     throw new OAuthFlowError("The OAuth worker returned an invalid session.", 502);
+  }
+  if (
+    !Array.isArray(result.scopes) || result.scopes.length === 0 || result.scopes.length > 30 ||
+    result.scopes.some((scope) => typeof scope !== "string" || !scope.trim() || scope.length > 160)
+  ) {
+    throw new OAuthFlowError("The OAuth worker returned invalid requested scopes.", 502);
   }
 
   const state = await signPayload<OAuthState>({
@@ -144,6 +150,7 @@ export async function beginOAuthFlow(input: Readonly<{
       state,
       redirectUri,
       codeChallenge: await pkceChallenge(codeVerifier),
+      scopes: result.scopes,
     });
   }
   if (input.provider === "xero") {
@@ -152,8 +159,14 @@ export async function beginOAuthFlow(input: Readonly<{
       state,
       redirectUri,
       codeChallenge: await pkceChallenge(codeVerifier),
-      scopes: xeroRequestedScopes(process.env.XERO_ENABLE_ADVANCED_JOURNALS === "true"),
+      // The credential-owning worker is the source of truth for optional
+      // connector capabilities. This prevents a Sites/Fly configuration drift
+      // from authorising scopes the worker did not record for the session.
+      scopes: result.scopes,
     });
+  }
+  if (result.scopes.length !== 1 || result.scopes[0] !== "longlife_refresh_token") {
+    throw new OAuthFlowError("The OAuth worker returned invalid Deputy scopes.", 502);
   }
   return buildDeputyAuthorizationUrl({
     clientId: requiredEnvironment("DEPUTY_CLIENT_ID"),
@@ -177,34 +190,53 @@ export async function finishOAuthFlow(input: Readonly<{
 }>): Promise<OAuthCallbackResult> {
   const cookieStore = await cookies();
   const cookieToken = cookieStore.get(cookieName(input.provider))?.value;
-  cookieStore.delete(cookieName(input.provider));
   if (!cookieToken) throw new OAuthFlowError("The OAuth browser session is missing or expired.", 400);
-  const cookie = await verifySignedPayload<OAuthCookie>(
-    cookieToken,
-    requiredEnvironment("ALBERT_OAUTH_STATE_SECRET"),
-  );
-  const state = await verifySignedPayload<OAuthState>(
-    input.state,
-    requiredEnvironment("ALBERT_OAUTH_STATE_SECRET"),
-    { expectedNonce: cookie.nonce },
-  );
-  if (
-    state.provider !== input.provider ||
-    cookie.provider !== input.provider ||
-    state.tenantId !== input.tenantId ||
-    state.userId !== input.userId
-  ) {
-    throw new OAuthFlowError("The OAuth callback does not match the initiating user.", 403);
+  let cookie: OAuthCookie;
+  let state: OAuthState;
+  try {
+    cookie = await verifySignedPayload<OAuthCookie>(
+      cookieToken,
+      requiredEnvironment("ALBERT_OAUTH_STATE_SECRET"),
+    );
+    state = await verifySignedPayload<OAuthState>(
+      input.state,
+      requiredEnvironment("ALBERT_OAUTH_STATE_SECRET"),
+      { expectedNonce: cookie.nonce },
+    );
+    if (
+      state.provider !== input.provider ||
+      cookie.provider !== input.provider ||
+      state.tenantId !== input.tenantId ||
+      state.userId !== input.userId
+    ) {
+      throw new OAuthFlowError("The OAuth callback does not match the initiating user.", 403);
+    }
+  } catch (error) {
+    // Invalid state must not leave reusable browser-side authorization state.
+    cookieStore.delete(cookieName(input.provider));
+    throw error;
   }
-  return callWorker<OAuthCallbackResult>("/v1/oauth/callback", {
-    oauthSessionId: state.oauthSessionId,
-    tenantId: state.tenantId,
-    userId: state.userId,
-    provider: providerToConnector[state.provider],
-    redirectUri: state.redirectUri,
-    stateNonceHash: await sha256(state.nonce),
-    code: input.code,
-  });
+
+  try {
+    const result = await callWorker<OAuthCallbackResult>("/v1/oauth/callback", {
+      oauthSessionId: state.oauthSessionId,
+      tenantId: state.tenantId,
+      userId: state.userId,
+      provider: providerToConnector[state.provider],
+      redirectUri: state.redirectUri,
+      stateNonceHash: await sha256(state.nonce),
+      code: input.code,
+    });
+    // Consume the cookie only after the durable worker completed. A transport
+    // failure or 5xx can then retry the same bounded callback safely.
+    cookieStore.delete(cookieName(input.provider));
+    return result;
+  } catch (error) {
+    if (error instanceof OAuthFlowError && error.status < 500) {
+      cookieStore.delete(cookieName(input.provider));
+    }
+    throw error;
+  }
 }
 
 export async function selectOAuthAccount(input: Readonly<{
@@ -214,14 +246,6 @@ export async function selectOAuthAccount(input: Readonly<{
   userId: string;
 }>): Promise<{ connectionId: string }> {
   return callWorker("/v1/oauth/select", input);
-}
-
-export async function disconnectOAuthConnection(input: Readonly<{
-  connectionId: string;
-  tenantId: string;
-  userId: string;
-}>): Promise<{ deletionRequestId: string }> {
-  return callWorker("/v1/oauth/disconnect", input);
 }
 
 export class OAuthFlowError extends Error {

@@ -1439,10 +1439,10 @@ BEGIN
     p_runtime_profile, 'running', actor
   );
 
-  UPDATE control_plane.conversations
+  UPDATE control_plane.conversations AS active_conversation
   SET updated_at = now()
-  WHERE tenant_id = selected_tenant
-    AND conversation_id = resolved_conversation;
+  WHERE active_conversation.tenant_id = selected_tenant
+    AND active_conversation.conversation_id = resolved_conversation;
 
   conversation_id := resolved_conversation;
   previous_response_id := previous_provider_response;

@@ -11,6 +11,10 @@ import {
   type SealedSecret,
 } from "../../../packages/security/src/index.js";
 import type { TransactionalPostgres } from "../../sync-workers/src/database.js";
+import {
+  attestWebhookDocument,
+  type WebhookAttestor,
+} from "./attestation.js";
 import type { WebhookConnection } from "./store.js";
 
 export type ResolvedDeputyWebhook = WebhookConnection & Readonly<{
@@ -48,16 +52,27 @@ function isCanonicalBase64Url256(value: string): boolean {
 }
 
 export class DeputyWebhookResolver {
-  constructor(private readonly db: TransactionalPostgres) {}
+  constructor(
+    private readonly db: TransactionalPostgres,
+    private readonly attestor: WebhookAttestor,
+  ) {}
 
   async resolve(connectionId: string, materialId: string): Promise<ResolvedDeputyWebhook | null> {
+    const { document, proof } = attestWebhookDocument(
+      this.attestor,
+      "deputy.resolve",
+      connectionId,
+      { version: 1, operation: "deputy.resolve", connectionId, materialId },
+    );
     const result = await this.db.query<ResolvedRow>(
       `select tenant_id, connection_id, connector_key,
               external_account_reference, material_id, material_version,
               verification_mode, envelope_version, algorithm, key_id, iv,
               ciphertext, callback_url
-         from control_plane.resolve_deputy_webhook_material($1, $2)`,
-      [connectionId, materialId],
+         from control_plane.resolve_attested_deputy_webhook_material(
+           $1, $2, $3, $4, $5
+         )`,
+      [document, proof.issuedAt, proof.nonce, proof.keyId, proof.signature],
     );
     if (result.rows.length > 1) throw new Error("deputy_webhook_resolution_ambiguous");
     const row = result.rows[0];

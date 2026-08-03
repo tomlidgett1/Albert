@@ -72,9 +72,48 @@ function mapAccount(row: CanonicalStagingRow): readonly CanonicalProjectionComma
     legal_entity_id: sourceRef("legal_entity", "Organisations", organisationId, row),
     code: optionalText(row.code) ?? id,
     name: requiredText(row.name, "accounts.name"),
-    account_class: (optionalText(row.class) ?? optionalText(row.type) ?? "unknown").toLowerCase(),
+    account_class: classifyXeroAccount(optionalText(row.type), optionalText(row.class)),
     active: !row.tombstone && normalizedStatus(row.status, "active") === "active",
   }, row)];
+}
+
+/**
+ * Exhaustive crosswalk for the account types documented by Xero's AU chart of
+ * accounts. Type is authoritative because Xero's broad EXPENSE class cannot
+ * distinguish direct costs from operating expenses.
+ */
+export function classifyXeroAccount(type: string | null | undefined, accountClass: string | null | undefined): string {
+  const normalizedType = type?.trim().toUpperCase();
+  const byType: Readonly<Record<string, string>> = {
+    BANK: "asset",
+    CURRENT: "asset",
+    FIXED: "asset",
+    INVENTORY: "asset",
+    NONCURRENT: "asset",
+    PREPAYMENT: "asset",
+    CURRLIAB: "liability",
+    LIABILITY: "liability",
+    TERMLIAB: "liability",
+    EQUITY: "equity",
+    REVENUE: "revenue",
+    SALES: "revenue",
+    OTHERINCOME: "revenue",
+    DIRECTCOSTS: "cost_of_sales",
+    DEPRECIATN: "operating_expense",
+    EXPENSE: "operating_expense",
+    OVERHEADS: "operating_expense",
+  };
+  if (normalizedType && byType[normalizedType]) return byType[normalizedType];
+
+  const normalizedClass = accountClass?.trim().toUpperCase();
+  const byClass: Readonly<Record<string, string>> = {
+    ASSET: "asset",
+    LIABILITY: "liability",
+    EQUITY: "equity",
+    REVENUE: "revenue",
+    EXPENSE: "operating_expense",
+  };
+  return normalizedClass ? byClass[normalizedClass] ?? "unknown" : "unknown";
 }
 
 function mapContact(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
@@ -312,7 +351,13 @@ function mapBankTransaction(row: CanonicalStagingRow, context: CanonicalMappingC
   const date = requiredDate(row.date, "bank_transactions.date");
   const type = requiredText(row.type, "bank_transactions.type").toUpperCase();
   const amount = decimalOrZeroValue(row.total, "bank_transactions.total");
-  const signedAmount = type.includes("SPEND") || type.includes("PAY") ? negate(amount.abs()) : amount;
+  const direction = type.startsWith("RECEIVE")
+    ? 1
+    : type.startsWith("SPEND")
+      ? -1
+      : 0;
+  if (direction===0) throw new Error(`xero_bank_transaction_type_invalid:${type}`);
+  const signedAmount = signed(amount.abs(),direction);
   const bankAccount = asObject(row.bank_account);
   const glRef = bankAccount ? glAccountRef(bankAccount, row, true) : null;
   const lineItems = jsonRecords(row.line_items);

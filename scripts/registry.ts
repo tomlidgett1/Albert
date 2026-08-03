@@ -8,6 +8,7 @@ import { xeroManifest } from "../connectors/xero/manifest.js";
 import { buildGovernedSourceCatalogueFields } from "../packages/connector-sdk/src/index.js";
 import {
   combineCatalogueDocuments,
+  assertCapabilityContract,
   createRegistryCatalogueDocuments,
   createSourceFieldCatalogueDocuments,
   createSemanticPublicationPlan,
@@ -45,6 +46,7 @@ async function loadArtifacts() {
   const source = await readFile(REGISTRY_PATH, "utf8");
   const document = parseRegistryDocument(source);
   const connectorManifests = [deputyManifest,lightspeedRManifest,xeroManifest] as const;
+  assertCapabilityContract(document,connectorManifests);
   const packVersions = {
     [deputyManifest.id]: deputyManifest.packVersion,
     [lightspeedRManifest.id]: lightspeedRManifest.packVersion,
@@ -74,6 +76,9 @@ async function publish(artifacts: Awaited<ReturnType<typeof loadArtifacts>>): Pr
   const databaseUrl = process.env.CONTROL_PLANE_DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("CONTROL_PLANE_DATABASE_URL is required to publish.");
   const publicationRole = process.env.ALBERT_SEMANTIC_PUBLISH_ROLE?.trim() || "albert_control_migration_owner";
+  if (publicationRole !== "albert_control_migration_owner") {
+    throw new Error("Semantic publication must use albert_control_migration_owner.");
+  }
   const embeddingProvider = new OpenAIEmbeddingProvider({
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL,
@@ -100,10 +105,18 @@ async function publish(artifacts: Awaited<ReturnType<typeof loadArtifacts>>): Pr
   try {
     await client.query("BEGIN");
     await client.query(`SET LOCAL ROLE ${quoteIdentifier(publicationRole)}`);
-    const identity = await client.query<{ current_user: string }>("SELECT current_user");
+    const identity = await client.query<{ current_user: string; session_user: string }>(
+      "SELECT current_user, session_user",
+    );
     const currentRole = identity.rows[0]?.current_user;
     if (!currentRole || FORBIDDEN_PUBLISH_ROLES.has(currentRole)) {
       throw new Error(`Refusing to publish as runtime role ${currentRole ?? "unknown"}.`);
+    }
+    if (
+      process.env.ALBERT_REQUIRE_DEPLOYER_LOGIN === "true" &&
+      identity.rows[0]?.session_user !== "albert_control_deployer"
+    ) {
+      throw new Error("Semantic publication must use the albert_control_deployer login.");
     }
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended('albert:semantic-publication', 0))",

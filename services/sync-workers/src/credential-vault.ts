@@ -23,10 +23,6 @@ function webBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
   return copy;
 }
 
-function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
-  return webBytes(Buffer.from(value, "base64url"));
-}
-
 function concat(...values: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   const result = new Uint8Array(values.reduce((total, value) => total + value.byteLength, 0));
   let offset = 0;
@@ -49,51 +45,103 @@ export interface DataKeyWrapper {
   unwrap(input: WrappedDataKey): Promise<Uint8Array>;
 }
 
-/**
- * AES-KW adapter for a 256-bit key-encryption-key held in the worker secret
- * manager. The KEK never encrypts credential data directly; every secret gets
- * an independent cryptographically random DEK.
- */
-export class AesKeyWrapper implements DataKeyWrapper {
-  private readonly keyBytes: Uint8Array<ArrayBuffer>;
+export interface RotatingDataKeyWrapper extends DataKeyWrapper {
+  readonly currentKeyReference: string;
+  readonly currentKeyVersion: string;
+  readonly loadedKeyVersions: ReadonlySet<string>;
+  canUnwrap(input: Pick<WrappedDataKey, "keyReference" | "keyVersion">): boolean;
+  rewrap(input: WrappedDataKey): Promise<WrappedDataKey>;
+  assertCanUnwrap(input: WrappedDataKey): Promise<void>;
+}
 
-  constructor(
-    encodedKey: string,
-    private readonly keyReference: string,
-    private readonly keyVersion: string,
-  ) {
-    this.keyBytes = base64UrlToBytes(encodedKey);
-    if (this.keyBytes.byteLength !== 32) {
-      throw new Error("TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes.");
-    }
-    if (!keyReference.trim() || !keyVersion.trim()) {
+const CANONICAL_BASE64URL_256 = /^[A-Za-z0-9_-]{43}$/u;
+
+function decodeCanonicalKek(encodedKey: string): Uint8Array<ArrayBuffer> {
+  if (!CANONICAL_BASE64URL_256.test(encodedKey)) {
+    throw new Error("A token encryption key must be an unpadded base64url-encoded 256-bit KEK.");
+  }
+  const decoded = Buffer.from(encodedKey, "base64url");
+  if (decoded.byteLength !== 32 || decoded.toString("base64url") !== encodedKey) {
+    throw new Error("A token encryption key must be an unpadded base64url-encoded 256-bit KEK.");
+  }
+  return webBytes(decoded);
+}
+
+/**
+ * AES-KW keyring with one write key and a bounded, decrypt-only overlap set.
+ * Key IDs are the persisted envelope key versions. All keys share the stable
+ * logical key reference; a changed reference is treated as unavailable rather
+ * than silently trying unrelated key material.
+ */
+export class AesKeyringWrapper implements RotatingDataKeyWrapper {
+  private readonly keyBytesByVersion: ReadonlyMap<string, Uint8Array<ArrayBuffer>>;
+  readonly loadedKeyVersions: ReadonlySet<string>;
+
+  constructor(input: Readonly<{
+    currentKeyReference: string;
+    currentKeyVersion: string;
+    encodedKeys: ReadonlyMap<string, string>;
+  }>) {
+    if (!input.currentKeyReference.trim() || !input.currentKeyVersion.trim()) {
       throw new Error("Envelope key reference and version are required.");
     }
+    if (!input.encodedKeys.has(input.currentKeyVersion)) {
+      throw new Error("The token keyring does not contain its current key ID.");
+    }
+    if (input.encodedKeys.size < 1 || input.encodedKeys.size > 5) {
+      throw new Error("The token keyring must contain one current and at most four overlap keys.");
+    }
+    const decoded = new Map<string, Uint8Array<ArrayBuffer>>();
+    const material = new Set<string>();
+    for (const [keyVersion, encodedKey] of input.encodedKeys) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(keyVersion)) {
+        throw new Error("A token encryption key ID is invalid.");
+      }
+      const keyBytes = decodeCanonicalKek(encodedKey);
+      const canonical = Buffer.from(keyBytes).toString("base64url");
+      if (material.has(canonical)) {
+        throw new Error("Token encryption key material must not be reused under another key ID.");
+      }
+      material.add(canonical);
+      decoded.set(keyVersion, keyBytes);
+    }
+    this.currentKeyReference = input.currentKeyReference;
+    this.currentKeyVersion = input.currentKeyVersion;
+    this.keyBytesByVersion = decoded;
+    this.loadedKeyVersions = new Set(decoded.keys());
   }
 
-  private importKek(usages: KeyUsage[]) {
-    return crypto.subtle.importKey("raw", this.keyBytes, "AES-KW", false, usages);
+  readonly currentKeyReference: string;
+  readonly currentKeyVersion: string;
+
+  private importKek(keyVersion: string, usages: KeyUsage[]) {
+    const keyBytes = this.keyBytesByVersion.get(keyVersion);
+    if (!keyBytes) throw new Error("credential_kek_unavailable");
+    return crypto.subtle.importKey("raw", keyBytes, "AES-KW", false, usages);
+  }
+
+  canUnwrap(input: Pick<WrappedDataKey, "keyReference" | "keyVersion">): boolean {
+    return input.keyReference === this.currentKeyReference &&
+      this.keyBytesByVersion.has(input.keyVersion);
   }
 
   async wrap(rawDataKey: Uint8Array): Promise<WrappedDataKey> {
     if (rawDataKey.byteLength !== 32) throw new Error("A credential DEK must contain 32 bytes.");
     const [kek, dek] = await Promise.all([
-      this.importKek(["wrapKey"]),
+      this.importKek(this.currentKeyVersion, ["wrapKey"]),
       crypto.subtle.importKey("raw", webBytes(rawDataKey), "AES-GCM", true, ["encrypt", "decrypt"]),
     ]);
     const wrapped = await crypto.subtle.wrapKey("raw", dek, kek, "AES-KW");
     return {
       wrappedDataKey: new Uint8Array(wrapped),
-      keyReference: this.keyReference,
-      keyVersion: this.keyVersion,
+      keyReference: this.currentKeyReference,
+      keyVersion: this.currentKeyVersion,
     };
   }
 
   async unwrap(input: WrappedDataKey): Promise<Uint8Array> {
-    if (input.keyReference !== this.keyReference || input.keyVersion !== this.keyVersion) {
-      throw new Error("The configured key wrapper cannot unwrap this key version.");
-    }
-    const kek = await this.importKek(["unwrapKey"]);
+    if (!this.canUnwrap(input)) throw new Error("credential_kek_unavailable");
+    const kek = await this.importKek(input.keyVersion, ["unwrapKey"]);
     const dek = await crypto.subtle.unwrapKey(
       "raw",
       webBytes(input.wrappedDataKey),
@@ -104,6 +152,45 @@ export class AesKeyWrapper implements DataKeyWrapper {
       ["encrypt", "decrypt"],
     );
     return new Uint8Array(await crypto.subtle.exportKey("raw", dek));
+  }
+
+  async assertCanUnwrap(input: WrappedDataKey): Promise<void> {
+    const rawDataKey = await this.unwrap(input);
+    rawDataKey.fill(0);
+  }
+
+  async rewrap(input: WrappedDataKey): Promise<WrappedDataKey> {
+    if (
+      input.keyReference === this.currentKeyReference &&
+      input.keyVersion === this.currentKeyVersion
+    ) {
+      return input;
+    }
+    const rawDataKey = await this.unwrap(input);
+    try {
+      return await this.wrap(rawDataKey);
+    } finally {
+      rawDataKey.fill(0);
+    }
+  }
+}
+
+/**
+ * AES-KW adapter for a 256-bit key-encryption-key held in the worker secret
+ * manager. The KEK never encrypts credential data directly; every secret gets
+ * an independent cryptographically random DEK.
+ */
+export class AesKeyWrapper extends AesKeyringWrapper {
+  constructor(
+    encodedKey: string,
+    keyReference: string,
+    keyVersion: string,
+  ) {
+    super({
+      currentKeyReference: keyReference,
+      currentKeyVersion: keyVersion,
+      encodedKeys: new Map([[keyVersion, encodedKey]]),
+    });
   }
 }
 
@@ -187,6 +274,28 @@ export class EnvelopeCryptography {
     } finally {
       rawDek.fill(0);
     }
+  }
+
+  /**
+   * Rotate only the random DEK wrapping. Credential ciphertext and its binding
+   * are returned byte-for-byte unchanged and OAuth plaintext is never opened.
+   */
+  async rewrapDataKey(envelope: SealedEnvelope): Promise<SealedEnvelope> {
+    const wrapper = this.keyWrapper as Partial<RotatingDataKeyWrapper>;
+    if (typeof wrapper.rewrap !== "function") {
+      throw new Error("credential_kek_rotation_unsupported");
+    }
+    const wrapped = await wrapper.rewrap({
+      wrappedDataKey: envelope.wrappedDataKey,
+      keyReference: envelope.keyReference,
+      keyVersion: envelope.keyVersion,
+    });
+    return Object.freeze({
+      ...envelope,
+      wrappedDataKey: wrapped.wrappedDataKey,
+      keyReference: wrapped.keyReference,
+      keyVersion: wrapped.keyVersion,
+    });
   }
 }
 

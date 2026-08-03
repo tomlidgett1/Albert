@@ -210,8 +210,8 @@ test("Xero HTTP ingress commits only an encrypted tenant-neutral item before ack
   const ingress = new XeroWebhookIngress({
     signingKey,
     keyring,
-    encryptedRetentionDays: 32,
-    metadataRetentionDays: 40,
+    encryptedRetentionDays: 3,
+    metadataRetentionDays: 14,
     persistenceTimeoutMs: 3_500,
   }, {
     async accept(input) {
@@ -232,8 +232,8 @@ test("Xero HTTP ingress commits only an encrypted tenant-neutral item before ack
   assert.equal("tenantId" in stored, false);
   assert.equal("connectionId" in stored, false);
   assert.equal(Buffer.from(stored.ciphertext).includes(Buffer.from(ids.tenantA)), false);
-  assert.equal(stored.expiresAt, "2026-09-04T10:01:00.000Z");
-  assert.equal(stored.retainUntil, "2026-09-12T10:01:00.000Z");
+  assert.equal(stored.expiresAt, "2026-08-06T10:01:00.000Z");
+  assert.equal(stored.retainUntil, "2026-08-17T10:01:00.000Z");
 });
 
 test("leased Xero processing routes only matching tenant/category partitions and enqueues gap recovery", async () => {
@@ -275,10 +275,32 @@ test("leased Xero processing routes only matching tenant/category partitions and
         eventCount: 4,
         firstReceivedAt: "2026-08-03T10:01:00.000Z",
         attemptCount: 1,
+        leaseToken: "A".repeat(22),
+        leaseVersion: 1,
       };
     },
-    async renew() { return true; },
-    async recordSequence(): Promise<XeroSequenceObservationFixture> {
+    async renew(
+      inboxId: string,
+      workerId: string,
+      leaseToken: string,
+      leaseVersion: number,
+    ) {
+      assert.equal(inboxId, ids.inbox);
+      assert.equal(workerId, "xero-test-worker");
+      assert.equal(leaseToken, "A".repeat(22));
+      assert.equal(leaseVersion, 1);
+      return true;
+    },
+    async recordSequence(
+      inboxId: string,
+      workerId: string,
+      leaseToken: string,
+      leaseVersion: number,
+    ): Promise<XeroSequenceObservationFixture> {
+      assert.equal(inboxId, ids.inbox);
+      assert.equal(workerId, "xero-test-worker");
+      assert.equal(leaseToken, "A".repeat(22));
+      assert.equal(leaseVersion, 1);
       return {
         disposition: "gap",
         gapId: "01J00000000000000000000006",
@@ -286,11 +308,36 @@ test("leased Xero processing routes only matching tenant/category partitions and
         gapLastSequence: 19,
       };
     },
-    async enqueueGapSweeps() { gapSweeps += 1; return 6; },
-    async recordConnection(input: { streams: readonly string[] }) {
+    async enqueueGapSweeps(
+      _gapId: string,
+      _inboxId: string,
+      _workerId: string,
+      leaseToken: string,
+      leaseVersion: number,
+    ) {
+      assert.equal(leaseToken, "A".repeat(22));
+      assert.equal(leaseVersion, 1);
+      gapSweeps += 1;
+      return 6;
+    },
+    async recordConnection(input: {
+      streams: readonly string[];
+      leaseToken: string;
+      leaseVersion: number;
+    }) {
+      assert.equal(input.leaseToken, "A".repeat(22));
+      assert.equal(input.leaseVersion, 1);
       (recordedConnections as string[][]).push([...input.streams]);
     },
-    async complete(_inboxId: string, _workerId: string, value: Readonly<Record<string, string | number>>) {
+    async complete(
+      _inboxId: string,
+      _workerId: string,
+      _leaseToken: string,
+      _leaseVersion: number,
+      value: Readonly<Record<string, string | number>>,
+    ) {
+      assert.equal(_leaseToken, "A".repeat(22));
+      assert.equal(_leaseVersion, 1);
       summary = value;
       controller.abort();
     },
@@ -309,12 +356,35 @@ test("leased Xero processing routes only matching tenant/category partitions and
       assert.deepEqual([...externalIds].sort(), [ids.tenantA, ids.tenantB].sort());
       return [connection];
     },
-    async reserve() {
+    async reserve(input: { leaseToken?: string; leaseVersion?: number }) {
+      assert.equal(input.leaseToken, "A".repeat(22));
+      assert.equal(input.leaseVersion, 1);
       const receiptId = receiptIndex++ === 0 ? ids.receiptA : ids.receiptB;
-      return { receiptId, status: "received" as const, rawObjectKey: null, duplicate: false };
+      return {
+        receiptId,
+        status: "received" as const,
+        rawObjectKey: null,
+        duplicate: false,
+        receivedAt: "2026-08-03T10:01:00.000Z",
+      };
     },
-    async attachRaw() {},
-    async finalizeXero() { return true; },
+    async attachRaw(
+      _connection: WebhookConnection,
+      _receiptId: string,
+      _objectKey: string,
+      _verificationReference: string,
+      _workerId: string,
+      leaseToken: string,
+      leaseVersion: number,
+    ) {
+      assert.equal(leaseToken, "A".repeat(22));
+      assert.equal(leaseVersion, 1);
+    },
+    async finalizeXero(input: { leaseToken: string; leaseVersion: number }) {
+      assert.equal(input.leaseToken, "A".repeat(22));
+      assert.equal(input.leaseVersion, 1);
+      return true;
+    },
     async markFailed() {},
   };
   const raw = {
@@ -391,4 +461,44 @@ test("migration provides bounded leases, idempotent sequences, fixed routing and
   assert.match(migration, /revoke\s+execute\s+on\s+function\s+control_plane\.enqueue_sync_job[\s\S]*from\s+public,\s*albert_webhook_control/i);
   assert.doesNotMatch(migration, /grant[^;]+oauth_(?:token_refs|secret_envelopes)[^;]+albert_webhook_control/i);
   assert.doesNotMatch(migration, /grant[^;]+service_role/i);
+});
+
+test("retention hardening erases terminal payloads and caps all Xero inbox data below 30 days", async () => {
+  const [migration, bootstrap, legacyAdminUpgrade, managedPostgresUpgrade] = await Promise.all([
+    readFile(new URL(
+      "../../infra/migrations/control-plane/0035_m8_xero_webhook_retention_hardening.sql",
+      import.meta.url,
+    ), "utf8"),
+    readFile(new URL("../../infra/bootstrap/control_plane_role.sql", import.meta.url), "utf8"),
+    readFile(new URL(
+      "../../infra/bootstrap-upgrades/control-plane/0001_xero_inbox_retention_cron.sql",
+      import.meta.url,
+    ), "utf8"),
+    readFile(new URL(
+      "../../infra/bootstrap-upgrades/control-plane/0003_managed_postgres_cron_identity.sql",
+      import.meta.url,
+    ), "utf8"),
+  ]);
+  assert.match(migration, /expires_at\s*>=\s*first_received_at\s*\+\s*interval\s*'1 day'/i);
+  assert.match(migration, /expires_at\s*<=\s*first_received_at\s*\+\s*interval\s*'7 days'/i);
+  assert.match(migration, /retain_until\s*<=\s*first_received_at\s*\+\s*interval\s*'30 days'/i);
+  assert.match(
+    migration,
+    /next_status\s+in\s*\('expired',\s*'failed'\)[\s\S]*then\s+null/i,
+  );
+  assert.match(migration, /lease_expires_at\s*>\s*clock_timestamp\(\)/i);
+  assert.match(
+    migration,
+    /active_key_ids[\s\S]*filter\s*\(where status in \('pending',\s*'processing',\s*'retry_wait'\)\)/i,
+  );
+  assert.match(migration, /albert_install_xero_inbox_retention_cron_job/u);
+  assert.match(
+    legacyAdminUpgrade,
+    /albert-xero-inbox-retention[\s\S]*\* \* \* \* \*[\s\S]*purge_xero_webhook_inbox\(5000\)[\s\S]*'postgres'/u,
+  );
+  assert.match(
+    managedPostgresUpgrade,
+    /albert-xero-inbox-retention[\s\S]*\* \* \* \* \*[\s\S]*purge_xero_webhook_inbox\(5000\)[\s\S]*current_database\(\),\s*NULL/u,
+  );
+  assert.doesNotMatch(bootstrap, /albert_install_xero_inbox_retention_cron_job/u);
 });

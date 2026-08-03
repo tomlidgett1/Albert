@@ -37,14 +37,24 @@ verification are exposed only through fixed `SECURITY DEFINER` functions that
 prove the current queue message, worker, read count, visibility deadline, and
 tenant/connection scope. The analytical login is independently injected as
 `DELETION_ANALYTICAL_DATABASE_URL`, belongs only to `deletion_rw`, and also
-activates that role per transaction. Raw deletion uses a storage-only S3 key,
-never the Supabase service-role JWT.
+activates that role per transaction. Under ADR 0031, raw deletion uses a
+short-lived deletion-purpose Auth session whose Storage RLS permits only
+`SELECT` and `DELETE`, never a generated S3 key or Supabase service-role JWT.
 
-Connection disconnect is one authenticated owner/manager action. Remote
-revocation is attempted first by the existing connector pack, the per-secret
-wrapped data key and ciphertext are destroyed, the connection becomes a
-non-sensitive tombstone, and purge is queued immediately. The organisation,
+Connection disconnect is one authenticated owner/manager action. That action
+atomically commits the deletion fence, marks the connection unavailable, and
+publishes its queue message before returning. The deletion worker then attempts
+remote revocation through the existing connector pack before destroying the
+per-secret wrapped data key and ciphertext, producing a non-sensitive
+connection tombstone, and verifying the purge. A queue or process failure can
+therefore resume without another user action and can never leave destroyed
+credentials behind an active-looking connection. The organisation,
 memberships, overlays, and other connections remain.
+
+Connection and tenant requests share a 15-minute database watchdog. If the
+worker cannot complete best-effort provider revocation inside that grace
+period, the control plane destroys the local token reference and envelope key,
+records the remote outcome as failed, and leaves the durable purge queued.
 
 Full tenant erasure uses two authenticated owner confirmations with a short
 approval expiry. Approval fences the tenant immediately and queues deletion.
@@ -73,7 +83,32 @@ The worker purges and independently verifies four required stores:
    answer artefacts and caches, source-derived dossier/review evidence, and
    either a scrubbed connection tombstone or the physical tenant anchor.
 
+Analytical verification reports live post-purge row counts for staging,
+canonical, bridge, link, embedding, cache, and other analytical classes for
+both connection and tenant scopes. `remainingRows` is the exact sum of those
+measured classes; literal or inferred zero placeholders are not evidence. The
+worker rejects an absent, malformed, or internally inconsistent measurement,
+the proof-ledger insert trigger enforces the same typed zero-residual contract,
+and protected dogfood acceptance independently recomputes the total from the
+persisted class counts.
+
 Completion is allowed only when all four verification objects say `verified`.
+Before persistence, the worker reconstructs rather than forwards each proof
+object. Remote revocation has an exact bounded vocabulary for provider,
+generation, status, failure code/class, and correlation id; credential, raw,
+analytical, and control-plane verification objects have exact key sets and
+non-negative integer counters that must all be zero. The proof-ledger trigger
+independently enforces those complete schemas. This prevents a compromised
+lease holder or accidental adapter field from placing free-form vendor text,
+customer data, or unmeasured booleans in the durable evidence ledger.
+The same rule applies to user-visible deletion progress: raw, analytical, and
+control purge results are reduced to exact count-only summaries, and the
+lease-bound progress routine rejects unknown keys at the database boundary.
+The first normalized remote-revocation document becomes immutable once local
+credentials are destroyed and is reused after a crash; retries cannot replace
+a succeeded or failed provider outcome with an empty `not_applicable` result.
+Watchdog-forced local destruction is retained as its own exact, non-free-text
+evidence variant.
 The worker then writes one append-only proof containing the request id, scope,
 timestamps, remote-revocation outcome, per-store counts, service version, and a
 digest. Tenant and connection references in the proof are HMAC-SHA-256 values
@@ -104,7 +139,7 @@ Operator logs carry the same correlation id without the raw exception message.
   HMAC secret.
 - Production deployment must provide a control login that is a member only of
   `albert_deletion_control`, a `DELETION_ANALYTICAL_DATABASE_URL` login that is
-  a member only of `deletion_rw`, storage-only S3 credentials,
+  a member only of `deletion_rw`, the ADR 0031 deletion-purpose machine session,
   `DELETION_PROOF_HMAC_KEY`, and the provider credentials needed for remote
   revocation. It must run the worker continuously and alert on requests
   approaching their purge deadline, repeated failure cycles, or stale worker

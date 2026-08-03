@@ -1,7 +1,9 @@
 import { ulid } from "ulid";
 import { z } from "zod";
 import { normalizeAgentPreferences } from "@/packages/shared/src";
-import { meterOpenAIUsage } from "@/packages/usage-metering/src";
+import { inspectRuntimeEnvironment } from "@/packages/config/src/env";
+import { ALBERT_PREFERENCE_OPTION_IDS } from "@/packages/agent/src/semantic-tools";
+import { meterOpenAIUsage, toModelUsageRpcPayload } from "@/packages/usage-metering/src";
 import {
   correlationIdFromHeader,
   createServiceLogger,
@@ -11,15 +13,16 @@ import {
   createFixtureConversationSseResponse,
   createLiveTraceSseResponse,
   createTraceEmitter,
+  appendCurrentUserMessage,
+  DurableModelUsageLifecycle,
   runLiveAlbertTurn,
+  SemanticServiceClient,
 } from "@/services/conversation/src";
 import {
   appendConversationEvent,
   beginConversationTurn,
-  completeConversationTurn,
   failConversationTurn,
   loadConversationModelContext,
-  recordConversationModelUsage,
 } from "@/services/conversation/src/artifact-store";
 import {
   ControlPlaneError,
@@ -29,6 +32,7 @@ import {
 } from "@/services/control-plane/src/web-repository";
 import {
   assertSameOriginMutation,
+  readBoundedJsonBody,
   rateLimitExceededResponse,
 } from "@/services/control-plane/src/request-security";
 
@@ -36,10 +40,10 @@ const conversationRequestSchema = z.object({
   message: z.string().trim().min(1).max(8_000),
   preferences: z.unknown().optional(),
   conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
-  confirmedChoice: z.object({
-    question: z.string().trim().min(1).max(300),
-    value: z.string().trim().min(1).max(300),
-  }).optional(),
+  confirmedOption: z.object({
+    offeredTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    optionId: z.enum(ALBERT_PREFERENCE_OPTION_IDS),
+  }).strict().optional(),
 });
 
 const logger = createServiceLogger("albert-web");
@@ -64,6 +68,12 @@ function turnTimeoutMilliseconds():number{
   return parsed;
 }
 
+function persistedAnswerState(value:string):"verified"|"qualified"|"exploratory"|"clarification"|"unavailable"{
+  const normalized=value.toLowerCase();
+  if(normalized==="verified"||normalized==="qualified"||normalized==="exploratory"||normalized==="clarification"||normalized==="unavailable")return normalized;
+  throw new Error("The completed answer state is invalid.");
+}
+
 async function safetyIdentifier(userId: string, secret: string): Promise<string> {
   const encoder=new TextEncoder();
   const key=await crypto.subtle.importKey(
@@ -86,9 +96,6 @@ export async function POST(request: Request) {
     logger.warn("conversation.request_rejected", { status, ...safeErrorEvidence(error) }, correlationId);
     return jsonError(error instanceof Error ? error.message : "Request rejected.", status, correlationId);
   }
-  const declaredSize = Number(request.headers.get("content-length") ?? 0);
-  if (declaredSize > 32_000) return jsonError("Request body is too large.", 413, correlationId);
-
   let user;
   let tenant;
   try {
@@ -105,9 +112,13 @@ export async function POST(request: Request) {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return jsonError("Request body must be valid JSON.", 400, correlationId);
+    body = await readBoundedJsonBody(request);
+  } catch (error) {
+    const status = error instanceof ControlPlaneError ? error.status : 400;
+    const message = error instanceof ControlPlaneError
+      ? error.message
+      : "Request body must be valid JSON.";
+    return jsonError(message, status, correlationId);
   }
   const parsed = conversationRequestSchema.safeParse(body);
   if (!parsed.success) return jsonError("A valid message is required.", 400, correlationId);
@@ -123,6 +134,17 @@ export async function POST(request: Request) {
     return response;
   }
   if (configuredRuntime !== "live") return jsonError("Unknown conversation runtime configuration.", 503, correlationId);
+
+  if (process.env.NODE_ENV === "production") {
+    const readiness = inspectRuntimeEnvironment("web");
+    if (!readiness.ready) {
+      logger.error("conversation.production_boundary_invalid", {
+        missing: readiness.missing,
+        invalid: readiness.invalid,
+      }, correlationId);
+      return jsonError("Live analytics is not fully configured.", 503, correlationId);
+    }
+  }
 
   const configuration = {
     openaiApiKey: process.env.OPENAI_API_KEY,
@@ -158,6 +180,7 @@ export async function POST(request: Request) {
         fastMode: preferences.fastMode,
         runtime: "openai-agents-sdk",
       },
+      confirmedOption: parsed.data.confirmedOption,
     });
   } catch (error) {
     const status = error instanceof ControlPlaneError ? error.status : 503;
@@ -177,7 +200,10 @@ export async function POST(request: Request) {
 
   let modelContext;
   try {
-    modelContext = await loadConversationModelContext(begun.conversationId);
+    modelContext = appendCurrentUserMessage(
+      await loadConversationModelContext(begun.conversationId),
+      parsed.data.message,
+    );
   } catch (error) {
     await failConversationTurn({
       conversationId: begun.conversationId,
@@ -195,17 +221,45 @@ export async function POST(request: Request) {
 
   const response = createLiveTraceSseResponse({
     conversationId: begun.conversationId,
+    turnId,
     signal: request.signal,
     run: async (deliver, streamSignal) => {
       const timeoutSignal=AbortSignal.timeout(turnTimeoutMs);
       const agentSignal=AbortSignal.any([streamSignal,timeoutSignal]);
+      const semanticClient = new SemanticServiceClient(
+        configuration.semanticServiceUrl!,
+        configuration.semanticSigningSecret!,
+      );
+      const usageLifecycle = new DurableModelUsageLifecycle(async (usage, outcome) => {
+        await semanticClient.checkpointModelUsage({
+          tenantId: tenant.tenant_id,
+          actorUserId: user.id,
+          conversationId: begun.conversationId,
+          turnId,
+          providerResponseId: usage.providerResponseId,
+          providerUsage: usage.providerUsage,
+          metering: toModelUsageRpcPayload(usage.metering),
+          outcome,
+        });
+      });
+      let deferredTerminalEvent: Parameters<typeof deliver>[0] | undefined;
+      let finalizationAttempted = false;
       const emit = createTraceEmitter({
         persist: (event) => appendConversationEvent({
           conversationId: begun.conversationId,
           turnId,
           event,
         }),
-        deliver,
+        // Persist the terminal event so the semantic service can bind it into
+        // the immutable artefact, but do not expose it until that transaction
+        // has succeeded. Progress, tables, and validations remain live.
+        deliver: (event) => {
+          if (event.type === "answer" || event.type === "clarification") {
+            deferredTerminalEvent = event;
+            return;
+          }
+          deliver(event);
+        },
       });
       try {
         const result = await runLiveAlbertTurn({
@@ -216,7 +270,7 @@ export async function POST(request: Request) {
           conversationId: begun.conversationId,
           turnId,
           modelContext,
-          confirmedChoice: parsed.data.confirmedChoice,
+          confirmedPreference: begun.confirmedPreference,
           abortSignal: agentSignal,
           openaiApiKey: configuration.openaiApiKey!,
           openaiBaseUrl: configuration.openaiBaseUrl!,
@@ -224,36 +278,69 @@ export async function POST(request: Request) {
           semanticSigningSecret: configuration.semanticSigningSecret!,
           safetyIdentifier: await safetyIdentifier(user.id, configuration.userHashSecret!),
           openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
+          onProviderUsage: async (providerUsage, providerResponseId) => {
+            const metering = meterOpenAIUsage({
+              model: preferences.model,
+              fastMode: preferences.fastMode,
+              usage: providerUsage,
+            });
+            await usageLifecycle.providerCompleted({
+              providerResponseId,
+              providerUsage,
+              metering,
+            });
+          },
           emit,
         });
-        const metering = meterOpenAIUsage({
-          model: preferences.model,
-          fastMode: preferences.fastMode,
-          usage: result.usage as Parameters<typeof meterOpenAIUsage>[0]["usage"],
-        });
-        await recordConversationModelUsage({
-          conversationId: begun.conversationId,
-          turnId,
-          metering,
-        });
-        await completeConversationTurn({
+        const usageCheckpoint = usageLifecycle.checkpoint;
+        if (!usageCheckpoint) throw new Error("The completed provider run did not produce durable usage.");
+        finalizationAttempted = true;
+        const finalization = await semanticClient.finalizeAnswerArtifact({
+          tenantId:tenant.tenant_id,
+          actorUserId:user.id,
           conversationId: begun.conversationId,
           turnId,
           providerResponseId: result.lastResponseId,
-          usage: result.usage,
-          answerState: result.answerState,
-          resultDigest: result.resultDigest,
+          providerUsage: result.usage,
+          answerState: persistedAnswerState(result.answerState),
+          turnResultDigest: result.resultDigest,
+          metering: toModelUsageRpcPayload(usageCheckpoint.metering),
+          queryAuditIds: [...result.queryAuditIds],
         });
+        try {
+          await usageLifecycle.terminal("answer_finalized");
+        } catch (usageOutcomeError) {
+          logger.error("conversation.usage_outcome_failed", {
+            tenantId: tenant.tenant_id,
+            conversationId: begun.conversationId,
+            turnId,
+            outcome: "answer_finalized",
+            ...safeErrorEvidence(usageOutcomeError),
+          }, correlationId);
+        }
+        if (!deferredTerminalEvent) {
+          throw new Error("The finalized turn did not produce a terminal trace event.");
+        }
+        deliver(deferredTerminalEvent);
         logger.info("conversation.turn_completed", {
           tenantId: tenant.tenant_id,
           conversationId: begun.conversationId,
           turnId,
           answerState: result.answerState,
           model: preferences.model,
+          answerArtifactId: finalization.answerArtifactId,
+          artifactDigest: finalization.artifactDigest,
         }, correlationId);
       } catch (error) {
         const disconnected = streamSignal.aborted;
         const timedOut=timeoutSignal.aborted&&!disconnected;
+        const usageOutcome = disconnected
+          ? "client_disconnected"
+          : timedOut
+            ? "turn_timeout"
+            : finalizationAttempted
+              ? "artifact_finalization_failed"
+              : "runtime_failure";
         logger.error(disconnected ? "conversation.turn_disconnected" : timedOut ? "conversation.turn_timed_out" : "conversation.turn_failed", {
           tenantId: tenant.tenant_id,
           conversationId: begun.conversationId,
@@ -261,6 +348,15 @@ export async function POST(request: Request) {
           ...safeErrorEvidence(error),
         }, correlationId);
         try {
+          await usageLifecycle.terminal(usageOutcome).catch((usageError) => {
+            logger.error("conversation.usage_failure_outcome_failed", {
+              tenantId: tenant.tenant_id,
+              conversationId: begun.conversationId,
+              turnId,
+              outcome: usageOutcome,
+              ...safeErrorEvidence(usageError),
+            }, correlationId);
+          });
           if (!disconnected) {
             await emit({
               type: "error",

@@ -34,6 +34,7 @@ test("pgmq adapter claims high priority before standard/backfill", async () => {
               ...ids,
               schemaVersion: 1,
               type: "IncrementalSync",
+              connectionGeneration: 1,
               connectorId: "xero",
               externalAccountReference: "org-1",
               requestedAt: "2026-08-03T10:00:00.000Z",
@@ -71,6 +72,7 @@ test("orchestrator assigns webhook work to durable high-priority queue", async (
   await orchestrator.enqueueIncrementalSync({
     tenantId: ids.tenantId,
     connectionId: ids.connectionId,
+    connectionGeneration: 1,
     connectorId: "xero",
     externalAccountReference: "org-1",
     stream: "invoices",

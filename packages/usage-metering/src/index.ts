@@ -7,14 +7,15 @@ import type { AlbertModelId } from "../../shared/src/index.js";
  * cached-token discounts remain exact without floating point arithmetic.
  */
 export const OPENAI_GPT_5_6_RATE_CARD = Object.freeze({
-  id: "openai-gpt-5.6-2026-08-03",
+  id: "openai-gpt-5.6-au-2026-08-03",
   effectiveAt: "2026-08-03T00:00:00.000Z",
-  source: "https://developers.openai.com/api/docs/models/compare",
+  source: "https://developers.openai.com/api/docs/pricing",
+  dataResidencyRegion: "AU",
   longContextThresholdInputTokens: 272_000,
   models: Object.freeze({
     "gpt-5.6-sol": Object.freeze({ input: 5_000n, cachedInput: 500n, output: 30_000n }),
-    "gpt-5.6-terra": Object.freeze({ input: 2_500n, cachedInput: 250n, output: 15_000n }),
-    "gpt-5.6-luna": Object.freeze({ input: 1_000n, cachedInput: 100n, output: 6_000n }),
+    "gpt-5.6-terra": Object.freeze({ input: 2_000n, cachedInput: 200n, output: 12_000n }),
+    "gpt-5.6-luna": Object.freeze({ input: 200n, cachedInput: 20n, output: 1_200n }),
   }),
   cacheWriteInputNumerator: 5n,
   cacheWriteInputDenominator: 4n,
@@ -24,6 +25,8 @@ export const OPENAI_GPT_5_6_RATE_CARD = Object.freeze({
   longContextInputDenominator: 1n,
   longContextOutputNumerator: 3n,
   longContextOutputDenominator: 2n,
+  regionalProcessingNumerator: 11n,
+  regionalProcessingDenominator: 10n,
 } as const);
 
 export type ProviderRequestUsage = Readonly<{
@@ -56,6 +59,28 @@ export type MeteredModelUsage = Readonly<{
   estimatedCostUsdMicros: number;
   pricingCompleteness: "request_level" | "aggregate_estimate";
 }>;
+
+/**
+ * Exact persistence shape shared by the immutable answer finalizer and the
+ * legacy usage RPC. Kept in this dependency-free metering module so plain
+ * Node contract tests do not load Supabase/Next server dependencies.
+ */
+export function toModelUsageRpcPayload(
+  metering: MeteredModelUsage,
+): MeteredModelUsage {
+  return Object.freeze({
+    rateCardId: metering.rateCardId,
+    model: metering.model,
+    fastMode: metering.fastMode,
+    requests: metering.requests,
+    inputTokens: metering.inputTokens,
+    cachedInputTokens: metering.cachedInputTokens,
+    cacheWriteInputTokens: metering.cacheWriteInputTokens,
+    outputTokens: metering.outputTokens,
+    estimatedCostUsdMicros: metering.estimatedCostUsdMicros,
+    pricingCompleteness: metering.pricingCompleteness,
+  });
+}
 
 function nonNegativeInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -132,6 +157,15 @@ function priceRequest(
       OPENAI_GPT_5_6_RATE_CARD.fastModeDenominator,
     );
   }
+  // Albert production is pinned to the Australian data-residency endpoint.
+  // OpenAI applies a 10% residency uplift to eligible models released after
+  // 5 March 2026. Australia currently provides regional storage, not regional
+  // inference; this price adjustment must not be described as inference-local.
+  nanos = multiplyRatio(
+    nanos,
+    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingNumerator,
+    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingDenominator,
+  );
   return { nanos, cachedInputTokens, cacheWriteInputTokens };
 }
 
@@ -160,10 +194,19 @@ export function meterOpenAIUsage(input: Readonly<{
   const requests = nonNegativeInteger(input.usage.requests, "usage.requests");
   const inputTokens = nonNegativeInteger(input.usage.inputTokens, "usage.inputTokens");
   const outputTokens = nonNegativeInteger(input.usage.outputTokens, "usage.outputTokens");
-  nonNegativeInteger(input.usage.totalTokens, "usage.totalTokens");
+  const totalTokens = nonNegativeInteger(input.usage.totalTokens, "usage.totalTokens");
+  if (totalTokens !== inputTokens + outputTokens) {
+    throw new Error("Run usage total tokens do not reconcile to input and output tokens.");
+  }
+  if (requests === 0 && totalTokens > 0) {
+    throw new Error("Run usage cannot contain tokens without a provider request.");
+  }
 
   const entries = input.usage.requestUsageEntries;
   const requestLevel = entries !== undefined && entries.length > 0;
+  if (requestLevel && entries.length !== requests) {
+    throw new Error("Per-request usage entries do not reconcile to the provider request count.");
+  }
   const pricedEntries = requestLevel
     ? entries
     : [{

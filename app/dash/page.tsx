@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   DEFAULT_AGENT_PREFERENCES,
@@ -20,6 +19,11 @@ import ConnectionsWorkspace, {
   type MatchDecision,
 } from "./components/ConnectionsWorkspace";
 import { ModelRunControls } from "./components/ModelRunControls";
+import OrganizationWorkspace from "./components/OrganizationWorkspace";
+import TenantDeletionWorkspace, {
+  parseTenantDeletionReceipt,
+  type TenantDeletionReceipt,
+} from "./components/TenantDeletionWorkspace";
 import styles from "./dash.module.css";
 
 type IconName =
@@ -28,34 +32,14 @@ type IconName =
   | "monitor"
   | "sun"
   | "moon"
-  | "home"
   | "chat"
-  | "agents"
   | "connections"
-  | "audio"
-  | "mic"
-  | "images"
-  | "codex"
-  | "key"
-  | "usage"
   | "logs"
-  | "batches"
-  | "storage"
-  | "plugins"
-  | "settings"
-  | "more"
   | "organization"
-  | "profile"
-  | "docs"
-  | "terms"
-  | "help"
   | "logout"
   | "chevron"
-  | "chevrons"
   | "plus"
   | "arrowUp"
-  | "arrowUpRight"
-  | "sparkle"
   | "close";
 
 type NavItem = {
@@ -66,482 +50,6 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "Chat", icon: "chat" },
   { label: "Connections", icon: "connections" },
-];
-
-const pageTabs: Record<string, string[]> = {
-  Chat: ["Playground"],
-  Agents: ["Overview", "Runs"],
-  Connections: ["Connected apps"],
-};
-
-const dashboards = [
-  {
-    id: "overview",
-    label: "Overview",
-    title: "Business overview",
-    description: "A live view of how the business is tracking today.",
-    metrics: [
-      { label: "Revenue", value: "$48.2k", delta: "+8.4%" },
-      { label: "Orders", value: "312", delta: "+12%" },
-      { label: "Active agents", value: "4", delta: "Stable" },
-      { label: "Open tasks", value: "19", delta: "-3" },
-    ],
-    table: {
-      title: "Recent activity",
-      columns: ["Source", "Event", "Value", "Status"],
-      rows: [
-        ["Lightspeed", "Sale · Bondi", "$184.00", "Synced"],
-        ["Xero", "Invoice paid", "$2,400.00", "Cleared"],
-        ["Albert", "Agent run", "Weekly summary", "Complete"],
-        ["Lightspeed", "Refund · Online", "-$42.00", "Review"],
-        ["Xero", "Bill due", "$860.00", "Pending"],
-      ],
-    },
-    barChart: {
-      title: "Orders by channel",
-      series: [
-        { label: "Store", value: 118 },
-        { label: "Online", value: 94 },
-        { label: "Phone", value: 41 },
-        { label: "Wholesale", value: 59 },
-      ],
-    },
-    lineChart: {
-      title: "Revenue trend",
-      series: [
-        { label: "Mon", value: 42 },
-        { label: "Tue", value: 48 },
-        { label: "Wed", value: 39 },
-        { label: "Thu", value: 55 },
-        { label: "Fri", value: 61 },
-        { label: "Sat", value: 72 },
-        { label: "Sun", value: 58 },
-      ],
-    },
-  },
-  {
-    id: "sales",
-    label: "Sales",
-    title: "Sales performance",
-    description: "Track store sales, conversion, and standout products.",
-    metrics: [
-      { label: "Sales today", value: "$6.4k", delta: "+14%" },
-      { label: "Avg. order", value: "$84", delta: "+$6" },
-      { label: "Conversion", value: "3.2%", delta: "+0.4%" },
-      { label: "Units sold", value: "761", delta: "+9%" },
-    ],
-    table: {
-      title: "Top products",
-      columns: ["Product", "Channel", "Units", "Revenue"],
-      rows: [
-        ["Coastal Tee", "Store", "86", "$2,150"],
-        ["Harbour Cap", "Online", "64", "$1,280"],
-        ["Weekend Bag", "Store", "22", "$1,980"],
-        ["Daily Socks", "Online", "140", "$980"],
-        ["Trail Jacket", "Wholesale", "18", "$2,340"],
-      ],
-    },
-    barChart: {
-      title: "Sales by store",
-      series: [
-        { label: "Bondi", value: 86 },
-        { label: "Surry", value: 72 },
-        { label: "Newtown", value: 54 },
-        { label: "Online", value: 91 },
-      ],
-    },
-    lineChart: {
-      title: "Daily sales",
-      series: [
-        { label: "Mon", value: 38 },
-        { label: "Tue", value: 44 },
-        { label: "Wed", value: 51 },
-        { label: "Thu", value: 47 },
-        { label: "Fri", value: 68 },
-        { label: "Sat", value: 84 },
-        { label: "Sun", value: 63 },
-      ],
-    },
-  },
-  {
-    id: "customers",
-    label: "Customers",
-    title: "Customer activity",
-    description: "See who is engaging, returning, and needing a follow-up.",
-    metrics: [
-      { label: "New customers", value: "48", delta: "+11" },
-      { label: "Returning", value: "61%", delta: "+2%" },
-      { label: "Open tickets", value: "7", delta: "-2" },
-      { label: "NPS", value: "54", delta: "+3" },
-    ],
-    table: {
-      title: "Customer queue",
-      columns: ["Customer", "Touchpoint", "Value", "Priority"],
-      rows: [
-        ["A. Nguyen", "Support", "Order delay", "High"],
-        ["J. Patel", "Email", "Restock alert", "Medium"],
-        ["S. Clarke", "In store", "Loyalty join", "Low"],
-        ["M. Rossi", "Chat", "Refund request", "High"],
-        ["L. Brown", "Email", "Quote follow-up", "Medium"],
-      ],
-    },
-    barChart: {
-      title: "Visits by segment",
-      series: [
-        { label: "New", value: 48 },
-        { label: "Loyal", value: 76 },
-        { label: "At risk", value: 23 },
-        { label: "VIP", value: 31 },
-      ],
-    },
-    lineChart: {
-      title: "Engagement trend",
-      series: [
-        { label: "Mon", value: 28 },
-        { label: "Tue", value: 34 },
-        { label: "Wed", value: 31 },
-        { label: "Thu", value: 42 },
-        { label: "Fri", value: 49 },
-        { label: "Sat", value: 57 },
-        { label: "Sun", value: 45 },
-      ],
-    },
-  },
-  {
-    id: "finance",
-    label: "Finance",
-    title: "Cash and invoices",
-    description: "Keep cash flow, invoices, and outstanding balances in view.",
-    metrics: [
-      { label: "Cash on hand", value: "$126k", delta: "+$4.2k" },
-      { label: "Invoices due", value: "$18.4k", delta: "-$1.1k" },
-      { label: "Paid this week", value: "$9.1k", delta: "+18%" },
-      { label: "Burn rate", value: "$22k", delta: "Stable" },
-    ],
-    table: {
-      title: "Invoice register",
-      columns: ["Invoice", "Counterparty", "Amount", "Status"],
-      rows: [
-        ["INV-2041", "Northside Co", "$3,200", "Paid"],
-        ["INV-2042", "Harbour Labs", "$1,850", "Due"],
-        ["BILL-881", "Supply Hub", "$860", "Scheduled"],
-        ["INV-2043", "Coast Retail", "$4,100", "Overdue"],
-        ["BILL-882", "Studio Rent", "$2,400", "Paid"],
-      ],
-    },
-    barChart: {
-      title: "Cash by category",
-      series: [
-        { label: "Sales", value: 92 },
-        { label: "Invoices", value: 64 },
-        { label: "Costs", value: 48 },
-        { label: "Tax", value: 27 },
-      ],
-    },
-    lineChart: {
-      title: "Cash flow",
-      series: [
-        { label: "Mon", value: 52 },
-        { label: "Tue", value: 49 },
-        { label: "Wed", value: 58 },
-        { label: "Thu", value: 61 },
-        { label: "Fri", value: 55 },
-        { label: "Sat", value: 67 },
-        { label: "Sun", value: 70 },
-      ],
-    },
-  },
-] as const;
-
-type DashboardChartPoint = { label: string; value: number };
-
-type DashboardView = {
-  id: string;
-  label: string;
-  title: string;
-  description: string;
-  metrics: ReadonlyArray<{ label: string; value: string; delta: string }>;
-  table: {
-    title: string;
-    columns: readonly string[];
-    rows: ReadonlyArray<readonly string[]>;
-  };
-  barChart: {
-    title: string;
-    series: ReadonlyArray<DashboardChartPoint>;
-  };
-  lineChart: {
-    title: string;
-    series: ReadonlyArray<DashboardChartPoint>;
-  };
-};
-
-const starterDashboards: DashboardView[] = dashboards.map((dashboard) => ({
-  id: dashboard.id,
-  label: dashboard.label,
-  title: dashboard.title,
-  description: dashboard.description,
-  metrics: [...dashboard.metrics],
-  table: {
-    title: dashboard.table.title,
-    columns: [...dashboard.table.columns],
-    rows: dashboard.table.rows.map((row) => [...row]),
-  },
-  barChart: {
-    title: dashboard.barChart.title,
-    series: [...dashboard.barChart.series],
-  },
-  lineChart: {
-    title: dashboard.lineChart.title,
-    series: [...dashboard.lineChart.series],
-  },
-}));
-
-function createBlankDashboard(index: number): DashboardView {
-  return {
-    id: `dashboard-${Date.now()}-${index}`,
-    label: `Dashboard ${index}`,
-    title: "New dashboard",
-    description: "Start adding metrics, tables, and charts to this canvas.",
-    metrics: [
-      { label: "Metric 1", value: "—", delta: "—" },
-      { label: "Metric 2", value: "—", delta: "—" },
-      { label: "Metric 3", value: "—", delta: "—" },
-      { label: "Metric 4", value: "—", delta: "—" },
-    ],
-    table: {
-      title: "Raw data",
-      columns: ["Column A", "Column B", "Column C", "Column D"],
-      rows: [
-        ["—", "—", "—", "—"],
-        ["—", "—", "—", "—"],
-        ["—", "—", "—", "—"],
-      ],
-    },
-    barChart: {
-      title: "Bar chart",
-      series: [
-        { label: "A", value: 24 },
-        { label: "B", value: 40 },
-        { label: "C", value: 32 },
-        { label: "D", value: 18 },
-      ],
-    },
-    lineChart: {
-      title: "Line graph",
-      series: [
-        { label: "Mon", value: 20 },
-        { label: "Tue", value: 28 },
-        { label: "Wed", value: 24 },
-        { label: "Thu", value: 36 },
-        { label: "Fri", value: 42 },
-        { label: "Sat", value: 38 },
-        { label: "Sun", value: 45 },
-      ],
-    },
-  };
-}
-
-const agentScheduleFrequencies = ["Manual", "Hourly", "Daily", "Weekly"] as const;
-type AgentScheduleFrequency = (typeof agentScheduleFrequencies)[number];
-
-const agentScheduleTimes = ["06:00", "09:00", "12:00", "17:00", "21:00"];
-const agentScheduleDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const timeRanges = ["24h", "7d", "30d", "90d"];
-
-type ConnectionId = "lightspeed" | "xero" | "deputy";
-
-const connectionProviders: Array<{
-  id: ConnectionId;
-  name: string;
-  description: string;
-  logo: string;
-}> = [
-  {
-    id: "lightspeed",
-    name: "Lightspeed",
-    description: "Sync sales, inventory, and store activity.",
-    logo: "/logos/lightspeed.png",
-  },
-  {
-    id: "xero",
-    name: "Xero",
-    description: "Bring in invoices, payments, and accounting data.",
-    logo: "/logos/xero.svg",
-  },
-  {
-    id: "deputy",
-    name: "Deputy",
-    description: "Sync rosters, timesheets, and workforce data.",
-    logo: "/logos/deputy.png",
-  },
-];
-
-type AgentStatus = "Active" | "Paused" | "Draft";
-
-type AgentRun = {
-  id: string;
-  at: string;
-  result: string;
-  duration: string;
-};
-
-type ExampleAgent = {
-  id: string;
-  name: string;
-  status: AgentStatus;
-  schedule: string;
-  lastRun: string;
-  nextRun: string;
-  tools: string[];
-  prompt: string;
-  runs: AgentRun[];
-};
-
-const exampleAgents: ExampleAgent[] = [
-  {
-    id: "weekly-sales",
-    name: "Weekly sales briefing",
-    status: "Active",
-    schedule: "Weekly · Mon 09:00",
-    lastRun: "2 hours ago",
-    nextRun: "Mon 09:00",
-    tools: ["Lightspeed", "Xero"],
-    prompt: "Summarise last week's sales by store and channel. Flag anything unusual and draft three follow-up actions for the team.",
-    runs: [
-      { id: "r1", at: "Today · 09:00", result: "Complete", duration: "42s" },
-      { id: "r2", at: "25 Jul · 09:00", result: "Complete", duration: "38s" },
-      { id: "r3", at: "18 Jul · 09:00", result: "Complete", duration: "51s" },
-    ],
-  },
-  {
-    id: "low-stock",
-    name: "Low stock watcher",
-    status: "Active",
-    schedule: "Daily · 07:00",
-    lastRun: "5 hours ago",
-    nextRun: "Tomorrow 07:00",
-    tools: ["Lightspeed"],
-    prompt: "Check inventory across all stores. List SKUs under two weeks of cover and suggest reorder quantities.",
-    runs: [
-      { id: "r1", at: "Today · 07:00", result: "Complete", duration: "27s" },
-      { id: "r2", at: "1 Aug · 07:00", result: "Complete", duration: "24s" },
-      { id: "r3", at: "31 Jul · 07:00", result: "Warning", duration: "33s" },
-    ],
-  },
-  {
-    id: "invoice-chase",
-    name: "Overdue invoice chase",
-    status: "Active",
-    schedule: "Daily · 10:00",
-    lastRun: "Yesterday",
-    nextRun: "Tomorrow 10:00",
-    tools: ["Xero"],
-    prompt: "Find invoices overdue by more than 14 days. Draft polite reminder emails grouped by customer.",
-    runs: [
-      { id: "r1", at: "Yesterday · 10:00", result: "Complete", duration: "36s" },
-      { id: "r2", at: "31 Jul · 10:00", result: "Complete", duration: "41s" },
-      { id: "r3", at: "30 Jul · 10:00", result: "Complete", duration: "29s" },
-    ],
-  },
-  {
-    id: "cashflow",
-    name: "Cashflow snapshot",
-    status: "Paused",
-    schedule: "Weekly · Fri 16:00",
-    lastRun: "4 days ago",
-    nextRun: "Paused",
-    tools: ["Xero"],
-    prompt: "Produce a Friday cashflow snapshot with expected inflows, outflows, and a short risk note for next week.",
-    runs: [
-      { id: "r1", at: "29 Jul · 16:00", result: "Complete", duration: "47s" },
-      { id: "r2", at: "22 Jul · 16:00", result: "Complete", duration: "44s" },
-      { id: "r3", at: "15 Jul · 16:00", result: "Failed", duration: "12s" },
-    ],
-  },
-  {
-    id: "morning-brief",
-    name: "Morning ops brief",
-    status: "Active",
-    schedule: "Daily · 06:30",
-    lastRun: "6 hours ago",
-    nextRun: "Tomorrow 06:30",
-    tools: ["Lightspeed", "Xero"],
-    prompt: "Build a short morning brief covering overnight sales, open tasks, and anything that needs attention before open.",
-    runs: [
-      { id: "r1", at: "Today · 06:30", result: "Complete", duration: "31s" },
-      { id: "r2", at: "1 Aug · 06:30", result: "Complete", duration: "28s" },
-      { id: "r3", at: "31 Jul · 06:30", result: "Complete", duration: "35s" },
-    ],
-  },
-  {
-    id: "refund-review",
-    name: "Refund review",
-    status: "Active",
-    schedule: "Daily · 18:00",
-    lastRun: "20 hours ago",
-    nextRun: "Today 18:00",
-    tools: ["Lightspeed"],
-    prompt: "Review refunds from the last 24 hours. Highlight high-value or repeat cases and recommend next steps.",
-    runs: [
-      { id: "r1", at: "Yesterday · 18:00", result: "Complete", duration: "22s" },
-      { id: "r2", at: "31 Jul · 18:00", result: "Complete", duration: "19s" },
-      { id: "r3", at: "30 Jul · 18:00", result: "Complete", duration: "26s" },
-    ],
-  },
-  {
-    id: "staff-roster",
-    name: "Roster reminder",
-    status: "Draft",
-    schedule: "Weekly · Thu 12:00",
-    lastRun: "Never",
-    nextRun: "Not scheduled",
-    tools: ["Lightspeed"],
-    prompt: "Remind managers about next week's roster gaps and list shifts that still need coverage.",
-    runs: [],
-  },
-  {
-    id: "margin-check",
-    name: "Margin anomaly check",
-    status: "Active",
-    schedule: "Hourly",
-    lastRun: "48 min ago",
-    nextRun: "In 12 min",
-    tools: ["Lightspeed", "Xero"],
-    prompt: "Scan recent sales for margin anomalies versus category averages and call out products that need a pricing review.",
-    runs: [
-      { id: "r1", at: "Today · 10:00", result: "Complete", duration: "18s" },
-      { id: "r2", at: "Today · 09:00", result: "Complete", duration: "17s" },
-      { id: "r3", at: "Today · 08:00", result: "Complete", duration: "21s" },
-    ],
-  },
-  {
-    id: "customer-followup",
-    name: "VIP follow-up drafts",
-    status: "Paused",
-    schedule: "Daily · 11:00",
-    lastRun: "3 days ago",
-    nextRun: "Paused",
-    tools: ["Lightspeed"],
-    prompt: "Draft personalised follow-ups for VIP customers who purchased in the last week but have not been contacted.",
-    runs: [
-      { id: "r1", at: "30 Jul · 11:00", result: "Complete", duration: "55s" },
-      { id: "r2", at: "29 Jul · 11:00", result: "Complete", duration: "49s" },
-      { id: "r3", at: "28 Jul · 11:00", result: "Warning", duration: "61s" },
-    ],
-  },
-  {
-    id: "month-end",
-    name: "Month-end pack",
-    status: "Draft",
-    schedule: "Manual",
-    lastRun: "Never",
-    nextRun: "Manual only",
-    tools: ["Xero", "Lightspeed"],
-    prompt: "Assemble a month-end pack with revenue, costs, top products, and a one-page narrative for leadership.",
-    runs: [],
-  },
 ];
 
 type Theme = "system" | "light" | "dark";
@@ -624,138 +132,27 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><circle cx="12" cy="12" r="3.5" /><path d="M12 2.8v2M12 19.2v2M21.2 12h-2M4.8 12h-2M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4M18.5 18.5l-1.4-1.4M6.9 6.9 5.5 5.5" /></svg>;
     case "moon":
       return <svg {...shared}><path d="M19.7 14.5A7.8 7.8 0 0 1 9.5 4.3a8 8 0 1 0 10.2 10.2Z" /></svg>;
-    case "home":
-      return <svg {...shared}><path d="m3.5 10.8 8.5-7 8.5 7" /><path d="M5.3 9.8v9.1a1.5 1.5 0 0 0 1.5 1.5h10.4a1.5 1.5 0 0 0 1.5-1.5V9.8" /><path d="M9.2 20.4v-5.8h5.6v5.8" /></svg>;
     case "chat":
       return <svg {...shared}><path d="M20.2 11.2c0 4.5-3.7 8.1-8.3 8.1a8.8 8.8 0 0 1-3.2-.6l-4.7 1.2 1.2-4.3a7.8 7.8 0 0 1-1.5-4.4c0-4.5 3.7-8.1 8.2-8.1s8.3 3.6 8.3 8.1Z" /></svg>;
-    case "agents":
-      return <svg {...shared}><path d="M12 3.5 13.5 9l5.5 1.5-5.5 1.5-1.5 5.5-1.5-5.5L5 10.5 10.5 9 12 3.5Z" /><path d="m18.2 15.5.6 2.1 2.1.6-2.1.6-.6 2.1-.6-2.1-2.1-.6 2.1-.6.6-2.1Z" /></svg>;
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
-    case "audio":
-      return <svg {...shared}><path d="M6 10v4" /><path d="M10 6.5v11" /><path d="M14 9v6" /><path d="M18 7v10" /></svg>;
-    case "mic":
-      return <svg {...shared}><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5M9 20.5h6" /></svg>;
-    case "images":
-      return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2" /><circle cx="9" cy="9" r="1.6" /><path d="m4.5 17 4.3-4.1a1.6 1.6 0 0 1 2.2 0l2.1 2 1.8-1.6a1.6 1.6 0 0 1 2.2 0l2.4 2.3" /></svg>;
-    case "codex":
-      return <svg {...shared}><path d="M7.1 8.1a4.4 4.4 0 0 1 8.1-1.2 4.1 4.1 0 0 1 2.5 7.4 4.3 4.3 0 0 1-7.4 2.9 4.2 4.2 0 0 1-5.8-5.9 4.1 4.1 0 0 1 2.6-3.2Z" /><path d="m12 8.3.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1Z" /></svg>;
-    case "key":
-      return <svg {...shared}><circle cx="8.5" cy="15.5" r="3.6" /><path d="m11.2 12.8 7.5-7.5 2.2 2.2-1.7 1.7 1.2 1.2-1.8 1.8-1.2-1.2-2.7 2.7" /></svg>;
-    case "usage":
-      return <svg {...shared}><path d="m3.5 17 5.1-5.1 3.4 2.6 7.8-8" /><path d="M15.4 6.5h4.4v4.4" /></svg>;
     case "logs":
       return <svg {...shared}><path d="m5 7 2-2h10l2 2" /><path d="m5 12 2-2h10l2 2" /><path d="m5 17 2-2h10l2 2" /></svg>;
-    case "batches":
-      return <svg {...shared}><path d="M8.3 4.2H6.5a2 2 0 0 0-2 2v2.1a2 2 0 0 1-2 2 2 2 0 0 1 2 2v2.1a2 2 0 0 0 2 2h1.8" /><path d="M15.7 4.2h1.8a2 2 0 0 1 2 2v2.1a2 2 0 0 0 2 2 2 2 0 0 0-2 2v2.1a2 2 0 0 1-2 2h-1.8" /><path d="M9 8.5h6M9 12h6M9 15.5h6" /></svg>;
-    case "storage":
-      return <svg {...shared}><ellipse cx="12" cy="5.7" rx="7" ry="2.8" /><path d="M5 5.7v6.3c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8V5.7" /><path d="M5 12v6.3c0 1.6 3.1 2.8 7 2.8s7-1.2 7-2.8V12" /></svg>;
-    case "plugins":
-      return <svg {...shared}><circle cx="12" cy="12" r="8.6" /><path d="M9.2 9.2 14.8 8l-1.2 5.6-5.6 1.2 1.2-5.6Z" /><path d="m15.8 8.2 1.4-1.4" /></svg>;
-    case "settings":
-      return <svg {...shared}><path d="m9.6 4.1.7-1.3h3.4l.7 1.3 1.6.9 1.4-.2 1.7 3-1 1.1.1 1.9 1 1.1-1.7 3-1.4-.2-1.6.9-.7 1.3h-3.4l-.7-1.3-1.6-.9-1.4.2-1.7-3 1-1.1-.1-1.9-1-1.1 1.7-3 1.4.2 1.6-.9Z" /><circle cx="12" cy="11.1" r="2.6" /></svg>;
-    case "more":
-      return <svg {...shared}><circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.1" fill="currentColor" stroke="none" /></svg>;
     case "organization":
       return <svg {...shared}><path d="M4 20V8.5l5-3v14.5M9 20h11M15 20V4h5v16" /><path d="M6.5 11h.1M6.5 14.5h.1M17.5 8h.1M17.5 11.5h.1M17.5 15h.1" /></svg>;
-    case "profile":
-      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="9.5" r="2.6" /><path d="M7.5 17.3a5.5 5.5 0 0 1 9 0" /></svg>;
-    case "docs":
-      return <svg {...shared}><path d="M6.2 4.2h8.1l3.5 3.5v12.1H6.2z" /><path d="M14.3 4.2v4h3.5M8.8 12h6.4M8.8 15.5h4.7" /></svg>;
-    case "terms":
-      return <svg {...shared}><path d="M7 3.8h8.7l2.4 2.4v14H7z" /><path d="M15.7 3.8v3h2.4M9.5 11h6M9.5 14.5h6M9.5 18h3.2" /></svg>;
-    case "help":
-      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><path d="M8.9 9.2a3.2 3.2 0 0 1 6.1 1.4c0 2-2.7 2.2-2.7 3.8M12.3 17.2v.1" /></svg>;
     case "logout":
       return <svg {...shared}><path d="M10 4.2H6.2a2 2 0 0 0-2 2v11.6a2 2 0 0 0 2 2H10" /><path d="M13 8.2 17 12l-4 3.8M17 12H8.3" /></svg>;
     case "chevron":
       return <svg {...shared}><path d="m9 5 7 7-7 7" /></svg>;
-    case "chevrons":
-      return <svg {...shared}><path d="m7.5 9 4.5-4 4.5 4" /><path d="m7.5 15 4.5 4 4.5-4" /></svg>;
     case "plus":
       return <svg {...shared}><path d="M12 5v14M5 12h14" /></svg>;
     case "arrowUp":
       return <svg {...shared}><path d="M12 18V6M7.5 10.5 12 6l4.5 4.5" /></svg>;
-    case "arrowUpRight":
-      return <svg {...shared}><path d="M6 18 18 6M8 6h10v10" /></svg>;
-    case "sparkle":
-      return <svg {...shared}><path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3ZM18.5 14l.7 2.8L22 17.5l-2.8.7-.7 2.8-.7-2.8-2.8-.7 2.8-.7.7-2.8ZM5.5 15l.6 2.1 2.1.6-2.1.6-.6 2.1-.6-2.1-2.1-.6 2.1-.6.6-2.1Z" /></svg>;
     case "close":
       return <svg {...shared}><path d="m6 6 12 12M18 6 6 18" /></svg>;
     default:
       return null;
   }
-}
-
-function DashboardBarChart({ series, title }: { series: readonly DashboardChartPoint[]; title: string }) {
-  const maxValue = Math.max(...series.map((point) => point.value), 1);
-  const width = 360;
-  const height = 180;
-  const padding = { top: 12, right: 8, bottom: 28, left: 8 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  const gap = 12;
-  const barWidth = (chartWidth - gap * (series.length - 1)) / series.length;
-
-  return (
-    <svg className={styles.dashboardChartSvg} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-      {series.map((point, index) => {
-        const barHeight = (point.value / maxValue) * chartHeight;
-        const x = padding.left + index * (barWidth + gap);
-        const y = padding.top + chartHeight - barHeight;
-        return (
-          <g key={point.label}>
-            <rect
-              className={styles.dashboardBar}
-              x={x}
-              y={y}
-              width={barWidth}
-              height={Math.max(barHeight, 2)}
-              rx="6"
-            />
-            <text className={styles.dashboardChartLabel} x={x + barWidth / 2} y={height - 8} textAnchor="middle">
-              {point.label}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-function DashboardLineChart({ series, title }: { series: readonly DashboardChartPoint[]; title: string }) {
-  const maxValue = Math.max(...series.map((point) => point.value), 1);
-  const minValue = Math.min(...series.map((point) => point.value), 0);
-  const range = Math.max(maxValue - minValue, 1);
-  const width = 360;
-  const height = 180;
-  const padding = { top: 16, right: 12, bottom: 28, left: 12 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-
-  const points = series.map((point, index) => {
-    const x = padding.left + (series.length === 1 ? chartWidth / 2 : (index / (series.length - 1)) * chartWidth);
-    const y = padding.top + chartHeight - ((point.value - minValue) / range) * chartHeight;
-    return { ...point, x, y };
-  });
-
-  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
-
-  return (
-    <svg className={styles.dashboardChartSvg} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-      <path className={styles.dashboardLineArea} d={areaPath} />
-      <path className={styles.dashboardLinePath} d={linePath} />
-      {points.map((point) => (
-        <g key={point.label}>
-          <circle className={styles.dashboardLineDot} cx={point.x} cy={point.y} r="3.5" />
-          <text className={styles.dashboardChartLabel} x={point.x} y={height - 8} textAnchor="middle">
-            {point.label}
-          </text>
-        </g>
-      ))}
-    </svg>
-  );
 }
 
 type ChatMessage = {
@@ -765,6 +162,8 @@ type ChatMessage = {
   isStreaming?: boolean;
   events?: TraceEvent[];
   runtime?: "fixture" | "openai";
+  conversationId?: string;
+  turnId?: string;
   suppressEnter?: boolean;
   animateReveal?: boolean;
 };
@@ -782,6 +181,45 @@ type ConversationSummary = Readonly<{
   lastMessage: string;
 }>;
 
+type OAuthNotice = Readonly<{
+  kind: "success" | "info" | "error";
+  message: string;
+}>;
+
+const oauthProviderLabels: Readonly<Record<ConnectionProviderId, string>> = Object.freeze({
+  lightspeed: "Lightspeed",
+  xero: "Xero",
+  deputy: "Deputy",
+});
+
+function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
+  const status = searchParams.get("oauth");
+  if (!status) return null;
+  const rawProvider = searchParams.get("provider");
+  const provider = rawProvider === "lightspeed" || rawProvider === "xero" || rawProvider === "deputy"
+    ? oauthProviderLabels[rawProvider]
+    : "This source";
+
+  switch (status) {
+    case "connected":
+      return { kind: "success", message: `${provider} is connected. The recent-first sync has started.` };
+    case "selection_required":
+      return { kind: "info", message: `Choose the ${provider} account below to finish connecting it.` };
+    case "cancelled":
+      return { kind: "info", message: `${provider} authorization was cancelled. Nothing was changed.` };
+    case "rate_limited":
+      return { kind: "error", message: "Too many authorization attempts were made. Wait a few minutes, then try again." };
+    case "invalid_callback":
+      return { kind: "error", message: `${provider} returned an invalid or expired authorization response. Start the connection again.` };
+    case "tenant_missing":
+      return { kind: "error", message: "Choose or create an organisation before connecting a source." };
+    case "unknown_provider":
+      return { kind: "error", message: "That connection provider is not supported." };
+    default:
+      return { kind: "error", message: `${provider} authorization could not be completed. Try connecting again.` };
+  }
+}
+
 const traceEventTypes = new Set([
   "progress",
   "narrative",
@@ -793,6 +231,7 @@ const traceEventTypes = new Set([
   "clarification",
   "error",
 ]);
+const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 function parseTraceEvent(value: unknown): TraceEvent | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -835,6 +274,7 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
     const lastTurn = candidate.last_turn;
     if (
       typeof candidate.conversation_id !== "string"
+      || !ulidPattern.test(candidate.conversation_id)
       || typeof candidate.status !== "string"
       || typeof candidate.updated_at !== "string"
       || (candidate.title !== null && typeof candidate.title !== "string")
@@ -867,30 +307,29 @@ export default function DashPage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [accountEmail, setAccountEmail] = useState("");
+  const [accountOrganisation, setAccountOrganisation] = useState<{
+    name: string;
+    role: "owner" | "manager" | "bookkeeper" | "internal_operator" | null;
+  }>({ name: "Organisation", role: null });
   const [isInternalOperator, setIsInternalOperator] = useState(false);
+  const [oauthNotice, setOAuthNotice] = useState<OAuthNotice | null>(null);
   const [connectionsData, setConnectionsData] = useState<ConnectionsWorkspaceData>(emptyConnectionsWorkspace);
   const [connectionsStatus, setConnectionsStatus] = useState<{
     kind: "loading" | "error" | "ready";
     message?: string;
   }>({ kind: "loading" });
+  const [tenantDeletionReceipt, setTenantDeletionReceipt] = useState<TenantDeletionReceipt | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [accountError, setAccountError] = useState("");
   const [activeItem, setActiveItem] = useState("Chat");
-  const [activeTab, setActiveTab] = useState(pageTabs.Chat[0]);
-  const [dashboardList, setDashboardList] = useState<DashboardView[]>(starterDashboards);
-  const [activeDashboard, setActiveDashboard] = useState(starterDashboards[0].id);
-  const [activeRange, setActiveRange] = useState(timeRanges[0]);
   const theme = useSyncExternalStore(
     subscribeToTheme,
     getThemeSnapshot,
     getServerThemeSnapshot,
   );
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [tableDensity, setTableDensity] = useState<"normal" | "compact">("normal");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [albertPopupOpen, setAlbertPopupOpen] = useState(false);
-  const [albertPopupClosing, setAlbertPopupClosing] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
@@ -905,25 +344,7 @@ export default function DashPage() {
   const [chatClarification, setChatClarification] = useState<ChatClarification | null>(null);
   const [clarifyDraft, setClarifyDraft] = useState("");
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [agentName, setAgentName] = useState("");
-  const [agentInstructions, setAgentInstructions] = useState("");
-  const [agentFrequency, setAgentFrequency] = useState<AgentScheduleFrequency>("Daily");
-  const [agentTime, setAgentTime] = useState(agentScheduleTimes[1]);
-  const [agentDays, setAgentDays] = useState<string[]>(["Mon", "Wed", "Fri"]);
-  const [agentTools, setAgentTools] = useState<Record<ConnectionId, boolean>>({
-    lightspeed: true,
-    xero: false,
-    deputy: false,
-  });
-  const [frequencyIndicator, setFrequencyIndicator] = useState({ left: 0, width: 0 });
   const reduceMotion = useReducedMotion();
-  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
-  const [rangeIndicator, setRangeIndicator] = useState({ left: 0, width: 0 });
-  const [dashboardTabIndicator, setDashboardTabIndicator] = useState({ left: 0, width: 0 });
-  const tabBarRef = useRef<HTMLDivElement>(null);
-  const rangeBarRef = useRef<HTMLDivElement>(null);
-  const dashboardTabBarRef = useRef<HTMLDivElement>(null);
-  const frequencyBarRef = useRef<HTMLDivElement>(null);
   const accountAreaRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatSpacerRef = useRef<HTMLDivElement>(null);
@@ -935,30 +356,21 @@ export default function DashPage() {
   const composerExpandTimerRef = useRef<number | undefined>(undefined);
   const chatRequestAbortRef = useRef<AbortController | null>(null);
   const chatMessageSequenceRef = useRef(0);
-  const albertPopupRef = useRef<HTMLElement>(null);
-  const popupCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const popupPreviousFocusRef = useRef<HTMLElement | null>(null);
   const visibleNavItems = useMemo<readonly NavItem[]>(
-    () => isInternalOperator ? [...navItems, { label: "Admin", icon: "logs" }] : navItems,
-    [isInternalOperator],
+    () => tenantDeletionReceipt
+      ? [{ label: "Deletion", icon: "organization" }]
+      : isInternalOperator ? [...navItems, { label: "Admin", icon: "logs" }] : navItems,
+    [isInternalOperator, tenantDeletionReceipt],
   );
   const filteredItems = useMemo(
     () => visibleNavItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
     [query, visibleNavItems],
   );
-  const tabs = pageTabs[activeItem] ?? ["Overview"];
-  const showHeaderTabs = !["Chat", "Connections", "Dashboard", "Admin"].includes(activeItem);
-  const activeDashboardView = dashboardList.find((dashboard) => dashboard.id === activeDashboard) ?? dashboardList[0];
-  const agentPanelOpen = activeItem === "Chat" && activeTab === "Agent";
-  const chatComposerHero = activeItem === "Chat" && !agentPanelOpen && chatMessages.length === 0;
-  const chatComposerCompact = activeItem === "Chat" && !agentPanelOpen && !composerExpanded;
-  const selectedAgent = activeItem === "Agents"
-    ? exampleAgents.find((agent) => agent.id === selectedAgentId) ?? null
-    : null;
-  const agentsDetailOpen = activeItem === "Agents" && selectedAgent !== null;
-  const showScheduleTime = agentFrequency === "Daily" || agentFrequency === "Weekly";
-  const showScheduleDays = agentFrequency === "Weekly";
+  const chatComposerHero = activeItem === "Chat" && chatMessages.length === 0;
+  const chatComposerCompact = activeItem === "Chat" && !composerExpanded;
+  const canManageConnections = accountOrganisation.role === "owner" || accountOrganisation.role === "manager";
   const accountInitial = accountEmail.trim().charAt(0).toUpperCase() || "P";
+  const accountRoleLabel = accountOrganisation.role?.replaceAll("_", " ") ?? "Loading organisation";
 
   useEffect(() => {
     let isMounted = true;
@@ -973,9 +385,19 @@ export default function DashPage() {
   }, [supabase]);
 
   useEffect(() => {
-    const requestedView = new URLSearchParams(window.location.search).get("view");
-    if (requestedView !== "Connections") return;
-    const task = window.setTimeout(() => setActiveItem("Connections"), 0);
+    const url = new URL(window.location.href);
+    const requestedView = url.searchParams.get("view");
+    const nextOAuthNotice = oauthNoticeFrom(url.searchParams);
+    if (url.searchParams.has("oauth") || url.searchParams.has("provider")) {
+      url.searchParams.delete("oauth");
+      url.searchParams.delete("provider");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    if (requestedView !== "Connections" && !nextOAuthNotice) return;
+    const task = window.setTimeout(() => {
+      if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
+      setOAuthNotice(nextOAuthNotice);
+    }, 0);
     return () => window.clearTimeout(task);
   }, []);
 
@@ -987,14 +409,38 @@ export default function DashPage() {
         error?: string;
         needsBootstrap?: boolean;
         internalOperator?: boolean;
+        deletionReceipt?: unknown;
         user?: {
           email?: string | null;
           suggestedOrganisationName?: string | null;
           timezone?: string | null;
         };
+        context?: {
+          tenant_name?: string;
+          role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
+        } | null;
       };
       if (!sessionResponse.ok) throw new Error(sessionPayload.error || "Your organisation could not be loaded.");
       setIsInternalOperator(sessionPayload.internalOperator === true);
+      const nextDeletionReceipt = sessionPayload.deletionReceipt === null
+        || sessionPayload.deletionReceipt === undefined
+        ? null
+        : parseTenantDeletionReceipt(sessionPayload.deletionReceipt);
+      if (sessionPayload.deletionReceipt && !nextDeletionReceipt) {
+        throw new Error("Your deletion receipt returned invalid state.");
+      }
+      setTenantDeletionReceipt(nextDeletionReceipt);
+      if (sessionPayload.context?.tenant_name && sessionPayload.context.role) {
+        setAccountOrganisation({ name: sessionPayload.context.tenant_name, role: sessionPayload.context.role });
+      }
+
+      if (nextDeletionReceipt && !sessionPayload.context) {
+        setActiveItem("Deletion");
+        setAccountOrganisation({ name: "Deletion receipt", role: null });
+        setConnectionsData(emptyConnectionsWorkspace);
+        setConnectionsStatus({ kind: "ready" });
+        return;
+      }
 
       if (sessionPayload.needsBootstrap) {
         const fallbackName = sessionPayload.user?.email?.split("@")[0]?.trim()
@@ -1008,8 +454,20 @@ export default function DashPage() {
             timezone: sessionPayload.user?.timezone || "Australia/Melbourne",
           }),
         });
-        const bootstrapPayload = await bootstrapResponse.json().catch(() => null) as { error?: string } | null;
+        const bootstrapPayload = await bootstrapResponse.json().catch(() => null) as {
+          error?: string;
+          context?: {
+            tenant_name?: string;
+            role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
+          };
+        } | null;
         if (!bootstrapResponse.ok) throw new Error(bootstrapPayload?.error || "Your organisation could not be created.");
+        if (bootstrapPayload?.context?.tenant_name && bootstrapPayload.context.role) {
+          setAccountOrganisation({
+            name: bootstrapPayload.context.tenant_name,
+            role: bootstrapPayload.context.role,
+          });
+        }
       }
 
       const response = await fetch("/api/connections", { cache: "no-store" });
@@ -1048,9 +506,10 @@ export default function DashPage() {
     if (!response.ok) {
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       setConnectionsStatus({ kind: "error", message: payload?.error || "The answer was not saved." });
-      return;
+      return false;
     }
-    void loadConnections();
+    await loadConnections();
+    return true;
   };
 
   const decideConnectionMatch = async (taskId: string, decision: MatchDecision) => {
@@ -1087,7 +546,7 @@ export default function DashPage() {
   };
 
   const disconnectConnection = async (connectionId: string) => {
-    setConnectionsStatus({ kind: "loading", message: "Destroying credentials and scheduling the scoped data purge." });
+    setConnectionsStatus({ kind: "loading", message: "Securing the connection and queuing its verified data purge." });
     const response = await fetch("/api/oauth/disconnect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1149,7 +608,12 @@ export default function DashPage() {
       for (const rawTurn of history.turns) {
         if (!rawTurn || typeof rawTurn !== "object" || Array.isArray(rawTurn)) continue;
         const turn = rawTurn as Record<string, unknown>;
-        if (typeof turn.user_message !== "string" || !Array.isArray(turn.events)) continue;
+        if (
+          typeof turn.user_message !== "string"
+          || typeof turn.turn_id !== "string"
+          || !ulidPattern.test(turn.turn_id)
+          || !Array.isArray(turn.events)
+        ) continue;
         messageId += 1;
         restored.push({ id: messageId, role: "user", text: turn.user_message, suppressEnter: true });
         const events = turn.events
@@ -1164,6 +628,8 @@ export default function DashPage() {
           events,
           isStreaming: turn.status === "running",
           runtime: "openai",
+          conversationId,
+          turnId: turn.turn_id,
           suppressEnter: true,
         });
         restoredPreferences = normalizeAgentPreferences(turn.runtime_profile);
@@ -1185,12 +651,6 @@ export default function DashPage() {
         message: error instanceof Error ? error.message : "The conversation could not be opened.",
       });
     }
-  };
-
-  const createDashboard = () => {
-    const nextDashboard = createBlankDashboard(dashboardList.length + 1);
-    setDashboardList((list) => [...list, nextDashboard]);
-    setActiveDashboard(nextDashboard.id);
   };
 
   useEffect(() => () => {
@@ -1398,33 +858,6 @@ export default function DashPage() {
     };
   }, [chatMessages, reduceMotion]);
 
-  useLayoutEffect(() => {
-    const updateIndicator = (
-      container: HTMLDivElement | null,
-      setIndicator: (value: { left: number; width: number }) => void,
-    ) => {
-      const activeButton = container?.querySelector<HTMLButtonElement>("[data-active='true']");
-      if (!container || !activeButton) return;
-      const containerRect = container.getBoundingClientRect();
-      const buttonRect = activeButton.getBoundingClientRect();
-      setIndicator({
-        left: buttonRect.left - containerRect.left,
-        width: buttonRect.width,
-      });
-    };
-
-    const updateIndicators = () => {
-      updateIndicator(tabBarRef.current, setTabIndicator);
-      updateIndicator(rangeBarRef.current, setRangeIndicator);
-      updateIndicator(dashboardTabBarRef.current, setDashboardTabIndicator);
-      updateIndicator(frequencyBarRef.current, setFrequencyIndicator);
-    };
-
-    updateIndicators();
-    window.addEventListener("resize", updateIndicators);
-    return () => window.removeEventListener("resize", updateIndicators);
-  }, [activeItem, activeTab, activeDashboard, activeRange, agentFrequency, agentPanelOpen]);
-
   useEffect(() => {
     if (!accountOpen) return;
 
@@ -1446,60 +879,9 @@ export default function DashPage() {
     };
   }, [accountOpen]);
 
-  useEffect(() => {
-    if (!albertPopupOpen) {
-      popupPreviousFocusRef.current?.focus();
-      return;
-    }
-
-    const closePopupOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAlbertPopupClosing(true);
-
-      if (event.key !== "Tab") return;
-
-      const focusableElements = albertPopupRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusableElements?.length) return;
-
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
-      if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    popupPreviousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", closePopupOnEscape);
-    const focusPopup = window.requestAnimationFrame(() => popupCloseButtonRef.current?.focus());
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", closePopupOnEscape);
-      window.cancelAnimationFrame(focusPopup);
-    };
-  }, [albertPopupOpen]);
-
-  useEffect(() => {
-    if (!albertPopupClosing) return;
-
-    const closeTimer = window.setTimeout(() => {
-      setAlbertPopupOpen(false);
-      setAlbertPopupClosing(false);
-    }, 180);
-
-    return () => window.clearTimeout(closeTimer);
-  }, [albertPopupClosing]);
-
   const sendChatMessage = async (
     suggestedText?: string,
-    confirmedChoice?: Readonly<{ question: string; value: string }>,
+    confirmedOption?: Readonly<{ offeredTurnId: string; optionId: string }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
     if (!text || isChatResponding) return;
@@ -1557,7 +939,7 @@ export default function DashPage() {
           message: text,
           preferences: agentPreferences,
           conversationId: activeConversationId,
-          confirmedChoice,
+          confirmedOption,
         }),
         signal: controller.signal,
       });
@@ -1569,8 +951,24 @@ export default function DashPage() {
 
       const runtime = response.headers.get("X-Albert-Runtime") === "fixture" ? "fixture" : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
-      if (responseConversationId) setActiveConversationId(responseConversationId);
-      updateAssistant({ runtime });
+      const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+      if (runtime === "openai" && (
+        !responseConversationId || !ulidPattern.test(responseConversationId)
+        || !responseTurnId || !ulidPattern.test(responseTurnId)
+      )) {
+        await response.body?.cancel("missing_immutable_turn_identifiers");
+        throw new Error("The governed stream did not include its immutable turn identifiers.");
+      }
+      if (responseConversationId && ulidPattern.test(responseConversationId)) {
+        setActiveConversationId(responseConversationId);
+      }
+      updateAssistant({
+        runtime,
+        ...(responseConversationId && responseTurnId ? {
+          conversationId: responseConversationId,
+          turnId: responseTurnId,
+        } : {}),
+      });
 
       if (!response.body) throw new Error("The conversation stream was unavailable.");
       const reader = response.body.getReader();
@@ -1627,24 +1025,12 @@ export default function DashPage() {
     }
   };
 
-  const answerClarification = (answer: string, question?: string) => {
+  const answerClarification = (answer: string, offeredTurnId?: string, optionId?: string) => {
     const text = answer.trim();
     if (!text || isChatResponding) return;
     setChatClarification(null);
     setClarifyDraft("");
-    void sendChatMessage(text, question ? { question, value: text } : undefined);
-  };
-
-  const openAlbertChat = () => {
-    setActiveItem("Chat");
-    setActiveTab(pageTabs.Chat[0]);
-    setChatHistoryOpen(false);
-    setAlbertPopupClosing(true);
-  };
-
-  const openAlbertPopup = () => {
-    setAlbertPopupClosing(false);
-    setAlbertPopupOpen(true);
+    void sendChatMessage(text, offeredTurnId && optionId ? { offeredTurnId, optionId } : undefined);
   };
 
   const startNewChat = () => {
@@ -1674,11 +1060,13 @@ export default function DashPage() {
 
   const handleSignOut = async () => {
     if (isSigningOut) return;
+    setAccountError("");
     setIsSigningOut(true);
 
     const { error } = await supabase.auth.signOut();
 
     if (error) {
+      setAccountError("Albert could not sign you out. Please try again.");
       setIsSigningOut(false);
       return;
     }
@@ -1692,7 +1080,7 @@ export default function DashPage() {
       className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
-      <aside className={styles.sidebar} inert={albertPopupOpen}>
+      <aside className={styles.sidebar}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
             <span className={styles.projectName}>Albert</span>
@@ -1730,10 +1118,7 @@ export default function DashPage() {
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => {
                     setActiveItem(item.label);
-                    const nextTabs = pageTabs[item.label];
-                    if (nextTabs?.[0]) setActiveTab(nextTabs[0]);
                     setChatHistoryOpen(false);
-                    if (item.label !== "Agents") setSelectedAgentId(null);
                   }}
                 >
                   <Icon name={item.icon} />
@@ -1755,6 +1140,7 @@ export default function DashPage() {
             inert={!accountOpen}
           >
             <p className={styles.accountEmail}>{accountEmail || "Signed in"}</p>
+            {accountError ? <p className={styles.accountError} role="alert">{accountError}</p> : null}
             <div className={styles.themeSwitcher} aria-label="Theme" role="group">
               {themeOptions.map((option) => (
                 <button
@@ -1772,11 +1158,18 @@ export default function DashPage() {
 
             <div className={styles.accountDivider} />
 
-            <button className={styles.accountWorkspace} type="button">
+            <button
+              className={styles.accountWorkspace}
+              type="button"
+              onClick={() => {
+                setActiveItem("Organization");
+                setAccountOpen(false);
+              }}
+            >
               <span className={styles.accountAvatar}>{accountInitial}</span>
               <span className={styles.accountWorkspaceCopy}>
-                <strong>Personal</strong>
-                <small>Organization</small>
+                <strong>{accountOrganisation.name}</strong>
+                <small>{accountRoleLabel}</small>
               </span>
               <Icon name="chevron" />
             </button>
@@ -1784,16 +1177,13 @@ export default function DashPage() {
             <div className={styles.accountDivider} />
 
             <div className={styles.accountLinks}>
-              <button type="button"><Icon name="organization" /><span>Organization settings</span></button>
-              <button type="button"><Icon name="profile" /><span>Profile settings</span></button>
-            </div>
-
-            <div className={styles.accountDivider} />
-
-            <div className={styles.accountLinks}>
-              <button type="button"><Icon name="docs" /><span>Developer docs</span></button>
-              <button type="button"><Icon name="terms" /><span>Terms &amp; policies</span></button>
-              <button type="button"><Icon name="help" /><span>Help</span></button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveItem("Organization");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="organization" /><span>Organization settings</span></button>
             </div>
 
             <div className={styles.accountDivider} />
@@ -1818,234 +1208,27 @@ export default function DashPage() {
           >
             <span className={styles.accountAvatar}>{accountInitial}</span>
             <span className={styles.accountWorkspaceCopy}>
-              <strong>Personal</strong>
-              <small>Organization</small>
+              <strong>{accountOrganisation.name}</strong>
+              <small>{accountRoleLabel}</small>
             </span>
           </button>
         </div>
       </aside>
 
-      <section className={styles.content} aria-labelledby="dash-title" inert={albertPopupOpen}>
-        <header className={`${styles.pageHeader} ${!showHeaderTabs ? styles.pageHeaderSimple : ""}`}>
+      <section className={styles.content} aria-labelledby="dash-title">
+        <header className={`${styles.pageHeader} ${styles.pageHeaderSimple}`}>
           <div className={styles.pageHeaderTop}>
             <h1 id="dash-title">{activeItem}</h1>
-            {showHeaderTabs ? (
-              <div className={styles.headerActions}>
-                <button
-                  className={styles.albertTrigger}
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded={albertPopupOpen}
-                  onClick={openAlbertPopup}
-                >
-                  <Icon name="sparkle" />
-                  <span>Try Albert</span>
-                </button>
-                <div className={styles.rangeBar} ref={rangeBarRef} role="tablist" aria-label="Time range">
-                  {timeRanges.map((range) => (
-                    <button
-                      className={`${styles.rangeButton} ${activeRange === range ? styles.rangeActive : ""}`}
-                      key={range}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeRange === range}
-                      data-active={activeRange === range}
-                      onClick={() => setActiveRange(range)}
-                    >
-                      {range}
-                    </button>
-                  ))}
-                  <span
-                    className={styles.rangeIndicator}
-                    style={{ left: rangeIndicator.left, width: rangeIndicator.width }}
-                    aria-hidden="true"
-                  />
-                </div>
-              </div>
-            ) : null}
           </div>
-          {showHeaderTabs ? (
-            <div className={styles.headerSubnav}>
-              <div className={styles.tabBar} ref={tabBarRef} role="tablist" aria-label={`${activeItem} views`}>
-                {tabs.map((tab) => (
-                  <button
-                    className={`${styles.tabButton} ${activeTab === tab ? styles.tabActive : ""}`}
-                    key={tab}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === tab}
-                    data-active={activeTab === tab}
-                    onClick={() => {
-                      setActiveTab(tab);
-                      if (tab === "Agent") setChatHistoryOpen(false);
-                    }}
-                  >
-                    {tab}
-                  </button>
-                ))}
-                <span
-                  className={styles.tabIndicator}
-                  style={{ left: tabIndicator.left, width: tabIndicator.width }}
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
-          ) : null}
         </header>
-        {activeItem === "Dashboard" ? (
-          <div className={styles.dashboardWorkspace}>
-            <div className={styles.dashboardCanvas} aria-live="polite">
-              <div className={styles.dashboardGridSurface} aria-hidden="true" />
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  className={styles.dashboardCanvasPanel}
-                  key={activeDashboardView.id}
-                  initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
-                >
-                  <div className={styles.dashboardBoardHeader}>
-                    <div>
-                      <p className={styles.contentEyebrow}>GRIDDED CANVAS</p>
-                      <h2>{activeDashboardView.title}</h2>
-                      <p className={styles.contentDescription}>{activeDashboardView.description}</p>
-                    </div>
-                  </div>
-
-                  <div className={styles.dashboardBoard}>
-                    <div className={styles.dashboardMetricGrid} role="list" aria-label={`${activeDashboardView.label} metrics`}>
-                      {activeDashboardView.metrics.map((metric) => (
-                        <article className={styles.dashboardMetric} key={metric.label} role="listitem">
-                          <div className={styles.dashboardMetricTop}>
-                            <span>{metric.label}</span>
-                            <small>{metric.delta}</small>
-                          </div>
-                          <strong>{metric.value}</strong>
-                        </article>
-                      ))}
-                    </div>
-
-                    <section className={styles.dashboardWidget} aria-label={activeDashboardView.table.title}>
-                      <div className={styles.dashboardWidgetHeader}>
-                        <h3>{activeDashboardView.table.title}</h3>
-                        <div className={styles.tableDensity} role="group" aria-label="Table row size">
-                          <button
-                            type="button"
-                            className={tableDensity === "compact" ? styles.tableDensityActive : ""}
-                            aria-pressed={tableDensity === "compact"}
-                            onClick={() => setTableDensity("compact")}
-                          >
-                            Compact
-                          </button>
-                          <button
-                            type="button"
-                            className={tableDensity === "normal" ? styles.tableDensityActive : ""}
-                            aria-pressed={tableDensity === "normal"}
-                            onClick={() => setTableDensity("normal")}
-                          >
-                            Normal
-                          </button>
-                        </div>
-                      </div>
-                      <div className={styles.dashboardTableWrap}>
-                        <table
-                          className={`${styles.dashboardTable} ${tableDensity === "compact" ? styles.tableCompact : ""}`}
-                        >
-                          <thead>
-                            <tr>
-                              {activeDashboardView.table.columns.map((column) => (
-                                <th key={column} scope="col">{column}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {activeDashboardView.table.rows.map((row) => (
-                              <tr key={row.join("-")}>
-                                {row.map((cell, cellIndex) => (
-                                  <td key={`${row[0]}-${cellIndex}`}>{cell}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-
-                    <div className={styles.dashboardChartRow}>
-                      <section className={styles.dashboardWidget} aria-label={activeDashboardView.barChart.title}>
-                        <div className={styles.dashboardWidgetHeader}>
-                          <h3>{activeDashboardView.barChart.title}</h3>
-                          <span>Bar chart</span>
-                        </div>
-                        <DashboardBarChart
-                          series={activeDashboardView.barChart.series}
-                          title={activeDashboardView.barChart.title}
-                        />
-                      </section>
-
-                      <section className={styles.dashboardWidget} aria-label={activeDashboardView.lineChart.title}>
-                        <div className={styles.dashboardWidgetHeader}>
-                          <h3>{activeDashboardView.lineChart.title}</h3>
-                          <span>Line graph</span>
-                        </div>
-                        <DashboardLineChart
-                          series={activeDashboardView.lineChart.series}
-                          title={activeDashboardView.lineChart.title}
-                        />
-                      </section>
-                    </div>
-                  </div>
-                </motion.div>
-              </AnimatePresence>
-            </div>
-
-            <div className={styles.dashboardTabDock}>
-              <div
-                className={styles.dashboardTabBar}
-                ref={dashboardTabBarRef}
-                role="tablist"
-                aria-label="Dashboards"
-              >
-                {dashboardList.map((dashboard) => {
-                  const isActive = activeDashboard === dashboard.id;
-                  return (
-                    <button
-                      className={`${styles.dashboardTabButton} ${isActive ? styles.dashboardTabActive : ""}`}
-                      key={dashboard.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      data-active={isActive}
-                      onClick={() => setActiveDashboard(dashboard.id)}
-                    >
-                      {dashboard.label}
-                    </button>
-                  );
-                })}
-                <button
-                  className={styles.dashboardTabButton}
-                  type="button"
-                  aria-label="New dashboard"
-                  onClick={createDashboard}
-                >
-                  <Icon name="plus" />
-                  <span>New</span>
-                </button>
-                <span
-                  className={styles.dashboardTabIndicator}
-                  style={{ left: dashboardTabIndicator.left, width: dashboardTabIndicator.width }}
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
-          </div>
+        {tenantDeletionReceipt ? (
+          <TenantDeletionWorkspace initialReceipt={tenantDeletionReceipt} />
         ) : activeItem === "Chat" ? (
-          <div className={`${styles.chatShell} ${agentPanelOpen ? styles.chatShellAgentOpen : ""}`}>
+          <div className={styles.chatShell}>
           <div
             className={`${styles.chatWorkspace} ${chatHistoryOpen ? styles.chatWorkspaceHistoryOpen : ""}`}
           >
-            {!agentPanelOpen && chatMessages.length > 0 ? (
+            {chatMessages.length > 0 ? (
               <button
                 className={styles.chatNewChat}
                 type="button"
@@ -2080,8 +1263,12 @@ export default function DashPage() {
                             events={message.events}
                             streaming={message.isStreaming}
                             runtime={message.runtime}
+                            lineageReference={message.conversationId && message.turnId ? {
+                              conversationId: message.conversationId,
+                              turnId: message.turnId,
+                            } : undefined}
                             onFollowUp={(prompt) => void sendChatMessage(prompt)}
-                            onClarification={answerClarification}
+                            onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
                           />
                         ) : message.isStreaming ? (
                           <div className={styles.chatTraceConnecting} role="status">
@@ -2165,7 +1352,7 @@ export default function DashPage() {
             ) : null}
 
             <motion.div
-              className={`${styles.chatComposerStack} ${chatComposerCompact ? styles.chatComposerStackHero : ""} ${chatClarification && !agentPanelOpen ? styles.chatComposerStackConnected : ""}`}
+              className={`${styles.chatComposerStack} ${chatComposerCompact ? styles.chatComposerStackHero : ""} ${chatComposerHero ? styles.chatComposerStackEmpty : ""} ${chatClarification ? styles.chatComposerStackConnected : ""}`}
             >
               <AnimatePresence initial={false}>
                 {chatComposerHero ? (
@@ -2185,7 +1372,7 @@ export default function DashPage() {
                 ) : null}
               </AnimatePresence>
               <AnimatePresence initial={false}>
-                {chatClarification && !agentPanelOpen ? (
+                {chatClarification ? (
                   <motion.div
                     key="chat-clarify"
                     className={styles.chatClarify}
@@ -2243,50 +1430,37 @@ export default function DashPage() {
 
             <motion.form
               ref={chatComposerRef}
-              className={`${styles.chatComposer} ${chatComposerCompact ? styles.chatComposerHero : ""} ${agentPanelOpen ? styles.chatComposerAgent : ""}`}
+              className={`${styles.chatComposer} ${chatComposerCompact ? styles.chatComposerHero : ""}`}
               initial={false}
-              animate={
-                agentPanelOpen
-                  ? undefined
-                  : {
-                      borderRadius: chatComposerCompact ? 999 : 20,
-                      paddingTop: chatComposerCompact ? 12 : 12,
-                      paddingBottom: chatComposerCompact ? 12 : 10,
-                      paddingLeft: chatComposerCompact ? 20 : 13,
-                      paddingRight: chatComposerCompact ? 12 : 13,
-                    }
-              }
+              animate={{
+                borderRadius: chatComposerCompact ? 999 : 20,
+                paddingTop: 12,
+                paddingBottom: chatComposerCompact ? 12 : 10,
+                paddingLeft: chatComposerCompact ? 20 : 13,
+                paddingRight: chatComposerCompact ? 12 : 13,
+              }}
               transition={{
                 duration: reduceMotion ? 0 : 0.45,
                 ease: [0.22, 1, 0.36, 1],
               }}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (agentPanelOpen) return;
                 void sendChatMessage();
               }}
             >
               <div className={styles.chatComposerInputRow}>
                 <textarea
-                  aria-label={agentPanelOpen ? "Design your agent" : "Ask me anything"}
-                  placeholder={
-                    agentPanelOpen
-                      ? "Design your agent…"
-                      : chatComposerHero
-                        ? "Type a message…"
-                        : "Search or ask anything"
-                  }
+                  aria-label="Ask me anything"
+                  placeholder={chatComposerHero ? "Type a message…" : "Search or ask anything"}
                   rows={1}
-                  value={agentPanelOpen ? agentInstructions : chatDraft}
-                  onChange={(event) => {
-                    if (agentPanelOpen) {
-                      setAgentInstructions(event.target.value);
-                      return;
+                  value={chatDraft}
+                  onFocus={() => {
+                    if (chatMessages.length === 0) {
+                      setComposerExpanded(true);
                     }
-                    setChatDraft(event.target.value);
                   }}
+                  onChange={(event) => setChatDraft(event.target.value)}
                   onKeyDown={(event) => {
-                    if (agentPanelOpen) return;
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       void sendChatMessage();
@@ -2294,25 +1468,7 @@ export default function DashPage() {
                   }}
                 />
               </div>
-              {agentPanelOpen ? (
-                <div className={styles.chatComposerFooter}>
-                  <span className={styles.agentComposerHint}>Describe what this agent should do</span>
-                  <button
-                    className={styles.chatSendButton}
-                    type="button"
-                    aria-label="Apply agent description"
-                    disabled={!agentInstructions.trim()}
-                    onClick={() => {
-                      if (!agentName.trim() && agentInstructions.trim()) {
-                        setAgentName(agentInstructions.trim().slice(0, 48));
-                      }
-                    }}
-                  >
-                    <Icon name="sparkle" />
-                  </button>
-                </div>
-              ) : (
-                <>
+              <>
                   <motion.div
                     className={styles.chatComposerFooter}
                     initial={false}
@@ -2336,7 +1492,9 @@ export default function DashPage() {
                         ease: "easeOut",
                       },
                     }}
-                    style={{ overflow: "hidden" }}
+                    style={{
+                      overflow: chatComposerCompact ? "hidden" : "visible",
+                    }}
                     aria-hidden={chatComposerCompact}
                     inert={chatComposerCompact || undefined}
                   >
@@ -2379,8 +1537,7 @@ export default function DashPage() {
                   >
                     <Icon name="arrowUp" />
                   </motion.button>
-                </>
-              )}
+              </>
             </motion.form>
             </motion.div>
 
@@ -2396,381 +1553,14 @@ export default function DashPage() {
             />
           </div>
 
-          <aside
-            className={`${styles.agentCreatePanel} ${agentPanelOpen ? styles.agentCreatePanelOpen : ""}`}
-            role="dialog"
-            aria-modal="false"
-            aria-labelledby="agent-create-title"
-            aria-hidden={!agentPanelOpen}
-            inert={!agentPanelOpen}
-          >
-                <div className={styles.agentCreateHeader}>
-                  <h2 id="agent-create-title">Create Agent</h2>
-                  <button
-                    className={styles.agentCreateClose}
-                    type="button"
-                    aria-label="Close agent creator"
-                    onClick={() => setActiveTab("Playground")}
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-
-                <div className={styles.agentCreateBody}>
-                  <label className={styles.agentField}>
-                    <span>Name</span>
-                    <input
-                      className={styles.agentInput}
-                      type="text"
-                      placeholder="Weekly sales briefing"
-                      value={agentName}
-                      onChange={(event) => setAgentName(event.target.value)}
-                    />
-                  </label>
-
-                  <div className={styles.agentField}>
-                    <span>Schedule</span>
-                    <div
-                      className={styles.agentFrequencyBar}
-                      ref={frequencyBarRef}
-                      role="tablist"
-                      aria-label="Run frequency"
-                    >
-                      {agentScheduleFrequencies.map((frequency) => (
-                        <button
-                          className={`${styles.agentFrequencyButton} ${agentFrequency === frequency ? styles.agentFrequencyActive : ""}`}
-                          key={frequency}
-                          type="button"
-                          role="tab"
-                          aria-selected={agentFrequency === frequency}
-                          data-active={agentFrequency === frequency}
-                          onClick={() => setAgentFrequency(frequency)}
-                        >
-                          {frequency}
-                        </button>
-                      ))}
-                      <span
-                        className={styles.agentFrequencyIndicator}
-                        style={{ left: frequencyIndicator.left, width: frequencyIndicator.width }}
-                        aria-hidden="true"
-                      />
-                    </div>
-                  </div>
-
-                  {showScheduleTime ? (
-                    <div className={styles.agentField}>
-                      <span>Run time</span>
-                      <div className={styles.agentTimeGrid} role="group" aria-label="Run time">
-                        {agentScheduleTimes.map((time) => (
-                          <button
-                            className={`${styles.agentTimeButton} ${agentTime === time ? styles.agentTimeActive : ""}`}
-                            key={time}
-                            type="button"
-                            aria-pressed={agentTime === time}
-                            onClick={() => setAgentTime(time)}
-                          >
-                            {time}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {showScheduleDays ? (
-                    <div className={styles.agentField}>
-                      <span>Days</span>
-                      <div className={styles.agentDayGrid} role="group" aria-label="Run days">
-                        {agentScheduleDays.map((day) => {
-                          const selected = agentDays.includes(day);
-                          return (
-                            <button
-                              className={`${styles.agentDayButton} ${selected ? styles.agentDayActive : ""}`}
-                              key={day}
-                              type="button"
-                              aria-pressed={selected}
-                              onClick={() => {
-                                setAgentDays((days) => (
-                                  selected
-                                    ? days.filter((value) => value !== day)
-                                    : [...days, day]
-                                ));
-                              }}
-                            >
-                              {day}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className={styles.agentField}>
-                    <span>Tools</span>
-                    <div className={styles.agentToolList}>
-                      {connectionProviders.map((provider) => {
-                        const enabled = agentTools[provider.id];
-                        return (
-                          <button
-                            className={`${styles.agentToolRow} ${enabled ? styles.agentToolActive : ""}`}
-                            key={provider.id}
-                            type="button"
-                            aria-pressed={enabled}
-                            onClick={() => {
-                              setAgentTools((tools) => ({
-                                ...tools,
-                                [provider.id]: !tools[provider.id],
-                              }));
-                            }}
-                          >
-                            <span className={styles.agentToolLogo} data-provider={provider.id}>
-                              <Image src={provider.logo} alt="" width={20} height={20} />
-                            </span>
-                            <span className={styles.agentToolCopy}>
-                              <strong>{provider.name}</strong>
-                            </span>
-                            <span
-                              className={`${styles.agentToolCheck} ${enabled ? styles.agentToolCheckOn : ""}`}
-                              aria-hidden="true"
-                            >
-                              <AnimatePresence initial={false}>
-                                {enabled ? (
-                                  <motion.svg
-                                    key="check"
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 16 16"
-                                    fill="none"
-                                    initial={reduceMotion ? false : { opacity: 0, scale: 0.65 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={reduceMotion ? undefined : { opacity: 0, scale: 0.65 }}
-                                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                                  >
-                                    <motion.path
-                                      d="M3.4 8.2 L6.6 11.3 L12.6 4.4"
-                                      stroke="currentColor"
-                                      strokeWidth="2.2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      initial={reduceMotion ? false : { pathLength: 0 }}
-                                      animate={{ pathLength: 1 }}
-                                      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                                    />
-                                  </motion.svg>
-                                ) : null}
-                              </AnimatePresence>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.agentCreateFooter}>
-                  <p className={styles.agentCreateSummary}>
-                    {agentFrequency === "Manual"
-                      ? "Runs only when you start it."
-                      : agentFrequency === "Hourly"
-                        ? "Runs every hour."
-                        : agentFrequency === "Daily"
-                          ? `Runs daily at ${agentTime}.`
-                          : `Runs ${agentDays.length > 0 ? agentDays.join(", ") : "no days selected"} at ${agentTime}.`}
-                  </p>
-                  <button
-                    className={styles.agentCreateButton}
-                    type="button"
-                    disabled={!agentInstructions.trim()}
-                    onClick={() => {
-                      if (!agentName.trim() && agentInstructions.trim()) {
-                        setAgentName(agentInstructions.trim().slice(0, 48));
-                      }
-                      setActiveTab("Playground");
-                    }}
-                  >
-                    <span>Create agent</span>
-                  </button>
-                </div>
-          </aside>
-          </div>
-        ) : activeItem === "Agents" ? (
-          <div className={`${styles.agentsShell} ${agentsDetailOpen ? styles.agentsShellOpen : ""}`}>
-            <div className={styles.agentsWorkspace}>
-              <div className={styles.agentsIntro}>
-                <p>Ten example agents ready to review. Select a row to inspect schedule, prompt, and recent runs.</p>
-                <div className={styles.tableDensity} role="group" aria-label="Table row size">
-                  <button
-                    type="button"
-                    className={tableDensity === "compact" ? styles.tableDensityActive : ""}
-                    aria-pressed={tableDensity === "compact"}
-                    onClick={() => setTableDensity("compact")}
-                  >
-                    Compact
-                  </button>
-                  <button
-                    type="button"
-                    className={tableDensity === "normal" ? styles.tableDensityActive : ""}
-                    aria-pressed={tableDensity === "normal"}
-                    onClick={() => setTableDensity("normal")}
-                  >
-                    Normal
-                  </button>
-                </div>
-              </div>
-
-              <div className={styles.agentsTableWrap}>
-                <table
-                  className={`${styles.agentsTable} ${tableDensity === "compact" ? styles.tableCompact : ""}`}
-                >
-                  <thead>
-                    <tr>
-                      <th scope="col">Agent</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Schedule</th>
-                      <th scope="col">Last run</th>
-                      <th scope="col">Next run</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {exampleAgents.map((agent) => {
-                      const isSelected = selectedAgentId === agent.id;
-                      return (
-                        <tr
-                          className={`${styles.agentsTableRow} ${isSelected ? styles.agentsTableRowSelected : ""}`}
-                          key={agent.id}
-                          tabIndex={0}
-                          aria-selected={isSelected}
-                          onClick={() => setSelectedAgentId(agent.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              setSelectedAgentId(agent.id);
-                            }
-                          }}
-                        >
-                          <td>
-                            <div className={styles.agentsTableName}>
-                              <strong>{agent.name}</strong>
-                              <span>{agent.tools.join(" · ")}</span>
-                            </div>
-                          </td>
-                          <td>
-                            <span
-                              className={`${styles.agentsStatus} ${
-                                agent.status === "Active"
-                                  ? styles.agentsStatusActive
-                                  : agent.status === "Paused"
-                                    ? styles.agentsStatusPaused
-                                    : styles.agentsStatusDraft
-                              }`}
-                            >
-                              {agent.status}
-                            </span>
-                          </td>
-                          <td>{agent.schedule}</td>
-                          <td>{agent.lastRun}</td>
-                          <td>{agent.nextRun}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <aside
-              className={`${styles.agentsDetailPanel} ${agentsDetailOpen ? styles.agentsDetailPanelOpen : ""}`}
-              aria-label="Agent details"
-              aria-hidden={!agentsDetailOpen}
-              inert={!agentsDetailOpen}
-            >
-              {selectedAgent ? (
-                <>
-                  <div className={styles.agentsDetailHeader}>
-                    <div>
-                      <h2 id="agent-detail-title">{selectedAgent.name}</h2>
-                      <span
-                        className={`${styles.agentsStatus} ${
-                          selectedAgent.status === "Active"
-                            ? styles.agentsStatusActive
-                            : selectedAgent.status === "Paused"
-                              ? styles.agentsStatusPaused
-                              : styles.agentsStatusDraft
-                        }`}
-                      >
-                        {selectedAgent.status}
-                      </span>
-                    </div>
-                    <button
-                      className={styles.agentsDetailClose}
-                      type="button"
-                      aria-label="Close agent details"
-                      onClick={() => setSelectedAgentId(null)}
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-
-                  <div className={styles.agentsDetailBody}>
-                    <section className={styles.agentsDetailSection}>
-                      <h3>Schedule</h3>
-                      <dl className={styles.agentsDetailMeta}>
-                        <div>
-                          <dt>Cadence</dt>
-                          <dd>{selectedAgent.schedule}</dd>
-                        </div>
-                        <div>
-                          <dt>Last run</dt>
-                          <dd>{selectedAgent.lastRun}</dd>
-                        </div>
-                        <div>
-                          <dt>Next run</dt>
-                          <dd>{selectedAgent.nextRun}</dd>
-                        </div>
-                      </dl>
-                    </section>
-
-                    <section className={styles.agentsDetailSection}>
-                      <h3>Tools</h3>
-                      <div className={styles.agentsDetailTools}>
-                        {selectedAgent.tools.map((tool) => (
-                          <span key={tool}>{tool}</span>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section className={styles.agentsDetailSection}>
-                      <h3>Prompt</h3>
-                      <p className={styles.agentsDetailPrompt}>{selectedAgent.prompt}</p>
-                    </section>
-
-                    <section className={styles.agentsDetailSection}>
-                      <h3>Recent runs</h3>
-                      {selectedAgent.runs.length > 0 ? (
-                        <ul className={styles.agentsDetailRuns}>
-                          {selectedAgent.runs.map((run) => (
-                            <li key={run.id}>
-                              <div>
-                                <strong>{run.at}</strong>
-                                <span>{run.result}</span>
-                              </div>
-                              <small>{run.duration}</small>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className={styles.agentsDetailEmpty}>No runs yet.</p>
-                      )}
-                    </section>
-                  </div>
-                </>
-              ) : null}
-            </aside>
           </div>
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}
             status={connectionsStatus}
-            onConnect={connectionsStatus.kind === "ready" ? connectProvider : undefined}
+            notice={oauthNotice}
+            canManage={canManageConnections}
+            onConnect={connectProvider}
             onAnswerBlockingQuestion={answerConnectionQuestion}
             onMatchDecision={decideConnectionMatch}
             onSelectOAuthAccount={selectOAuthAccount}
@@ -2778,79 +1568,20 @@ export default function DashPage() {
           />
         ) : activeItem === "Admin" && isInternalOperator ? (
           <AdminWorkspace />
+        ) : activeItem === "Organization" ? (
+          <OrganizationWorkspace
+            onOrganisationChanged={() => window.location.reload()}
+            onOrganisationRenamed={(name) => setAccountOrganisation((current) => ({ ...current, name }))}
+          />
         ) : (
           <div className={styles.contentBody}>
-            <p className={styles.contentEyebrow}>ALBERT DASH</p>
-            <h2>{activeTab}</h2>
-            <p className={styles.contentDescription}>
-              Your {activeTab.toLowerCase()} workspace is ready. Choose a view from the tabs above to get started.
-            </p>
+            <p className={styles.contentEyebrow}>ACCESS UNAVAILABLE</p>
+            <h2>This area is not available for your current role.</h2>
+            <p className={styles.contentDescription}>Choose Chat or Connections from the sidebar.</p>
           </div>
         )}
       </section>
 
-      {albertPopupOpen ? (
-        <div
-          className={`${styles.popupBackdrop} ${albertPopupClosing ? styles.popupBackdropClosing : ""}`}
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setAlbertPopupClosing(true);
-          }}
-        >
-          <section
-            ref={albertPopupRef}
-            className={`${styles.albertPopup} ${albertPopupClosing ? styles.albertPopupClosing : ""}`}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="albert-popup-title"
-            aria-describedby="albert-popup-description"
-          >
-            <button
-              ref={popupCloseButtonRef}
-              className={styles.popupClose}
-              type="button"
-              aria-label="Close Albert introduction"
-              onClick={() => setAlbertPopupClosing(true)}
-            >
-              <Icon name="close" />
-            </button>
-
-            <div className={styles.popupIntro}>
-              <span className={styles.popupMark}><Icon name="sparkle" /></span>
-              <span className={styles.popupEyebrow}>ALBERT</span>
-            </div>
-            <h2 id="albert-popup-title">A clearer way to find your next step.</h2>
-            <p id="albert-popup-description">
-              Ask Albert about your activity, uncover what changed, and turn a question into an action in seconds.
-            </p>
-
-            <div className={styles.popupPreview} aria-hidden="true">
-              <div className={styles.popupPreviewTopline}>
-                <span>YOUR WORKSPACE</span>
-                <span>NOW</span>
-              </div>
-              <div className={styles.popupInsight}>
-                <span className={styles.popupInsightMark}><Icon name="sparkle" /></span>
-                <p>“What should I focus on this week?”</p>
-              </div>
-              <div className={styles.popupInsightReply}>
-                <span>Albert</span>
-                <p>I found three priorities worth your attention.</p>
-              </div>
-            </div>
-
-            <div className={styles.popupActions}>
-              <button className={styles.popupSecondaryAction} type="button" onClick={() => setAlbertPopupClosing(true)}>
-                Maybe later
-              </button>
-              <button className={styles.popupPrimaryAction} type="button" onClick={openAlbertChat}>
-                <span>Open Albert</span>
-                <Icon name="arrowUpRight" />
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </main>
   );
 }

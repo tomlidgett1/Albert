@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-const migration=readFileSync(
-  resolve("infra/migrations/control-plane/0014_m7_blocking_question_allowlist.sql"),
-  "utf8",
-);
+const migration=[
+  "infra/migrations/control-plane/0014_m7_blocking_question_allowlist.sql",
+  "infra/migrations/control-plane/0052_m6_flagship_employee_performance_lenses.sql",
+].map((path)=>readFileSync(resolve(path),"utf8")).join("\n");
 const workspace=readFileSync(
   resolve("services/control-plane/src/connections-workspace.ts"),
   "utf8",
@@ -43,6 +43,8 @@ test("answers publish operative defaults and the semantic agent receives them wi
   assert.match(migration,/trading_day_cutoff/);
   assert.match(migration,/employee\.performance_default/);
   assert.match(migration,/reconciliation\.pos_posting_topology/);
+  assert.match(migration,/profit-per-hour' THEN 'composites\.gross_profit_per_labour_hour'/);
+  assert.match(workspace,/profit-per-hour", label: "Gross profit per worked hour"/);
   assert.match(migration,/semantic_runtime_dossier_read/);
   assert.match(semanticContext,/FROM control_plane\.dossiers AS dossier/);
   assert.match(semanticContext,/copyAllowlistedDefault/);

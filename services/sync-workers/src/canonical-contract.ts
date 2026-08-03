@@ -32,6 +32,11 @@ export type CanonicalSourceReference = Readonly<{
     lookup?: Readonly<{
       kind: "xero_gl_account_code";
       value: string;
+    }> | Readonly<{
+      kind: "employment_episode_on";
+      workerSourceObjectType: string;
+      workerSourceRecordId: string;
+      businessDate: string;
     }>;
   }>;
 }>;
@@ -63,6 +68,8 @@ export type CanonicalUpsertCommand = Readonly<{
   sourceRecordId: string;
   values: Readonly<Record<string, CanonicalProjectionValue>>;
   tombstone?: boolean;
+  /** Apply a verified identity-only deletion only when the canonical row exists. */
+  updateOnly?: boolean;
   entityType?: CanonicalEntityType;
   authorityConcept?: SourceAuthorityConcept;
 }>;
@@ -102,6 +109,7 @@ export type CanonicalIdentityHintCommand = Readonly<{
   deterministicKeys: Readonly<Record<string, string | undefined>>;
   normalizedName?: string;
   corroboratingScope?: string;
+  corroboratingScopeRef?: IdentityEvidenceReference;
   evidenceRefs?: readonly IdentityEvidenceReference[];
   evidenceOnly?: boolean;
 }>;

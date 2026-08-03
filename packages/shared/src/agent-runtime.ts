@@ -165,6 +165,8 @@ export type TraceTableColumn = Readonly<{
   key: string;
   label: string;
   type: "string" | "number" | "currency" | "percent" | "date" | "datetime";
+  /** ISO-4217 code proven by query validation; omitted when the currency is unknown. */
+  currency?: string;
 }>;
 
 export interface TraceTableEvent extends TraceEventBase {
@@ -203,6 +205,12 @@ export interface TraceAnswerEvent extends TraceEventBase {
   text: string;
   provenance: TraceProvenance;
   followUps: readonly string[];
+  /** Server-validated cell associations retained in the immutable artefact. */
+  claims?: readonly Readonly<{
+    statement: string;
+    assertion: "value" | "highest" | "lowest" | "greater_than" | "less_than" | "equal";
+    refs: readonly Readonly<{ resultId: string; rowIndex: number; columnKey: string }>[];
+  }>[];
 }
 
 export interface TraceClarificationEvent extends TraceEventBase {
@@ -211,7 +219,6 @@ export interface TraceClarificationEvent extends TraceEventBase {
   options: readonly Readonly<{
     id: string;
     label: string;
-    value: string;
   }>[];
 }
 

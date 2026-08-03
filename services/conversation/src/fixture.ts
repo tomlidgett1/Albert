@@ -97,7 +97,7 @@ const fixtureTrace: readonly TraceEvent[] = Object.freeze([
     caption: "Category performance · July 2026",
     columns: Object.freeze([
       Object.freeze({ key: "category", label: "Category", type: "string" as const }),
-      Object.freeze({ key: "netSales", label: "Net sales", type: "currency" as const }),
+      Object.freeze({ key: "netSales", label: "Net sales", type: "currency" as const, currency: "AUD" }),
       Object.freeze({ key: "grossMarginPct", label: "Gross margin", type: "percent" as const }),
     ]),
     rows: Object.freeze([

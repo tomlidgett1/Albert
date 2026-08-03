@@ -1,5 +1,12 @@
-import { compileSemanticQuery, SemanticCompilerError } from "../../../packages/compiler/src/index.js";
+import { ulid } from "ulid";
 import {
+  compileSemanticQuery,
+  SemanticCompilerError,
+  type CompiledSemanticQuery,
+  type CompiledSemanticValidationEvidence,
+} from "../../../packages/compiler/src/index.js";
+import {
+  isAllowlistedRememberedPreference,
   semanticToolInputSchemas,
   semanticQueryIrSchema,
   type SemanticToolResponse,
@@ -15,6 +22,7 @@ import type {
   AnswerState,
   DataHealthSnapshot,
   SemanticServiceDependencies,
+  SemanticPublicationEvidence,
   SemanticToolExecutor,
   SemanticToolName,
   SourceField,
@@ -65,10 +73,10 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
   private async runSemanticQuery(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
     const tenant = await this.dependencies.contextProvider.load(context);
     const ir = semanticQueryIrSchema.parse(semanticToolInputSchemas.run_semantic_query.parse(input));
-    const compiled = compileSemanticQuery(ir, this.dependencies.registry, {
+    const compile=(capabilities:ReadonlySet<string>)=>compileSemanticQuery(ir, this.dependencies.registry, {
       tenantId: context.tenantId,
       role: context.role,
-      capabilities: tenant.capabilities,
+      capabilities,
       now: this.clock().toISOString(),
       timezone: tenant.timezone,
       tradingDayCutoff: tenant.tradingDayCutoff,
@@ -79,40 +87,119 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       maxRows: 1000,
       maxEstimatedCost: 100,
     });
+    // Resolve the governed time range with the vocabulary the tenant has
+    // observed, then compile again through the stricter per-contributor gate.
+    // A healthy Xero organisation can no longer make the same capability from
+    // a second unavailable organisation appear tenant-wide.
+    const provisionalCapabilities=new Set([
+      ...tenant.capabilities,...(tenant.capabilityDetails??[]).map((detail)=>detail.id),
+    ]);
+    const provisional=compile(provisionalCapabilities);
+    const scopedCapabilities=contributorScopedCapabilities(
+      tenant,semanticTimeRange(provisional.resolvedTime),
+    );
+    const compiled=compile(scopedCapabilities);
+    const contributingSources = contributingSemanticSources(
+      compiled.validationEvidence,
+      tenant,
+      this.dependencies.registry,
+      semanticTimeRange(compiled.resolvedTime),
+    );
     const bundleHash = semanticBundleHash({
       registryVersion: this.dependencies.registry.version,
       overlayVersion: tenant.overlayVersion,
       identityGraph: identityGraphForTenant(tenant),
-      packVersions: tenant.packVersions,
-      sourceWatermarks: tenant.sourceWatermarks,
+      packVersions: contributingSources.packVersions,
+      sourceWatermarks: contributingSources.sourceWatermarks,
       ir,
     });
+    const progressiveCoverage=progressiveCoverageGate(
+      tenant,
+      this.dependencies.registry.topics.get(compiled.topic),
+      compiled.metricIds,
+      this.dependencies.registry,
+      compiled.resolvedTime,
+    );
+    if(progressiveCoverage.status==="blocked"){
+      const queryId=ulid();
+      const validation:SemanticToolResponse["validation"]={
+        status:"blocked",checks:progressiveCoverage.checks.map((check)=>({...check})),
+        warnings:[...progressiveCoverage.warnings],
+      };
+      const resultDigest=contentDigest({columns:compiled.resultColumns,rows:[]});
+      const compilerOutputHash=contentDigest({sql:compiled.sql});
+      await this.dependencies.audit.append({
+        queryId,tenantId:context.tenantId,conversationId:context.conversationId,
+        turnId:context.turnId,role:context.role,route:"semantic",topic:compiled.topic,
+        bundleHash,registryVersion:this.dependencies.registry.version,input:ir,
+        compiledSql:compiled.sql,parameterCount:compiled.parameters.length,
+        resultDigest,rowCount:0,durationMs:0,cacheHit:false,state:"unavailable",validation,
+      });
+      return{
+        state:"unavailable",resultId:`semantic:${bundleHash}`,
+        provenance:{
+          bundleHash,registryVersion:this.dependencies.registry.version,
+          identityGraph:identityGraphForTenant(tenant),sources:[...compiled.sourceTables],
+          sourceWatermarks:{...contributingSources.sourceWatermarks},
+          sourceDetails:contributingSources.sourceDetails.map((detail)=>({...detail})),
+          definitionsApplied:[...compiled.metricIds],
+          definitionDetails:compiled.metricIds.flatMap((id)=>{
+            const metric=this.dependencies.registry.metrics.get(id);
+            return metric?[metricDefinitionDetail(metric)]:[];
+          }),
+          timeRange:{label:resolvedTimeLabel(compiled.resolvedTime),start:compiled.resolvedTime.from,
+            end:compiled.resolvedTime.to,timezone:tenant.timezone},
+        },
+        validation,performance:{cacheHit:false,durationMs:0,rowCount:0},
+        queryAudit:{queryAuditId:queryId,route:"semantic",bundleHash,
+          registryVersion:this.dependencies.registry.version,resultDigest,compilerOutputHash},
+      };
+    }
+    const publicationEvidence = await inspectPublicationEvidence(this.dependencies);
+    const semanticInvariantChecks = semanticQueryInvariantChecks(
+      compiled.validationEvidence,
+      tenant,
+      this.dependencies.registry,
+      this.dependencies.registry.version,
+      publicationEvidence,
+      semanticTimeRange(compiled.resolvedTime),
+    );
     const cacheKey = `${context.tenantId}:${bundleHash}`;
-    const cached = await this.dependencies.cache.get(cacheKey);
+    const cached = await this.dependencies.cache.get(cacheKey, context);
     if (cached) {
       const health = await this.dependencies.dataHealth.getForTopic(context, compiled.topic);
       const topic = this.dependencies.registry.topics.get(compiled.topic);
-      const freshness = freshnessWarnings(tenant.sourceWatermarks, topic?.freshnessMinutes ?? 120, this.clock());
+      const freshness = freshnessWarnings(contributingSources.sourceWatermarks, topic?.freshnessMinutes ?? 120, this.clock());
       const cachedRows = cached.data?.rows ?? [];
       const validation = validateSemanticResult(
         cachedRows,
         compiled.resultColumns,
-        health.status,
-        health.checks,
-        [...compiled.warnings, ...freshness],
+        combinedHealthStatus(health.status,progressiveCoverage.status),
+        [...health.checks,...progressiveCoverage.checks],
+        [...compiled.warnings, ...freshness,...progressiveCoverage.warnings],
+        semanticInvariantChecks,
+        cached.validation,
       );
       const state: AnswerState = validation.status === "passed"
         ? "verified"
         : validation.status === "warning" ? "qualified" : "unavailable";
-      const { data: cachedData, ...cachedMetadata } = cached;
+      const { data: cachedData, queryAudit: _cachedQueryAudit, ...cachedMetadata } = cached;
+      void _cachedQueryAudit;
+      const governedCachedData = cachedData
+        ? { ...cachedData, resultWindow: resultWindowForWire(compiled.resultWindow) }
+        : undefined;
       const response: SemanticToolResponse = {
         ...cachedMetadata,
         state,
-        ...(state !== "unavailable" && cachedData ? { data: cachedData } : {}),
+        ...(state !== "unavailable" && governedCachedData ? { data: governedCachedData } : {}),
         validation,
         performance: { ...cached.performance, cacheHit: true },
       };
+      const queryId = ulid();
+      const resultDigest = contentDigest({ columns: compiled.resultColumns, rows: cachedRows });
+      const compilerOutputHash = contentDigest({ sql: compiled.sql });
       await this.dependencies.audit.append({
+        queryId,
         tenantId: context.tenantId,
         conversationId: context.conversationId,
         turnId: context.turnId,
@@ -124,14 +211,24 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
         input: ir,
         compiledSql: compiled.sql,
         parameterCount: compiled.parameters.length,
-        resultDigest: contentDigest({ columns: compiled.resultColumns, rows: cachedRows }),
+        resultDigest,
         rowCount: cachedRows.length,
         durationMs: 0,
         cacheHit: true,
         state,
         validation,
       });
-      return response;
+      return {
+        ...response,
+        queryAudit: {
+          queryAuditId: queryId,
+          route: "semantic",
+          bundleHash,
+          registryVersion: this.dependencies.registry.version,
+          resultDigest,
+          compilerOutputHash,
+        },
+      };
     }
 
     const result = await this.dependencies.database.queryAsSemanticRole({
@@ -140,21 +237,24 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       parameters: compiled.parameters,
       statementTimeoutMs: this.statementTimeoutMs,
       expectedIdentityGraph: identityGraphForTenant(tenant),
+      capabilityEvidence: capabilityEvidence(context),
     });
     const health = await this.dependencies.dataHealth.getForTopic(context, compiled.topic);
     const topic = this.dependencies.registry.topics.get(compiled.topic);
-    const freshness = freshnessWarnings(tenant.sourceWatermarks, topic?.freshnessMinutes ?? 120, this.clock());
+    const freshness = freshnessWarnings(contributingSources.sourceWatermarks, topic?.freshnessMinutes ?? 120, this.clock());
     const validation = validateSemanticResult(
       result.rows,
       compiled.resultColumns,
-      health.status,
-      health.checks,
-      [...compiled.warnings, ...freshness],
+      combinedHealthStatus(health.status,progressiveCoverage.status),
+      [...health.checks,...progressiveCoverage.checks],
+      [...compiled.warnings, ...freshness,...progressiveCoverage.warnings],
+      semanticInvariantChecks,
     );
     const state: AnswerState = validation.status === "passed"
       ? "verified"
       : validation.status === "warning" ? "qualified" : "unavailable";
     const visibleRows = result.rows.map(stripInternalColumns);
+    const filterRefs = result.rows.map((row) => filterRefsForRow(row, compiled.dimensions));
     const definitionDetails = compiled.metricIds.flatMap((id) => {
       const metric = this.dependencies.registry.metrics.get(id);
       return metric ? [metricDefinitionDetail(metric)] : [];
@@ -162,14 +262,21 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const response: SemanticToolResponse = {
       state,
       resultId: `semantic:${bundleHash}`,
-      ...(state !== "unavailable" ? { data: { columns: [...compiled.resultColumns], rows: visibleRows } } : {}),
+      ...(state !== "unavailable" ? {
+        data: {
+          columns: [...compiled.resultColumns],
+          rows: visibleRows,
+          ...(filterRefs.some((row) => Object.keys(row).length > 0) ? { filterRefs } : {}),
+          resultWindow: resultWindowForWire(compiled.resultWindow),
+        },
+      } : {}),
       provenance: {
         bundleHash,
         registryVersion: this.dependencies.registry.version,
         identityGraph: identityGraphForTenant(tenant),
         sources: [...compiled.sourceTables],
-        sourceWatermarks: { ...tenant.sourceWatermarks },
-        sourceDetails: sourceDetailsForTenant(tenant),
+        sourceWatermarks: { ...contributingSources.sourceWatermarks },
+        sourceDetails: contributingSources.sourceDetails.map((detail) => ({ ...detail })),
         definitionsApplied: [...compiled.metricIds],
         definitionDetails,
         timeRange: {
@@ -182,7 +289,11 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       validation,
       performance: { cacheHit: false, durationMs: result.durationMs, rowCount: visibleRows.length },
     };
+    const queryId = ulid();
+    const resultDigest = contentDigest({ columns: compiled.resultColumns, rows: visibleRows });
+    const compilerOutputHash = contentDigest({ sql: compiled.sql });
     await this.dependencies.audit.append({
+      queryId,
       tenantId: context.tenantId,
       conversationId: context.conversationId,
       turnId: context.turnId,
@@ -194,15 +305,39 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       input: ir,
       compiledSql: compiled.sql,
       parameterCount: compiled.parameters.length,
-      resultDigest: contentDigest({ columns: compiled.resultColumns, rows: visibleRows }),
+      resultDigest,
       rowCount: visibleRows.length,
       durationMs: result.durationMs,
       cacheHit: false,
       state,
       validation,
     });
-    await this.dependencies.cache.set(cacheKey, response, this.cacheTtlSeconds);
-    return response;
+    // Keep governed rows in the server-side cache even when this execution is
+    // blocked. A later authority/quality recovery can then revalidate the same
+    // deterministic result without turning an unavailable cache entry into an
+    // empty verified answer. The public response still withholds those rows.
+    const cacheResponse = response.data
+      ? response
+      : {
+        ...response,
+        data: {
+          columns: [...compiled.resultColumns],
+          rows: visibleRows,
+          resultWindow: resultWindowForWire(compiled.resultWindow),
+        },
+      };
+    await this.dependencies.cache.set(cacheKey, cacheResponse, this.cacheTtlSeconds, context);
+    return {
+      ...response,
+      queryAudit: {
+        queryAuditId: queryId,
+        route: "semantic",
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        resultDigest,
+        compilerOutputHash,
+      },
+    };
   }
 
   private async runSourceQuery(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
@@ -210,12 +345,16 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const tenant = await this.dependencies.contextProvider.load(context);
     const catalogue = await this.dependencies.sourceCatalogue.listFields(context, parsed.connectionId, parsed.sourceTable);
     const compiled = compileSourceQuery(parsed, context.tenantId, context.role, catalogue);
+    const sourceThrough = tenant.sourceWatermarks[parsed.connectionId];
+    if (!sourceThrough || !Number.isFinite(Date.parse(sourceThrough))) {
+      throw new Error("The selected source has no valid watermark, so freshness provenance cannot be established.");
+    }
     const bundleHash = semanticBundleHash({
       registryVersion: this.dependencies.registry.version,
       overlayVersion: tenant.overlayVersion,
       identityGraph: identityGraphForTenant(tenant),
-      packVersions: tenant.packVersions,
-      sourceWatermarks: tenant.sourceWatermarks,
+      packVersions: { [compiled.connectorId]: compiled.packVersion },
+      sourceWatermarks: { [parsed.connectionId]: sourceThrough },
       ir: { route: "source_exploration", ...parsed },
     });
     const result = await this.dependencies.database.queryAsSemanticRole({
@@ -224,20 +363,25 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       parameters: compiled.parameters,
       statementTimeoutMs: this.statementTimeoutMs,
       expectedIdentityGraph: identityGraphForTenant(tenant),
+      capabilityEvidence: capabilityEvidence(context),
     });
-    const authoritativeConnection = compiled.authorityConcept
-      ? tenant.authorityByConcept[compiled.authorityConcept]
-      : undefined;
-    const authorityWarning = authoritativeConnection && authoritativeConnection !== parsed.connectionId
-      ? `This source is not authoritative for ${compiled.authorityConcept}; ${authoritativeConnection} is authoritative.`
-      : undefined;
+    const authoritativeConnections = compiled.authorityConcept
+      ? authorityConnectionIds(tenant,compiled.authorityConcept,currentSemanticTimeRange(this.clock))
+      : [];
+    const authorityWarning = authoritativeConnections.length===0
+      ? `No authoritative source is configured for ${compiled.authorityConcept}; this result remains exploratory.`
+      : !authoritativeConnections.includes(parsed.connectionId)
+        ? `This source is not authoritative for ${compiled.authorityConcept}; ${authoritativeConnections.join(", ")} ${authoritativeConnections.length===1?"is":"are"} authoritative.`
+        : undefined;
     const warnings = authorityWarning ? [authorityWarning] : [];
     const validation = {
       status: (warnings.length ? "warning" : "passed") as "warning" | "passed",
       checks: [{ checkId: "single_source", status: "passed" }, { checkId: "pii_gate", status: "passed" }],
       warnings,
     };
+    const queryId = ulid();
     const promotionCandidateId = await this.dependencies.audit.promoteSourceField({
+      queryId,
       context,
       connectionId: parsed.connectionId,
       connectorId: compiled.connectorId,
@@ -251,7 +395,6 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       ...(parsed.requestedMetricConcept ? { requestedMetricConcept: parsed.requestedMetricConcept } : {}),
     });
     const definitionsApplied = compiled.fieldDefinitions.map((field) => `${parsed.sourceTable}.${field.field}`);
-    const sourceThrough = tenant.sourceWatermarks[parsed.connectionId] ?? latestWatermark(tenant.sourceWatermarks) ?? this.clock().toISOString();
     const response: SemanticToolResponse = {
       state: "exploratory",
       resultId: `source:${bundleHash}`,
@@ -262,7 +405,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
         registryVersion: this.dependencies.registry.version,
         identityGraph: identityGraphForTenant(tenant),
         sources: [compiled.source],
-        sourceWatermarks: { ...tenant.sourceWatermarks },
+        sourceWatermarks: { [parsed.connectionId]: sourceThrough },
         sourceDetails: sourceDetailsForSource(tenant, compiled.connectorId, parsed.connectionId, sourceThrough),
         definitionsApplied,
         definitionDetails: compiled.fieldDefinitions.map((field) => ({
@@ -271,9 +414,9 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
           definition: field.definition,
         })),
         timeRange: {
-          label: `Source exploration · data through ${sourceThrough}`,
-          start: sourceThrough,
-          end: sourceThrough,
+          label: compiled.resolvedTime.label,
+          start: compiled.resolvedTime.start,
+          end: compiled.resolvedTime.end,
           timezone: tenant.timezone,
         },
         ...(authorityWarning ? { authorityWarning } : {}),
@@ -281,7 +424,10 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       validation,
       performance: { cacheHit: false, durationMs: result.durationMs, rowCount: result.rows.length },
     };
+    const resultDigest = contentDigest({ columns: compiled.columns, rows: response.data?.rows ?? [] });
+    const compilerOutputHash = contentDigest({ sql: compiled.sql });
     await this.dependencies.audit.append({
+      queryId,
       tenantId: context.tenantId,
       conversationId: context.conversationId,
       turnId: context.turnId,
@@ -292,14 +438,24 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       input: parsed,
       compiledSql: compiled.sql,
       parameterCount: compiled.parameters.length,
-      resultDigest: contentDigest({ columns: compiled.columns, rows: response.data?.rows ?? [] }),
+      resultDigest,
       rowCount: result.rows.length,
       durationMs: result.durationMs,
       cacheHit: false,
       state: "exploratory",
       validation,
     });
-    return response;
+    return {
+      ...response,
+      queryAudit: {
+        queryAuditId: queryId,
+        route: "source_exploration",
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        resultDigest,
+        compilerOutputHash,
+      },
+    };
   }
 
   private async searchCatalogue(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
@@ -346,7 +502,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
         id: topic.id,
         label: topic.label,
         description: topic.description,
-        answerable: topicIsAnswerable(topic, tenant, this.dependencies.registry),
+        answerable: topicIsAnswerable(topic, tenant, this.clock),
       }));
     const topicMetricIds = topics.flatMap(({ id }) => this.dependencies.registry.topics.get(id)?.metrics ?? []);
     const metricIds = ranked
@@ -458,16 +614,21 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     if (!topic.roles.includes(context.role)) {
       throw new SemanticCompilerError("FORBIDDEN_ROLE", `Role ${context.role} cannot access Topic ${topicId}.`);
     }
-    const required = [...new Set([
-      ...topic.requiredCapabilities,
+    const required = [...new Set(topic.requiredCapabilities)];
+    const relevant = [...new Set([
+      ...required,
       ...topic.metrics.flatMap((id) => this.dependencies.registry.metrics.get(id)?.requiredCapabilities ?? []),
     ])];
+    const scopedCapabilities=contributorScopedCapabilities(
+      tenant,currentSemanticTimeRange(this.clock),
+    );
     const capabilities = {
       topic: topicId,
-      answerable: required.every((item) => tenant.capabilities.has(item)),
+      answerable: required.every((item) => scopedCapabilities.has(item)),
       required,
-      available: required.filter((item) => tenant.capabilities.has(item)),
-      missing: required.filter((item) => !tenant.capabilities.has(item)),
+      available: required.filter((item) => scopedCapabilities.has(item)),
+      missing: required.filter((item) => !scopedCapabilities.has(item)),
+      details: relevant.map((id)=>capabilityDetail(id,required.includes(id),tenant,scopedCapabilities)),
     };
     return metadataResponse(tenant, this.dependencies.registry.version, { route: "get_capabilities", topic: topicId }, {
       capabilities,
@@ -495,6 +656,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
         statementTimeoutMs: Math.min(this.statementTimeoutMs, 5_000),
         parameters,
         expectedIdentityGraph: identityGraphForTenant(tenant),
+        capabilityEvidence: capabilityEvidence(context),
         sql: `SELECT ${quoteIdentifier(dimension.displayField)}::text AS value\nFROM ${quoteQualified(dimension.table)}\nWHERE tenant_id=$1${queryPredicate}\nORDER BY ${quoteIdentifier(dimension.displayField)}\nLIMIT ${limitParameter}`,
       });
       fieldValues = result.rows.flatMap((row) => typeof row.value === "string" ? [{ value: row.value }] : []);
@@ -534,7 +696,11 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
 
   private async remember(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
     const parsed = semanticToolInputSchemas.remember.parse(input);
-    if (context.confirmedValue === undefined || String(parsed.value) !== context.confirmedValue) {
+    if (context.confirmedPreference === undefined
+      || context.confirmedValue === undefined
+      || parsed.preference !== context.confirmedPreference
+      || parsed.value !== context.confirmedValue
+      || !isAllowlistedRememberedPreference(parsed.preference, parsed.value)) {
       throw new SemanticCompilerError("INVALID_PARAMETER", "A matching server-side user confirmation is required before remembering a preference.");
     }
     if (context.role !== "owner" && context.role !== "manager") {
@@ -551,23 +717,502 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
   }
 }
 
+type ProgressiveCoverageGate=Readonly<{
+  status:"passed"|"warning"|"blocked";
+  checks:readonly Readonly<Record<string,unknown>>[];
+  warnings:readonly string[];
+}>;
+
+function progressiveCoverageGate(
+  tenant:TenantSemanticContext,
+  topic:TopicContract|undefined,
+  metricIds:readonly string[],
+  registry:SemanticRegistry,
+  resolvedTime:CompiledSemanticQuery["resolvedTime"],
+):ProgressiveCoverageGate{
+  if(!topic)return{status:"blocked",checks:[{checkId:"progressive_coverage",status:"blocked",reason:"Topic contract is missing."}],warnings:["The Topic coverage contract is unavailable."]};
+  const coverageRows=tenant.progressiveCoverage??[];
+  if(!coverageRows.length)return{status:"passed",checks:[],warnings:[]};
+  const earliestRequested=[resolvedTime.from,resolvedTime.comparisonFrom]
+    .filter((value):value is string=>typeof value==="string")
+    .map((value)=>Date.parse(value)).filter(Number.isFinite)
+    .sort((left,right)=>left-right)[0]??Date.parse(resolvedTime.from);
+  const checks:Readonly<Record<string,unknown>>[]=[];
+  const warnings:string[]=[];
+  let blocked=false;
+  const seen=new Set<string>();
+  const authorityRange=semanticTimeRange(resolvedTime);
+  const requiredCapabilities=[...new Set([
+    ...topic.requiredCapabilities,
+    ...metricIds.flatMap((metricId)=>registry.metrics.get(metricId)?.requiredCapabilities??[]),
+  ])];
+  for(const capability of requiredCapabilities){
+    const contributorIds=authorityConnectionIds(
+      tenant,capabilityAuthorityConcept(capability),authorityRange,
+    );
+    const candidates=(tenant.capabilityDetails??[]).filter((detail)=>
+      detail.id===capability&&capabilityObservationAvailable(detail)&&
+      typeof detail.connectionId==="string"&&typeof detail.coverage.stream==="string"
+      &&(contributorIds.length===0||contributorIds.includes(detail.connectionId))
+    );
+    for(const connectionId of contributorIds){
+      if(candidates.some((candidate)=>candidate.connectionId===connectionId))continue;
+      if(!coverageRows.some((coverage)=>coverage.connectionId===connectionId))continue;
+      blocked=true;
+      checks.push({
+        checkId:`progressive_coverage:${connectionId}:missing_target_stream`,
+        status:"blocked",capability,connectionId,reasonCode:"progressive_target_stream_missing",
+      });
+      warnings.push(`${capability} is unavailable because its current progressive stream coverage is missing.`);
+    }
+    if(!candidates.length)continue;
+    for(const contributor of candidates){
+      const stream=String(contributor.coverage.stream);
+      const key=`${contributor.connectionId}:${stream}`;
+      if(seen.has(key))continue;
+      seen.add(key);
+      const coverage=coverageRows.find((row)=>
+        row.connectionId===contributor.connectionId&&row.stream===stream
+      );
+      if(!coverage){
+        if(coverageRows.some((row)=>row.connectionId===contributor.connectionId)){
+          blocked=true;
+          checks.push({
+            checkId:`progressive_coverage:${key}`,status:"blocked",capability,
+            connectionId:contributor.connectionId,stream,
+            reasonCode:"progressive_target_stream_missing",
+          });
+          warnings.push(`${capability} is unavailable because current coverage for ${stream} is missing.`);
+        }
+        continue;
+      }
+      if(coverage.status==="superseded")continue;
+      const insideStart=earliestRequested>=Date.parse(coverage.coveredFrom);
+      const queryable=coverage.status==="queryable"&&insideStart;
+      checks.push({
+        checkId:`progressive_coverage:${key}`,
+        status:queryable?"warning":"blocked",
+        capability,connectionId:contributor.connectionId,stream,
+        coverageStatus:coverage.status,coveredFrom:coverage.coveredFrom,
+        coveredTo:coverage.coveredTo,requestedFrom:new Date(earliestRequested).toISOString(),
+      });
+      if(!queryable){
+        blocked=true;
+        warnings.push(coverage.status!=="queryable"
+          ? `${capability} is unavailable until every page and declared master dependency for ${stream} has transformed.`
+          : `${capability} is unavailable before ${coverage.coveredFrom}; deeper history is still backfilling.`);
+      }else{
+        warnings.push(`${coverage.qualification} ${stream} is covered from ${coverage.coveredFrom} through ${coverage.coveredTo}.`);
+      }
+    }
+  }
+  return{status:blocked?"blocked":warnings.length?"warning":"passed",checks,warnings};
+}
+
+function capabilityAuthorityConcept(capability:string):string{
+  if(capability.startsWith("inventory."))return"stock";
+  if(capability.startsWith("workforce.shifts"))return"planned_shifts";
+  if(capability.startsWith("workforce."))return"worked_hours";
+  if(capability==="finance.bank_transactions"||capability==="finance.payments")return"cash_settlement";
+  if(capability.startsWith("finance."))return"statutory_finance";
+  if(capability==="commerce.orders.customer")return"customer_master";
+  return"operational_sales";
+}
+
+type SemanticTimeRange=Readonly<{from:string;to:string}>;
+type AuthoritySelection=NonNullable<TenantSemanticContext["authoritySelections"]>[number];
+
+function semanticTimeRange(resolved:CompiledSemanticQuery["resolvedTime"]):SemanticTimeRange{
+  const starts=[resolved.from,resolved.comparisonFrom].filter((value):value is string=>typeof value==="string");
+  const ends=[resolved.to,resolved.comparisonTo].filter((value):value is string=>typeof value==="string");
+  const from=new Date(Math.min(...starts.map((value)=>Date.parse(value))));
+  const to=new Date(Math.max(...ends.map((value)=>Date.parse(value))));
+  if(!Number.isFinite(from.valueOf())||!Number.isFinite(to.valueOf())||from>=to){
+    throw new Error("Compiled semantic authority range is invalid.");
+  }
+  return Object.freeze({from:from.toISOString(),to:to.toISOString()});
+}
+
+function currentSemanticTimeRange(clock:()=>Date):SemanticTimeRange{
+  const now=clock();
+  if(!Number.isFinite(now.valueOf()))throw new Error("Semantic authority clock is invalid.");
+  return Object.freeze({from:now.toISOString(),to:new Date(now.valueOf()+1).toISOString()});
+}
+
+function authoritySelectionsForRange(
+  tenant:TenantSemanticContext,
+  concept:string,
+  range:SemanticTimeRange,
+):AuthoritySelection[]{
+  if(tenant.authoritySelections===undefined){
+    const connectionId=tenant.authorityByConcept[concept];
+    if(!connectionId)return[];
+    return [{
+      concept,scopeType:"tenant",scopeId:"legacy",connectionId,
+      effectiveFrom:new Date(0).toISOString(),
+      controlEligible:tenant.sourceDetails?.find((detail)=>detail.connectionId===connectionId)?.authorityEligible!==false,
+    }];
+  }
+  const from=Date.parse(range.from);const to=Date.parse(range.to);
+  const overlapping=tenant.authoritySelections.filter((selection)=>
+    selection.concept===concept
+    &&Date.parse(selection.effectiveFrom)<to
+    &&(!selection.effectiveTo||Date.parse(selection.effectiveTo)>from)
+  );
+  // Tenant rows are legacy/default fallbacks. Once a precise authority exists
+  // for a concept and period it is the only admissible contributor set.
+  const scoped=overlapping.filter((selection)=>selection.scopeType!=="tenant");
+  return [...(scoped.length?scoped:overlapping)];
+}
+
+function authorityConnectionIds(
+  tenant:TenantSemanticContext,concept:string,range:SemanticTimeRange,
+):string[]{
+  return [...new Set(authoritySelectionsForRange(tenant,concept,range)
+    .map((selection)=>selection.connectionId))].sort();
+}
+
+function capabilityObservationAvailable(
+  detail:NonNullable<TenantSemanticContext["capabilityDetails"]>[number],
+):boolean{
+  return detail.available!==false&&(detail.support==="full"||detail.support==="partial");
+}
+
+function contributorScopedCapabilities(
+  tenant:TenantSemanticContext,range:SemanticTimeRange,
+):ReadonlySet<string>{
+  // Existing in-process fixtures pre-date scoped authority. Production always
+  // supplies authoritySelections (including an empty array), which fails
+  // closed below when no authoritative contributor exists.
+  if(tenant.authoritySelections===undefined)return tenant.capabilities;
+  const available=new Set<string>();
+  const details=tenant.capabilityDetails??[];
+  for(const capability of new Set(details.map((detail)=>detail.id))){
+    const concept=capabilityAuthorityConcept(capability);
+    const selections=authoritySelectionsForRange(tenant,concept,range);
+    const contributors=[...new Set(selections.map((selection)=>selection.connectionId))];
+    if(contributors.length===0)continue;
+    const everyContributorReady=contributors.every((connectionId)=>{
+      const source=tenant.sourceDetails?.find((detail)=>detail.connectionId===connectionId);
+      if(!source||source.authorityEligible===false)return false;
+      if(selections.some((selection)=>selection.connectionId===connectionId&&selection.controlEligible===false))return false;
+      return details.some((detail)=>
+        detail.id===capability&&detail.connectionId===connectionId
+        &&detail.connectorId===source.connectorId&&capabilityObservationAvailable(detail)
+      );
+    });
+    if(everyContributorReady)available.add(capability);
+  }
+  return available;
+}
+
+function combinedHealthStatus(
+  health:"passed"|"warning"|"failed"|"blocked",
+  coverage:"passed"|"warning"|"blocked",
+):"passed"|"warning"|"failed"|"blocked"{
+  if(health==="blocked"||coverage==="blocked")return"blocked";
+  if(health==="failed")return"failed";
+  if(health==="warning"||coverage==="warning")return"warning";
+  return"passed";
+}
+
+function capabilityEvidence(context: TrustedToolContext): Readonly<{
+  conversationId: string;
+  turnId: string;
+}> {
+  return Object.freeze({ conversationId: context.conversationId, turnId: context.turnId });
+}
+
 function validateSemanticResult(
   rows: readonly Readonly<Record<string, unknown>>[],
   columns: readonly string[],
   healthStatus: "passed" | "warning" | "failed" | "blocked",
   checks: readonly Readonly<Record<string, unknown>>[],
   warnings: readonly string[],
+  semanticInvariantChecks: readonly Readonly<Record<string, unknown>>[],
+  previous?: SemanticToolResponse["validation"],
 ): SemanticToolResponse["validation"] {
   const shapeFailures = rows.filter((row) => columns.some((column) => !(column in row))).length;
-  const combinedWarnings = [...warnings, ...(shapeFailures ? [`${shapeFailures} result rows did not match the compiled result shape.`] : [])];
-  const status: SemanticToolResponse["validation"]["status"] = healthStatus === "failed" || healthStatus === "blocked" || shapeFailures
-    ? healthStatus === "blocked" ? "blocked" : "failed"
+  const currentSliceChecks = semanticSliceChecks(rows);
+  const previousSliceChecks = (previous?.checks ?? []).filter((check) =>
+    typeof check.checkId === "string" && check.checkId.startsWith("slice_"),
+  );
+  const sliceChecks = currentSliceChecks.length > 0 ? currentSliceChecks : previousSliceChecks;
+  const sliceWarnings = sliceChecks
+    .filter((check) => check.status !== "passed")
+    .map((check) => sliceCheckWarning(check));
+  const semanticWarnings = semanticInvariantChecks
+    .filter((check) => check.status !== "passed")
+    .map((check) => semanticInvariantWarning(check));
+  const combinedWarnings = [
+    ...warnings,
+    ...semanticWarnings,
+    ...sliceWarnings,
+    ...(shapeFailures ? [`${shapeFailures} result rows did not match the compiled result shape.`] : []),
+  ];
+  const sliceBlocked = sliceChecks.some((check) => check.status === "blocked" || check.status === "failed");
+  const semanticBlocked = semanticInvariantChecks.some((check) =>
+    check.status === "blocked" || check.status === "failed");
+  const status: SemanticToolResponse["validation"]["status"] = healthStatus === "failed" || healthStatus === "blocked" || shapeFailures || sliceBlocked || semanticBlocked
+    ? healthStatus === "blocked" || sliceBlocked || semanticBlocked ? "blocked" : "failed"
     : healthStatus === "warning" || combinedWarnings.length ? "warning" : "passed";
+  const semanticCheckIds = new Set(semanticInvariantChecks.map((check) => check.checkId));
   return {
     status,
-    checks: [...checks.map((check) => ({ ...check })), { checkId: "result_shape", status: shapeFailures ? "failed" : "passed", failingRows: shapeFailures }],
+    checks: [
+      ...checks.filter((check) => !semanticCheckIds.has(check.checkId)).map((check) => ({ ...check })),
+      ...semanticInvariantChecks.map((check) => ({ ...check })),
+      ...sliceChecks.map((check) => ({ ...check })),
+      { checkId: "result_shape", status: shapeFailures ? "failed" : "passed", failingRows: shapeFailures },
+    ],
     warnings: combinedWarnings,
   };
+}
+
+async function inspectPublicationEvidence(
+  dependencies: SemanticServiceDependencies,
+): Promise<SemanticPublicationEvidence | undefined> {
+  if (!dependencies.publicationEvidence) return undefined;
+  try {
+    return await dependencies.publicationEvidence.inspect();
+  } catch {
+    return undefined;
+  }
+}
+
+function semanticQueryInvariantChecks(
+  evidence: CompiledSemanticValidationEvidence,
+  tenant: TenantSemanticContext,
+  registry: SemanticRegistry,
+  registryVersion: string,
+  publication: SemanticPublicationEvidence | undefined,
+  authorityRange:SemanticTimeRange,
+): Readonly<Record<string, unknown>>[] {
+  const validPlan = evidence.planKind === "single_fact"
+    ? evidence.factIds.length === 1 && evidence.alignOn.length === 0
+    : evidence.factIds.length >= 2 && evidence.alignOn.length > 0;
+  const unsafeJoins = evidence.joins.filter((join) =>
+    join.cardinality !== "many_to_one" && join.cardinality !== "one_to_one");
+  const fanoutPassed = validPlan && unsafeJoins.length === 0;
+
+  const ratioMetrics = evidence.metrics.filter((metric) => metric.aggregation === "ratio");
+  const invalidRatioMetrics = ratioMetrics.filter((metric) => {
+    if (metric.testKinds.includes("aggregate_then_align")) {
+      return evidence.planKind !== "aggregate_then_align"
+        || evidence.factIds.length < 2
+        || evidence.alignOn.length === 0;
+    }
+    const baseFactIsExecutable = registry.facts.has(metric.baseFact);
+    if (!baseFactIsExecutable) {
+      return evidence.planKind !== "aggregate_then_align"
+        || evidence.factIds.length < 2
+        || evidence.alignOn.length === 0;
+    }
+    return metric.dependencyMetricIds.some((dependencyId) => {
+      const dependency = registry.metrics.get(dependencyId);
+      return !dependency
+        || dependency.baseFact !== metric.baseFact
+        || dependency.grain !== metric.grain;
+    });
+  });
+
+  const snapshotMetrics = evidence.metrics.filter((metric) =>
+    metric.snapshotAccesses.length > 0 || metric.testKinds.includes("snapshot_not_summed"));
+  const invalidSnapshotMetrics = snapshotMetrics.filter((metric) =>
+    metric.snapshotAccesses.some((access) => access.operation === "sum")
+      || (metric.testKinds.includes("snapshot_not_summed") && metric.snapshotAccesses.length === 0));
+
+  const authorities = semanticAuthorityConcepts(evidence, registry);
+  const authorityProofs:Readonly<Record<string,unknown>>[]=[];
+  for(const concept of authorities){
+    const selections=authoritySelectionsForRange(tenant,concept,authorityRange);
+    if(selections.length===0){
+      authorityProofs.push({concept,status:"blocked",reasonCode:"authority_selection_missing"});
+      continue;
+    }
+    for(const selection of selections){
+      const connectionId=selection.connectionId;
+      const source=tenant.sourceDetails?.find((detail)=>detail.connectionId===connectionId);
+      const watermark=tenant.sourceWatermarks[connectionId];
+      const packVersion=source?tenant.packVersions[source.connectorId]:undefined;
+      const controlEligible=selection.controlEligible!==false&&source?.authorityEligible!==false;
+      const liveMetadata=Boolean(
+        controlEligible&&source&&watermark&&packVersion
+        &&Number.isFinite(Date.parse(source.dataThrough))
+        &&Number.isFinite(Date.parse(watermark))
+        &&Date.parse(source.dataThrough)===Date.parse(watermark)
+      );
+      authorityProofs.push({
+        concept,connectionId,
+        ...(tenant.authoritySelections!==undefined?{
+          scopeType:selection.scopeType,scopeId:selection.scopeId,
+          effectiveFrom:selection.effectiveFrom,
+          ...(selection.effectiveTo?{effectiveTo:selection.effectiveTo}:{}),
+        }:{}),
+        ...(source?{connectorId:source.connectorId}:{}),
+        status:liveMetadata?"passed":"blocked",
+        ...(liveMetadata?{}:{reasonCode:controlEligible
+          ?"authority_source_metadata_missing":"authority_connection_ineligible"}),
+      });
+    }
+  }
+  const authorityPassed = authorityProofs.length > 0
+    && authorityProofs.every((proof) => proof.status === "passed");
+
+  const publicationPassed = Boolean(
+    publication?.activePublicationMatches
+    && publication.registryVersion === registryVersion
+    && /^[a-f0-9]{64}$/u.test(publication.registryHash),
+  );
+
+  return [
+    {
+      checkId: "no_fanout",
+      status: fanoutPassed ? "passed" : "blocked",
+      planKind: evidence.planKind,
+      factCount: evidence.factIds.length,
+      joinCount: evidence.joins.length,
+      joinCardinalities: [...new Set(evidence.joins.map((join) => join.cardinality))].sort(),
+      ...(fanoutPassed ? {} : { reasonCode: validPlan ? "fanout_join_detected" : "invalid_compiled_plan" }),
+    },
+    {
+      checkId: "grain_compatible_ratios",
+      status: invalidRatioMetrics.length === 0 ? "passed" : "blocked",
+      evaluatedMetrics: ratioMetrics.map((metric) => metric.metricId),
+      incompatibleMetrics: invalidRatioMetrics.map((metric) => metric.metricId),
+      planKind: evidence.planKind,
+      alignOn: [...evidence.alignOn],
+      ...(invalidRatioMetrics.length === 0 ? {} : { reasonCode: "ratio_grain_incompatible" }),
+    },
+    {
+      checkId: "snapshot_not_summed",
+      status: invalidSnapshotMetrics.length === 0 ? "passed" : "blocked",
+      evaluatedMetrics: snapshotMetrics.map((metric) => metric.metricId),
+      accesses: snapshotMetrics.flatMap((metric) => metric.snapshotAccesses.map((access) => ({
+        metricId: metric.metricId,
+        factId: access.factId,
+        field: access.field,
+        operation: access.operation,
+      }))),
+      ...(invalidSnapshotMetrics.length === 0 ? {} : { reasonCode: "snapshot_additivity_violated" }),
+    },
+    {
+      checkId: "authority_respected",
+      status: authorityPassed ? "passed" : "blocked",
+      concepts: authorityProofs,
+      ...(authorityPassed ? {} : { reasonCode: "authority_evidence_incomplete" }),
+    },
+    {
+      checkId: "golden_fixture_match",
+      status: publicationPassed ? "passed" : "blocked",
+      registryVersion,
+      ...(publication ? {
+        publicationRegistryVersion: publication.registryVersion,
+        publicationRegistryHash: publication.registryHash,
+        activePublicationMatches: publication.activePublicationMatches,
+      } : {}),
+      evidenceKind: "active_content_addressed_publication",
+      ...(publicationPassed ? {} : { reasonCode: "exact_fixture_gated_publication_missing" }),
+    },
+  ];
+}
+
+function semanticInvariantWarning(check: Readonly<Record<string, unknown>>): string {
+  const checkId = String(check.checkId ?? "semantic_validation");
+  const reasonCode = String(check.reasonCode ?? "semantic_evidence_incomplete");
+  return `${checkId}: ${reasonCode}; verified output was withheld.`;
+}
+
+function semanticSliceChecks(
+  rows: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>>[] {
+  const aliases = new Set(rows.flatMap((row) => Object.keys(row)));
+  const checks: Readonly<Record<string, unknown>>[] = [];
+  for (const eligibleAlias of [...aliases].filter((alias) => alias.startsWith("__coverage_eligible__"))) {
+    const suffix = eligibleAlias.slice("__coverage_eligible__".length);
+    const observedAlias = `__coverage_observed__${suffix}`;
+    let eligible = 0;
+    let observed = 0;
+    let failingRows = 0;
+    for (const row of rows) {
+      const rowEligible = exactCount(row[eligibleAlias]);
+      const rowObserved = exactCount(row[observedAlias]);
+      eligible += rowEligible;
+      observed += rowObserved;
+      if (rowObserved < rowEligible) failingRows += 1;
+    }
+    checks.push({
+      checkId: `slice_cost_coverage:${suffix}`,
+      status: failingRows > 0 ? "blocked" : "passed",
+      eligibleRows: eligible,
+      observedRows: observed,
+      coverage: eligible === 0 ? 1 : observed / eligible,
+      failingRows,
+    });
+  }
+  for (const currencyAlias of [...aliases].filter((alias) => alias.startsWith("__currency_codes__"))) {
+    const suffix = currencyAlias.slice("__currency_codes__".length);
+    let failingRows = 0;
+    const currencies = new Set<string>();
+    for (const row of rows) {
+      const rowCurrencies = new Set(
+        String(row[currencyAlias] ?? "")
+          .split(",")
+          .map((currency) => currency.trim().toUpperCase())
+          .filter(Boolean),
+      );
+      rowCurrencies.forEach((currency) => currencies.add(currency));
+      if (rowCurrencies.size > 1) failingRows += 1;
+    }
+    checks.push({
+      checkId: `slice_single_currency:${suffix}`,
+      status: failingRows > 0 ? "blocked" : "passed",
+      currencies: [...currencies].sort(),
+      failingRows,
+    });
+  }
+  for (const eligibleAlias of [...aliases].filter((alias) => alias.startsWith("__settlement_eligible__"))) {
+    const suffix = eligibleAlias.slice("__settlement_eligible__".length);
+    const linkedAlias = `__settlement_linked__${suffix}`;
+    let eligible = 0;
+    let linked = 0;
+    let failingRows = 0;
+    for (const row of rows) {
+      const rowEligible = exactCount(row[eligibleAlias]);
+      const rowLinked = exactCount(row[linkedAlias]);
+      eligible += rowEligible;
+      linked += rowLinked;
+      if (rowLinked < rowEligible) failingRows += 1;
+    }
+    checks.push({
+      checkId: `slice_settlement_bridge_coverage:${suffix}`,
+      status: failingRows > 0 ? "warning" : "passed",
+      eligibleTenders: eligible,
+      linkedTenders: linked,
+      coverage: eligible === 0 ? 1 : linked / eligible,
+      failingRows,
+    });
+  }
+  return checks;
+}
+
+function exactCount(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? "0"), 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function sliceCheckWarning(check: Readonly<Record<string, unknown>>): string {
+  const checkId = String(check.checkId ?? "slice_validation");
+  if (checkId.startsWith("slice_cost_coverage:")) {
+    return `${checkId}: missing cost observations (${String(check.observedRows ?? 0)}/${String(check.eligibleRows ?? 0)} covered); verified output was withheld.`;
+  }
+  if (checkId.startsWith("slice_single_currency:")) {
+    return `${checkId}: multiple currencies contribute to at least one result slice; verified output was withheld.`;
+  }
+  if (checkId.startsWith("slice_settlement_bridge_coverage:")) {
+    return `${checkId}: ${String(check.linkedTenders ?? 0)}/${String(check.eligibleTenders ?? 0)} tenders have deterministic bank-settlement links; the variance remains qualified evidence.`;
+  }
+  return `${checkId}: blocked.`;
 }
 
 function metadataResponse(
@@ -646,7 +1291,17 @@ function assertTrustedContext(context: TrustedToolContext): void {
 }
 
 function stripInternalColumns(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  return Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith("__key_")));
+  return Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith("__")));
+}
+
+function filterRefsForRow(
+  row: Readonly<Record<string, unknown>>,
+  dimensions: readonly string[],
+): Readonly<Record<string, string>> {
+  return Object.freeze(Object.fromEntries(dimensions.flatMap((dimension) => {
+    const value = row[`__key_${dimension}`];
+    return typeof value === "string" && value.length > 0 ? [[dimension, value]] : [];
+  })));
 }
 
 function resolveMetricDefinition(name: string, metrics: ReadonlyMap<string, MetricContract>): MetricContract | undefined {
@@ -712,12 +1367,37 @@ function metricIsVisible(metricId: string, registry: SemanticRegistry, role: Tru
   return [...registry.topics.values()].some((topic) => topic.roles.includes(role) && topic.metrics.includes(metricId));
 }
 
-function topicIsAnswerable(topic: TopicContract, tenant: TenantSemanticContext, registry: SemanticRegistry): boolean {
-  const required = new Set([
-    ...topic.requiredCapabilities,
-    ...topic.metrics.flatMap((metricId) => registry.metrics.get(metricId)?.requiredCapabilities ?? []),
-  ]);
-  return [...required].every((capability) => tenant.capabilities.has(capability));
+function topicIsAnswerable(
+  topic:TopicContract,tenant:TenantSemanticContext,clock:()=>Date,
+):boolean{
+  const scoped=contributorScopedCapabilities(tenant,currentSemanticTimeRange(clock));
+  return topic.requiredCapabilities.every((capability) => scoped.has(capability));
+}
+
+function capabilityDetail(
+  id:string,
+  requiredForTopic:boolean,
+  tenant:TenantSemanticContext,
+  scopedCapabilities:ReadonlySet<string>,
+){
+  const observations=(tenant.capabilityDetails??[]).filter((detail)=>detail.id===id);
+  const support=observations.length===0?"unknown":observations.slice(1).reduce<"full"|"partial"|"unavailable"|"unknown">((best,current)=>
+    capabilityRank(current.support)>capabilityRank(best)?current.support:best,observations[0]!.support);
+  return{
+    id,requiredForTopic,available:scopedCapabilities.has(id),support,
+    observations:observations.map((observation)=>({
+      connectorId:observation.connectorId,
+      ...(observation.connectionId?{connectionId:observation.connectionId}:{}),
+      support:observation.support,
+      ...(observation.reasonCode?{reasonCode:observation.reasonCode}:{}),
+      ...(observation.reason?{reason:observation.reason}:{}),
+      coverage:{...observation.coverage},
+    })),
+  };
+}
+
+function capabilityRank(value:"full"|"partial"|"unavailable"|"unknown"):number{
+  if(value==="full")return 4;if(value==="partial")return 3;if(value==="unknown")return 2;return 1;
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -748,6 +1428,65 @@ function isIdentityGraphChanged(error: unknown): boolean {
     && (error as Error & { code?: unknown }).code === "IDENTITY_GRAPH_CHANGED";
 }
 
+function contributingSemanticSources(
+  evidence: CompiledSemanticValidationEvidence,
+  tenant: TenantSemanticContext,
+  registry: SemanticRegistry,
+  authorityRange:SemanticTimeRange,
+): Readonly<{
+  packVersions: Readonly<Record<string, string>>;
+  sourceWatermarks: Readonly<Record<string, string>>;
+  sourceDetails: readonly NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]>[number][];
+}> {
+  const authorityConcepts = semanticAuthorityConcepts(evidence, registry);
+  const connectionIds = [...new Set(authorityConcepts.flatMap((concept) => {
+    return authorityConnectionIds(tenant,concept,authorityRange);
+  }))].sort();
+  const packVersions: Record<string, string> = {};
+  const sourceWatermarks: Record<string, string> = {};
+  const sourceDetails: NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]> = [];
+  for (const connectionId of connectionIds) {
+    const watermark = tenant.sourceWatermarks[connectionId];
+    if (watermark !== undefined) sourceWatermarks[connectionId] = watermark;
+    const detail = tenant.sourceDetails?.find((candidate) => candidate.connectionId === connectionId);
+    if (!detail) continue;
+    sourceDetails.push({ ...detail,...(watermark === undefined ? {} : { dataThrough: watermark }) });
+    const packVersion = tenant.packVersions[detail.connectorId];
+    if (packVersion !== undefined) packVersions[detail.connectorId] = packVersion;
+  }
+  return Object.freeze({
+    packVersions: Object.freeze(packVersions),
+    sourceWatermarks: Object.freeze(sourceWatermarks),
+    sourceDetails: Object.freeze(sourceDetails),
+  });
+}
+
+function semanticAuthorityConcepts(
+  evidence: CompiledSemanticValidationEvidence,
+  registry: SemanticRegistry,
+): string[] {
+  const concepts = new Set(evidence.metrics.map((metric) => metric.authority));
+  for (const dependencyId of evidence.metrics.flatMap((metric) => metric.dependencyMetricIds)) {
+    const authority = registry.metrics.get(dependencyId)?.authority;
+    if (authority) concepts.add(authority);
+  }
+  return [...concepts].sort();
+}
+
+function resultWindowForWire(
+  resultWindow: Readonly<{
+    requestedLimit: number;
+    orderedBeforeLimit: true;
+    orderBy: readonly Readonly<{ columnKey: string; direction: "asc" | "desc" }>[];
+  }>,
+): NonNullable<NonNullable<SemanticToolResponse["data"]>["resultWindow"]> {
+  return {
+    requestedLimit: resultWindow.requestedLimit,
+    orderedBeforeLimit: true,
+    orderBy: resultWindow.orderBy.map((item) => ({ ...item })),
+  };
+}
+
 function sourceDetailsForTenant(tenant: TenantSemanticContext): NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]> {
   if (tenant.sourceDetails?.length) return tenant.sourceDetails.map((detail) => ({ ...detail }));
   return Object.entries(tenant.sourceWatermarks).map(([key, dataThrough]) => ({
@@ -765,7 +1504,9 @@ function sourceDetailsForSource(
   dataThrough: string,
 ): NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]> {
   const configured = tenant.sourceDetails?.find((detail) => detail.connectionId === connectionId);
-  return [configured ? { ...configured } : { connectorId, connectionId, label: connectorLabel(connectorId), dataThrough }];
+  return [configured
+    ? { ...configured, dataThrough }
+    : { connectorId, connectionId, label: connectorLabel(connectorId), dataThrough }];
 }
 
 function resolvedTimeLabel(range: Readonly<{ fromBusinessDate: string; toBusinessDate: string; compare: string }>): string {

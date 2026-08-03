@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { consumeAlbertRateLimit, ControlPlaneError, currentTenantContext, requireUser } from "@/services/control-plane/src/web-repository";
 import { selectOAuthAccount } from "@/services/oauth/src/web-flow";
-import { assertSameOriginMutation, rateLimitExceededResponse } from "@/services/control-plane/src/request-security";
+import { assertSameOriginMutation, readBoundedJsonBody, rateLimitExceededResponse } from "@/services/control-plane/src/request-security";
 
 const schema = z.object({
   oauthSessionId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
@@ -11,7 +11,7 @@ const schema = z.object({
 export async function POST(request: Request) {
   try {
     assertSameOriginMutation(request);
-    const parsed = schema.safeParse(await request.json());
+    const parsed = schema.safeParse(await readBoundedJsonBody(request));
     if (!parsed.success) return Response.json({ error: "A valid account choice is required." }, { status: 400 });
     const [{ user }, tenant] = await Promise.all([requireUser(), currentTenantContext()]);
     if (!tenant) return Response.json({ error: "Organisation context is required." }, { status: 409 });

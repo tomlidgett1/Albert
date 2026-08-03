@@ -6,8 +6,16 @@ kill_timeout = 30
   dockerfile = "Dockerfile.services"
 
 [env]
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_MODEL_DATA_RESIDENCY_REGION = "au"
   ALBERT_SEMANTIC_HOST = "0.0.0.0"
   ALBERT_SEMANTIC_PORT = "8788"
+  ALBERT_SEMANTIC_RELAY_WORKER_ID = "semantic-promotion-relay"
+  ALBERT_SEMANTIC_RELAY_POLL_INTERVAL_MS = "5000"
+  ALBERT_SEMANTIC_RELAY_TENANT_BATCH_SIZE = "10"
+  ALBERT_SEMANTIC_RELAY_CANDIDATE_BATCH_SIZE = "20"
+  ALBERT_SEMANTIC_RELAY_LEASE_SECONDS = "90"
   NODE_ENV = "production"
 
 [processes]
@@ -31,6 +39,13 @@ kill_timeout = 30
     interval = "15s"
     method = "GET"
     path = "/readyz"
+    timeout = "5s"
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
     timeout = "5s"
 
 [[restart]]

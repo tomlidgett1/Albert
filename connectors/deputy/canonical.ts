@@ -34,6 +34,9 @@ const COMMON_STAGING_COLUMNS = new Set([
 /** Pure, fail-closed Deputy typed-staging to source-neutral canonical projection. */
 export const mapDeputyCanonical: CanonicalStreamMapper = (stream, row, context) => {
   assertStagingRow(stream, row);
+  if (row.tombstone && isIdentityOnlyTombstone(stream, row)) {
+    return mapIdentityOnlyTombstone(stream, row);
+  }
   switch (stream) {
     case "companies": return mapCompany(row, context);
     case "operational_units": return mapOperationalUnit(row, context);
@@ -112,6 +115,7 @@ function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionComm
   }
   const contactId = optionalIdentifier(row.contact);
   const payrollId = optionalText(row.employee_id) ?? undefined;
+  const episodeSourceRecordId = `${id}#episode:${effectiveFrom}`;
   return [
     dimension("person", row.source_object_type, id, { display_name: displayName }, row),
     dimension("worker", row.source_object_type, id, {
@@ -119,7 +123,7 @@ function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionComm
       display_name: displayName,
       active,
     }, row, "worker"),
-    dimension("employment_episode", row.source_object_type, id, {
+    dimension("employment_episode", "EmployeeEpisode", episodeSourceRecordId, {
       worker_id: sourceRef("worker", "Employee", id, row, { entityType: "worker" }),
       legal_entity_id: null,
       effective_from: effectiveFrom,
@@ -133,7 +137,7 @@ function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionComm
         contact_id: contactId ?? undefined,
       },
       normalizedName: normalizedName(displayName),
-      corroboratingScope: companyId,
+      corroboratingScopeRef: { sourceObjectType: "Company", sourceRecordId: companyId },
       evidenceRefs: contactId ? [{ sourceObjectType: "Contact", sourceRecordId: contactId }] : undefined,
     }),
   ];
@@ -152,13 +156,14 @@ function mapRoster(row: CanonicalStagingRow, context: CanonicalMappingContext): 
   const status = row.tombstone
     ? "cancelled"
     : truthy(row.open) ? "open" : truthy(row.published) ? "published" : "draft";
+  const businessDate = requiredDate(row.date, "rosters.date");
   return [fact("workforce_shift", row.source_object_type, id, {
     worker_id: sourceRef("worker", "Employee", workerId, row, { entityType: "worker" }),
-    employment_episode_id: sourceRef("employment_episode", "Employee", workerId, row, { nullable: true }),
+    employment_episode_id: employmentEpisodeRef(workerId, businessDate, row),
     location_id: sourceRef("location", "OperationalUnit", locationId, row, { entityType: "location" }),
     starts_at: startsAt,
     ends_at: endsAt,
-    business_date: requiredDate(row.date, "rosters.date"),
+    business_date: businessDate,
     status,
     rostered_minutes: durationMinutes(row.total_time, startsAt, endsAt, "rosters.total_time"),
     estimated_cost: optionalDecimal(row.cost, "rosters.cost"),
@@ -178,17 +183,21 @@ function mapTimesheet(row: CanonicalStagingRow, context: CanonicalMappingContext
   const cost = optionalDecimalValue(row.cost, "timesheets.cost");
   const onCost = optionalDecimalValue(row.on_cost, "timesheets.on_cost");
   const labourCost = cost || onCost ? (cost ?? ZERO).add(onCost ?? ZERO).toString() : null;
+  const businessDate = requiredDate(row.date, "timesheets.date");
   const commands: CanonicalProjectionCommand[] = [fact("workforce_time_entry", row.source_object_type, id, {
     worker_id: sourceRef("worker", "Employee", workerId, row, { entityType: "worker" }),
-    employment_episode_id: sourceRef("employment_episode", "Employee", workerId, row, { nullable: true }),
+    employment_episode_id: employmentEpisodeRef(workerId, businessDate, row),
     location_id: sourceRef("location", "OperationalUnit", locationId, row, { entityType: "location" }),
     starts_at: startsAt,
     ends_at: endsAt,
     approved_at: approved ? optionalInstant(row.source_updated_at) : null,
-    business_date: requiredDate(row.date, "timesheets.date"),
+    business_date: businessDate,
     status: discarded ? "discarded" : truthy(row.is_leave) ? "leave" : approved ? "approved" : "pending",
     worked_minutes: durationMinutes(row.total_time, startsAt, endsAt, "timesheets.total_time"),
-    overtime_minutes: 0,
+    // Deputy's Timesheet payload does not expose a trustworthy overtime split.
+    // Null is materially different from zero: zero would claim that overtime
+    // was measured and none occurred.
+    overtime_minutes: null,
     labour_cost: labourCost,
     currency: context.baseCurrency,
   }, "worked_hours", row.tombstone)];
@@ -199,7 +208,7 @@ function mapTimesheet(row: CanonicalStagingRow, context: CanonicalMappingContext
       linkType: "part_of_batch",
       from: { connectionId: row.connection_id, sourceObjectType: row.source_object_type, sourceRecordId: id },
       to: { connectionId: row.connection_id, sourceObjectType: "Roster", sourceRecordId: rosterId },
-      evidence: { relationship: "actual_time_for_planned_shift", business_date: requiredDate(row.date, "timesheets.date") },
+      evidence: { relationship: "actual_time_for_planned_shift", business_date: businessDate },
     });
   }
   return commands;
@@ -228,7 +237,7 @@ function mapLeave(row: CanonicalStagingRow, context: CanonicalMappingContext): r
     : days ? decimalHoursToMinutes(days.multiply("8"), "leave.days") : 0;
   return [fact("workforce_leave", row.source_object_type, id, {
     worker_id: sourceRef("worker", "Employee", workerId, row, { entityType: "worker" }),
-    employment_episode_id: sourceRef("employment_episode", "Employee", workerId, row, { nullable: true }),
+    employment_episode_id: employmentEpisodeRef(workerId, startDate, row),
     location_id: companyId
       ? sourceRef("location", "Company", companyId, row, { entityType: "location", nullable: true })
       : null,
@@ -259,6 +268,68 @@ function mapContact(row: CanonicalStagingRow): readonly CanonicalProjectionComma
       classification: "identity_evidence",
     },
   ];
+}
+
+function isIdentityOnlyTombstone(stream: string, row: CanonicalStagingRow): boolean {
+  const contract = deputyManifest.streams.find((candidate) => candidate.id === stream);
+  if (!contract) return false;
+  const idColumn = stagingColumnName(contract.recordIdField);
+  return deputyManifest.fieldCoverage
+    .filter((field) => field.stream === stream && field.disposition !== "unsupported")
+    .map((field) => stagingColumnName(field.field))
+    .filter((column) => column !== idColumn)
+    .every((column) => row[column] === null || row[column] === undefined || row[column] === "");
+}
+
+function mapIdentityOnlyTombstone(
+  stream: string,
+  row: CanonicalStagingRow,
+): readonly CanonicalProjectionCommand[] {
+  const sourceRecordId = row.source_record_id;
+  const command = (
+    kind: "dimension" | "fact",
+    table: CanonicalProjectionTable,
+    values: Readonly<Record<string, CanonicalProjectionValue>>,
+    entityType?: CanonicalEntityType,
+  ): CanonicalProjectionCommand => ({
+    kind,
+    table,
+    sourceObjectType: row.source_object_type,
+    sourceRecordId,
+    values,
+    tombstone: true,
+    updateOnly: true,
+    ...(entityType ? { entityType } : {}),
+    ...(kind === "fact"
+      ? { authorityConcept: stream === "rosters" ? "planned_shifts" : "worked_hours" }
+      : {}),
+  } as CanonicalProjectionCommand);
+
+  if (stream === "operational_units") {
+    return [command("dimension", "location", { active: false }, "location")];
+  }
+  if (stream === "employees") {
+    // Reconciliation tombstones preserve the prior typed Employee fields when
+    // an employee has previously been observed, so the normal mapper closes
+    // that exact effective-dated episode. An identity-only first observation
+    // has no episode to close and must not guess an episode key.
+    return [command("dimension", "worker", { active: false }, "worker")];
+  }
+  if (stream === "rosters") {
+    return [command("fact", "workforce_shift", { status: "cancelled" })];
+  }
+  if (stream === "timesheets") {
+    return [command("fact", "workforce_time_entry", { status: "discarded" })];
+  }
+  if (stream === "leave") {
+    return [command("fact", "workforce_leave", { status: "cancelled" })];
+  }
+  return [{
+    kind: "metadata",
+    sourceObjectType: row.source_object_type,
+    sourceRecordId,
+    classification: "lookup_only",
+  }];
 }
 
 function assertStagingRow(stream: string, row: CanonicalStagingRow): void {
@@ -326,6 +397,7 @@ function identityHint(
     deterministicKeys: Readonly<Record<string, string | undefined>>;
     normalizedName?: string;
     corroboratingScope?: string;
+    corroboratingScopeRef?: Readonly<{ sourceObjectType: string; sourceRecordId: string }>;
     evidenceRefs?: readonly Readonly<{ sourceObjectType: string; sourceRecordId: string }>[];
     evidenceOnly?: boolean;
   }>,
@@ -347,6 +419,27 @@ function sourceRef(
       sourceRecordId,
       connectionId: row.connection_id,
       ...options,
+    },
+  };
+}
+
+function employmentEpisodeRef(
+  workerSourceRecordId: string,
+  businessDate: string,
+  row: CanonicalStagingRow,
+): CanonicalSourceReference {
+  return {
+    sourceRef: {
+      table: "employment_episode",
+      sourceObjectType: "EmployeeEpisode",
+      connectionId: row.connection_id,
+      nullable: true,
+      lookup: {
+        kind: "employment_episode_on",
+        workerSourceObjectType: "Employee",
+        workerSourceRecordId,
+        businessDate,
+      },
     },
   };
 }

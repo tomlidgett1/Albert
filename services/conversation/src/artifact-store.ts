@@ -1,11 +1,19 @@
 import { z } from "zod";
-import type { TraceEvent } from "../../../packages/shared/src/index.js";
-import type { MeteredModelUsage } from "../../../packages/usage-metering/src/index.js";
+import {
+  ALBERT_PREFERENCE_OPTION_IDS,
+  type AlbertPreferenceOptionId,
+} from "../../../packages/agent/src/semantic-tools.js";
+import type {
+  TraceEvent,
+} from "../../../packages/shared/src/index.js";
 import { ControlPlaneError, requireUser } from "../../control-plane/src/web-repository.js";
 
 const beginResultSchema = z.object({
   conversation_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   previous_response_id: z.string().nullable().optional(),
+  confirmed_option_id: z.enum(ALBERT_PREFERENCE_OPTION_IDS).nullable().optional(),
+  confirmed_preference: z.string().min(1).max(120).nullable().optional(),
+  confirmed_value: z.string().min(1).max(300).nullable().optional(),
 });
 
 const modelContextSchema = z.array(z.object({
@@ -26,6 +34,11 @@ function singleton(value: unknown): unknown {
 export type BegunConversationTurn = Readonly<{
   conversationId: string;
   previousResponseId?: string;
+  confirmedPreference?: Readonly<{
+    optionId: AlbertPreferenceOptionId;
+    preference: string;
+    value: string;
+  }>;
 }>;
 
 export type ConversationModelMessage = Readonly<{
@@ -33,28 +46,12 @@ export type ConversationModelMessage = Readonly<{
   text: string;
 }>;
 
-export function toModelUsageRpcPayload(
-  metering: MeteredModelUsage,
-): Readonly<Record<string, string | number | boolean>> {
-  return Object.freeze({
-    rateCardId: metering.rateCardId,
-    model: metering.model,
-    fastMode: metering.fastMode,
-    requests: metering.requests,
-    inputTokens: metering.inputTokens,
-    cachedInputTokens: metering.cachedInputTokens,
-    cacheWriteInputTokens: metering.cacheWriteInputTokens,
-    outputTokens: metering.outputTokens,
-    estimatedCostUsdMicros: metering.estimatedCostUsdMicros,
-    pricingCompleteness: metering.pricingCompleteness,
-  });
-}
-
 export async function beginConversationTurn(input: Readonly<{
   conversationId?: string;
   turnId: string;
   message: string;
   runtimeProfile: Readonly<Record<string, unknown>>;
+  confirmedOption?: Readonly<{ offeredTurnId: string; optionId: string }>;
 }>): Promise<BegunConversationTurn> {
   const { supabase } = await requireUser();
   const { data, error } = await supabase.rpc("begin_albert_turn", {
@@ -62,6 +59,8 @@ export async function beginConversationTurn(input: Readonly<{
     p_turn_id: input.turnId,
     p_user_message: input.message,
     p_runtime_profile: input.runtimeProfile,
+    p_confirmation_turn_id: input.confirmedOption?.offeredTurnId ?? null,
+    p_confirmation_option_id: input.confirmedOption?.optionId ?? null,
   });
   if (error) throw new ControlPlaneError("The conversation could not be started.", 503);
   const parsed = beginResultSchema.safeParse(singleton(data));
@@ -69,6 +68,13 @@ export async function beginConversationTurn(input: Readonly<{
   return Object.freeze({
     conversationId: parsed.data.conversation_id,
     previousResponseId: parsed.data.previous_response_id ?? undefined,
+    ...(parsed.data.confirmed_option_id && parsed.data.confirmed_preference && parsed.data.confirmed_value ? {
+      confirmedPreference: Object.freeze({
+        optionId: parsed.data.confirmed_option_id,
+        preference: parsed.data.confirmed_preference,
+        value: parsed.data.confirmed_value,
+      }),
+    } : {}),
   });
 }
 
@@ -125,20 +131,6 @@ export async function completeConversationTurn(input: Readonly<{
     p_result_digest: input.resultDigest,
   });
   if (error) throw new ControlPlaneError("The completed conversation could not be persisted.", 503);
-}
-
-export async function recordConversationModelUsage(input: Readonly<{
-  conversationId: string;
-  turnId: string;
-  metering: MeteredModelUsage;
-}>): Promise<void> {
-  const { supabase } = await requireUser();
-  const { error } = await supabase.rpc("record_albert_model_usage", {
-    p_conversation_id: input.conversationId,
-    p_turn_id: input.turnId,
-    p_metering: toModelUsageRpcPayload(input.metering),
-  });
-  if (error) throw new ControlPlaneError("The model usage ledger could not be recorded.", 503);
 }
 
 export async function failConversationTurn(input: Readonly<{

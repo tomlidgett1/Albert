@@ -5,6 +5,7 @@ import {
   ConnectorError,
   type WebhookDisposition,
   type WebhookEnvelope,
+  type WebhookTombstoneSignal,
 } from "../../packages/connector-sdk/src/index.js";
 
 export const DEPUTY_WEBHOOK_TOPICS = Object.freeze([
@@ -35,21 +36,6 @@ export type DeputyWebhookVerificationMaterial = Readonly<{
   enterpriseHmacKey?: string;
 }>;
 
-export type DeputyWebhookProvisioningInput = Readonly<{
-  callbackUrl: string;
-  customHeaderSecret: string;
-  existingHooks: readonly DeputyVendorWebhook[];
-}>;
-
-export type DeputyVendorWebhook = Readonly<{
-  id: string;
-  topic: string;
-  address: string;
-  headers: string;
-  enabled: boolean;
-  type: string;
-}>;
-
 const payloadSchema = z.object({
   topic: z.string().min(1).max(160),
   data: z.union([
@@ -58,42 +44,22 @@ const payloadSchema = z.object({
   ]),
 }).passthrough();
 
-const vendorWebhookSchema = z.object({
-  Id: z.union([z.string().min(1).max(200), z.number().int().nonnegative()]),
-  Topic: z.string().min(1).max(160),
-  Address: z.string().min(1).max(2_000),
-  Headers: z.string().max(2_000).nullish(),
-  Enabled: z.union([
-    z.boolean(),
-    z.number().int().min(0).max(1),
-    z.string().min(1).max(20),
-  ]),
-  Type: z.string().min(1).max(40),
-}).passthrough();
-
-const createdWebhookSchema = z.union([
-  z.string().min(1).max(200),
-  z.number().int().nonnegative(),
-  z.object({
-    Id: z.union([z.string().min(1).max(200), z.number().int().nonnegative()]),
-  }).passthrough(),
-]);
-
 const verificationMaterialSchema = z.object({
   version: z.literal(1),
   customHeaderSecret: z.string().min(32).max(512).refine((value) => !/[\r\n]/u.test(value)),
   enterpriseHmacKey: z.string().min(16).max(4096).optional(),
 });
 
-const STREAM_BY_RESOURCE = Object.freeze({
-  company: "companies",
-  operationalunit: "operational_units",
-  employee: "employees",
-  roster: "rosters",
-  timesheet: "timesheets",
-  leave: "leave",
-  contact: "contacts",
+const ROUTE_BY_RESOURCE = Object.freeze({
+  company: { stream: "companies", sourceObjectType: "Company" },
+  operationalunit: { stream: "operational_units", sourceObjectType: "OperationalUnit" },
+  employee: { stream: "employees", sourceObjectType: "Employee" },
+  roster: { stream: "rosters", sourceObjectType: "Roster" },
+  timesheet: { stream: "timesheets", sourceObjectType: "Timesheet" },
+  leave: { stream: "leave", sourceObjectType: "Leave" },
+  contact: { stream: "contacts", sourceObjectType: "Contact" },
 } as const);
+const SUPPORTED_TOPICS = new Set<string>(DEPUTY_WEBHOOK_TOPICS);
 
 function header(headers: Readonly<Record<string, string>>, name: string): string | undefined {
   return Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
@@ -125,6 +91,42 @@ function unixGenerationTime(value: string | undefined): number {
     throw new ConnectorError("WEBHOOK_SIGNATURE_INVALID", "Deputy webhook generation time is invalid.");
   }
   return seconds * 1_000;
+}
+
+function sourceRecordId(value: unknown): string | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  }
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 300 && !/[\u0000-\u001f\u007f]/u.test(normalized)
+    ? normalized
+    : null;
+}
+
+function deletionSignals(input: Readonly<{
+  topic: string;
+  data: Readonly<Record<string, unknown>> | readonly Readonly<Record<string, unknown>>[];
+  observedAt: string;
+  stream: string;
+  sourceObjectType: string;
+}>): readonly WebhookTombstoneSignal[] {
+  if (!input.topic.endsWith(".Delete")) return [];
+  const records = Array.isArray(input.data) ? input.data : [input.data];
+  const identities = [...new Set(records.map((record) => sourceRecordId(record.Id ?? record.id)))];
+  if (identities.length === 0 || identities.some((identity) => identity === null)) {
+    throw new ConnectorError(
+      "REMOTE_RESPONSE_INVALID",
+      "Deputy deletion webhook did not contain a valid source record identity.",
+    );
+  }
+  return identities.map((identity) => Object.freeze({
+    kind: "tombstone" as const,
+    stream: input.stream,
+    sourceObjectType: input.sourceObjectType,
+    sourceRecordId: identity!,
+    observedAt: input.observedAt,
+  }));
 }
 
 function verifyAuthentication(
@@ -193,54 +195,30 @@ export function parseDeputyWebhook(input: Readonly<{
       cause: parsed.error,
     });
   }
+  const supportedTopic = SUPPORTED_TOPICS.has(parsed.data.topic);
   const resource = parsed.data.topic.split(".")[0]?.toLowerCase();
-  const stream = resource
-    ? STREAM_BY_RESOURCE[resource as keyof typeof STREAM_BY_RESOURCE]
+  const route = supportedTopic && resource
+    ? ROUTE_BY_RESOURCE[resource as keyof typeof ROUTE_BY_RESOURCE]
     : undefined;
+  const reconciliationSignals = route
+    ? deletionSignals({
+        topic: parsed.data.topic,
+        data: parsed.data.data,
+        observedAt: new Date(generatedAt).toISOString(),
+        stream: route.stream,
+        sourceObjectType: route.sourceObjectType,
+      })
+    : [];
   const bodySha256 = createHash("sha256").update(input.event.body).digest("hex");
   return Object.freeze({
-    accepted: Boolean(stream),
+    accepted: Boolean(route),
     // The raw body is authenticated in Enterprise mode and transported with a
     // unique per-connection secret otherwise. No mutable header enters this key.
     dedupeKey: `deputy:${parsed.data.topic}:${bodySha256}`,
-    streams: stream ? [stream] : [],
-    reason: stream ? undefined : "Webhook topic is outside Albert's Deputy stream catalogue.",
+    streams: route ? [route.stream] : [],
+    reconciliationSignals,
+    reason: route ? undefined : "Webhook topic is outside Albert's Deputy stream catalogue.",
   });
-}
-
-export function parseDeputyVendorWebhooks(value: unknown): readonly DeputyVendorWebhook[] {
-  const parsed = z.array(vendorWebhookSchema).max(500).safeParse(value);
-  if (!parsed.success) {
-    throw new ConnectorError("REMOTE_RESPONSE_INVALID", "Deputy Webhook QUERY returned an invalid response.", {
-      cause: parsed.error,
-    });
-  }
-  return Object.freeze(parsed.data.map((hook) => Object.freeze({
-    id: String(hook.Id),
-    topic: hook.Topic,
-    address: hook.Address,
-    headers: hook.Headers ?? "",
-    enabled: hook.Enabled === true || hook.Enabled === 1 || hook.Enabled === "1" || hook.Enabled === "true",
-    type: hook.Type,
-  })));
-}
-
-export function parseCreatedDeputyWebhookId(value: unknown): string {
-  const parsed = createdWebhookSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new ConnectorError("REMOTE_RESPONSE_INVALID", "Deputy did not return a webhook identifier.", {
-      cause: parsed.error,
-    });
-  }
-  return typeof parsed.data === "object" ? String(parsed.data.Id) : String(parsed.data);
-}
-
-export function deputyWebhookHeaderValue(secret: string): string {
-  if (Buffer.byteLength(secret, "utf8") < 32 || /[\r\n]/u.test(secret)) {
-    throw new ConnectorError("CONFIGURATION_INVALID", "Deputy webhook custom-header secret is invalid.");
-  }
-  // Deputy documents this exact newline-delimited `Name: value` representation.
-  return `X-Albert-Webhook-Secret: ${secret}`;
 }
 
 export function parseDeputyWebhookVerificationMaterial(

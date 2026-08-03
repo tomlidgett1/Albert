@@ -10,7 +10,17 @@ export type OpaqueCursorState = Readonly<{
   watermark?: string;
   /** Highest source timestamp observed while the current paged window is still open. */
   observedWatermark?: string;
+  /** Oldest event/source timestamp observed across every page in this scan. */
+  oldestObservedAt?: string;
   continuation?: string | number;
+  /** Fixed source-modification upper fence for a mutable paged scan. */
+  scanUpperBound?: string;
+  /** Rolling ordered digest/count for a bounded paged scan verification pass. */
+  scanDigest?: string;
+  scanCount?: number;
+  /** Prior complete pass; the next pass must match before its watermark commits. */
+  verificationDigest?: string;
+  verificationCount?: number;
   rangeFrom?: string;
   rangeTo?: string;
 }>;

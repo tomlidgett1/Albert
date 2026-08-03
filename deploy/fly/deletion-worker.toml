@@ -6,8 +6,12 @@ kill_timeout = 120
   dockerfile = "Dockerfile.services"
 
 [env]
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_DELETION_WORKER_ID = "deletion-worker"
   DELETION_WORKER_PORT = "8083"
   NODE_ENV = "production"
+  SUPABASE_STORAGE_S3_REGION = "ap-southeast-2"
 
 [processes]
   app = "node --enable-source-maps services/deletion-worker.js"
@@ -20,6 +24,16 @@ kill_timeout = 120
     path = "/readyz"
     port = 8083
     timeout = "8s"
+    type = "http"
+    processes = ["app"]
+
+  [checks.liveness]
+    grace_period = "15s"
+    interval = "30s"
+    method = "get"
+    path = "/livez"
+    port = 8083
+    timeout = "5s"
     type = "http"
     processes = ["app"]
 

@@ -6,137 +6,13 @@ import {
   type OAuthConnectorPack,
   type WorkerCredentialVault,
 } from "../../../packages/connector-sdk/src/index.js";
-import { ulid } from "ulid";
-import { CredentialVaultFactory } from "./credential-vault.js";
-import type { TransactionalPostgres } from "./database.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
-import {
-  DeputyWebhookSetupCoordinator,
-  type DeputyWebhookSetupResult,
-} from "./deputy-webhooks.js";
 
 type Provider = "lightspeed-r" | "xero" | "deputy";
 
 export interface OAuthConnectorFactory {
   create(provider: Provider, vault: WorkerCredentialVault): OAuthConnectorPack;
   scopes(provider: Provider): readonly string[];
-}
-
-type DisconnectRecord = Readonly<{
-  tenantId: string;
-  connectionId: string;
-  connectorId: Provider;
-  credentialRef: string;
-  initiatedBy: string;
-}>;
-
-export class DisconnectStore {
-  constructor(private readonly db: TransactionalPostgres) {}
-
-  async load(input: Readonly<{ tenantId: string; connectionId: string; userId: string }>): Promise<DisconnectRecord> {
-    const result = await this.db.query<{
-      tenant_id: string;
-      connection_id: string;
-      connector_key: Provider;
-      secret_reference: string;
-    }>(
-      `select connection.tenant_id, connection.connection_id,
-              connection.connector_key, token.secret_reference
-         from control_plane.connections as connection
-         join control_plane.memberships as membership
-           on membership.tenant_id = connection.tenant_id
-          and membership.user_id = $3
-          and membership.status = 'active'
-          and membership.role in ('owner', 'manager')
-         join control_plane.oauth_token_refs as token
-           on token.tenant_id = connection.tenant_id
-          and token.connection_id = connection.connection_id
-        where connection.tenant_id = $1 and connection.connection_id = $2
-          and connection.status <> 'disconnected'`,
-      [input.tenantId, input.connectionId, input.userId],
-    );
-    const row = result.rows[0];
-    if (!row) throw new Error("disconnect_connection_not_found");
-    return {
-      tenantId: row.tenant_id,
-      connectionId: row.connection_id,
-      connectorId: row.connector_key,
-      credentialRef: row.secret_reference,
-      initiatedBy: input.userId,
-    };
-  }
-
-  async finalize(record: DisconnectRecord, remoteStatus: "succeeded" | "unsupported" | "failed") {
-    return this.db.transaction(async (client) => {
-      await client.query(
-        `delete from control_plane.deputy_webhook_material
-          where tenant_id = $1 and connection_id = $2`,
-        [record.tenantId, record.connectionId],
-      );
-      await client.query(
-        `delete from control_plane.oauth_token_refs
-          where tenant_id = $1 and connection_id = $2 and secret_reference = $3`,
-        [record.tenantId, record.connectionId, record.credentialRef],
-      );
-      await client.query(
-        `update control_plane.connections
-            set status = 'disconnected', auth_health = 'revoked', disconnected_at = now()
-          where tenant_id = $1 and connection_id = $2`,
-        [record.tenantId, record.connectionId],
-      );
-      await client.query(
-        `update control_plane.readiness
-            set state = 'blocked', reason_code = 'connection_disconnected',
-                reason_detail = 'Connection data is scheduled for deletion.', evaluated_at = now()
-          where tenant_id = $1 and connection_id = $2`,
-        [record.tenantId, record.connectionId],
-      );
-      const existing = await client.query<{ deletion_request_id: string }>(
-        `select deletion_request_id
-           from control_plane.deletion_requests
-          where tenant_id = $1 and connection_id = $2
-            and status in ('queued', 'running', 'retry_wait', 'verifying', 'failed')
-          for update`,
-        [record.tenantId, record.connectionId],
-      );
-      const deletionRequestId = existing.rows[0]?.deletion_request_id ?? ulid();
-      if (!existing.rows[0]) {
-        await client.query(
-          `insert into control_plane.deletion_requests (
-             tenant_id, deletion_request_id, connection_id, scope, status,
-             requested_by, remote_revocation_status, credential_destroyed_at,
-             purge_due_at, progress
-           ) values ($1, $2, $3, 'connection', 'queued', $4, $5, now(),
-             now(), jsonb_build_object(
-               'credential_vault', jsonb_build_object('verified', true, 'completedAt', now()),
-               'remote_revocation', jsonb_build_object('summary', $5::text)
-             ))`,
-          [record.tenantId, deletionRequestId, record.connectionId, record.initiatedBy, remoteStatus],
-        );
-      }
-      await client.query(
-        `insert into control_plane.audit_log (
-           tenant_id, audit_id, actor_user_id, actor_type, action,
-           resource_type, resource_id, audit_metadata
-         ) values ($1, $2, $3, 'service', 'connection.disconnected',
-           'connection', $4, jsonb_build_object(
-             'deletion_request_id', $5::text,
-             'remote_revocation_status', $6::text,
-             'credential_destroyed', true
-           ))`,
-        [
-          record.tenantId,
-          ulid(),
-          record.initiatedBy,
-          record.connectionId,
-          deletionRequestId,
-          remoteStatus,
-        ],
-      );
-      await client.query("select control_plane.enqueue_deletion_request($1)", [deletionRequestId]);
-      return deletionRequestId;
-    });
-  }
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -195,7 +71,7 @@ function publicError(error: unknown) {
     ? 403
     : /not_found/.test(code)
       ? 404
-      : /deletion_in_progress|conflict|already/.test(code)
+      : /deletion_(?:in_progress|irreversible)|conflict|already/.test(code)
         ? 409
         : /invalid|mismatch|expired|no_accounts|choice/.test(code)
           ? 400
@@ -208,10 +84,7 @@ export class OAuthWorkerHttpHandler {
     oauthWorkerSigningSecret: string;
     allowedRedirectUris: ReadonlySet<string>;
     sessions: OAuthSessionStore;
-    credentialVaults: CredentialVaultFactory;
     connectors: OAuthConnectorFactory;
-    disconnects: DisconnectStore;
-    deputyWebhooks: Pick<DeputyWebhookSetupCoordinator, "provision">;
     operationTimeoutMs?: number;
   }>) {
     if (internalSigningSecretBytes(dependencies.oauthWorkerSigningSecret) < 32) {
@@ -257,8 +130,6 @@ export class OAuthWorkerHttpHandler {
             return await this.callback(input, operationSignal);
           case "/v1/oauth/select":
             return await this.select(input, operationSignal);
-          case "/v1/oauth/disconnect":
-            return await this.disconnect(input, operationSignal);
           default:
             return errorResponse("not_found", 404);
         }
@@ -294,15 +165,39 @@ export class OAuthWorkerHttpHandler {
       codeVerifier: verifier,
       expiresAt: expiresAt.toISOString(),
     });
-    return response({ oauthSessionId });
+    return response({ oauthSessionId, scopes: [...scopes] });
   }
 
   private async callback(input: Record<string, unknown>, signal: AbortSignal) {
-    const context = await this.dependencies.sessions.loadForCallback({
+    const callbackIdentity = {
       tenantId: requiredString(input, "tenantId", 26),
       oauthSessionId: requiredString(input, "oauthSessionId", 26),
       initiatedBy: requiredString(input, "userId", 36),
       stateNonceHash: stateNonceHash(input),
+    } as const;
+    const replay = await this.dependencies.sessions.loadCallbackReplay(callbackIdentity);
+    if (replay) {
+      if (input.provider !== undefined && provider(input) !== replay.provider) {
+        throw new Error("oauth_provider_mismatch");
+      }
+      if (input.redirectUri !== undefined && requiredString(input, "redirectUri", 1000) !== replay.redirectUri) {
+        throw new Error("oauth_redirect_mismatch");
+      }
+      return replay.status === "selection_required"
+        ? response({
+            oauthSessionId: callbackIdentity.oauthSessionId,
+            status: replay.status,
+            choices: replay.choices,
+          }, 202)
+        : response({
+            oauthSessionId: callbackIdentity.oauthSessionId,
+            status: replay.status,
+            connectionId: replay.connectionId,
+            jobRequestId: replay.jobRequestId,
+          });
+    }
+    const context = await this.dependencies.sessions.loadForCallback({
+      ...callbackIdentity,
     });
     if (input.provider !== undefined && provider(input) !== context.provider) {
       throw new Error("oauth_provider_mismatch");
@@ -344,23 +239,35 @@ export class OAuthWorkerHttpHandler {
       discovery,
       provisionalCredentialRef: credentialRef,
     });
-    const { credentialRef: liveCredentialRef, ...result } = finalized;
-    const webhookSetup = await this.provisionDeputyWebhooks(context, result.connectionId, liveCredentialRef, signal);
+    const result = {
+      connectionId: finalized.connectionId,
+      jobRequestId: finalized.jobRequestId,
+    };
     return response({
       oauthSessionId: context.oauthSessionId,
       status: "connected",
       ...result,
-      ...(webhookSetup ? { webhookSetup } : {}),
     });
   }
 
   private async select(input: Record<string, unknown>, signal: AbortSignal) {
-    const context = await this.dependencies.sessions.loadForSelection({
+    const selectionIdentity = {
       tenantId: requiredString(input, "tenantId", 26),
       oauthSessionId: requiredString(input, "oauthSessionId", 26),
       initiatedBy: requiredString(input, "userId", 36),
-    });
-    const accountId = requiredString(input, "externalAccountId", 300);
+      selectedAccountReference: requiredString(input, "externalAccountId", 300),
+    } as const;
+    const replay = await this.dependencies.sessions.loadSelectionReplay(selectionIdentity);
+    if (replay) {
+      return response({
+        oauthSessionId: selectionIdentity.oauthSessionId,
+        status: "connected",
+        connectionId: replay.connectionId,
+        jobRequestId: replay.jobRequestId,
+      });
+    }
+    const context = await this.dependencies.sessions.loadForSelection(selectionIdentity);
+    const accountId = selectionIdentity.selectedAccountReference;
     const credentialRef = await this.dependencies.sessions.provisionalCredentialReference(context);
     const connector = this.dependencies.connectors.create(
       context.provider,
@@ -377,78 +284,17 @@ export class OAuthWorkerHttpHandler {
       discovery,
       provisionalCredentialRef: credentialRef,
     });
-    const { credentialRef: liveCredentialRef, ...result } = finalized;
-    const webhookSetup = await this.provisionDeputyWebhooks(context, result.connectionId, liveCredentialRef, signal);
+    const result = {
+      connectionId: finalized.connectionId,
+      jobRequestId: finalized.jobRequestId,
+    };
     return response({
       oauthSessionId: context.oauthSessionId,
       status: "connected",
       ...result,
-      ...(webhookSetup ? { webhookSetup } : {}),
     });
   }
 
-  private async provisionDeputyWebhooks(
-    context: Readonly<{ tenantId: string; provider: Provider }>,
-    connectionId: string,
-    credentialRef: string,
-    signal: AbortSignal,
-  ): Promise<DeputyWebhookSetupResult | undefined> {
-    if (context.provider !== "deputy") return undefined;
-    const connector = this.dependencies.connectors.create(
-      "deputy",
-      this.dependencies.credentialVaults.reader(),
-    );
-    if (!("provision_webhooks" in connector) || typeof connector.provision_webhooks !== "function") {
-      throw new Error("deputy_webhook_provisioner_unavailable");
-    }
-    try {
-      return await this.dependencies.deputyWebhooks.provision({
-        connector: connector as Parameters<DeputyWebhookSetupCoordinator["provision"]>[0]["connector"],
-        context: {
-          tenantId: context.tenantId,
-          connectionId,
-          credentialRef,
-          abortSignal: signal,
-        },
-      });
-    } catch {
-      // OAuth is already durable at this point. Returning an explicit retryable
-      // state prevents a successful connection from masquerading as a failed
-      // callback while reconnecting remains a safe setup retry.
-      return Object.freeze({
-        state: "retryable",
-        reasonCode: "deputy_webhook_setup_retry_required",
-        provisionedTopics: Object.freeze([]),
-      });
-    }
-  }
-
-  private async disconnect(input: Record<string, unknown>, signal: AbortSignal) {
-    const record = await this.dependencies.disconnects.load({
-      tenantId: requiredString(input, "tenantId", 26),
-      connectionId: requiredString(input, "connectionId", 26),
-      userId: requiredString(input, "userId", 36),
-    });
-    const connector = this.dependencies.connectors.create(
-      record.connectorId,
-      this.dependencies.credentialVaults.reader(),
-    );
-    let remoteStatus: "succeeded" | "unsupported" | "failed" =
-      record.connectorId === "deputy" ? "unsupported" : "succeeded";
-    try {
-      await connector.revoke_credentials({
-        tenantId: record.tenantId,
-        connectionId: record.connectionId,
-        credentialRef: record.credentialRef,
-        abortSignal: signal,
-      });
-    } catch (error) {
-      remoteStatus = "failed";
-      void error;
-    }
-    const deletionRequestId = await this.dependencies.disconnects.finalize(record, remoteStatus);
-    return response({ status: "disconnected", deletionRequestId, remoteRevocation: remoteStatus }, 202);
-  }
 }
 
 function internalSigningSecretBytes(value: string): number {

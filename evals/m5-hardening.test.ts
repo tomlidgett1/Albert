@@ -94,7 +94,11 @@ test("trusted overlay windows drive customer and stock scans and reject model ov
   assert.match(active.sql,/f\."last_order_at" >= \$\d+/);assert.equal(active.resolvedTime.toBusinessDate,"2026-03-16");
   assert.equal(daysBetween(active.resolvedTime.fromBusinessDate,active.resolvedTime.toBusinessDate),60);
   const stock=compileSemanticQuery({topic:"inventory_health",metrics:["stock_cover_days"],dimensions:[],filters:[],time:{field:"snapshot_date",range:{type:"today"},compare:"none"},sort:[],limit:20,parameters:{}},registry,baseContext);
-  assert.equal(daysBetween(stock.resolvedTime.fromBusinessDate,stock.resolvedTime.toBusinessDate),45);assert.match(stock.sql,/AVG\(f\."units_sold"\)/);
+  assert.equal(daysBetween(stock.resolvedTime.fromBusinessDate,stock.resolvedTime.toBusinessDate),45);
+  assert.match(stock.sql,/SUM\(f\."units_sold"\) FILTER/);
+  assert.match(stock.sql,/f\."business_date" >= \(CAST\(\$\d+ AS date\) - CAST\(\$\d+ AS integer\)\)/);
+  assert.doesNotMatch(stock.sql,/AVG\(f\."units_sold"\)/);
+  assert.ok(stock.parameters.includes(45));
   assert.throws(()=>compileSemanticQuery({topic:"customers_retention",metrics:["active_customers"],dimensions:[],filters:[],time:{field:"last_order_at",range:{type:"today"},compare:"none"},sort:[],limit:20,parameters:{active_customer_days:999}},registry,baseContext),(error)=>error instanceof SemanticCompilerError&&error.code==="INVALID_PARAMETER");
 });
 
@@ -124,8 +128,12 @@ test("Postgres semantic reader rejects a changed identity graph in the query sna
 });
 
 test("Postgres data-health and cache adapters use governed metadata boundaries",async()=>{
-  const health=new PostgresDataHealthProvider({async queryAsSemanticRole(){return{rows:[{check_id:"line_maths",status:"passed",details:{}}],durationMs:1};}},registry);
+  const healthRequests:unknown[][]=[];
+  const health=new PostgresDataHealthProvider({async queryAsSemanticRole(request){healthRequests.push([...request.parameters]);assert.match(request.sql,/quality\.current_scoped_health\(\$1,\$2::text\[\],\$3::text\[\]\)/);return{rows:[{check_id:"line_maths",domain:"commerce",status:"passed",details:{}}],durationMs:1};}},registry);
   const snapshot=await health.getForTopic({tenantId:FIXTURE_TENANT_ID,role:"owner",conversationId:"c",turnId:"t"},"sales_performance");assert.equal(snapshot.status,"passed");
+  assert.equal(healthRequests[0]?.[0],FIXTURE_TENANT_ID);
+  assert.deepEqual(new Set(healthRequests[0]?.[1] as string[]),new Set(["connector","canonical","commerce"]));
+  assert.deepEqual(healthRequests[0]?.[2],["commerce.order_lines"]);
   const response={state:"verified" as const,provenance:{bundleHash:"a".repeat(64),registryVersion:"1.0.0",identityGraph:{version:0,hash:"d41d8cd98f00b204e9800998ecf8427e"},sources:[],sourceWatermarks:{},sourceDetails:[],definitionsApplied:[],definitionDetails:[]},validation:{status:"passed" as const,checks:[],warnings:[]},performance:{cacheHit:false,durationMs:1,rowCount:0}};
   const statements:string[]=[];const pool:PgPoolLike={async connect(){return{async query(sql){statements.push(sql);if(sql.includes("SELECT response"))return{rows:[{response}]};return{rows:[]};},release(){}};}};
   const cache=new PostgresSemanticResultCache(pool);const key=`${FIXTURE_TENANT_ID}:${"a".repeat(64)}`;assert.deepEqual(await cache.get(key),response);await cache.set(key,response,60);assert.ok(statements.includes("SET LOCAL ROLE semantic_meta_rw"));assert.ok(statements.some((sql)=>sql.includes("INSERT INTO semantic_internal.result_cache")));

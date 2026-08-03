@@ -1,0 +1,16 @@
+primary_region = "syd"
+
+[build]
+  image = "flyio/fly-autoscaler@sha256:8befadf6269dd637e3f3759f61039bd8e1543e9ec3d06523e974e76a80c207df"
+
+[env]
+  FAS_PROMETHEUS_METRIC_NAME = "capacity_floor"
+
+[metrics]
+  port = 9090
+  path = "/metrics"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"

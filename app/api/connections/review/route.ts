@@ -8,6 +8,7 @@ import {
 } from "@/services/control-plane/src/web-repository";
 import {
   assertSameOriginMutation,
+  readBoundedJsonBody,
   rateLimitExceededResponse,
 } from "@/services/control-plane/src/request-security";
 
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
     }
     const rateLimit = await consumeAlbertRateLimit("review.mutation");
     if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
-    const parsed = requestSchema.safeParse(await request.json());
+    const parsed = requestSchema.safeParse(await readBoundedJsonBody(request));
     if (!parsed.success) return Response.json({ error: "A valid review action is required." }, { status: 400 });
     if (parsed.data.action === "answer_blocking_question") {
       await answerBlockingQuestion(parsed.data.questionId, parsed.data.optionId);

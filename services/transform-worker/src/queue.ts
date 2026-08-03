@@ -130,13 +130,21 @@ export class PostgresCanonicalTransformQueue implements DurableCanonicalTransfor
 
   async retryOrFail(
     claim:ClaimedCanonicalTransformJob,
-    error:Readonly<{code:string;retryable:boolean;detail?:string}>,
+    error:Readonly<{code:string;retryable:boolean}>,
     options:Readonly<{retryDelaySeconds:number;maxAttempts:number}>,
   ):Promise<"retry_wait"|"failed">{
+    if(!Number.isSafeInteger(options.retryDelaySeconds)||options.retryDelaySeconds<0||options.retryDelaySeconds>86_400){
+      throw new Error("canonical_queue_invalid_retry_delay");
+    }
+    if(!Number.isSafeInteger(options.maxAttempts)||options.maxAttempts<1||options.maxAttempts>100){
+      throw new Error("canonical_queue_invalid_max_attempts");
+    }
+    const code=/^[a-z][a-z0-9_.-]{0,119}$/u.test(error.code)
+      ? error.code
+      : "unexpected_transform_failure";
     const safeError={
-      code:error.code.replace(/[^a-z0-9_.-]/gi,"_").slice(0,120),
+      code,
       retryable:error.retryable,
-      ...(error.detail?{detail:error.detail.replace(/[\u0000-\u001f\u007f]/g," ").slice(0,500)}:{}),
     };
     const result=await withTransformControlRole(this.database,(client)=>client.query<{outcome:string}>(
         `select control_plane.retry_or_fail_canonical_transform_job(
@@ -144,7 +152,7 @@ export class PostgresCanonicalTransformQueue implements DurableCanonicalTransfor
          ) as outcome`,
         [
           claim.job.tenantId,claim.job.transformJobId,claim.workerId,claim.leaseToken,
-          JSON.stringify(safeError),options.retryDelaySeconds,options.maxAttempts,
+          JSON.stringify(safeError),Math.max(1,options.retryDelaySeconds),options.maxAttempts,
         ],
       ));
     const outcome=result.rows[0]?.outcome;

@@ -137,6 +137,26 @@ export type OAuthSessionContext = Readonly<{
   selectedAccountReference: string | null;
 }>;
 
+export type OAuthCallbackReplay = Readonly<{
+  provider: OAuthSessionContext["provider"];
+  redirectUri: string;
+}> & (
+  | Readonly<{
+      status: "selection_required";
+      choices: readonly SanitizedAccountChoice[];
+    }>
+  | Readonly<{
+      status: "connected";
+      connectionId: string;
+      jobRequestId: string;
+  }>
+);
+
+export type OAuthSelectionReplay = Readonly<{
+  connectionId: string;
+  jobRequestId: string;
+}>;
+
 export class OAuthSessionStore {
   constructor(
     private readonly db: TransactionalPostgres,
@@ -226,6 +246,73 @@ export class OAuthSessionStore {
     return session;
   }
 
+  async loadCallbackReplay(input: Readonly<{
+    tenantId: string;
+    oauthSessionId: string;
+    initiatedBy: string;
+    stateNonceHash: string;
+  }>): Promise<OAuthCallbackReplay | null> {
+    const result = await this.db.query<{
+      provider: OAuthSessionContext["provider"];
+      redirect_uri: string;
+      state_nonce_hash: string;
+      status: string;
+      expires_at: string | Date;
+      discovered_account_choices: SanitizedAccountChoice[] | null;
+      completion_result: Record<string, unknown> | null;
+    }>(
+      `select session.provider,session.redirect_uri,session.state_nonce_hash,
+              session.status,session.expires_at,session.discovered_account_choices,
+              session.completion_result
+         from control_plane.oauth_sessions as session
+         join control_plane.memberships as membership
+           on membership.tenant_id = session.tenant_id
+          and membership.user_id = session.initiated_by
+          and membership.status = 'active'
+          and membership.role in ('owner', 'manager')
+        where session.tenant_id = $1 and session.oauth_session_id = $2
+          and session.initiated_by = $3`,
+      [input.tenantId, input.oauthSessionId, input.initiatedBy],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("oauth_session_not_found");
+    if (row.state_nonce_hash !== stateHash(input.stateNonceHash)) {
+      throw new Error("oauth_state_mismatch");
+    }
+    if (row.status === "selecting_account") {
+      if (new Date(row.expires_at).valueOf() <= Date.now()) {
+        throw new Error("oauth_session_expired");
+      }
+      const choices = row.discovered_account_choices ?? [];
+      if (choices.length < 2) throw new Error("oauth_callback_result_unavailable");
+      return Object.freeze({
+        provider: row.provider,
+        redirectUri: row.redirect_uri,
+        status: "selection_required" as const,
+        choices: Object.freeze([...choices]),
+      });
+    }
+    if (row.status === "consumed") {
+      const connectionId = row.completion_result?.connectionId;
+      const jobRequestId = row.completion_result?.jobRequestId;
+      if (
+        typeof connectionId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(connectionId) ||
+        typeof jobRequestId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(jobRequestId)
+      ) {
+        throw new Error("oauth_callback_result_unavailable");
+      }
+      return Object.freeze({
+        provider: row.provider,
+        redirectUri: row.redirect_uri,
+        status: "connected" as const,
+        connectionId,
+        jobRequestId,
+      });
+    }
+    if (row.status === "pending" || row.status === "exchanging") return null;
+    throw new Error("oauth_session_already_used");
+  }
+
   async loadForSelection(input: Readonly<{
     tenantId: string;
     oauthSessionId: string;
@@ -234,6 +321,47 @@ export class OAuthSessionStore {
     const session = await this.loadWithPkce(input.tenantId, input.oauthSessionId, input.initiatedBy);
     if (session.status !== "selecting_account") throw new Error("oauth_session_not_selecting");
     return session;
+  }
+
+  async loadSelectionReplay(input: Readonly<{
+    tenantId: string;
+    oauthSessionId: string;
+    initiatedBy: string;
+    selectedAccountReference: string;
+  }>): Promise<OAuthSelectionReplay | null> {
+    const result = await this.db.query<{
+      status: string;
+      selected_account_reference: string | null;
+      completion_result: Record<string, unknown> | null;
+    }>(
+      `select session.status,session.selected_account_reference,
+              session.completion_result
+         from control_plane.oauth_sessions as session
+         join control_plane.memberships as membership
+           on membership.tenant_id = session.tenant_id
+          and membership.user_id = session.initiated_by
+          and membership.status = 'active'
+          and membership.role in ('owner', 'manager')
+        where session.tenant_id = $1 and session.oauth_session_id = $2
+          and session.initiated_by = $3`,
+      [input.tenantId, input.oauthSessionId, input.initiatedBy],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("oauth_session_not_found");
+    if (row.status === "selecting_account") return null;
+    if (row.status !== "consumed") throw new Error("oauth_session_not_selecting");
+    if (row.selected_account_reference !== input.selectedAccountReference) {
+      throw new Error("oauth_selected_account_mismatch");
+    }
+    const connectionId = row.completion_result?.connectionId;
+    const jobRequestId = row.completion_result?.jobRequestId;
+    if (
+      typeof connectionId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(connectionId) ||
+      typeof jobRequestId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(jobRequestId)
+    ) {
+      throw new Error("oauth_callback_result_unavailable");
+    }
+    return Object.freeze({ connectionId, jobRequestId });
   }
 
   private async loadWithPkce(
@@ -257,6 +385,11 @@ export class OAuthSessionStore {
           and envelope.secret_kind = 'pkce_verifier'
           and envelope.consumed_at is null
           and envelope.destroyed_at is null
+         join control_plane.memberships as membership
+           on membership.tenant_id = session.tenant_id
+          and membership.user_id = session.initiated_by
+          and membership.status = 'active'
+          and membership.role in ('owner', 'manager')
         where session.tenant_id = $1
           and session.oauth_session_id = $2
           and session.initiated_by = $3`,
@@ -295,7 +428,9 @@ export class OAuthSessionStore {
     }
     const updated = await this.db.query(
       `update control_plane.oauth_sessions
-          set status = 'selecting_account', discovered_account_choices = $4::jsonb
+          set status = 'selecting_account',
+              discovered_account_choices = $4::jsonb,
+              expires_at = greatest(expires_at, now() + interval '10 minutes')
         where tenant_id = $1 and oauth_session_id = $2 and initiated_by = $3
           and status = 'pending' and expires_at > now()
         returning oauth_session_id`,
@@ -366,14 +501,14 @@ export class OAuthSessionStore {
       version: 1,
     });
     const account = safeAccountChoice(input.discovery);
-    const connectionStatus = input.context.provider === "deputy" ? "degraded" : "connected";
     const accountMetadata = input.context.provider === "deputy"
       ? {
           ...account.metadata,
           webhook_setup: {
-            status: "pending",
-            reason_code: null,
-            recoverable: true,
+            status: "operator_installation_required",
+            reason_code: "deputy_webhook_operator_installation_required",
+            optional: true,
+            completeness_mode: "scheduled_polling_and_reconciliation",
             updated_at: new Date().toISOString(),
           },
         }
@@ -400,72 +535,56 @@ export class OAuthSessionStore {
       )) {
         throw new Error("oauth_account_choice_not_offered");
       }
-      const existingConnection = await client.query<{ connection_id: string }>(
-        `select connection_id
-           from control_plane.connections
-          where tenant_id = $1 and connector_key = $2
-            and external_account_reference = $3
-          for update`,
-        [input.context.tenantId, input.context.provider, account.externalAccountId],
+      const exchanging = await client.query(
+        `update control_plane.oauth_sessions
+            set status = 'exchanging', selected_account_reference = $4
+          where tenant_id = $1 and oauth_session_id = $2 and initiated_by = $3
+            and status in ('pending', 'selecting_account', 'exchanging')
+            and expires_at > now()
+        returning oauth_session_id`,
+        [
+          input.context.tenantId,
+          input.context.oauthSessionId,
+          input.context.initiatedBy,
+          account.externalAccountId,
+        ],
       );
-      const connectionId = existingConnection.rows[0]?.connection_id ?? generatedConnectionId;
-      if (existingConnection.rows[0]) {
-        const deletion = await client.query<{ status: string }>(
-          `select status from control_plane.deletion_requests
-            where tenant_id = $1 and connection_id = $2
-              and status in ('queued', 'running', 'verifying')
-            order by requested_at desc limit 1 for update`,
-          [input.context.tenantId, connectionId],
-        );
-        if (deletion.rows[0] && deletion.rows[0].status !== "queued") {
-          throw new Error("connection_deletion_in_progress");
-        }
-        await client.query(
-          `update control_plane.deletion_requests
-              set status = 'cancelled', completed_at = now(),
-                  progress = progress || '{"reconnected":true}'::jsonb
-            where tenant_id = $1 and connection_id = $2 and status = 'queued'`,
-          [input.context.tenantId, connectionId],
-        );
-        await client.query(
-          `delete from control_plane.oauth_token_refs
-            where tenant_id = $1 and connection_id = $2`,
-          [input.context.tenantId, connectionId],
-        );
-        await client.query(
-          `update control_plane.connections
-              set display_name = $3, status = $6, auth_health = 'healthy',
-                  account_metadata = $4::jsonb, authorised_by = $5,
-                  authorised_at = now(), last_checked_at = now(), disconnected_at = null
-            where tenant_id = $1 and connection_id = $2`,
-          [
-            input.context.tenantId,
-            connectionId,
-            account.displayName,
-            JSON.stringify(accountMetadata),
-            input.context.initiatedBy,
-            connectionStatus,
-          ],
-        );
-      } else {
-        await client.query(
-          `insert into control_plane.connections (
-           tenant_id, connection_id, connector_key, display_name,
-             external_account_reference, status, auth_health, account_metadata,
-             authorised_by, authorised_at, last_checked_at
-           ) values ($1, $2, $3, $4, $5, $8, 'healthy', $6::jsonb, $7, now(), now())`,
-          [
-            input.context.tenantId,
-            connectionId,
-            input.context.provider,
-            account.displayName,
-            account.externalAccountId,
-            JSON.stringify(accountMetadata),
-            input.context.initiatedBy,
-            connectionStatus,
-          ],
-        );
+      if (!exchanging.rows[0]) throw new Error("oauth_session_finalize_conflict");
+      const finalizedIdentity = await client.query<{
+        connection_id: string;
+        connection_generation: string | number;
+        replayed: boolean;
+      }>(
+        `select connection_id,connection_generation,replayed
+           from control_plane.finalize_oauth_connection_identity(
+             $1::text,$2::text,$3::uuid,$4::text,$5::text,$6::text,$7::text,
+             $8::jsonb,$9::text
+           )`,
+        [
+          input.context.tenantId,
+          input.context.oauthSessionId,
+          input.context.initiatedBy,
+          input.context.provider,
+          account.externalAccountId,
+          generatedConnectionId,
+          account.displayName,
+          JSON.stringify(accountMetadata),
+          input.provisionalCredentialRef,
+        ],
+      );
+      const connectionId = finalizedIdentity.rows[0]?.connection_id;
+      const connectionGeneration = Number(finalizedIdentity.rows[0]?.connection_generation);
+      if (
+        !connectionId || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(connectionId) ||
+        !Number.isSafeInteger(connectionGeneration) || connectionGeneration < 1
+      ) {
+        throw new Error("oauth_connection_identity_finalization_failed");
       }
+      await client.query(
+        `delete from control_plane.oauth_token_refs
+          where tenant_id = $1 and connection_id = $2`,
+        [input.context.tenantId, connectionId],
+      );
       await client.query(
         `insert into control_plane.oauth_token_refs (
            tenant_id, token_ref_id, connection_id, secret_reference,
@@ -520,6 +639,7 @@ export class OAuthSessionStore {
         type: "InitialBackfill",
         tenantId: input.context.tenantId,
         connectionId,
+        connectionGeneration,
         connectorId: input.context.provider,
         externalAccountReference: account.externalAccountId,
         syncRunId,
@@ -530,6 +650,8 @@ export class OAuthSessionStore {
           to: new Date().toISOString(),
         },
         phase: "recent",
+        replayVersion: 1,
+        planMode: "progressive",
       };
       const enqueued = await client.query<{ job_request_id: string }>(
         `select job_request_id
@@ -538,6 +660,17 @@ export class OAuthSessionStore {
       );
       const jobRequestId = enqueued.rows[0]?.job_request_id;
       if (!jobRequestId) throw new Error("oauth_initial_backfill_enqueue_failed");
+      const completedSession = await client.query(
+        `update control_plane.oauth_sessions
+            set completion_result = jsonb_build_object(
+              'connectionId',$3::text,'jobRequestId',$4::text
+            )
+          where tenant_id = $1 and oauth_session_id = $2
+            and status = 'consumed'
+        returning oauth_session_id`,
+        [input.context.tenantId, input.context.oauthSessionId, connectionId, jobRequestId],
+      );
+      if (!completedSession.rows[0]) throw new Error("oauth_session_finalize_conflict");
       await client.query(
         `insert into control_plane.audit_log (
            tenant_id, audit_id, actor_user_id, actor_type, action,

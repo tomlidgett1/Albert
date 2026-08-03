@@ -10,4 +10,5 @@ export type ConnectionRuntimeRecord = Readonly<{
   connectorKey: "lightspeed-r" | "xero" | "deputy";
   externalAccountReference: string;
   credentialRef: string;
+  connectionGeneration: number;
 }>;

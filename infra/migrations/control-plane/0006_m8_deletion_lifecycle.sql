@@ -288,13 +288,7 @@ BEGIN
 END;
 $$;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pgmq.meta WHERE queue_name = 'albert_deletion') THEN
-    PERFORM pgmq.create('albert_deletion');
-  END IF;
-END;
-$$;
+SELECT extensions.albert_install_deletion_queue();
 
 CREATE OR REPLACE FUNCTION control_plane.assert_deletion_queue_ready()
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pgmq AS $$

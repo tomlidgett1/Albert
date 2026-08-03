@@ -30,6 +30,20 @@ SELECT set_config(
   true
 );
 SELECT * FROM public.bootstrap_albert_tenant('Albert RLS One','Australia/Sydney') \gset tenant_one_
+SELECT * FROM public.bootstrap_albert_tenant('Ignored Retry Name','Australia/Perth') \gset tenant_one_retry_
+SELECT pg_temp.assert_true(
+  :'tenant_one_retry_tenant_id'=:'tenant_one_tenant_id'
+  AND :'tenant_one_retry_tenant_name'=:'tenant_one_tenant_name'
+  AND :'tenant_one_retry_timezone'=:'tenant_one_timezone',
+  'repeated first-user bootstrap must return the original tenant without mutation'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=1
+     FROM control_plane.memberships
+    WHERE user_id='10000000-0000-4000-8000-000000000001'
+      AND status='active'),
+  'idempotent bootstrap must create one active first-owner membership'
+);
 
 RESET ROLE;
 SET LOCAL ROLE authenticated;
@@ -45,9 +59,9 @@ RESET ROLE;
 INSERT INTO control_plane.connections (
   tenant_id,connection_id,connector_key,display_name,status,auth_health,authorised_by
 ) VALUES
-  (:'tenant_one_tenant_id','01K1ZZZZZZ0000000000000001','lightspeed-r','One POS','active','healthy',
+  (:'tenant_one_tenant_id','01K1ZZZZZZ0000000000000001','lightspeed-r','One POS','connected','healthy',
    '10000000-0000-4000-8000-000000000001'),
-  (:'tenant_two_tenant_id','01K1ZZZZZZ0000000000000002','xero','Two Xero','active','healthy',
+  (:'tenant_two_tenant_id','01K1ZZZZZZ0000000000000002','xero','Two Xero','connected','healthy',
    '20000000-0000-4000-8000-000000000002');
 
 SET LOCAL ROLE authenticated;
@@ -77,6 +91,50 @@ SELECT pg_temp.assert_true(
   (SELECT tenant_id = :'tenant_one_tenant_id' FROM public.current_albert_context()),
   'current context must derive tenant scope from auth claims and membership'
 );
+SELECT pg_temp.assert_true(
+  NOT has_table_privilege('authenticated','control_plane.memberships','INSERT')
+  AND NOT has_table_privilege('authenticated','control_plane.memberships','UPDATE')
+  AND NOT has_table_privilege('authenticated','control_plane.memberships','DELETE')
+  AND NOT has_table_privilege('authenticated','control_plane.connections','INSERT')
+  AND NOT has_table_privilege('authenticated','control_plane.connections','UPDATE')
+  AND NOT has_table_privilege('authenticated','control_plane.connections','DELETE')
+  AND NOT has_table_privilege('authenticated','control_plane.user_active_tenants','SELECT')
+  AND NOT has_table_privilege('authenticated','control_plane.user_active_tenants','INSERT'),
+  'membership, connection, and active-tenant writes must be mediated by guarded RPCs'
+);
+SELECT * FROM public.albert_create_organisation('Albert RLS One Branch','Australia/Melbourne') \gset tenant_branch_
+SELECT pg_temp.assert_true(
+  (SELECT tenant_id=:'tenant_branch_tenant_id' FROM public.current_albert_context()),
+  'new organisations must become active immediately without trusting a browser tenant id'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2 FROM jsonb_array_elements(public.albert_list_organisations())),
+  'a user must be able to enumerate only their own organisation memberships'
+);
+SELECT public.albert_select_organisation(:'tenant_one_tenant_id');
+SELECT pg_temp.assert_true(
+  (SELECT tenant_id=:'tenant_one_tenant_id' FROM public.current_albert_context()),
+  'a persisted active organisation selection must scope subsequent requests'
+);
+SELECT public.albert_add_organisation_member(
+  :'tenant_one_tenant_id','owner-two@albert.invalid','manager'
+);
+SELECT pg_temp.assert_true(
+  jsonb_array_length(public.albert_organisation_settings()->'members')=2,
+  'an owner must be able to activate an existing confirmed Albert user'
+);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM public.albert_update_organisation_member(
+      control_plane.require_current_tenant_id(),
+      '10000000-0000-4000-8000-000000000001','manager','active'
+    );
+    RAISE EXCEPTION 'last owner was unexpectedly demoted';
+  EXCEPTION WHEN SQLSTATE '22023' THEN NULL;
+  END;
+END;
+$$;
 SELECT pg_temp.assert_true(
   NOT has_table_privilege('authenticated','control_plane.oauth_token_refs','SELECT'),
   'browser role must not read token references'
@@ -112,7 +170,7 @@ SELECT pg_temp.assert_true(
   'authenticated conversations require the bounded tenant-scoped model-context RPC'
 );
 SELECT pg_temp.assert_true(
-  (SELECT NOT internal_operator FROM public.albert_operator_status()),
+  NOT public.albert_operator_status(),
   'ordinary tenant members must not receive operator access'
 );
 
@@ -134,11 +192,11 @@ SELECT pg_temp.assert_true(
   'pgvector must be enabled for governed catalogue discovery'
 );
 SELECT pg_temp.assert_true(
-  has_table_privilege('service_role','control_plane.catalogue_documents','SELECT')
+  NOT has_table_privilege('service_role','control_plane.catalogue_documents','SELECT')
   AND NOT has_table_privilege('service_role','control_plane.catalogue_documents','INSERT')
   AND NOT has_table_privilege('service_role','control_plane.catalogue_documents','UPDATE')
   AND NOT has_table_privilege('service_role','control_plane.catalogue_documents','DELETE'),
-  'semantic runtime may read but never mutate immutable catalogue documents'
+  'the legacy platform service role must not bypass Albert runtime isolation'
 );
 SELECT pg_temp.assert_true(
   has_table_privilege('albert_semantic_control','control_plane.catalogue_documents','SELECT')
@@ -196,7 +254,8 @@ SELECT pg_temp.assert_true(
 );
 SELECT pg_temp.assert_true(
   NOT has_function_privilege('service_role','control_plane.enqueue_deletion_request(text)','EXECUTE')
-  AND NOT has_function_privilege('service_role','control_plane.acquire_sync_write_permit(text,text,text,text,integer)','EXECUTE')
+  AND NOT has_function_privilege('service_role','control_plane.acquire_sync_write_permit(text,text,bigint,text,text,text,bigint,text,integer,integer)','EXECUTE')
+  AND NOT has_function_privilege('service_role','control_plane.assert_sync_write_permit_and_issue_capability(text,text)','EXECUTE')
   AND NOT has_function_privilege('service_role','control_plane.release_sync_write_permit(text,text,text)','EXECUTE')
   AND NOT has_function_privilege('service_role','control_plane.claim_deletion_jobs(text,integer,integer)','EXECUTE')
   AND NOT has_function_privilege('service_role','control_plane.complete_deletion_job(bigint,text,text,integer,text,text,text,jsonb,jsonb,text,text)','EXECUTE'),
@@ -241,11 +300,7 @@ BEGIN
   BEGIN
     UPDATE control_plane.audit_log
        SET audit_metadata = '{"tampered":true}'::jsonb
-     WHERE tenant_id = (
-       SELECT tenant_id
-       FROM control_plane.memberships
-       WHERE user_id = '10000000-0000-4000-8000-000000000001'
-     );
+     WHERE actor_user_id = '10000000-0000-4000-8000-000000000001';
   EXCEPTION WHEN SQLSTATE '55000' THEN
     immutable_blocked := true;
   END;
@@ -256,3 +311,196 @@ END;
 $$;
 
 ROLLBACK;
+
+-- Deterministic two-session bootstrap race proof. The winner connection holds
+-- the exact production per-user xact lock before the contender is dispatched,
+-- so the contender cannot pass the membership recheck until the winner's
+-- tenant is committed. This avoids relying on scheduler timing or pg_sleep.
+CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
+
+CREATE OR REPLACE FUNCTION pg_temp.assert_true(value boolean, message text)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF value IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'control-plane concurrency assertion failed: %', message;
+  END IF;
+END;
+$$;
+
+INSERT INTO auth.users (
+  id,aud,role,email,encrypted_password,email_confirmed_at,
+  raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+) VALUES (
+  '30000000-0000-4000-8000-000000000003','authenticated','authenticated',
+  'bootstrap-race@albert.invalid','',now(),'{}','{}',now(),now()
+);
+
+CREATE TEMP TABLE bootstrap_concurrency_winner (
+  tenant_id text,
+  tenant_name text,
+  tenant_slug text,
+  role text,
+  timezone text
+);
+CREATE TEMP TABLE bootstrap_concurrency_contender (
+  tenant_id text,
+  tenant_name text,
+  tenant_slug text,
+  role text,
+  timezone text
+);
+
+-- This harness runs only against CI's disposable local Supabase database,
+-- whose postgres test credential is fixed by .github/workflows/ci.yml. Connect
+-- to the server's bridge address rather than its loopback address: Supabase's
+-- loopback pg_hba rule does not consume a password, and PostgreSQL 17 correctly
+-- rejects password-less dblink connections from its protected postgres role.
+SELECT extensions.dblink_connect(
+  'albert_bootstrap_winner',
+  format(
+    'hostaddr=%s port=%s dbname=%L user=postgres password=postgres',
+    host(inet_server_addr()),
+    current_setting('port'),
+    current_database()
+  )
+);
+SELECT extensions.dblink_connect(
+  'albert_bootstrap_contender',
+  format(
+    'hostaddr=%s port=%s dbname=%L user=postgres password=postgres',
+    host(inet_server_addr()),
+    current_setting('port'),
+    current_database()
+  )
+);
+
+SELECT extensions.dblink_exec('albert_bootstrap_winner','BEGIN');
+SELECT extensions.dblink_exec('albert_bootstrap_winner','SET LOCAL ROLE authenticated');
+SELECT *
+FROM extensions.dblink(
+  'albert_bootstrap_winner',
+  $remote$
+    SELECT set_config(
+             'request.jwt.claim.sub',
+             '30000000-0000-4000-8000-000000000003',
+             true
+           ),
+           set_config(
+             'request.jwt.claims',
+             '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{}}',
+             true
+           )
+  $remote$
+) AS configured(subject text,claims text);
+SELECT *
+FROM extensions.dblink(
+  'albert_bootstrap_winner',
+  $remote$
+    SELECT true
+    FROM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'albert:tenant-bootstrap:'||'30000000-0000-4000-8000-000000000003'::uuid::text,
+        0
+      )
+    )
+  $remote$
+) AS locked(acquired boolean);
+
+SELECT extensions.dblink_exec('albert_bootstrap_contender','BEGIN');
+SELECT extensions.dblink_exec('albert_bootstrap_contender','SET LOCAL ROLE authenticated');
+SELECT *
+FROM extensions.dblink(
+  'albert_bootstrap_contender',
+  $remote$
+    SELECT set_config(
+             'request.jwt.claim.sub',
+             '30000000-0000-4000-8000-000000000003',
+             true
+           ),
+           set_config(
+             'request.jwt.claims',
+             '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{}}',
+             true
+           )
+  $remote$
+) AS configured(subject text,claims text);
+SELECT pg_temp.assert_true(
+  extensions.dblink_send_query(
+    'albert_bootstrap_contender',
+    $remote$
+      SELECT tenant_id,tenant_name,tenant_slug,role,timezone
+      FROM public.bootstrap_albert_tenant('Contender Organisation','Australia/Perth')
+    $remote$
+  )=1,
+  'the competing bootstrap query must be accepted asynchronously'
+);
+SELECT pg_temp.assert_true(
+  extensions.dblink_is_busy('albert_bootstrap_contender')=1,
+  'the contender must remain outstanding while the per-user lock is held'
+);
+
+INSERT INTO bootstrap_concurrency_winner
+SELECT *
+FROM extensions.dblink(
+  'albert_bootstrap_winner',
+  $remote$
+    SELECT tenant_id,tenant_name,tenant_slug,role,timezone
+    FROM public.bootstrap_albert_tenant('Winning Organisation','Australia/Sydney')
+  $remote$
+) AS result(tenant_id text,tenant_name text,tenant_slug text,role text,timezone text);
+SELECT extensions.dblink_exec('albert_bootstrap_winner','COMMIT');
+
+INSERT INTO bootstrap_concurrency_contender
+SELECT *
+FROM extensions.dblink_get_result('albert_bootstrap_contender')
+  AS result(tenant_id text,tenant_name text,tenant_slug text,role text,timezone text);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=0
+     FROM extensions.dblink_get_result('albert_bootstrap_contender')
+       AS drained(tenant_id text,tenant_name text,tenant_slug text,role text,timezone text)),
+  'the asynchronous contender result must be fully drained before reuse'
+);
+SELECT extensions.dblink_exec('albert_bootstrap_contender','COMMIT');
+
+SELECT pg_temp.assert_true(
+  (SELECT winner.tenant_id=contender.tenant_id
+          AND winner.tenant_name=contender.tenant_name
+          AND winner.tenant_slug=contender.tenant_slug
+          AND winner.timezone=contender.timezone
+     FROM bootstrap_concurrency_winner AS winner
+     CROSS JOIN bootstrap_concurrency_contender AS contender),
+  'both concurrent bootstrap calls must return the winner tenant unchanged'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=1
+     FROM control_plane.memberships
+    WHERE user_id='30000000-0000-4000-8000-000000000003'
+      AND role='owner'
+      AND status='active'),
+  'concurrent bootstrap must create exactly one active owner membership'
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=1
+     FROM control_plane.audit_log
+    WHERE actor_user_id='30000000-0000-4000-8000-000000000003'
+      AND action='tenant.bootstrap'),
+  'concurrent bootstrap must emit exactly one bootstrap audit event'
+);
+
+SELECT extensions.dblink_disconnect('albert_bootstrap_winner');
+SELECT extensions.dblink_disconnect('albert_bootstrap_contender');
+
+-- Remove committed concurrency fixtures through the migration-owner-only
+-- append-only retention seam so later SQL harnesses still start from a clean DB.
+BEGIN;
+SET LOCAL ROLE albert_control_migration_owner;
+SET LOCAL albert.deletion_authorized='on';
+DELETE FROM control_plane.audit_log
+WHERE actor_user_id='30000000-0000-4000-8000-000000000003';
+DELETE FROM control_plane.tenants
+WHERE created_by='30000000-0000-4000-8000-000000000003';
+COMMIT;
+DELETE FROM auth.users
+WHERE id='30000000-0000-4000-8000-000000000003';

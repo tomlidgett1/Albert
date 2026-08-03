@@ -9,22 +9,13 @@ import {
   subscribeToThemePreference,
 } from "@/app/theme-preference";
 import styles from "./login.module.css";
+import { safeDashboardRedirect } from "./safe-redirect";
 
 type AuthMode = "sign-in" | "sign-up";
 
 function getRedirectPath() {
   const requestedPath = new URLSearchParams(window.location.search).get("next");
-
-  if (
-    !requestedPath ||
-    !requestedPath.startsWith("/") ||
-    requestedPath.startsWith("//") ||
-    requestedPath.startsWith("/login")
-  ) {
-    return "/dash";
-  }
-
-  return requestedPath;
+  return safeDashboardRedirect(requestedPath, window.location.origin);
 }
 
 export default function LoginForm({ authError = false }: Readonly<{ authError?: boolean }>) {

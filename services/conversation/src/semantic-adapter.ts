@@ -16,10 +16,32 @@ export function adaptGovernedResult(response: SemanticToolResponse): GovernedRes
   const rows = response.data.rows.map((row) => Object.fromEntries(
     response.data?.columns.map((column) => [column, traceCell(row[column])]) ?? [],
   ));
+  const resultWindow = response.data.resultWindow;
+  const filterRefs = response.data.filterRefs;
+  if (filterRefs && (
+    filterRefs.length !== rows.length
+    || filterRefs.some((row) => Object.keys(row).some((key) => !response.data?.columns.includes(key)))
+  )) {
+    throw new Error("The semantic service returned invalid row filter references.");
+  }
+  if (resultWindow && (
+    rows.length > resultWindow.requestedLimit
+    || resultWindow.orderBy.some((item) => !response.data?.columns.includes(item.columnKey))
+  )) {
+    throw new Error("The semantic service returned an invalid governed result-window proof.");
+  }
   return {
     resultId: response.resultId,
     columns: response.data.columns.map((column) => columnMetadata(column, response, rows)),
     rows,
+    ...(filterRefs ? { filterRefs: filterRefs.map((row) => ({ ...row })) } : {}),
+    ...(resultWindow ? {
+      resultWindow: {
+        requestedLimit: resultWindow.requestedLimit,
+        orderedBeforeLimit: true,
+        orderBy: resultWindow.orderBy.map((item) => ({ ...item })),
+      },
+    } : {}),
     provenance: adaptTraceProvenance(response),
     validations: adaptValidations(response),
   };
@@ -117,11 +139,26 @@ function columnMetadata(
   const definition = response.provenance.definitionDetails.find((item) =>
     item.id === key || item.id.endsWith(`.${key}`),
   );
+  const type = inferColumnType(key, rows);
+  const currency = type === "currency" ? validatedCurrency(key, response.validation.checks) : undefined;
   return {
     key,
     label: sanitizeTraceText(definition?.label ?? humanize(key), 120),
-    type: inferColumnType(key, rows),
+    type,
+    ...(currency ? { currency } : {}),
   };
+}
+
+function validatedCurrency(
+  key: string,
+  checks: readonly Readonly<Record<string, unknown>>[],
+): string | undefined {
+  const check = checks.find((candidate) => candidate.checkId === `slice_single_currency:${key}`);
+  if (!check || !Array.isArray(check.currencies) || check.currencies.length !== 1) return undefined;
+  const currency = check.currencies[0];
+  if (typeof currency !== "string") return undefined;
+  const normalized = currency.trim().toUpperCase();
+  return /^[A-Z]{3}$/u.test(normalized) ? normalized : undefined;
 }
 
 function inferColumnType(key: string, rows: readonly Readonly<Record<string, TraceCell>>[]): TraceTableColumn["type"] {

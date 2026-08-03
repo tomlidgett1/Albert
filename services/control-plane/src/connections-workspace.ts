@@ -3,7 +3,7 @@ import { z } from "zod";
 const readinessSchema = z.object({
   domain: z.string(),
   state: z.enum(["not_started", "syncing", "transforming", "validating", "ready_partial", "ready_complete", "degraded", "blocked"]),
-  progress: z.coerce.number().min(0).max(100).nullable().optional(),
+  progress: z.coerce.number().min(0).max(1).nullable().optional(),
   data_ready_through: z.string().nullable().optional(),
   backfill_complete: z.boolean().nullable().optional(),
   reason_code: z.string().nullable().optional(),
@@ -16,6 +16,7 @@ const connectionSchema = z.object({
   auth_health: z.enum(["unknown", "healthy", "expiring", "expired", "revoked", "error"]),
   authorised_at: z.string().nullable().optional(),
   last_checked_at: z.string().nullable().optional(),
+  account_metadata: z.record(z.string(), z.unknown()).default({}),
   readiness: z.array(readinessSchema).default([]),
 });
 const workspaceSchema = z.object({
@@ -64,6 +65,7 @@ const providerDefinitions = {
     description: "Accounting, invoices, journals, and bank activity.",
     logo: "/logos/xero.svg",
     connectDetail: "Connect a Xero organisation.",
+    additionalConnectionLabel: "Add another Xero organisation",
   },
   deputy: {
     id: "deputy",
@@ -123,7 +125,7 @@ const blockingQuestions = [
     options: [
       { id: "net-sales", label: "Net sales" },
       { id: "gross-profit", label: "Gross profit" },
-      { id: "profit-per-hour", label: "Sales per worked hour" },
+      { id: "profit-per-hour", label: "Gross profit per worked hour" },
     ],
   },
   {
@@ -137,6 +139,15 @@ const blockingQuestions = [
     ],
   },
 ] as const;
+
+const blockingQuestionConnectorRequirements: Readonly<
+  Record<(typeof blockingQuestions)[number]["id"], readonly (keyof typeof providerDefinitions)[]>
+> = Object.freeze({
+  "sales-lens": Object.freeze(["lightspeed-r"] as const),
+  "trading-day": Object.freeze(["lightspeed-r"] as const),
+  "employee-performance": Object.freeze(["lightspeed-r", "deputy"] as const),
+  "pos-posting-topology": Object.freeze(["lightspeed-r", "xero"] as const),
+});
 
 function validDate(value: unknown): string | undefined {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return undefined;
@@ -182,52 +193,88 @@ function authState(connection: z.infer<typeof connectionSchema> | undefined) {
 export function toConnectionsWorkspace(raw: unknown, timezone: string) {
   const workspace = workspaceSchema.parse(raw);
   const providers = Object.entries(providerDefinitions).map(([connectorKey, definition]) => {
-    const connections = workspace.connections.filter(({ connector_key }) => connector_key === connectorKey);
-    const connection = connections.find(({ status }) => status !== "disconnected") ?? connections[0];
-    const auth = authState(connection);
-    const domains = connection?.readiness.map((domain) => ({
-      id: `${definition.id}-${domain.domain}`,
-      label: domainLabels[domain.domain] ?? domain.domain.replaceAll("_", " "),
-      state: domain.state,
-      detail: domain.reason_code
-        ? domain.reason_code.replaceAll("_", " ")
-        : domain.backfill_complete
-          ? "Available history has completed validation."
-          : domain.state === "ready_partial"
-            ? "Recent data is queryable while deep history continues."
-            : domain.state.replaceAll("_", " "),
-      progress: domain.progress ?? undefined,
-      watermark: validDate(domain.data_ready_through)
-        ? { label: `Ready through ${new Intl.DateTimeFormat("en-AU", { timeZone: timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(domain.data_ready_through!))}`, at: validDate(domain.data_ready_through)! }
-        : undefined,
-    })) ?? [];
+    const connections = workspace.connections
+      .filter((connection) =>
+        connection.connector_key === connectorKey && connection.status !== "disconnected"
+      )
+      .map((connection) => {
+        const auth = authState(connection);
+        const webhookSetup = asObject(connection.account_metadata.webhook_setup);
+        const deputyWebhookInstallationRequired = connectorKey === "deputy" &&
+          webhookSetup.status === "operator_installation_required";
+        const domains = connection.readiness.map((domain) => {
+          const dataReadyThrough = validDate(domain.data_ready_through);
+          return {
+            id: `${definition.id}-${connection.connection_id}-${domain.domain}`,
+            label: domainLabels[domain.domain] ?? domain.domain.replaceAll("_", " "),
+            state: domain.state,
+            detail: domain.reason_code
+              ? domain.reason_code.replaceAll("_", " ")
+              : domain.backfill_complete
+                ? "Available history has completed validation."
+                : domain.state === "ready_partial"
+                  ? "Recent data is queryable while deep history continues."
+                  : domain.state.replaceAll("_", " "),
+            progress: domain.progress == null ? undefined : domain.progress * 100,
+            watermark: dataReadyThrough
+              ? {
+                  label: `Ready through ${new Intl.DateTimeFormat("en-AU", {
+                    timeZone: timezone,
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(new Date(dataReadyThrough))}`,
+                  at: dataReadyThrough,
+                }
+              : undefined,
+          };
+        });
+        return {
+          connectionId: connection.connection_id,
+          auth: {
+            ...auth,
+            detail: connection.status === "degraded"
+              ? "Your account is connected, but integration setup needs attention. Reconnect to retry."
+              : deputyWebhookInstallationRequired
+                ? "Connected. Scheduled polling and reconciliation provide complete ingestion; optional webhooks require explicit owner or operator installation."
+                : connection.display_name || definition.connectDetail,
+            accountName: connection.display_name,
+            checkedAt: validDate(connection.last_checked_at),
+          },
+          domains,
+        };
+      });
     return {
       id: definition.id,
-      connectionId: connection?.connection_id,
       name: definition.name,
       description: definition.description,
       logo: definition.logo,
-      auth: {
-        ...auth,
-        detail: connection?.status === "degraded"
-          ? "Your account is connected, but integration setup needs attention. Reconnect to retry."
-          : connection?.display_name || definition.connectDetail,
-        accountName: connection?.display_name,
-        checkedAt: validDate(connection?.last_checked_at),
-      },
-      domains,
+      connectDetail: definition.connectDetail,
+      additionalConnectionLabel: "additionalConnectionLabel" in definition
+        ? definition.additionalConnectionLabel
+        : undefined,
+      connections,
     };
   });
 
-  const allDomains = providers.flatMap(({ domains }) => domains);
+  const allDomains = providers.flatMap(({ connections }) =>
+    connections.flatMap(({ domains }) => domains),
+  );
   const progress = allDomains.length
     ? Math.round(allDomains.reduce((total, domain) => total + (domain.progress ?? (domain.state === "ready_complete" ? 100 : 0)), 0) / allDomains.length)
     : 0;
-  const timestamps = workspace.connections.flatMap((connection) => [
-    validDate(connection.last_checked_at),
-    ...connection.readiness.map(({ data_ready_through }) => validDate(data_ready_through)),
-  ]).filter((value): value is string => Boolean(value));
+  const timestamps = workspace.connections
+    .filter(({ status }) => status !== "disconnected")
+    .flatMap((connection) => [
+      validDate(connection.last_checked_at),
+      ...connection.readiness.map(({ data_ready_through }) => validDate(data_ready_through)),
+    ])
+    .filter((value): value is string => Boolean(value));
   const latestActivityAt = timestamps.sort((first, second) => Date.parse(second) - Date.parse(first))[0];
+  const activeConnectorKeys = new Set(
+    workspace.connections
+      .filter(({ status }) => status !== "pending" && status !== "disconnected")
+      .map(({ connector_key }) => connector_key),
+  );
 
   const dossierContent = workspace.dossier?.content ?? {};
   const dossierProvenance = workspace.dossier?.provenance ?? {};
@@ -310,10 +357,13 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
       latestActivityAt,
     },
     dossier,
-    blockingQuestions: blockingQuestions.map((question) => ({
-      ...question,
-      selectedOptionId: workspace.blocking_answers[question.id],
-    })),
+    blockingQuestions: blockingQuestions
+      .filter((question) => blockingQuestionConnectorRequirements[question.id]
+        .every((connectorKey) => activeConnectorKeys.has(connectorKey)))
+      .map((question) => ({
+        ...question,
+        selectedOptionId: workspace.blocking_answers[question.id],
+      })),
     identityMatches,
     oauthSelections: workspace.oauth_sessions
       .filter((session) => session.status === "selecting_account" && Date.parse(session.expires_at) > Date.now())

@@ -36,6 +36,46 @@ $$;
 COMMIT;
 
 RESET ROLE;
+
+DO $$
+DECLARE exposed record;
+BEGIN
+  SELECT namespace.nspname AS schema_name,procedure.proname AS function_name
+    INTO exposed
+    FROM pg_catalog.pg_proc AS procedure
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=procedure.pronamespace
+   WHERE namespace.nspname IN (
+     'ingestion','source_lightspeed','source_xero','source_deputy',
+     'core','mart','quality','semantic_internal','deletion_internal'
+   )
+     AND procedure.prosecdef
+     AND pg_catalog.has_function_privilege('public',procedure.oid,'EXECUTE')
+   LIMIT 1;
+  IF exposed IS NOT NULL THEN
+    RAISE EXCEPTION 'protected SECURITY DEFINER %.% remains executable by PUBLIC',
+      exposed.schema_name,exposed.function_name;
+  END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF pg_catalog.has_function_privilege(
+       'semantic_ro','quality.run_all_invariants(text,text)','EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'diagnostic_ro','quality.run_all_invariants(text,text)','EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'ingest_rw','quality.run_all_invariants(text,text)','EXECUTE'
+     )
+     OR NOT pg_catalog.has_function_privilege(
+       'transform_rw','quality.run_all_invariants(text,text)','EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'quality invariant runner ACL is not transform-only';
+  END IF;
+END;
+$$;
 SET ROLE semantic_ro;
 BEGIN;
 SET LOCAL albert.tenant_id = '01H00000000000000000000001';

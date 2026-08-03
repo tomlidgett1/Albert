@@ -149,11 +149,23 @@ BEGIN
   -- Cross-source bridges and every query-derived cache can contain the deleted
   -- source even when the bridge/cache has no direct connection column.
   DELETE FROM core.order_line_source_observation observation
-  USING deletion_canonical_targets target
-  WHERE observation.tenant_id=p_tenant_id AND target.table_name='commerce_order_line' AND observation.order_line_id=target.id;
+  WHERE observation.tenant_id=p_tenant_id
+    AND (
+      observation.connection_id=p_connection_id
+      OR EXISTS (
+        SELECT 1 FROM deletion_canonical_targets target
+        WHERE target.table_name='commerce_order_line' AND observation.order_line_id=target.id
+      )
+    );
   DELETE FROM core.order_source_observation observation
-  USING deletion_canonical_targets target
-  WHERE observation.tenant_id=p_tenant_id AND target.table_name='commerce_order' AND observation.order_id=target.id;
+  WHERE observation.tenant_id=p_tenant_id
+    AND (
+      observation.connection_id=p_connection_id
+      OR EXISTS (
+        SELECT 1 FROM deletion_canonical_targets target
+        WHERE target.table_name='commerce_order' AND observation.order_id=target.id
+      )
+    );
   DELETE FROM core.event_link WHERE tenant_id=p_tenant_id
     AND (from_connection_id=p_connection_id OR to_connection_id=p_connection_id);
   DELETE FROM core.entity_source_link link WHERE link.tenant_id=p_tenant_id
@@ -186,6 +198,8 @@ BEGIN
   WHERE state.tenant_id=p_tenant_id AND state.canonical_table=target.table_name AND state.canonical_id=target.id;
   DELETE FROM quality.finding WHERE tenant_id=p_tenant_id;
   DELETE FROM quality.check_result WHERE tenant_id=p_tenant_id;
+  DELETE FROM quality.connector_check_observation
+  WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id;
   DELETE FROM quality.pipeline_stats WHERE tenant_id=p_tenant_id;
   DELETE FROM semantic_internal.pipeline_stats_projection_outbox WHERE tenant_id=p_tenant_id;
   DELETE FROM mart.sales_day_location WHERE tenant_id=p_tenant_id;
@@ -313,10 +327,13 @@ BEGIN
     +(SELECT count(*) FROM ingestion.source_records WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
     +(SELECT count(*) FROM ingestion.quarantine_records WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
     +(SELECT count(*) FROM core.entity_source_link WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
+    +(SELECT count(*) FROM core.order_source_observation WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
+    +(SELECT count(*) FROM core.order_line_source_observation WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
     +(SELECT count(*) FROM core.event_link WHERE tenant_id=p_tenant_id AND (from_connection_id=p_connection_id OR to_connection_id=p_connection_id))
     +(SELECT count(*) FROM core.source_authority WHERE tenant_id=p_tenant_id AND authoritative_connection_id=p_connection_id)
     +(SELECT count(*) FROM semantic_internal.identity_observation WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
     +(SELECT count(*) FROM semantic_internal.canonical_transform_commits WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
+    +(SELECT count(*) FROM quality.connector_check_observation WHERE tenant_id=p_tenant_id AND connection_id=p_connection_id)
     +(SELECT count(*) FROM core.entity_resolution WHERE tenant_id=p_tenant_id)
     +(SELECT count(*) FROM core.entity_identity_edge WHERE tenant_id=p_tenant_id)
     +(SELECT count(*) FROM semantic_internal.identity_decision_history WHERE tenant_id=p_tenant_id)

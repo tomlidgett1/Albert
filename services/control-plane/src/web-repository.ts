@@ -37,7 +37,7 @@ const conversationSummarySchema = z.object({
 const conversationHistorySchema = z.object({
   conversation_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   turns: z.array(z.object({
-    turn_id: z.string(),
+    turn_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
     turn_number: z.number().int().positive(),
     user_message: z.string(),
     status: z.string(),
@@ -50,9 +50,73 @@ const conversationHistorySchema = z.object({
   next_sequence: z.number().int().nonnegative(),
 });
 
+const answerLineageSchema = z.object({
+  answerArtifactId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  turnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  turnNumber: z.number().int().positive(),
+  answerState: z.enum(["verified", "qualified", "exploratory", "clarification", "unavailable"]),
+  question: z.string().min(1).max(40_000),
+  finalNarrative: z.string().min(1).max(4_000),
+  interpretedPlan: z.record(z.string(), z.unknown()),
+  validationOutcomes: z.array(z.unknown()),
+  provenance: z.record(z.string(), z.unknown()),
+  semanticBundleHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  traceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  queries: z.array(z.object({
+    queryAuditId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    route: z.enum(["semantic", "source_exploration"]),
+    topic: z.string().nullable(),
+    bundleHash: z.string().regex(/^[a-f0-9]{64}$/),
+    registryVersion: z.string().min(1),
+    compilerOutputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    answerState: z.enum(["verified", "qualified", "exploratory", "clarification", "unavailable"]),
+    validation: z.record(z.string(), z.unknown()),
+  }).strict()).max(20),
+  finalizedAt: z.string(),
+}).strict();
+
+const connectionDisconnectSchema = z.object({
+  deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  status: z.enum(["queued", "running", "retry_wait", "verifying", "failed"]),
+}).strict();
+
+const tenantDeletionReceiptSchema = z.object({
+  deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  status: z.enum([
+    "awaiting_approval", "queued", "running", "retry_wait", "verifying",
+    "failed", "completed", "cancelled",
+  ]),
+  requestedAt: z.string(),
+  approvedAt: z.string().nullable(),
+  purgeDueAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  lastErrorCode: z.string().nullable(),
+  proof: z.object({
+    proofId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    proofDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    completedAt: z.string(),
+    remoteRevocation: z.record(z.string(), z.unknown()),
+    storeVerification: z.record(z.string(), z.unknown()),
+    serviceVersion: z.string().min(1).max(120),
+  }).strict().nullable(),
+}).strict();
+
 export type TenantContext = z.infer<typeof tenantContextSchema>;
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
 export type ConversationHistory = z.infer<typeof conversationHistorySchema>;
+export type AnswerLineage = z.infer<typeof answerLineageSchema>;
+export type TenantDeletionReceipt = z.infer<typeof tenantDeletionReceiptSchema>;
+
+const tenantSessionStateSchema = z.object({
+  context: tenantContextSchema.nullable(),
+  deletionReceipt: tenantDeletionReceiptSchema.nullable(),
+  needsBootstrap: z.boolean(),
+}).strict();
+
+export type TenantSessionState = z.infer<typeof tenantSessionStateSchema>;
 
 export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "conversation.turn": Object.freeze({ limit: 20, windowSeconds: 60 }),
@@ -99,6 +163,40 @@ export async function currentTenantContext(): Promise<TenantContext | null> {
   return parsed.data;
 }
 
+export async function currentTenantDeletionReceipt(): Promise<TenantDeletionReceipt | null> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("current_albert_tenant_deletion_receipt");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new ControlPlaneError("The Albert deletion-receipt migration is not deployed.", 503);
+    }
+    throw new ControlPlaneError("Deletion status could not be loaded.", 503);
+  }
+  if (!data) return null;
+  const parsed = tenantDeletionReceiptSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Deletion status returned invalid state.", 503);
+  return parsed.data;
+}
+
+export async function currentTenantSessionState(): Promise<TenantSessionState> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("current_albert_session_state");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new ControlPlaneError("The Albert session-state migration is not deployed.", 503);
+    }
+    throw new ControlPlaneError("The organisation session could not be loaded.", 503);
+  }
+  const parsed = tenantSessionStateSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("The organisation session returned invalid state.", 503);
+  if (parsed.data.needsBootstrap !== (
+    parsed.data.context === null && parsed.data.deletionReceipt === null
+  )) {
+    throw new ControlPlaneError("The organisation session returned inconsistent state.", 503);
+  }
+  return parsed.data;
+}
+
 export async function bootstrapTenant(input: Readonly<{
   displayName: string;
   timezone: string;
@@ -108,7 +206,14 @@ export async function bootstrapTenant(input: Readonly<{
     p_display_name: input.displayName,
     p_timezone: input.timezone,
   });
-  if (error) throw new ControlPlaneError("Your organisation could not be created.", 503);
+  if (error) {
+    throw new ControlPlaneError(
+      error.code === "55000"
+        ? "Your prior organisation is still being securely deleted."
+        : "Your organisation could not be created.",
+      error.code === "55000" ? 409 : 503,
+    );
+  }
   const parsed = tenantContextSchema.safeParse(singleton(data));
   if (!parsed.success) throw new ControlPlaneError("The created organisation is invalid.", 503);
   return parsed.data;
@@ -121,6 +226,44 @@ export async function loadConnectionsWorkspace(): Promise<unknown> {
   const { data, error } = await supabase.rpc("albert_connections_workspace");
   if (error) throw new ControlPlaneError("Connection status could not be loaded.", 503);
   return toConnectionsWorkspace(singleton(data), context.timezone);
+}
+
+export async function disconnectConnection(
+  connectionId: string,
+): Promise<z.infer<typeof connectionDisconnectSchema>> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_disconnect_connection", {
+    p_connection_id: connectionId,
+  });
+  if (error) {
+    const queueUnavailable = error.code === "55000" && /queue.*unavailable/iu.test(error.message);
+    const status = error.code === "42501"
+      ? 403
+      : error.code === "P0002"
+        ? 404
+        : error.code === "22023"
+          ? 400
+          : error.code === "55000" && !queueUnavailable
+            ? 409
+            : 503;
+    throw new ControlPlaneError(
+      status === 403
+        ? "Owner or manager access is required."
+        : status === 404
+          ? "The connection was not found."
+          : status === 400
+            ? "The connection is invalid."
+            : status === 409
+              ? "The connection cannot be disconnected in its current state."
+              : "The connection could not be disconnected safely.",
+      status,
+    );
+  }
+  const parsed = connectionDisconnectSchema.safeParse(singleton(data));
+  if (!parsed.success) {
+    throw new ControlPlaneError("The disconnect request returned invalid state.", 503);
+  }
+  return parsed.data;
 }
 
 export async function answerBlockingQuestion(questionId: string, optionId: string): Promise<void> {
@@ -172,6 +315,42 @@ export async function loadConversationHistory(
   }
   const parsed = conversationHistorySchema.safeParse(data);
   if (!parsed.success) throw new ControlPlaneError("The conversation returned invalid state.", 503);
+  return parsed.data;
+}
+
+export async function loadAnswerLineage(answerArtifactId: string): Promise<AnswerLineage> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_answer_lineage", {
+    p_answer_artifact_id: answerArtifactId,
+  });
+  if (error) {
+    throw new ControlPlaneError(
+      error.code === "P0002" ? "Answer lineage was not found." : "Answer lineage could not be loaded.",
+      error.code === "P0002" ? 404 : 503,
+    );
+  }
+  const parsed = answerLineageSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Answer lineage returned invalid state.", 503);
+  return parsed.data;
+}
+
+export async function loadTurnAnswerLineage(
+  conversationId: string,
+  turnId: string,
+): Promise<AnswerLineage> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_turn_answer_lineage", {
+    p_conversation_id: conversationId,
+    p_turn_id: turnId,
+  });
+  if (error) {
+    throw new ControlPlaneError(
+      error.code === "P0002" ? "Answer lineage was not found." : "Answer lineage could not be loaded.",
+      error.code === "P0002" ? 404 : 503,
+    );
+  }
+  const parsed = answerLineageSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Answer lineage returned invalid state.", 503);
   return parsed.data;
 }
 

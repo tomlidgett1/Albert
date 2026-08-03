@@ -60,14 +60,20 @@ export interface DomainReadiness {
   };
 }
 
+export interface ConnectionAccountData {
+  connectionId: string;
+  auth: ConnectionAuthHealth;
+  domains: readonly DomainReadiness[];
+}
+
 export interface ConnectionProviderData {
   id: ConnectionProviderId;
-  connectionId?: string;
   name: string;
   description: string;
   logo: string;
-  auth: ConnectionAuthHealth;
-  domains: readonly DomainReadiness[];
+  connectDetail: string;
+  additionalConnectionLabel?: string;
+  connections: readonly ConnectionAccountData[];
 }
 
 export interface DossierFact {
@@ -151,11 +157,19 @@ export interface ConnectionsWorkspaceProps {
     kind: "loading" | "error" | "ready";
     message?: string;
   }>;
+  notice?: Readonly<{
+    kind: "success" | "info" | "error";
+    message: string;
+  }> | null;
   initialView?: ConnectionViewId;
+  canManage?: boolean;
   onViewChange?: (view: ConnectionViewId) => void;
   onConnect?: (providerId: ConnectionProviderId) => void;
-  onManage?: (providerId: ConnectionProviderId) => void;
-  onAnswerBlockingQuestion?: (questionId: string, optionId: string) => void;
+  onManage?: (connectionId: string) => void;
+  onAnswerBlockingQuestion?: (
+    questionId: string,
+    optionId: string,
+  ) => boolean | void | Promise<boolean | void>;
   onMatchDecision?: (matchId: string, decision: MatchDecision) => boolean | void | Promise<boolean | void>;
   onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
   onDisconnect?: (connectionId: string) => void;
@@ -172,240 +186,6 @@ export const readinessStateLabels: Record<ReadinessState, string> = {
   blocked: "Blocked",
 };
 
-export const albertConnectionsFixture: ConnectionsWorkspaceData = {
-  tenantName: "Albert Cycle Co.",
-  timezone: "Australia/Melbourne",
-  syncSummary: {
-    progress: 60,
-    detail: "Recent data is prepared first. Deep history continues in the background.",
-    latestActivityAt: "2026-08-03T00:42:00.000Z",
-  },
-  providers: [
-    {
-      id: "lightspeed",
-      name: "Lightspeed",
-      description: "Sales, inventory, customers, and store activity.",
-      logo: "/logos/lightspeed.png",
-      auth: {
-        state: "healthy",
-        label: "Connected",
-        detail: "R-Series · 2 shops",
-        accountName: "Albert Cycle Co.",
-        checkedAt: "2026-08-03T00:41:00.000Z",
-      },
-      domains: [
-        {
-          id: "lightspeed-sales",
-          label: "Sales",
-          state: "ready_complete",
-          detail: "Recent sales and 13 months of history have passed validation.",
-          progress: 100,
-          watermark: {
-            label: "Ready through 10:42 am",
-            at: "2026-08-03T00:42:00.000Z",
-          },
-        },
-        {
-          id: "lightspeed-inventory",
-          label: "Inventory",
-          state: "ready_partial",
-          detail: "Current stock is queryable while movement history backfills.",
-          progress: 72,
-          watermark: {
-            label: "Ready through 10:40 am",
-            at: "2026-08-03T00:40:00.000Z",
-          },
-        },
-        {
-          id: "lightspeed-customers",
-          label: "Customers",
-          state: "validating",
-          detail: "Checking identity coverage and duplicate customer records.",
-          progress: 88,
-        },
-        {
-          id: "lightspeed-products",
-          label: "Product catalogue",
-          state: "transforming",
-          detail: "Mapping products, variants, and the category hierarchy.",
-          progress: 81,
-        },
-      ],
-    },
-    {
-      id: "xero",
-      name: "Xero",
-      description: "Accounting, invoices, journals, and bank activity.",
-      logo: "/logos/xero.svg",
-      auth: {
-        state: "healthy",
-        label: "Connected",
-        detail: "Australian organisation · Accrual basis",
-        accountName: "Albert Cycle Co Pty Ltd",
-        checkedAt: "2026-08-03T00:38:00.000Z",
-      },
-      domains: [
-        {
-          id: "xero-accounting",
-          label: "Accounting",
-          state: "syncing",
-          detail: "The current accounting period is loading before older journals.",
-          progress: 63,
-          watermark: {
-            label: "Synced through 31 July",
-            at: "2026-07-31T14:00:00.000Z",
-          },
-        },
-        {
-          id: "xero-cash",
-          label: "Cash settlement",
-          state: "degraded",
-          detail: "Bank activity is available through Friday; the weekend deposit is pending.",
-          progress: 76,
-          watermark: {
-            label: "Available through 1 August",
-            at: "2026-08-01T14:00:00.000Z",
-          },
-        },
-        {
-          id: "xero-payables",
-          label: "Payables",
-          state: "not_started",
-          detail: "Queued behind the current accounting period.",
-          progress: 0,
-        },
-      ],
-    },
-    {
-      id: "deputy",
-      name: "Deputy",
-      description: "Rosters, timesheets, leave, and workforce activity.",
-      logo: "/logos/deputy.png",
-      auth: {
-        state: "reauth_required",
-        label: "Reconnect required",
-        detail: "Authorization expired; existing review items remain available.",
-        accountName: "Albert Cycle Co.",
-        checkedAt: "2026-08-03T00:36:00.000Z",
-      },
-      domains: [
-        {
-          id: "deputy-workforce",
-          label: "Workforce",
-          state: "blocked",
-          detail: "Reconnect Deputy before rosters and timesheets can resume syncing.",
-          progress: 0,
-        },
-      ],
-    },
-  ],
-  dossier: [
-    {
-      id: "industry",
-      label: "Business type",
-      value: "Independent bicycle retailer",
-      confidence: { label: "High", percent: 96 },
-      provenance: "Lightspeed product category mix",
-      observedAt: "2026-08-03T00:42:00.000Z",
-    },
-    {
-      id: "locations",
-      label: "Trading locations",
-      value: "Brunswick and Fitzroy",
-      confidence: { label: "High", percent: 100 },
-      provenance: "Lightspeed Shops",
-      observedAt: "2026-08-03T00:41:00.000Z",
-    },
-    {
-      id: "gst",
-      label: "GST registration",
-      value: "Registered",
-      confidence: { label: "High", percent: 100 },
-      provenance: "Xero Organisation settings",
-      observedAt: "2026-08-03T00:38:00.000Z",
-    },
-    {
-      id: "accounting-basis",
-      label: "Accounting basis",
-      value: "Accrual",
-      confidence: { label: "High", percent: 100 },
-      provenance: "Xero Organisation settings",
-      observedAt: "2026-08-03T00:38:00.000Z",
-    },
-  ],
-  blockingQuestions: [
-    {
-      id: "sales-lens",
-      label: "Default sales lens",
-      question: "When you say sales, which figure should Albert use by default?",
-      options: [
-        { id: "ex-gst", label: "Excluding GST" },
-        { id: "inc-gst", label: "Including GST" },
-      ],
-    },
-    {
-      id: "trading-day",
-      label: "Trading-day cutoff",
-      question: "When should a trading day end for overnight activity?",
-      options: [
-        { id: "midnight", label: "Midnight" },
-        { id: "2am", label: "2 am" },
-        { id: "4am", label: "4 am" },
-      ],
-      selectedOptionId: "2am",
-    },
-    {
-      id: "employee-performance",
-      label: "Employee performance",
-      question: "What should performed best mean by default?",
-      options: [
-        { id: "net-sales", label: "Net sales" },
-        { id: "gross-profit", label: "Gross profit" },
-        { id: "profit-per-hour", label: "Sales per worked hour" },
-      ],
-    },
-  ],
-  identityMatches: [
-    {
-      id: "worker-jessica-chen",
-      kind: "worker",
-      title: "Is this the same team member?",
-      first: {
-        provider: "lightspeed",
-        providerLabel: "Lightspeed",
-        value: "Jessica Chen",
-      },
-      second: {
-        provider: "deputy",
-        providerLabel: "Deputy",
-        value: "Jess C",
-      },
-      evidence: "Exact work email and the same Fitzroy location",
-      confidence: "High",
-      decision: "proposed",
-      projectionStatus: "applied",
-    },
-    {
-      id: "location-brunswick",
-      kind: "location",
-      title: "Do these names describe the same place?",
-      first: {
-        provider: "lightspeed",
-        providerLabel: "Lightspeed",
-        value: "Brunswick Shop",
-      },
-      second: {
-        provider: "deputy",
-        providerLabel: "Deputy",
-        value: "Brunswick",
-      },
-      evidence: "Normalised street address matches exactly",
-      confidence: "High",
-      decision: "proposed",
-      projectionStatus: "applied",
-    },
-  ],
-};
 
 /** Truthful zero state used before the authenticated control plane responds. */
 export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze({
@@ -421,36 +201,25 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
       name: "Lightspeed",
       description: "Sales, inventory, customers, and store activity.",
       logo: "/logos/lightspeed.png",
-      auth: Object.freeze({
-        state: "not_connected" as const,
-        label: "Not connected",
-        detail: "Connect a Lightspeed Retail R-Series account.",
-      }),
-      domains: Object.freeze([]),
+      connectDetail: "Connect a Lightspeed Retail R-Series account.",
+      connections: Object.freeze([]),
     }),
     Object.freeze({
       id: "xero" as const,
       name: "Xero",
       description: "Accounting, invoices, journals, and bank activity.",
       logo: "/logos/xero.svg",
-      auth: Object.freeze({
-        state: "not_connected" as const,
-        label: "Not connected",
-        detail: "Connect a Xero organisation.",
-      }),
-      domains: Object.freeze([]),
+      connectDetail: "Connect a Xero organisation.",
+      additionalConnectionLabel: "Add another Xero organisation",
+      connections: Object.freeze([]),
     }),
     Object.freeze({
       id: "deputy" as const,
       name: "Deputy",
       description: "Rosters, timesheets, leave, and workforce activity.",
       logo: "/logos/deputy.png",
-      auth: Object.freeze({
-        state: "not_connected" as const,
-        label: "Not connected",
-        detail: "Connect a Deputy installation.",
-      }),
-      domains: Object.freeze([]),
+      connectDetail: "Connect a Deputy installation.",
+      connections: Object.freeze([]),
     }),
   ]),
   dossier: Object.freeze([]),
@@ -520,16 +289,25 @@ function ProgressBar({
 function ProviderLogo({ provider }: { provider: ConnectionProviderData }) {
   return (
     <span className={styles.connectionsProviderLogo} data-provider={provider.id}>
-      <Image src={provider.logo} alt="" width={24} height={24} />
+      <Image src={provider.logo} alt="" width={24} height={24} unoptimized />
     </span>
   );
 }
 
 export default function ConnectionsWorkspace(props: ConnectionsWorkspaceProps) {
-  const data=props.data??emptyConnectionsWorkspace;
-  const stateKey=[
-    ...data.blockingQuestions.map((question)=>`q:${question.id}:${question.selectedOptionId??""}`),
-    ...data.identityMatches.map((match)=>`m:${match.id}:${match.decision}:${match.projectionStatus}`),
+  const data = props.data ?? emptyConnectionsWorkspace;
+  const stateKey = [
+    ...data.providers.flatMap((provider) =>
+      provider.connections.map((connection) =>
+        `c:${connection.connectionId}:${connection.auth.state}`
+      )
+    ),
+    ...data.blockingQuestions.map((question) =>
+      `q:${question.id}:${question.selectedOptionId ?? ""}`
+    ),
+    ...data.identityMatches.map((match) =>
+      `m:${match.id}:${match.decision}:${match.projectionStatus}`
+    ),
   ].join("|");
   return <ConnectionsWorkspaceStateful key={stateKey} {...props} data={data} />;
 }
@@ -537,7 +315,9 @@ export default function ConnectionsWorkspace(props: ConnectionsWorkspaceProps) {
 function ConnectionsWorkspaceStateful({
   data = emptyConnectionsWorkspace,
   status = { kind: "ready" },
+  notice = null,
   initialView = "apps",
+  canManage = false,
   onViewChange,
   onConnect,
   onManage,
@@ -563,14 +343,24 @@ function ConnectionsWorkspaceStateful({
   const [matchProjectionStatuses, setMatchProjectionStatuses] = useState<Record<string, IdentityMatch["projectionStatus"]>>(() =>
     Object.fromEntries(data.identityMatches.map((match) => [match.id, match.projectionStatus])),
   );
-  const [managedProviderId, setManagedProviderId] = useState<ConnectionProviderId | null>(null);
+  const [pendingQuestionId, setPendingQuestionId] = useState<string | null>(null);
+  const [managedConnectionId, setManagedConnectionId] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const manageDialogRef = useRef<HTMLElement>(null);
   const managePreviousFocusRef = useRef<HTMLElement | null>(null);
-  const managedProvider = data.providers.find(({ id }) => id === managedProviderId);
+  const managedConnection = useMemo(() => {
+    if (!managedConnectionId) return undefined;
+    for (const provider of data.providers) {
+      const connection = provider.connections.find(({ connectionId }) => connectionId === managedConnectionId);
+      if (connection) return { provider, connection } as const;
+    }
+    return undefined;
+  }, [data.providers, managedConnectionId]);
 
   const allDomains = useMemo(
-    () => data.providers.flatMap((provider) => provider.domains),
+    () => data.providers.flatMap((provider) =>
+      provider.connections.flatMap((connection) => connection.domains),
+    ),
     [data.providers],
   );
   const readyDomainCount = allDomains.filter((domain) =>
@@ -583,6 +373,14 @@ function ConnectionsWorkspaceStateful({
     (match) => matchDecisions[match.id] === "proposed",
   ).length;
   const reviewCount = openQuestionCount + proposedMatchCount;
+  const mutationsEnabled = canManage && status.kind === "ready";
+  const disabledActionTitle = !canManage
+    ? "Owner or manager access is required."
+    : status.kind === "loading"
+      ? "Connection status is still loading."
+      : status.kind === "error"
+        ? "Connection controls are unavailable until status recovers."
+        : undefined;
 
   useLayoutEffect(() => {
     const container = tabListRef.current;
@@ -612,7 +410,7 @@ function ConnectionsWorkspaceStateful({
   }, [activeView]);
 
   useEffect(() => {
-    if (!managedProviderId) return;
+    if (!managedConnectionId) return;
     managePreviousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -622,7 +420,7 @@ function ConnectionsWorkspaceStateful({
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        setManagedProviderId(null);
+        setManagedConnectionId(null);
         setConfirmDisconnect(false);
         return;
       }
@@ -645,7 +443,7 @@ function ConnectionsWorkspaceStateful({
       document.body.style.overflow = previousOverflow;
       managePreviousFocusRef.current?.focus();
     };
-  }, [managedProviderId]);
+  }, [managedConnectionId]);
 
   const selectView = (view: ConnectionViewId, focus = false) => {
     setActiveView(view);
@@ -677,20 +475,39 @@ function ConnectionsWorkspaceStateful({
     selectView(CONNECTION_VIEWS[nextIndex], true);
   };
 
-  const answerQuestion = (questionId: string, optionId: string) => {
+  const answerQuestion = async (questionId: string, optionId: string) => {
+    if (!mutationsEnabled || !onAnswerBlockingQuestion || pendingQuestionId) return;
+    const previousOptionId = answers[questionId];
     setAnswers((current) => ({ ...current, [questionId]: optionId }));
-    onAnswerBlockingQuestion?.(questionId, optionId);
+    setPendingQuestionId(questionId);
+    try {
+      const saved = await onAnswerBlockingQuestion(questionId, optionId);
+      if (saved === false) {
+        setAnswers((current) => {
+          const next = { ...current };
+          if (previousOptionId) next[questionId] = previousOptionId;
+          else delete next[questionId];
+          return next;
+        });
+      }
+    } catch {
+      setAnswers((current) => {
+        const next = { ...current };
+        if (previousOptionId) next[questionId] = previousOptionId;
+        else delete next[questionId];
+        return next;
+      });
+    } finally {
+      setPendingQuestionId(null);
+    }
   };
 
   const decideMatch = async (matchId: string, decision: MatchDecision) => {
+    if (!mutationsEnabled || !onMatchDecision) return;
     const previousDecision = matchDecisions[matchId] ?? "proposed";
     const previousProjectionStatus = matchProjectionStatuses[matchId] ?? "applied";
     setMatchDecisions((current) => ({ ...current, [matchId]: decision }));
     setMatchProjectionStatuses((current) => ({ ...current, [matchId]: "pending" }));
-    if (!onMatchDecision) {
-      setMatchProjectionStatuses((current) => ({ ...current, [matchId]: "applied" }));
-      return;
-    }
     try {
       const saved = await onMatchDecision(matchId, decision);
       if (saved === false) {
@@ -720,12 +537,26 @@ function ConnectionsWorkspaceStateful({
       </div>
 
       {status.kind !== "ready" ? (
-        <div className={styles.connectionsPreviewNotice} data-status={status.kind} role="status">
+        <div className={styles.connectionsNotice} data-kind={status.kind === "error" ? "error" : "info"} role="status">
           <span aria-hidden="true">✦</span>
           <p>
             <strong>{status.kind === "loading" ? "Loading your connections" : "Connection status unavailable"}</strong>
             {status.message ? ` · ${status.message}` : ""}
           </p>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className={styles.connectionsNotice} data-kind={notice.kind} role={notice.kind === "error" ? "alert" : "status"}>
+          <span aria-hidden="true">{notice.kind === "success" ? "✓" : notice.kind === "error" ? "!" : "✦"}</span>
+          <p>{notice.message}</p>
+        </div>
+      ) : null}
+
+      {status.kind === "ready" && !canManage ? (
+        <div className={styles.connectionsNotice} data-kind="info" role="status">
+          <span aria-hidden="true">✦</span>
+          <p><strong>View only</strong> · An owner or manager can authorize sources and confirm onboarding decisions.</p>
         </div>
       ) : null}
 
@@ -777,7 +608,9 @@ function ConnectionsWorkspaceStateful({
             <div className={styles.connectionsSyncSummaryCopy}>
               <p className={styles.connectionsSectionEyebrow}>PROGRESSIVE SYNC</p>
               <h3 id={`${componentId}-sync-title`}>
-                {readyDomainCount} of {allDomains.length} domains are queryable
+                {allDomains.length > 0
+                  ? `${readyDomainCount} of ${allDomains.length} domains are queryable`
+                  : "Connect a source to start preparing domains"}
               </h3>
               <p>{data.syncSummary.detail}</p>
             </div>
@@ -810,7 +643,8 @@ function ConnectionsWorkspaceStateful({
                   <button
                     key={account.id}
                     type="button"
-                    disabled={!onSelectOAuthAccount}
+                    disabled={!mutationsEnabled || !onSelectOAuthAccount}
+                    title={disabledActionTitle}
                     onClick={() => onSelectOAuthAccount?.(selection.oauthSessionId, account.id)}
                   >
                     <strong>{account.label}</strong>
@@ -823,69 +657,123 @@ function ConnectionsWorkspaceStateful({
 
           <div className={styles.connectionsProviderList} role="list" aria-label="Connected apps">
             {data.providers.map((provider) => {
-              const connected = provider.auth.state === "healthy";
-              const authorizing = provider.auth.state === "authorizing";
-              const needsReconnect =
-                provider.auth.state === "reauth_required" || provider.auth.state === "error";
-              const providerReadyCount = provider.domains.filter((domain) =>
-                queryableReadinessStates.has(domain.state),
-              ).length;
+              const selectionInProgress = data.oauthSelections?.some(
+                (selection) => selection.provider === provider.id,
+              ) ?? false;
 
               return (
-                <article className={styles.connectionsProviderRow} key={provider.id} role="listitem">
-                  <div className={styles.connectionsProviderIdentity}>
-                    <ProviderLogo provider={provider} />
-                    <div className={styles.connectionsProviderCopy}>
-                      <div className={styles.connectionsProviderTitleRow}>
-                        <h3>{provider.name}</h3>
-                        <span
-                          className={styles.connectionsAuthStatus}
-                          data-auth-state={provider.auth.state}
-                        >
-                          <i aria-hidden="true" />
-                          {provider.auth.label}
-                        </span>
-                      </div>
-                      <p>{provider.description}</p>
-                      <small>
-                        {provider.auth.accountName ? `${provider.auth.accountName} · ` : ""}
-                        {connected
-                          ? `${providerReadyCount} of ${provider.domains.length} domains queryable`
-                          : provider.auth.detail}
-                      </small>
-                    </div>
-                  </div>
-
-                  <div className={styles.connectionsProviderActions}>
-                    {connected ? (
-                      <button
-                        className={styles.connectionsProviderActionSecondary}
-                        type="button"
-                        disabled={!onManage && !onDisconnect}
-                        onClick={() => {
-                          if (onManage) onManage(provider.id);
-                          else {
-                            setManagedProviderId(provider.id);
-                            setConfirmDisconnect(false);
-                          }
-                        }}
-                      >
-                        Manage
-                      </button>
+                <section
+                  className={styles.connectionsProviderGroup}
+                  key={provider.id}
+                  role="listitem"
+                  aria-label={`${provider.name} connections`}
+                >
+                  <div role="list" aria-label={`${provider.name} accounts`}>
+                    {provider.connections.length === 0 ? (
+                      <article className={styles.connectionsProviderRow} role="listitem">
+                        <div className={styles.connectionsProviderIdentity}>
+                          <ProviderLogo provider={provider} />
+                          <div className={styles.connectionsProviderCopy}>
+                            <div className={styles.connectionsProviderTitleRow}>
+                              <h3>{provider.name}</h3>
+                              <span className={styles.connectionsAuthStatus} data-auth-state="not_connected">
+                                <i aria-hidden="true" />
+                                Not connected
+                              </span>
+                            </div>
+                            <p>{provider.description}</p>
+                            <small>{provider.connectDetail}</small>
+                          </div>
+                        </div>
+                        <div className={styles.connectionsProviderActions}>
+                          <button
+                            className={styles.connectionsProviderActionPrimary}
+                            type="button"
+                            aria-busy={selectionInProgress}
+                            disabled={selectionInProgress || !mutationsEnabled || !onConnect}
+                            title={disabledActionTitle}
+                            onClick={() => onConnect?.(provider.id)}
+                          >
+                            {selectionInProgress ? "Choosing account…" : "Connect"}
+                          </button>
+                        </div>
+                      </article>
                     ) : (
-                      <button
-                        className={styles.connectionsProviderActionPrimary}
-                        type="button"
-                        aria-busy={authorizing}
-                        disabled={authorizing || !onConnect}
-                        title={!onConnect ? "OAuth authorization is not configured in this preview" : undefined}
-                        onClick={() => onConnect?.(provider.id)}
-                      >
-                        {authorizing ? "Authorizing…" : needsReconnect ? "Reconnect" : "Connect"}
-                      </button>
+                      provider.connections.map((connection) => {
+                        const authorizing = connection.auth.state === "authorizing";
+                        const providerReadyCount = connection.domains.filter((domain) =>
+                          queryableReadinessStates.has(domain.state),
+                        ).length;
+                        return (
+                          <article
+                            className={styles.connectionsProviderRow}
+                            key={connection.connectionId}
+                            role="listitem"
+                            data-connection-id={connection.connectionId}
+                          >
+                            <div className={styles.connectionsProviderIdentity}>
+                              <ProviderLogo provider={provider} />
+                              <div className={styles.connectionsProviderCopy}>
+                                <div className={styles.connectionsProviderTitleRow}>
+                                  <h3>{provider.name}</h3>
+                                  <span
+                                    className={styles.connectionsAuthStatus}
+                                    data-auth-state={connection.auth.state}
+                                  >
+                                    <i aria-hidden="true" />
+                                    {connection.auth.label}
+                                  </span>
+                                </div>
+                                <p>{provider.description}</p>
+                                <small>
+                                  {connection.auth.accountName || "Connected account"} · {connection.auth.label}
+                                  {connection.domains.length > 0
+                                    ? ` · ${providerReadyCount} of ${connection.domains.length} domains queryable`
+                                    : ""}
+                                </small>
+                              </div>
+                            </div>
+                            <div className={styles.connectionsProviderActions}>
+                              <button
+                                className={styles.connectionsProviderActionSecondary}
+                                type="button"
+                                aria-busy={authorizing}
+                                disabled={
+                                  authorizing ||
+                                  !mutationsEnabled ||
+                                  (!onManage && !onConnect && !onDisconnect)
+                                }
+                                title={disabledActionTitle}
+                                onClick={() => {
+                                  if (onManage) onManage(connection.connectionId);
+                                  else {
+                                    setManagedConnectionId(connection.connectionId);
+                                    setConfirmDisconnect(false);
+                                  }
+                                }}
+                              >
+                                {authorizing ? "Authorizing…" : "Manage"}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })
                     )}
                   </div>
-                </article>
+                  {provider.additionalConnectionLabel && provider.connections.length > 0 ? (
+                    <button
+                      className={styles.connectionsProviderAddAction}
+                      type="button"
+                      aria-busy={selectionInProgress}
+                      disabled={selectionInProgress || !mutationsEnabled || !onConnect}
+                      title={disabledActionTitle}
+                      onClick={() => onConnect?.(provider.id)}
+                    >
+                      <span aria-hidden="true">+</span>
+                      {provider.additionalConnectionLabel}
+                    </button>
+                  ) : null}
+                </section>
               );
             })}
           </div>
@@ -912,62 +800,93 @@ function ConnectionsWorkspaceStateful({
           </div>
 
           <div className={styles.connectionsReadinessGroups}>
-            {data.providers.map((provider) => (
-              <section
-                className={styles.connectionsReadinessGroup}
-                key={provider.id}
-                aria-labelledby={`${componentId}-${provider.id}-readiness-title`}
-              >
-                <div className={styles.connectionsReadinessGroupHeader}>
-                  <ProviderLogo provider={provider} />
-                  <div>
-                    <h3 id={`${componentId}-${provider.id}-readiness-title`}>{provider.name}</h3>
-                    <p>{provider.auth.detail}</p>
+            {data.providers.map((provider) => provider.connections.length === 0
+              ? (
+                <section
+                  className={styles.connectionsReadinessGroup}
+                  key={provider.id}
+                  aria-labelledby={`${componentId}-${provider.id}-readiness-title`}
+                >
+                  <div className={styles.connectionsReadinessGroupHeader}>
+                    <ProviderLogo provider={provider} />
+                    <div>
+                      <h3 id={`${componentId}-${provider.id}-readiness-title`}>{provider.name}</h3>
+                      <p>{provider.connectDetail}</p>
+                    </div>
                   </div>
-                </div>
-                <div className={styles.connectionsDomainList} role="list">
-                  {provider.domains.map((domain) => (
-                    <article
-                      className={styles.connectionsDomainRow}
-                      data-state={domain.state}
-                      key={domain.id}
-                      role="listitem"
-                    >
-                      <div className={styles.connectionsDomainTopline}>
-                        <div>
-                          <h4>{domain.label}</h4>
-                          <span
-                            className={styles.connectionsReadinessStatus}
-                            data-state={domain.state}
-                          >
-                            {readinessStateLabels[domain.state]}
-                          </span>
-                        </div>
-                        {domain.watermark ? (
-                          <time dateTime={domain.watermark.at}>{domain.watermark.label}</time>
-                        ) : null}
+                  <div className={styles.connectionsDomainList}>
+                    <p className={styles.connectionsEmptyState}>No domains are available until this source is connected and its first sync begins.</p>
+                  </div>
+                </section>
+              )
+              : provider.connections.map((connection) => {
+                const accountLabel = connection.auth.accountName || `${provider.name} account`;
+                const authDetail = connection.auth.detail === accountLabel
+                  ? ""
+                  : ` · ${connection.auth.detail}`;
+                return (
+                  <section
+                    className={styles.connectionsReadinessGroup}
+                    key={connection.connectionId}
+                    aria-labelledby={`${componentId}-${connection.connectionId}-readiness-title`}
+                    data-connection-id={connection.connectionId}
+                  >
+                    <div className={styles.connectionsReadinessGroupHeader}>
+                      <ProviderLogo provider={provider} />
+                      <div>
+                        <h3 id={`${componentId}-${connection.connectionId}-readiness-title`}>{provider.name}</h3>
+                        <p>{accountLabel} · {connection.auth.label}{authDetail}</p>
                       </div>
-                      <p>{domain.detail}</p>
-                      {typeof domain.progress === "number" ||
-                      ["syncing", "transforming", "validating"].includes(domain.state) ? (
-                        <div className={styles.connectionsDomainProgress}>
-                          <ProgressBar
-                            value={domain.progress}
-                            state={domain.state}
-                            label={`${domain.label} progress`}
-                          />
-                          {typeof domain.progress === "number" ? (
-                            <span>{clampProgress(domain.progress)}%</span>
-                          ) : (
-                            <span>Working</span>
-                          )}
-                        </div>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ))}
+                    </div>
+                    <div
+                      className={styles.connectionsDomainList}
+                      role={connection.domains.length > 0 ? "list" : undefined}
+                    >
+                      {connection.domains.length === 0 ? (
+                        <p className={styles.connectionsEmptyState}>No domains are available until this account’s first sync begins.</p>
+                      ) : connection.domains.map((domain) => (
+                        <article
+                          className={styles.connectionsDomainRow}
+                          data-state={domain.state}
+                          key={domain.id}
+                          role="listitem"
+                        >
+                          <div className={styles.connectionsDomainTopline}>
+                            <div>
+                              <h4>{domain.label}</h4>
+                              <span
+                                className={styles.connectionsReadinessStatus}
+                                data-state={domain.state}
+                              >
+                                {readinessStateLabels[domain.state]}
+                              </span>
+                            </div>
+                            {domain.watermark ? (
+                              <time dateTime={domain.watermark.at}>{domain.watermark.label}</time>
+                            ) : null}
+                          </div>
+                          <p>{domain.detail}</p>
+                          {typeof domain.progress === "number" ||
+                          ["syncing", "transforming", "validating"].includes(domain.state) ? (
+                            <div className={styles.connectionsDomainProgress}>
+                              <ProgressBar
+                                value={domain.progress}
+                                state={domain.state}
+                                label={`${accountLabel} ${domain.label} progress`}
+                              />
+                              {typeof domain.progress === "number" ? (
+                                <span>{clampProgress(domain.progress)}%</span>
+                              ) : (
+                                <span>Working</span>
+                              )}
+                            </div>
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                );
+              }))}
           </div>
         </div>
       ) : null}
@@ -988,8 +907,13 @@ function ConnectionsWorkspaceStateful({
               </div>
               <p>Every inferred fact keeps its source, observation time, and confidence.</p>
             </div>
-            <dl className={styles.connectionsDossierList}>
-              {data.dossier.map((fact) => (
+            {data.dossier.length === 0 ? (
+              <p className={styles.connectionsEmptyState}>
+                Albert will publish sourced business facts here after connected data passes its first transformation.
+              </p>
+            ) : (
+              <dl className={styles.connectionsDossierList}>
+                {data.dossier.map((fact) => (
                 <div className={styles.connectionsDossierFact} key={fact.id}>
                   <dt>{fact.label}</dt>
                   <dd>
@@ -1005,8 +929,9 @@ function ConnectionsWorkspaceStateful({
                     </small>
                   </dd>
                 </div>
-              ))}
-            </dl>
+                ))}
+              </dl>
+            )}
           </section>
 
           <section className={styles.connectionsReviewSection} aria-labelledby={`${componentId}-questions-title`}>
@@ -1018,7 +943,9 @@ function ConnectionsWorkspaceStateful({
               <p>Albert asks only where two reasonable choices would materially differ.</p>
             </div>
             <div className={styles.connectionsQuestionList}>
-              {data.blockingQuestions.map((question) => (
+              {data.blockingQuestions.length === 0 ? (
+                <p className={styles.connectionsEmptyState}>No blocking decisions are required for the sources connected so far.</p>
+              ) : data.blockingQuestions.map((question) => (
                 <article className={styles.connectionsQuestionRow} key={question.id}>
                   <div className={styles.connectionsQuestionCopy}>
                     <span>{question.label}</span>
@@ -1037,7 +964,10 @@ function ConnectionsWorkspaceStateful({
                           key={option.id}
                           type="button"
                           aria-pressed={selected}
-                          onClick={() => answerQuestion(question.id, option.id)}
+                          aria-busy={pendingQuestionId === question.id}
+                          disabled={!mutationsEnabled || !onAnswerBlockingQuestion || pendingQuestionId !== null}
+                          title={disabledActionTitle}
+                          onClick={() => void answerQuestion(question.id, option.id)}
                         >
                           {option.label}
                         </button>
@@ -1058,7 +988,9 @@ function ConnectionsWorkspaceStateful({
               <p>Confirmations are explicit and reversible; display names are never joined silently.</p>
             </div>
             <div className={styles.connectionsMatchList}>
-              {data.identityMatches.map((match) => {
+              {data.identityMatches.length === 0 ? (
+                <p className={styles.connectionsEmptyState}>No cross-system identity suggestions need review.</p>
+              ) : data.identityMatches.map((match) => {
                 const decision = matchDecisions[match.id] ?? match.decision;
                 const projectionStatus = matchProjectionStatuses[match.id] ?? match.projectionStatus;
                 return (
@@ -1110,6 +1042,8 @@ function ConnectionsWorkspaceStateful({
                           <button
                             className={styles.connectionsMatchSecondary}
                             type="button"
+                            disabled={!mutationsEnabled || !onMatchDecision}
+                            title={disabledActionTitle}
                             onClick={() => void decideMatch(match.id, "rejected")}
                           >
                             Keep separate
@@ -1117,6 +1051,8 @@ function ConnectionsWorkspaceStateful({
                           <button
                             className={styles.connectionsMatchPrimary}
                             type="button"
+                            disabled={!mutationsEnabled || !onMatchDecision}
+                            title={disabledActionTitle}
                             onClick={() => void decideMatch(match.id, "accepted")}
                           >
                             Confirm match
@@ -1127,6 +1063,8 @@ function ConnectionsWorkspaceStateful({
                           <button
                             className={styles.connectionsMatchSecondary}
                             type="button"
+                            disabled={!mutationsEnabled || !onMatchDecision}
+                            title={disabledActionTitle}
                             onClick={() => void decideMatch(match.id, "proposed")}
                           >
                             Undo decision
@@ -1134,6 +1072,8 @@ function ConnectionsWorkspaceStateful({
                           <button
                             className={styles.connectionsMatchPrimary}
                             type="button"
+                            disabled={!mutationsEnabled || !onMatchDecision}
+                            title={disabledActionTitle}
                             onClick={() => void decideMatch(match.id, decision)}
                           >
                             Retry change
@@ -1143,6 +1083,8 @@ function ConnectionsWorkspaceStateful({
                         <button
                           className={styles.connectionsMatchSecondary}
                           type="button"
+                          disabled={!mutationsEnabled || !onMatchDecision}
+                          title={disabledActionTitle}
                           onClick={() => void decideMatch(match.id, "proposed")}
                         >
                           Undo decision
@@ -1157,13 +1099,13 @@ function ConnectionsWorkspaceStateful({
         </div>
       ) : null}
 
-      {managedProvider ? (
+      {managedConnection ? (
         <div
           className={styles.connectionsManageBackdrop}
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setManagedProviderId(null);
+              setManagedConnectionId(null);
               setConfirmDisconnect(false);
             }
           }}
@@ -1180,32 +1122,37 @@ function ConnectionsWorkspaceStateful({
               type="button"
               aria-label="Close connection settings"
               onClick={() => {
-                setManagedProviderId(null);
+                setManagedConnectionId(null);
                 setConfirmDisconnect(false);
               }}
             >
               ×
             </button>
             <div className={styles.connectionsManageIdentity}>
-              <ProviderLogo provider={managedProvider} />
+              <ProviderLogo provider={managedConnection.provider} />
               <div>
                 <span>CONNECTED APP</span>
-                <h3 id={`${componentId}-manage-title`}>{managedProvider.name}</h3>
-                <p>{managedProvider.auth.accountName || managedProvider.auth.detail}</p>
+                <h3 id={`${componentId}-manage-title`}>{managedConnection.provider.name}</h3>
+                <p>
+                  {managedConnection.connection.auth.accountName ||
+                    managedConnection.connection.auth.detail}
+                </p>
               </div>
             </div>
             {confirmDisconnect ? (
               <div className={styles.connectionsDisconnectConfirm}>
-                <strong>Disconnect {managedProvider.name}?</strong>
-                <p>Syncing stops immediately. Credentials are revoked or destroyed, and tenant data enters the audited deletion workflow.</p>
+                <strong>
+                  Disconnect {managedConnection.connection.auth.accountName || managedConnection.provider.name}?
+                </strong>
+                <p>Only this connection stops syncing. Its credentials are revoked or destroyed, and its tenant data enters the audited deletion workflow.</p>
                 <div>
                   <button type="button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button>
                   <button
                     type="button"
-                    disabled={!managedProvider.connectionId || !onDisconnect}
+                    disabled={!mutationsEnabled || !onDisconnect}
                     onClick={() => {
-                      if (managedProvider.connectionId) onDisconnect?.(managedProvider.connectionId);
-                      setManagedProviderId(null);
+                      onDisconnect?.(managedConnection.connection.connectionId);
+                      setManagedConnectionId(null);
                       setConfirmDisconnect(false);
                     }}
                   >
@@ -1215,11 +1162,19 @@ function ConnectionsWorkspaceStateful({
               </div>
             ) : (
               <div className={styles.connectionsManageActions}>
-                <button type="button" onClick={() => onConnect?.(managedProvider.id)}>
-                  <strong>Reauthorize connection</strong>
-                  <span>Run the provider’s OAuth flow again without changing historical lineage.</span>
+                <button
+                  type="button"
+                  disabled={!mutationsEnabled || !onConnect}
+                  onClick={() => onConnect?.(managedConnection.provider.id)}
+                >
+                  <strong>Refresh authorization</strong>
+                  <span>Authorize this provider account again; choosing a different account adds it separately.</span>
                 </button>
-                <button type="button" onClick={() => setConfirmDisconnect(true)}>
+                <button
+                  type="button"
+                  disabled={!mutationsEnabled || !onDisconnect}
+                  onClick={() => setConfirmDisconnect(true)}
+                >
                   <strong>Disconnect and delete</strong>
                   <span>Stop syncs, destroy credentials, and schedule the scoped purge.</span>
                 </button>

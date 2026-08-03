@@ -22,10 +22,14 @@ const ids = {
 const config: WebhookGatewayConfig = {
   controlPlaneDatabaseUrl: "postgresql://worker:secret@db.example/postgres",
   rawStorage: {
-    endpoint:"https://project.storage.supabase.co/storage/v1/s3",
+    endpoint:"https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
+    authUrl:"https://abcdefghijklmnopqrst.supabase.co",
     region:"ap-southeast-2",
-    accessKeyId:"storage-access-key",
-    secretAccessKey:"storage-secret-key-value",
+    accessKeyId:"abcdefghijklmnopqrst",
+    legacyAnonKey:"eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
+    machinePurpose:"webhook",
+    machineEmail:"raw-storage-webhook@machine.albert.invalid",
+    machinePassword:"webhook-machine-password-material-000001",
     bucket:"raw-payloads",
   },
   xeroWebhookSigningKey: "xero-webhook-key",
@@ -34,9 +38,11 @@ const config: WebhookGatewayConfig = {
     currentKey: new Uint8Array(Buffer.alloc(32, 7)),
     keys: new Map([["xero-inbox-v1", new Uint8Array(Buffer.alloc(32, 7))]]),
   },
-  xeroWebhookEncryptedRetentionDays: 32,
-  xeroWebhookMetadataRetentionDays: 40,
+  xeroWebhookEncryptedRetentionDays: 3,
+  xeroWebhookMetadataRetentionDays: 14,
   xeroWebhookPersistenceTimeoutMs: 3_500,
+  webhookAttestationKeyId: "webhook-attestation-v1",
+  webhookAttestationSecret: Buffer.alloc(32, 11).toString("base64url"),
   xeroWebhookProcessor: {
     workerId: "test-webhook-worker",
     leaseSeconds: 90,
@@ -96,7 +102,13 @@ function dependencies(options: Readonly<{
   const store = {
     async reserve() {
       calls.push("reserve");
-      return { receiptId: ids.receiptId, status: "received" as const, rawObjectKey: null, duplicate: false };
+      return {
+        receiptId: ids.receiptId,
+        status: "received" as const,
+        rawObjectKey: null,
+        duplicate: false,
+        receivedAt: "2026-08-03T10:00:00.000Z",
+      };
     },
     async attachRaw() { calls.push("attach"); },
     async finalize(input: { streams: readonly string[] }) {
@@ -192,6 +204,7 @@ async function deputyIngressFixture(options: Readonly<{
     status: "received" | "queued";
     rawObjectKey: null;
     duplicate: boolean;
+    receivedAt: string;
   }>;
 }> = {}) {
   const connectionId = options.connectionId ?? ids.connectionId;
@@ -338,6 +351,7 @@ test("Deputy replay identity is body-derived and a processed retry is not routed
         status: reservation === 1 ? "received" : "queued",
         rawObjectKey: null,
         duplicate: reservation > 1,
+        receivedAt: "2026-08-03T10:00:00.000Z",
       };
     },
   });
@@ -365,15 +379,25 @@ test("Deputy replay identity is body-derived and a processed retry is not routed
 test("gateway configuration fails closed without the Deputy webhook-only encryption key", () => {
   const source: NodeJS.ProcessEnv = {
     NODE_ENV: "production",
-    CONTROL_PLANE_DATABASE_URL: config.controlPlaneDatabaseUrl,
-    SUPABASE_STORAGE_S3_ENDPOINT: config.rawStorage.endpoint,
-    SUPABASE_STORAGE_S3_REGION: config.rawStorage.region,
+    CONTROL_PLANE_DATABASE_URL:
+      "postgresql://albert_webhook_control_runtime.abcdefghijklmnopqrst:secret@control.example/postgres?sslmode=require",
+    ALBERT_CONTROL_PLANE_PROJECT_REF: "abcdefghijklmnopqrst",
+    ALBERT_CONTROL_PLANE_REGION: "ap-southeast-2",
+    SUPABASE_STORAGE_S3_ENDPOINT:
+      "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
+    SUPABASE_STORAGE_S3_REGION: "ap-southeast-2",
     SUPABASE_STORAGE_S3_ACCESS_KEY_ID: config.rawStorage.accessKeyId,
-    SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY: config.rawStorage.secretAccessKey,
+    SUPABASE_STORAGE_S3_LEGACY_ANON_KEY: config.rawStorage.legacyAnonKey,
+    ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: config.rawStorage.machinePassword,
     XERO_WEBHOOK_SIGNING_KEY: config.xeroWebhookSigningKey,
     WEBHOOK_INBOX_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
     WEBHOOK_INBOX_ENCRYPTION_KEY_ID: "xero-inbox-v1",
+    WEBHOOK_ATTESTATION_KEY_ID: config.webhookAttestationKeyId,
+    WEBHOOK_ATTESTATION_SECRET: config.webhookAttestationSecret,
     ALBERT_WEBHOOK_WORKER_ID: "test-webhook-worker",
+    FLY_MACHINE_ID: "90801abcdef123",
+    ALBERT_SERVICE_VERSION: "a".repeat(40),
+    ALBERT_DEPLOYMENT_ID: "test-deployment-1",
   };
   assert.throws(() => loadWebhookGatewayConfig(source), /DEPUTY_WEBHOOK_ENCRYPTION_KEY/);
 });

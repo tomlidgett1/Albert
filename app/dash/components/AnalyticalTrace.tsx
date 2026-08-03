@@ -1,21 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   TraceChartEvent,
   TraceEvent,
   TraceProvenance,
-  TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
 import styles from "../dash.module.css";
+import {
+  parseSafeAnswerLineage,
+  type SafeAnswerLineage,
+  type TurnLineageReference,
+} from "./answer-lineage";
+import {
+  formatCompactTraceCell,
+  formatTraceCell,
+  isExplainableTraceCell,
+  traceCellNumber,
+} from "./analytical-values";
 
 type AnalyticalTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   runtime?: "fixture" | "openai";
+  lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
-  onClarification?: (value: string, question: string) => void;
+  onClarification?: (label: string, optionId: string) => void;
 };
 
 type ExplainSelection = {
@@ -24,6 +35,12 @@ type ExplainSelection = {
   provenance: TraceProvenance;
 };
 
+type LineageState =
+  | Readonly<{ kind: "idle"; message: string }>
+  | Readonly<{ kind: "loading"; key: string }>
+  | Readonly<{ kind: "ready"; key: string; lineage: SafeAnswerLineage }>
+  | Readonly<{ kind: "error"; key: string; message: string }>;
+
 const answerStateDescriptions = {
   Verified: "Validated against complete, query-ready data",
   Qualified: "Useful with a disclosed data or definition limitation",
@@ -31,30 +48,6 @@ const answerStateDescriptions = {
   Clarification: "Albert needs one answer before the analysis can continue",
   Unavailable: "The required data is not currently queryable",
 } as const;
-
-function formatCell(value: string | number | null, column: TraceTableColumn) {
-  if (value === null) return "—";
-  if (typeof value !== "number") return value;
-
-  if (column.type === "currency") {
-    return new Intl.NumberFormat("en-AU", {
-      style: "currency",
-      currency: "AUD",
-      maximumFractionDigits: 0,
-    }).format(value);
-  }
-
-  if (column.type === "percent") {
-    const normalized = Math.abs(value) <= 1 ? value : value / 100;
-    return new Intl.NumberFormat("en-AU", {
-      style: "percent",
-      maximumFractionDigits: 1,
-      signDisplay: "exceptZero",
-    }).format(normalized);
-  }
-
-  return new Intl.NumberFormat("en-AU", { maximumFractionDigits: 2 }).format(value);
-}
 
 function formatTime(value: string) {
   const date = new Date(value);
@@ -65,6 +58,116 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatFinalizedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-AU", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function ImmutableLineageSection({
+  state,
+  onRetry,
+}: {
+  state: LineageState;
+  onRetry: () => void;
+}) {
+  if (state.kind === "idle") {
+    return (
+      <section className={styles.traceLineage} aria-label="Immutable answer record">
+        <div className={styles.traceLineageHeading}>
+          <h5>Immutable answer record</h5>
+          <span data-state="pending">PENDING</span>
+        </div>
+        <p className={styles.traceLineageState}>{state.message}</p>
+      </section>
+    );
+  }
+
+  if (state.kind === "loading") {
+    return (
+      <section className={styles.traceLineage} aria-label="Immutable answer record">
+        <div className={styles.traceLineageHeading}>
+          <h5>Immutable answer record</h5>
+          <span data-state="loading">CHECKING</span>
+        </div>
+        <p className={styles.traceLineageState} role="status">Verifying the sealed turn receipt…</p>
+      </section>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <section className={styles.traceLineage} aria-label="Immutable answer record">
+        <div className={styles.traceLineageHeading}>
+          <h5>Immutable answer record</h5>
+          <span data-state="error">UNAVAILABLE</span>
+        </div>
+        <div className={styles.traceLineageError} role="alert">
+          <p>{state.message}</p>
+          <button type="button" onClick={onRetry}>Try again</button>
+        </div>
+      </section>
+    );
+  }
+
+  const { lineage } = state;
+  return (
+    <section className={styles.traceLineage} aria-label="Immutable answer record">
+      <div className={styles.traceLineageHeading}>
+        <h5>Immutable answer record</h5>
+        <span data-state="sealed">SEALED</span>
+      </div>
+      <p className={styles.traceLineageIntro}>
+        Finalized {formatFinalizedAt(lineage.finalizedAt)} · turn {lineage.turnNumber} · {lineage.answerState}
+      </p>
+      <dl className={styles.traceLineageReceipt}>
+        <div>
+          <dt>Answer artifact</dt>
+          <dd title={lineage.answerArtifactId}>{lineage.answerArtifactId}</dd>
+        </div>
+        <div>
+          <dt>Artifact digest</dt>
+          <dd title={lineage.artifactDigest}>{lineage.artifactDigest}</dd>
+        </div>
+        <div>
+          <dt>Trace digest</dt>
+          <dd title={lineage.traceDigest}>{lineage.traceDigest}</dd>
+        </div>
+        {lineage.semanticBundleHash ? (
+          <div>
+            <dt>Semantic bundle</dt>
+            <dd title={lineage.semanticBundleHash}>{lineage.semanticBundleHash}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <div className={styles.traceLineageQueries}>
+        <h6>Governed query receipts</h6>
+        {lineage.queries.length ? (
+          <ol>
+            {lineage.queries.map((query) => (
+              <li key={query.queryAuditId}>
+                <div>
+                  <strong>{query.topic || (query.route === "semantic" ? "Semantic query" : "Source exploration")}</strong>
+                  <span>{query.route.replaceAll("_", " ")} · registry {query.registryVersion} · {query.answerState}</span>
+                </div>
+                <dl>
+                  <div><dt>Compiler</dt><dd title={query.compilerOutputHash}>{query.compilerOutputHash}</dd></div>
+                  <div><dt>Result</dt><dd title={query.resultDigest}>{query.resultDigest}</dd></div>
+                </dl>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>No analytical query was executed for this turn.</p>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function TraceGlyph({ type }: { type: TraceEvent["type"] }) {
@@ -128,9 +231,13 @@ function TraceGlyph({ type }: { type: TraceEvent["type"] }) {
 
 function ProvenancePanel({
   selection,
+  lineageState,
+  onRetryLineage,
   onClose,
 }: {
   selection: ExplainSelection;
+  lineageState: LineageState;
+  onRetryLineage: () => void;
   onClose: () => void;
 }) {
   const { provenance } = selection;
@@ -201,6 +308,8 @@ function ProvenancePanel({
           </ul>
         </div>
       ) : null}
+
+      <ImmutableLineageSection state={lineageState} onRetry={onRetryLineage} />
     </aside>
   );
 }
@@ -212,6 +321,9 @@ function ResultTable({
   event: TraceTableEvent;
   onExplain: (selection: ExplainSelection) => void;
 }) {
+  const hasExplainableCells = event.rows.some((row) => event.columns.some((column) =>
+    isExplainableTraceCell(row[column.key], column),
+  ));
   return (
     <figure className={styles.traceTableFigure}>
       <div className={styles.traceArtifactHeader}>
@@ -234,12 +346,12 @@ function ResultTable({
             </tr>
           </thead>
           <tbody>
-            {event.rows.map((row, rowIndex) => (
+            {event.rows.length ? event.rows.map((row, rowIndex) => (
               <tr key={`${event.resultId}-${rowIndex}`}>
                 {event.columns.map((column) => {
                   const rawValue = row[column.key];
-                  const value = formatCell(rawValue, column);
-                  const explainable = typeof rawValue === "number";
+                  const value = formatTraceCell(rawValue, column);
+                  const explainable = isExplainableTraceCell(rawValue, column);
                   return (
                     <td key={column.key} data-numeric={explainable || undefined}>
                       {explainable ? (
@@ -260,23 +372,31 @@ function ResultTable({
                   );
                 })}
               </tr>
-            ))}
+            )) : (
+              <tr className={styles.traceTableEmpty}>
+                <td colSpan={Math.max(event.columns.length, 1)}>No rows matched this governed query.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
-      <p className={styles.traceTableFootnote}>Select any number to inspect its source, definition, and freshness.</p>
+      {hasExplainableCells ? (
+        <p className={styles.traceTableFootnote}>Select any number to inspect its source, definition, freshness, and immutable receipt.</p>
+      ) : null}
     </figure>
   );
 }
 
 function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
+  const valueColumn = table?.columns.find((column) => column.key === event.yKey);
   const points = useMemo(() => {
     if (!table) return [];
     return table.rows.flatMap((row) => {
-      const value = row[event.yKey];
+      const rawValue = row[event.yKey];
+      const value = traceCellNumber(rawValue);
       const label = row[event.xKey];
-      return typeof value === "number" && label !== null
-        ? [{ label: String(label), value }]
+      return value !== null && label !== null
+        ? [{ label: String(label), rawValue, value }]
         : [];
     });
   }, [event.xKey, event.yKey, table]);
@@ -286,14 +406,21 @@ function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTa
   const padding = { top: 18, right: 18, bottom: 42, left: 24 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const maxValue = Math.max(...points.map((point) => point.value), 1);
+  const maxValue = Math.max(0, ...points.map((point) => point.value));
+  const minValue = Math.min(0, ...points.map((point) => point.value));
+  const domainMax = maxValue === 0 && minValue === 0 ? 1 : maxValue;
+  const valueSpan = Math.max(domainMax - minValue, 1);
+  const yFor = (value: number) => padding.top + ((domainMax - value) / valueSpan) * chartHeight;
+  const zeroY = yFor(0);
   const slotWidth = points.length ? chartWidth / points.length : chartWidth;
   const linePoints = points.map((point, index) => ({
     ...point,
     x: padding.left + slotWidth * index + slotWidth / 2,
-    y: padding.top + chartHeight - (point.value / maxValue) * chartHeight,
+    y: yFor(point.value),
   }));
   const linePath = linePoints.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
+  const chartMinimumWidth = Math.max(480, points.length * 68);
+  const shortLabel = (label: string) => label.length > 14 ? `${label.slice(0, 13)}…` : label;
 
   return (
     <figure className={styles.traceChartFigure}>
@@ -305,35 +432,50 @@ function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTa
         <small>From {table?.caption ?? event.dataRef}</small>
       </div>
       {points.length ? (
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={event.caption}>
-          <line className={styles.traceChartBaseline} x1={padding.left} x2={width - padding.right} y1={padding.top + chartHeight} y2={padding.top + chartHeight} />
-          {event.chartType === "bar" ? points.map((point, index) => {
-            const barWidth = Math.min(58, slotWidth * 0.54);
-            const barHeight = (point.value / maxValue) * chartHeight;
-            const x = padding.left + slotWidth * index + (slotWidth - barWidth) / 2;
-            const y = padding.top + chartHeight - barHeight;
-            return (
-              <g key={`${point.label}-${index}`}>
-                <rect className={styles.traceChartBar} x={x} y={y} width={barWidth} height={barHeight} rx="6" />
-                <text className={styles.traceChartValue} x={x + barWidth / 2} y={Math.max(12, y - 7)} textAnchor="middle">{new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                <text className={styles.traceChartLabel} x={x + barWidth / 2} y={height - 14} textAnchor="middle">{point.label}</text>
-              </g>
-            );
-          }) : (
-            <>
-              <path className={styles.traceChartLine} d={linePath} />
-              {linePoints.map((point, index) => (
+        <div className={styles.traceChartScroll} tabIndex={0} aria-label="Scrollable chart area">
+          <svg
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label={event.caption}
+            style={{ minWidth: chartMinimumWidth }}
+          >
+            <line className={styles.traceChartBaseline} x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} />
+            {event.chartType === "bar" ? points.map((point, index) => {
+              const barWidth = Math.min(58, slotWidth * 0.54);
+              const valueY = yFor(point.value);
+              const barHeight = Math.abs(valueY - zeroY);
+              const x = padding.left + slotWidth * index + (slotWidth - barWidth) / 2;
+              const y = Math.min(valueY, zeroY);
+              const valueLabelY = point.value >= 0
+                ? Math.max(12, y - 7)
+                : Math.min(height - 28, y + barHeight + 14);
+              return (
                 <g key={`${point.label}-${index}`}>
-                  <circle className={styles.traceChartDot} cx={point.x} cy={point.y} r="4" />
-                  <text className={styles.traceChartValue} x={point.x} y={Math.max(12, point.y - 9)} textAnchor="middle">{new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                  <text className={styles.traceChartLabel} x={point.x} y={height - 14} textAnchor="middle">{point.label}</text>
+                  <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
+                  <rect className={styles.traceChartBar} data-negative={point.value < 0 || undefined} x={x} y={y} width={barWidth} height={barHeight} rx="6" />
+                  <text className={styles.traceChartValue} x={x + barWidth / 2} y={valueLabelY} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
+                  <text className={styles.traceChartLabel} x={x + barWidth / 2} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
                 </g>
-              ))}
-            </>
-          )}
-        </svg>
+              );
+            }) : (
+              <>
+                <path className={styles.traceChartLine} d={linePath} />
+                {linePoints.map((point, index) => (
+                  <g key={`${point.label}-${index}`}>
+                    <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
+                    <circle className={styles.traceChartDot} cx={point.x} cy={point.y} r="4" />
+                    <text className={styles.traceChartValue} x={point.x} y={Math.max(12, Math.min(height - 28, point.y - 9))} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
+                    <text className={styles.traceChartLabel} x={point.x} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
+                  </g>
+                ))}
+              </>
+            )}
+          </svg>
+        </div>
       ) : (
-        <p className={styles.traceChartUnavailable}>The governed source table is not available in this trace.</p>
+        <p className={styles.traceChartUnavailable}>
+          {table ? "No chartable values were returned by the governed query." : "The governed source table is not available in this trace."}
+        </p>
       )}
     </figure>
   );
@@ -343,10 +485,14 @@ export default function AnalyticalTrace({
   events,
   streaming = false,
   runtime = "openai",
+  lineageReference,
   onFollowUp,
   onClarification,
 }: AnalyticalTraceProps) {
   const [explainSelection, setExplainSelection] = useState<ExplainSelection | null>(null);
+  const [lineageAttempt, setLineageAttempt] = useState(0);
+  const [lineageState, setLineageState] = useState<LineageState>({ kind: "loading", key: "" });
+  const lineageCacheRef = useRef<Readonly<{ key: string; lineage: SafeAnswerLineage }> | null>(null);
   const orderedEvents = useMemo(
     () => [...events].sort((first, second) => first.sequence - second.sequence),
     [events],
@@ -357,6 +503,74 @@ export default function AnalyticalTrace({
     ),
     [orderedEvents],
   );
+  const auditProvenance = useMemo(() => {
+    for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
+      const event = orderedEvents[index];
+      if (event.type === "answer" || event.type === "table") return event.provenance;
+    }
+    return undefined;
+  }, [orderedEvents]);
+  const lineageConversationId = lineageReference?.conversationId;
+  const lineageTurnId = lineageReference?.turnId;
+  const lineageKey = lineageConversationId && lineageTurnId
+    ? `${lineageConversationId}:${lineageTurnId}`
+    : "";
+  const visibleLineageState: LineageState = streaming
+    ? {
+        kind: "idle",
+        message: "Albert seals the immutable receipt after this turn finishes.",
+      }
+    : !lineageConversationId || !lineageTurnId
+      ? {
+          kind: "idle",
+          message: runtime === "fixture"
+            ? "Local fixture turns do not create production answer artifacts."
+            : "This message does not retain the turn identifiers needed to load its sealed receipt.",
+        }
+      : lineageState.kind !== "idle" && lineageState.key === lineageKey
+        ? lineageState
+        : { kind: "loading", key: lineageKey };
+
+  useEffect(() => {
+    if (!explainSelection || streaming || !lineageConversationId || !lineageTurnId) return;
+
+    const controller = new AbortController();
+    void (async () => {
+      await Promise.resolve();
+      if (controller.signal.aborted) return;
+      if (lineageCacheRef.current?.key === lineageKey) {
+        setLineageState({ kind: "ready", key: lineageKey, lineage: lineageCacheRef.current.lineage });
+        return;
+      }
+      setLineageState({ kind: "loading", key: lineageKey });
+      try {
+        const response = await fetch(
+          `/api/conversations/${encodeURIComponent(lineageConversationId)}/turns/${encodeURIComponent(lineageTurnId)}/lineage`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload = await response.json().catch(() => null) as {
+          lineage?: unknown;
+          error?: string;
+        } | null;
+        if (!response.ok) throw new Error(payload?.error || "The immutable answer record could not be loaded.");
+        const lineage = parseSafeAnswerLineage(payload?.lineage, {
+          conversationId: lineageConversationId,
+          turnId: lineageTurnId,
+        });
+        if (!lineage) throw new Error("The immutable answer record returned invalid metadata.");
+        lineageCacheRef.current = { key: lineageKey, lineage };
+        setLineageState({ kind: "ready", key: lineageKey, lineage });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setLineageState({
+          kind: "error",
+          key: lineageKey,
+          message: error instanceof Error ? error.message : "The immutable answer record could not be loaded.",
+        });
+      }
+    })();
+    return () => controller.abort();
+  }, [explainSelection, lineageAttempt, lineageConversationId, lineageKey, lineageTurnId, streaming]);
 
   return (
     <section className={styles.analyticalTrace} aria-label="Albert execution narrative">
@@ -370,6 +584,14 @@ export default function AnalyticalTrace({
         </div>
         <div className={styles.traceHeaderMeta}>
           <span>{runtime === "fixture" ? "Demo dataset" : "OpenAI runtime"}</span>
+          {auditProvenance ? (
+            <button
+              type="button"
+              onClick={() => setExplainSelection({ title: "Immutable turn record", provenance: auditProvenance })}
+            >
+              Audit record
+            </button>
+          ) : null}
           <span className={styles.traceEventCount}>{orderedEvents.length} {orderedEvents.length === 1 ? "step" : "steps"}</span>
         </div>
       </header>
@@ -392,7 +614,20 @@ export default function AnalyticalTrace({
                     <strong>{event.label}</strong>
                     {event.progress !== undefined ? <span>{Math.round(event.progress * 100)}%</span> : null}
                   </div>
-                  <div aria-hidden="true"><span style={{ width: event.progress === undefined ? "36%" : `${event.progress * 100}%` }} /></div>
+                  <div
+                    role="progressbar"
+                    aria-label={event.label}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    {...(event.progress === undefined
+                      ? { "aria-valuetext": "In progress" }
+                      : { "aria-valuenow": Math.round(event.progress * 100) })}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{ width: event.progress === undefined ? "36%" : `${event.progress * 100}%` }}
+                    />
+                  </div>
                 </div>
               ) : null}
 
@@ -431,7 +666,7 @@ export default function AnalyticalTrace({
                   {event.followUps.length ? (
                     <div className={styles.traceFollowUps} aria-label="Suggested follow-up questions">
                       {event.followUps.map((followUp) => (
-                        <button key={followUp} type="button" onClick={() => onFollowUp?.(followUp)}>{followUp}</button>
+                        <button key={followUp} type="button" disabled={!onFollowUp} onClick={() => onFollowUp?.(followUp)}>{followUp}</button>
                       ))}
                     </div>
                   ) : null}
@@ -443,7 +678,7 @@ export default function AnalyticalTrace({
                   <span>ONE DETAIL NEEDED</span>
                   <h4>{event.question}</h4>
                   <div role="group" aria-label={event.question}>
-                    {event.options.map((option) => <button key={option.id} type="button" onClick={() => onClarification?.(option.value, event.question)}>{option.label}</button>)}
+                    {event.options.map((option) => <button key={option.id} type="button" disabled={!onClarification} onClick={() => onClarification?.(option.label, option.id)}>{option.label}</button>)}
                   </div>
                 </div>
               ) : null}
@@ -459,7 +694,14 @@ export default function AnalyticalTrace({
         ))}
       </div>
 
-      {explainSelection ? <ProvenancePanel selection={explainSelection} onClose={() => setExplainSelection(null)} /> : null}
+      {explainSelection ? (
+        <ProvenancePanel
+          selection={explainSelection}
+          lineageState={visibleLineageState}
+          onRetryLineage={() => setLineageAttempt((attempt) => attempt + 1)}
+          onClose={() => setExplainSelection(null)}
+        />
+      ) : null}
     </section>
   );
 }

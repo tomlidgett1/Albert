@@ -1,11 +1,17 @@
+import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
+import {
+  loadRawStorageS3Config,
+  type RawStorageS3Config,
+} from "../../../packages/storage/src/s3.js";
+import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
-import { loadRawStorageS3Config,type RawStorageS3Config } from "../../../packages/storage/src/index.js";
 
 export type SyncWorkerConfig = Readonly<{
   controlPlaneDatabaseUrl: string;
   analyticalDatabaseUrl: string;
   rawStorage: RawStorageS3Config;
   tokenEncryptionKey: string;
+  tokenEncryptionKeys: ReadonlyMap<string, string>;
   tokenKeyReference: string;
   tokenKeyVersion: string;
   oauthWorkerSigningSecret: string;
@@ -13,20 +19,18 @@ export type SyncWorkerConfig = Readonly<{
   lightspeedClientId: string;
   lightspeedClientSecret: string;
   xeroClientId: string;
-  xeroWebhookSigningKey: string;
   xeroEnableAdvancedJournals: boolean;
   xeroDailyRequestLimit: 1000 | 5000;
   deputyClientId: string;
   deputyClientSecret: string;
   deputyRedirectUri: string;
-  deputyWebhookEncryptionKey: string;
-  deputyWebhookEncryptionKeyId: string;
-  deputyWebhookEncryptionKeys: ReadonlyMap<string, string>;
-  webhookGatewayPublicUrl: string;
   mappingVersion: string;
   workerId: string;
+  workerConcurrency: number;
+  queueSlaSeconds: number;
   serviceVersion: string;
   port: number;
+  metricsPort: number;
 }>;
 
 function required(source: NodeJS.ProcessEnv, name: string): string {
@@ -46,7 +50,34 @@ function url(value: string, name: string, protocols: readonly string[]) {
   return parsed;
 }
 
+function boundedInteger(
+  source: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const value = Number(source[name] ?? fallback);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
 export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): SyncWorkerConfig {
+  assertProductionRuntimeBoundary(source, {
+    label: "sync worker",
+    controlProject: true,
+    analyticalRegion: true,
+    storageRegion: true,
+    modelDataResidency: false,
+    lightspeedProduct: true,
+    databaseLogins: {
+      CONTROL_PLANE_DATABASE_URL: "albert_sync_control_runtime",
+      ANALYTICAL_DATABASE_URL: "albert_ingest_runtime",
+    },
+    distinctDatabaseVariables: ["CONTROL_PLANE_DATABASE_URL", "ANALYTICAL_DATABASE_URL"],
+  });
   const control = required(source, "CONTROL_PLANE_DATABASE_URL");
   const analytical = required(source, "ANALYTICAL_DATABASE_URL");
   url(control, "CONTROL_PLANE_DATABASE_URL", ["postgres:", "postgresql:"]);
@@ -67,11 +98,12 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   );
   const port = Number(source.PORT ?? "8080");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT is invalid.");
+  const metricsPort = boundedInteger(source, "ALBERT_METRICS_PORT", 9091, 1, 65535);
+  if (metricsPort === port) throw new Error("ALBERT_METRICS_PORT must differ from PORT.");
+  const workerConcurrency = boundedInteger(source, "ALBERT_WORKER_CONCURRENCY", 8, 1, 64);
+  const queueSlaSeconds = boundedInteger(source, "ALBERT_QUEUE_SLA_SECONDS", 300, 30, 3600);
 
   const tokenEncryptionKey = required(source, "TOKEN_ENCRYPTION_KEY");
-  if (Buffer.from(tokenEncryptionKey, "base64url").byteLength !== 32) {
-    throw new Error("TOKEN_ENCRYPTION_KEY must be a base64url-encoded 256-bit KEK.");
-  }
   const oauthWorkerSigningSecret = required(source, "ALBERT_OAUTH_WORKER_SIGNING_SECRET");
   if (Buffer.byteLength(oauthWorkerSigningSecret, "utf8") < 32) {
     throw new Error("ALBERT_OAUTH_WORKER_SIGNING_SECRET must contain at least 32 bytes.");
@@ -80,32 +112,20 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(tokenKeyVersion)) {
     throw new Error("TOKEN_ENCRYPTION_KEY_ID is invalid.");
   }
-  const deputyWebhookKeyring = loadEncodedAes256Keyring({
-    currentKey: required(source, "DEPUTY_WEBHOOK_ENCRYPTION_KEY"),
-    currentKeyId: required(source, "DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID"),
-    previousKeysJson: source.DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS,
-    keyName: "DEPUTY_WEBHOOK_ENCRYPTION_KEY",
-    keyIdName: "DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID",
-    previousKeysName: "DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS",
+  const tokenKeyring = loadEncodedAes256Keyring({
+    currentKey: tokenEncryptionKey,
+    currentKeyId: tokenKeyVersion,
+    previousKeysJson: source.TOKEN_PREVIOUS_ENCRYPTION_KEYS,
+    keyName: "TOKEN_ENCRYPTION_KEY",
+    keyIdName: "TOKEN_ENCRYPTION_KEY_ID",
+    previousKeysName: "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
+    maxPreviousKeys: 4,
   });
-  const deputyWebhookEncryptionKey = deputyWebhookKeyring.currentKey;
-  if ([...deputyWebhookKeyring.keys.values()].includes(tokenEncryptionKey)) {
-    throw new Error("Deputy webhook material and OAuth tokens must use distinct encryption keys.");
-  }
-  const deputyWebhookEncryptionKeyId = deputyWebhookKeyring.currentKeyId;
-  const webhookGatewayPublicUrl = url(
-    required(source, "WEBHOOK_GATEWAY_PUBLIC_URL"),
-    "WEBHOOK_GATEWAY_PUBLIC_URL",
-    ["https:"],
+  const workerId = loadReplicaWorkerId(
+    source,
+    "ALBERT_WORKER_ID",
+    "Albert sync worker is missing ALBERT_WORKER_ID.",
   );
-  if (
-    webhookGatewayPublicUrl.pathname !== "/" || webhookGatewayPublicUrl.search ||
-    webhookGatewayPublicUrl.hash || webhookGatewayPublicUrl.username || webhookGatewayPublicUrl.password
-  ) throw new Error("WEBHOOK_GATEWAY_PUBLIC_URL must be a clean HTTPS origin.");
-  const workerId = required(source, "ALBERT_WORKER_ID");
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(workerId)) {
-    throw new Error("ALBERT_WORKER_ID is invalid.");
-  }
   const mappingVersion = source.ALBERT_MAPPING_VERSION?.trim() || "m2-v1";
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(mappingVersion)) {
     throw new Error("ALBERT_MAPPING_VERSION is invalid.");
@@ -114,20 +134,23 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   if (xeroAdvancedJournals !== "true" && xeroAdvancedJournals !== "false") {
     throw new Error("XERO_ENABLE_ADVANCED_JOURNALS must be true or false.");
   }
-  const xeroDailyRequestLimit = Number(source.XERO_DAILY_REQUEST_LIMIT ?? "1000");
+  const xeroDailyRequestLimit = Number(
+    source.NODE_ENV === "production"
+      ? required(source, "XERO_DAILY_REQUEST_LIMIT")
+      : source.XERO_DAILY_REQUEST_LIMIT ?? "1000",
+  );
   if (xeroDailyRequestLimit !== 1000 && xeroDailyRequestLimit !== 5000) {
     throw new Error("XERO_DAILY_REQUEST_LIMIT must match the Xero tier limit: 1000 or 5000.");
   }
-  const xeroWebhookSigningKey = required(source, "XERO_WEBHOOK_SIGNING_KEY");
-  if ([...deputyWebhookKeyring.keys.values()].includes(xeroWebhookSigningKey)) {
-    throw new Error("Deputy webhook encryption and Xero signing keys must be distinct.");
-  }
-
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
     analyticalDatabaseUrl: analytical,
-    rawStorage: loadRawStorageS3Config(source),
-    tokenEncryptionKey,
+    rawStorage: loadRawStorageS3Config(source, {
+      machinePurpose: "sync",
+      passwordEnvironmentName: "ALBERT_RAW_STORAGE_SYNC_PASSWORD",
+    }),
+    tokenEncryptionKey: tokenKeyring.currentKey,
+    tokenEncryptionKeys: tokenKeyring.keys,
     tokenKeyReference: "env:TOKEN_ENCRYPTION_KEY",
     tokenKeyVersion,
     oauthWorkerSigningSecret,
@@ -135,19 +158,17 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     lightspeedClientId: required(source, "LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required(source, "LIGHTSPEED_CLIENT_SECRET"),
     xeroClientId: required(source, "XERO_CLIENT_ID"),
-    xeroWebhookSigningKey,
     xeroEnableAdvancedJournals: xeroAdvancedJournals === "true",
     xeroDailyRequestLimit: xeroDailyRequestLimit as 1000 | 5000,
     deputyClientId: required(source, "DEPUTY_CLIENT_ID"),
     deputyClientSecret: required(source, "DEPUTY_CLIENT_SECRET"),
     deputyRedirectUri: redirectValues[2]!,
-    deputyWebhookEncryptionKey,
-    deputyWebhookEncryptionKeyId,
-    deputyWebhookEncryptionKeys: deputyWebhookKeyring.keys,
-    webhookGatewayPublicUrl: webhookGatewayPublicUrl.toString(),
     mappingVersion,
     workerId,
+    workerConcurrency,
+    queueSlaSeconds,
     serviceVersion: source.ALBERT_SERVICE_VERSION?.trim() || "development",
     port,
+    metricsPort,
   });
 }

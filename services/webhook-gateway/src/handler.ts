@@ -137,6 +137,7 @@ export class WebhookGatewayHandler {
           body,
           receivedAt,
           null,
+          connection.materialId,
         );
         return result(200, { accepted: true, routed });
       }
@@ -153,6 +154,7 @@ export class WebhookGatewayHandler {
     body: Uint8Array,
     receivedAt: string,
     vendorEventId?: string | null,
+    verificationReference?: string,
   ): Promise<number> {
     const bodySha256 = webhookBodySha256(body);
     const reservation = await this.dependencies.store.reserve({
@@ -162,6 +164,7 @@ export class WebhookGatewayHandler {
         ? undefined
         : (vendorEventId ?? request.headers.get("x-request-id")?.slice(0, 300)) || undefined,
       bodySha256,
+      verificationReference: verificationReference ?? connection.connectionId,
       safeHeaders: safeHeaders(request),
       receivedAt,
     });
@@ -173,21 +176,34 @@ export class WebhookGatewayHandler {
           connectionId: connection.connectionId,
           receiptId: reservation.receiptId,
           connectorKey: connection.connectorKey,
-          receivedAt,
+          receivedAt: reservation.receivedAt,
           body,
+          authority: {
+            verificationReference: verificationReference ?? connection.connectionId,
+          },
         });
         if (raw.bodySha256 !== bodySha256) throw new Error("webhook_raw_hash_mismatch");
-        await this.dependencies.store.attachRaw(connection, reservation.receiptId, raw.objectKey);
+        await this.dependencies.store.attachRaw(
+          connection,
+          reservation.receiptId,
+          raw.objectKey,
+          verificationReference ?? connection.connectionId,
+        );
       }
       return await this.dependencies.store.finalize({
         connection,
         receiptId: reservation.receiptId,
         streams: disposition.streams,
-        receivedAt,
+        receivedAt: reservation.receivedAt,
         accepted: disposition.accepted,
+        reconciliationSignals: disposition.reconciliationSignals,
       });
     } catch (error) {
-      await this.dependencies.store.markFailed(connection, reservation.receiptId).catch(() => undefined);
+      await this.dependencies.store.markFailed(
+        connection,
+        reservation.receiptId,
+        verificationReference ?? connection.connectionId,
+      ).catch(() => undefined);
       throw error;
     }
   }

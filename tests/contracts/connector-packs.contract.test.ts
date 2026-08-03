@@ -10,6 +10,10 @@ import { buildDeputyAuthorizationUrl } from "../../connectors/deputy/oauth-publi
 import { deputySchemas } from "../../connectors/deputy/schemas";
 import { LightspeedRConnector } from "../../connectors/lightspeed-r/index";
 import { lightspeedRManifest } from "../../connectors/lightspeed-r/manifest";
+import {
+  LIGHTSPEED_R_DOCUMENTATION_BUILD,
+  LIGHTSPEED_R_DOCUMENTED_FIELDS,
+} from "../../connectors/lightspeed-r/documented-fields";
 import { buildLightspeedRAuthorizationUrl } from "../../connectors/lightspeed-r/oauth-public";
 import { lightspeedSchemas } from "../../connectors/lightspeed-r/schemas";
 import { XeroConnector } from "../../connectors/xero/index";
@@ -18,10 +22,15 @@ import {
   xeroManifest,
   xeroRequestedScopes,
 } from "../../connectors/xero/manifest";
+import {
+  XERO_ACCOUNTING_OPENAPI_REVISION,
+  XERO_DOCUMENTED_FIELDS,
+} from "../../connectors/xero/documented-fields";
 import { buildXeroAuthorizationUrl } from "../../connectors/xero/oauth-public";
 import { xeroSchemas } from "../../connectors/xero/schemas";
 import {
   assertFixtureFieldCoverage,
+  assertConnectorManifestReconciliationPolicy,
   decodeCursor,
   encodeCursor,
   fetchWithRetry,
@@ -160,17 +169,214 @@ test("all connector streams have typed, covered sanitized fixtures", () => {
   }
 });
 
+test("the Xero field catalogue is pinned to an immutable official OpenAPI revision", () => {
+  assert.match(XERO_ACCOUNTING_OPENAPI_REVISION, /^[a-f0-9]{40}$/u);
+  assert.match(xeroManifest.apiVersion, new RegExp(XERO_ACCOUNTING_OPENAPI_REVISION));
+  assert.ok(xeroManifest.documentation.some((url) => url.includes(XERO_ACCOUNTING_OPENAPI_REVISION)));
+  for (const [stream, fields] of Object.entries(XERO_DOCUMENTED_FIELDS)) {
+    const dispositions = xeroManifest.fieldCoverage.filter((entry) => entry.stream === stream);
+    const byField = new Map(dispositions.map((entry) => [entry.field, entry]));
+    assert.equal(byField.size, dispositions.length, `${stream} contains duplicate field dispositions`);
+    for (const field of fields) {
+      const disposition = byField.get(field);
+      assert.ok(disposition, `${stream}.${field} is missing its OpenAPI field disposition`);
+      if (disposition.disposition === "unsupported") {
+        assert.match(disposition.reason ?? "", /pinned Xero Accounting OpenAPI/iu);
+      }
+    }
+  }
+});
+
+test("Xero payments are settlement evidence and never fabricate POS tender facts", () => {
+  const payments = xeroManifest.streams.find((stream) => stream.id === "payments");
+  assert.ok(payments);
+  assert.deepEqual(payments.canonicalTargets, ["event_link"]);
+  assert.equal(payments.canonicalTargets.includes("commerce_payment"), false);
+  const paymentFields = xeroManifest.fieldCoverage.filter((field) => field.stream === "payments");
+  assert.ok(paymentFields.filter((field) => field.disposition === "canonical").every((field) =>
+    field.target?.startsWith("event_link.")
+  ));
+  assert.equal(paymentFields.some((field) => field.target?.startsWith("commerce_payment.")), false);
+});
+
+test("lookup-only PaymentType coverage names only emitted metadata evidence", () => {
+  const fields = lightspeedRManifest.fieldCoverage.filter((field) => field.stream === "payment_types");
+  const canonical = fields.filter((field) => field.disposition === "canonical");
+  assert.deepEqual(canonical.map((field) => [field.field, field.target]), [
+    ["paymentTypeID", "metadata.source_record_id"],
+  ]);
+  assert.ok(fields.filter((field) => field.field !== "paymentTypeID").every((field) =>
+    field.disposition !== "canonical"
+  ));
+});
+
+test("all thirty V1 streams declare executable reconciliation policies", () => {
+  const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
+  assert.equal(manifests.reduce((count, manifest) => count + manifest.streams.length, 0), 30);
+  for (const manifest of manifests) {
+    assert.doesNotThrow(() => assertConnectorManifestReconciliationPolicy(manifest));
+    for (const stream of manifest.streams) {
+      assert.ok(stream.lateEditStrategy);
+      assert.ok(stream.deletionStrategy);
+      assert.ok(stream.sourceTotalStrategy);
+      if (stream.deletionStrategy === "immutable_append_only") {
+        assert.equal(stream.lateEditStrategy, "append_only");
+      }
+    }
+  }
+
+  const incomplete = {
+    ...xeroManifest,
+    streams: [{ ...xeroManifest.streams[0], deletionStrategy: undefined }],
+  } as unknown as ConnectorManifest;
+  assert.throws(
+    () => assertConnectorManifestReconciliationPolicy(incomplete),
+    /missing a valid deletionStrategy/iu,
+  );
+});
+
+test("reconciliation uses modification authority and unfiltered identity scans", async () => {
+  const xeroFixture = fixture("../../connectors/xero/fixtures/sanitized-recording.json");
+  const paymentResponse = structuredClone(
+    xeroFixture.responses.payments as Record<string, unknown>,
+  );
+  const payment = (paymentResponse.Payments as Array<Record<string, unknown>>)[0];
+  assert.ok(payment);
+  payment.Date = "2020-01-01T00:00:00Z";
+  payment.DateString = "2020-01-01T00:00:00Z";
+  payment.UpdatedDateUTC = "/Date(1785474000000+0000)/";
+  payment.UpdatedDateUTCString = "2026-07-31T01:00:00Z";
+
+  const xeroRequests: Array<{ url: URL; headers: Headers }> = [];
+  const xero = new XeroConnector({
+    clientId: "client",
+    oauthMode: "pkce",
+    vault: new MemoryVault({
+      provider: "xero",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["accounting.transactions.read"],
+      metadata: { xeroTenantId: "xero-tenant" },
+    }),
+    fetcher: async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/connections") {
+        return Response.json([{
+          id: "connection-1",
+          tenantId: "xero-tenant",
+          tenantType: "ORGANISATION",
+          tenantName: "Demo Xero",
+        }]);
+      }
+      xeroRequests.push({ url, headers: new Headers(init?.headers) });
+      return Response.json(paymentResponse);
+    },
+  });
+  const paymentStream = (await xero.list_streams(context)).find((stream) =>
+    stream.id === "payments"
+  );
+  assert.ok(paymentStream);
+  const latePage = await xero.reconciliation_sync(context, paymentStream, {
+    phase: "late_edits",
+    range: { from: "2026-07-30T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+  });
+  assert.equal(latePage.records.length, 1);
+  assert.equal(
+    latePage.records[0]?.normalized?.timestamps?.event_date?.raw,
+    "2020-01-01T00:00:00Z",
+  );
+  assert.equal(
+    xeroRequests[0]?.headers.get("if-modified-since"),
+    new Date("2026-07-30T00:00:00Z").toUTCString(),
+  );
+  assert.equal(
+    xeroRequests[0]?.url.searchParams.get("where"),
+    "UpdatedDateUTC<DateTime(2026,8,1,0,0,0)",
+  );
+  assert.equal(
+    xeroRequests[0]?.url.searchParams.get("order"),
+    "UpdatedDateUTC ASC,PaymentID ASC",
+  );
+
+  xeroRequests.length = 0;
+  await xero.reconciliation_sync(context, paymentStream, {
+    phase: "identity_snapshot",
+    range: { from: "2026-07-30T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+  });
+  assert.equal(xeroRequests[0]?.headers.has("if-modified-since"), false);
+  assert.equal(xeroRequests[0]?.url.searchParams.has("where"), false);
+
+  let deputyQuery: Record<string, unknown> | undefined;
+  const deputy = new DeputyConnector({
+    clientId: "client",
+    clientSecret: "secret",
+    redirectUri: "https://albert.example/oauth/deputy/callback",
+    vault: new MemoryVault({
+      provider: "deputy",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["longlife_refresh_token"],
+      metadata: { endpoint: "demo.au.deputy.com" },
+    }),
+    fetcher: async (_input, init) => {
+      deputyQuery = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json([]);
+    },
+  });
+  const rosterStream = (await deputy.list_streams(context)).find((stream) =>
+    stream.id === "rosters"
+  );
+  assert.ok(rosterStream);
+  await deputy.reconciliation_sync(context, rosterStream, {
+    phase: "late_edits",
+    range: { from: "2026-07-30T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+  });
+  const lateSearch = deputyQuery?.search as Record<string, Record<string, unknown>>;
+  assert.equal(lateSearch.s1?.field, "Modified");
+  assert.equal(lateSearch.s2?.field, "Modified");
+  assert.equal(Object.values(lateSearch).some((filter) => filter.field === "Date"), false);
+
+  await deputy.reconciliation_sync(context, rosterStream, {
+    phase: "identity_snapshot",
+    range: { from: "2026-07-30T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+  });
+  assert.equal(deputyQuery?.search, undefined);
+  assert.deepEqual(deputyQuery?.sort, { Id: "asc" });
+});
+
+test("the Lightspeed R-Series field catalogue is pinned to a reviewed official documentation build", () => {
+  assert.equal(LIGHTSPEED_R_DOCUMENTATION_BUILD, "2026-07-27T19:51:56Z");
+  assert.match(lightspeedRManifest.apiVersion, /documentation build 2026-07-27T19:51:56Z/u);
+  for (const [stream, fields] of Object.entries(LIGHTSPEED_R_DOCUMENTED_FIELDS)) {
+    const dispositions = lightspeedRManifest.fieldCoverage.filter((entry) => entry.stream === stream);
+    const byField = new Map(dispositions.map((entry) => [entry.field, entry]));
+    assert.equal(byField.size, dispositions.length, `${stream} contains duplicate field dispositions`);
+    for (const field of fields) {
+      const disposition = byField.get(field);
+      assert.ok(disposition, `${stream}.${field} is missing its documentation field disposition`);
+      if (disposition.disposition === "unsupported") {
+        assert.match(disposition.reason ?? "", /pinned Lightspeed R-Series V3 documentation build/iu);
+      }
+    }
+  }
+});
+
 test("public OAuth builders contain only public, state-bound values", () => {
   const lightspeed = new URL(buildLightspeedRAuthorizationUrl({
     clientId: "public-ls-id",
     state: "state-ls",
     redirectUri: "https://albert.example/oauth/lightspeed-r/callback",
-    codeChallenge: "lightspeed-pkce-challenge",
+    codeChallenge: "challenge-ls",
   }));
   assert.equal(lightspeed.hostname, "cloud.lightspeedapp.com");
   assert.equal(lightspeed.searchParams.get("state"), "state-ls");
-  assert.equal(lightspeed.searchParams.get("code_challenge"), "lightspeed-pkce-challenge");
+  assert.equal(lightspeed.searchParams.get("code_challenge"), "challenge-ls");
   assert.equal(lightspeed.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(lightspeed.searchParams.get("redirect_uri"), "https://albert.example/oauth/lightspeed-r/callback");
   assert.equal(lightspeed.toString().includes("secret"), false);
 
   const xero = new URL(buildXeroAuthorizationUrl({
@@ -195,6 +401,52 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(deputy.hostname, "once.deputy.com");
   assert.equal(deputy.searchParams.get("scope"), "longlife_refresh_token");
   assert.equal(deputy.searchParams.get("state"), "state-deputy");
+});
+
+test("Lightspeed R-Series binds the documented redirect URI and PKCE verifier during token exchange", async () => {
+  let exchangeBody: URLSearchParams | undefined;
+  const connector = new LightspeedRConnector({
+    clientId: "lightspeed-client",
+    clientSecret: "lightspeed-secret",
+    vault: new MemoryVault({
+      provider: "lightspeed-r",
+      accessToken: "unused",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: [],
+      metadata: {},
+    }),
+    fetcher: async (_input, init) => {
+      exchangeBody = init?.body as URLSearchParams;
+      return Response.json({
+        access_token: "access",
+        refresh_token: "refresh",
+        token_type: "Bearer",
+        expires_in: 1_800,
+      });
+    },
+  });
+
+  await connector.exchange_authorization_code({
+    code: "short-lived-code",
+    redirectUri: "https://albert.example/api/oauth/lightspeed/callback",
+    codeVerifier: "v".repeat(64),
+  });
+
+  assert.equal(exchangeBody?.get("client_id"), "lightspeed-client");
+  assert.equal(exchangeBody?.get("client_secret"), "lightspeed-secret");
+  assert.equal(exchangeBody?.get("grant_type"), "authorization_code");
+  assert.equal(exchangeBody?.get("code"), "short-lived-code");
+  assert.equal(exchangeBody?.get("code_verifier"), "v".repeat(64));
+  assert.equal(exchangeBody?.get("redirect_uri"), "https://albert.example/api/oauth/lightspeed/callback");
+  assert.deepEqual([...(exchangeBody?.keys() ?? [])].sort(), [
+    "client_id",
+    "client_secret",
+    "code",
+    "code_verifier",
+    "grant_type",
+    "redirect_uri",
+  ]);
 });
 
 test("opaque cursors are provider and stream scoped", () => {
@@ -399,7 +651,7 @@ test("connector capability manifests never silently promote gated sources", asyn
     }),
   });
   const ledger = (await xeroWithoutJournals.describe_capabilities(context))
-    .find((item) => item.id === "finance.general_ledger");
+    .find((item) => item.id === "finance.journals");
   assert.equal(ledger?.support, "unavailable");
 
   const lightspeed = new LightspeedRConnector({
@@ -476,6 +728,7 @@ test("connector workers execute typed, read-only extraction pages against vendor
     clientId: "client",
     oauthMode: "pkce",
     webhookSigningKey: "key",
+    now: () => Date.parse("2026-08-03T00:00:00.000Z"),
     vault: new MemoryVault({
       provider: "xero",
       accessToken: "access",
@@ -718,7 +971,7 @@ test("Lightspeed InventoryLog advances by sortable ID and keeps additive drift o
   assert.equal(requests.at(-1)?.searchParams.get("inventoryLogID"), ">,1101");
   assert.equal(
     (await connector.describe_capabilities(context)).find((item) =>
-      item.id === "inventory.historical_movements")?.support,
+      item.id === "inventory.movements")?.support,
     "partial",
   );
 });
@@ -744,10 +997,8 @@ test("rotating refresh tokens are persisted with compare-and-swap before use", a
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.hostname === "identity.xero.com") {
         assert.equal(String(init?.body).includes("old-refresh"), true);
-        assert.equal(
-          new Headers(init?.headers).get("authorization"),
-          `Basic ${Buffer.from("client:", "utf8").toString("base64")}`,
-        );
+        assert.equal(new Headers(init?.headers).get("authorization"), null);
+        assert.equal((init?.body as URLSearchParams).get("client_id"), "client");
         return Response.json({
           access_token: "new-access",
           refresh_token: "new-refresh",
@@ -764,6 +1015,109 @@ test("rotating refresh tokens are persisted with compare-and-swap before use", a
   assert.equal(connectionsAuthorization, "Bearer new-access");
   assert.equal((await vault.read(context.credentialRef)).secret.refreshToken, "new-refresh");
   assert.equal((await vault.read(context.credentialRef)).revision, "2");
+});
+
+test("Xero connection discovery recovers an early-revoked access token through the durable refresh path", async () => {
+  const vault = new MemoryVault({
+    provider: "xero",
+    accessToken: "revoked-before-expiry",
+    refreshToken: "rotating-refresh-v1",
+    tokenType: "Bearer",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    scopes: ["offline_access", "accounting.settings.read"],
+    metadata: {},
+  });
+  const discoveryAuthorizations: string[] = [];
+  let refreshCalls = 0;
+  const xero = new XeroConnector({
+    clientId: "client",
+    oauthMode: "pkce",
+    vault,
+    fetcher: async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.hostname === "identity.xero.com") {
+        refreshCalls += 1;
+        return Response.json({
+          access_token: "fresh-access",
+          refresh_token: "rotating-refresh-v2",
+          expires_in: 1800,
+          token_type: "Bearer",
+          scope: "offline_access accounting.settings.read",
+        });
+      }
+      const authorization = new Headers(init?.headers).get("authorization") ?? "";
+      discoveryAuthorizations.push(authorization);
+      if (authorization === "Bearer revoked-before-expiry") {
+        return new Response("expired", { status: 401 });
+      }
+      return Response.json([{
+        id: "connection-1",
+        tenantId: "tenant-1",
+        tenantType: "ORGANISATION",
+        tenantName: "Demo Organisation",
+      }]);
+    },
+  });
+
+  const accounts = await xero.discover_accounts(context);
+  assert.equal(accounts.length, 1);
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(discoveryAuthorizations, [
+    "Bearer revoked-before-expiry",
+    "Bearer fresh-access",
+  ]);
+  assert.equal((await vault.read(context.credentialRef)).secret.refreshToken, "rotating-refresh-v2");
+});
+
+test("Xero contact extraction always includes archived source records", async () => {
+  const requestedUrls: URL[] = [];
+  const xero = new XeroConnector({
+    clientId: "client",
+    oauthMode: "pkce",
+    vault: new MemoryVault({
+      provider: "xero",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["accounting.contacts.read"],
+      metadata: { xeroTenantId: "tenant-1" },
+    }),
+    fetcher: async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      requestedUrls.push(url);
+      if (url.pathname === "/connections") {
+        return Response.json([{
+          id: "connection-1",
+          tenantId: "tenant-1",
+          tenantType: "ORGANISATION",
+          tenantName: "Demo Organisation",
+        }]);
+      }
+      return Response.json({ Contacts: [{
+        ContactID: "contact-1",
+        Name: "Demo Customer",
+        ContactStatus: "ARCHIVED",
+        Website: "https://customer.example",
+        ValidationErrors: [],
+      }] });
+    },
+  });
+  const stream = (await xero.list_streams(context)).find(({ id }) => id === "contacts");
+  assert.ok(stream);
+
+  const page = await xero.initial_sync(
+    context,
+    stream,
+    { from: "2026-07-01T00:00:00.000Z", to: "2026-08-01T00:00:00.000Z" },
+  );
+
+  const contactRequest = requestedUrls.find(({ pathname }) => pathname.endsWith("/Contacts"));
+  assert.equal(contactRequest?.searchParams.get("includeArchived"), "true");
+  assert.equal(page.records[0]?.validationIssues, undefined);
+  assert.equal(page.records[0]?.normalized?.tombstone, true);
+  assert.equal(page.records[0]?.normalized?.fields.Website, undefined);
+  assert.equal((page.records[0]?.payload as Record<string, unknown>).Website, "https://customer.example");
 });
 
 test("Xero discovery ignores non-organisation connections with null tenant names", async () => {
@@ -824,10 +1178,11 @@ test("Lightspeed and Xero disconnect remotely before cryptographically destroyin
     vault: lightspeedVault,
     fetcher: async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      assert.equal(url.toString(), "https://cloud.lightspeedapp.com/auth/oauth/revoke");
+      assert.equal(url.toString(), "https://cloud.lightspeedapp.com/auth/oauth/access_token");
       assert.equal(init?.method, "POST");
       const body = init?.body as URLSearchParams;
       assert.equal(body.get("refresh_token"), "lightspeed-refresh");
+      assert.equal(body.get("grant_type"), "revoke_refresh_token");
       lightspeedRevoked = true;
       return new Response(null, { status: 204 });
     },
@@ -891,12 +1246,15 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
   const originalWatermark = "2026-07-01T00:00:00.000Z";
   const xeroFixture = fixture("../../connectors/xero/fixtures/sanitized-recording.json");
   const xeroFilters: string[] = [];
+  const xeroWheres: string[] = [];
+  const xeroOrders: string[] = [];
   const xeroPages: number[] = [];
   let xeroPageCalls = 0;
   const xero = new XeroConnector({
     clientId: "client",
     oauthMode: "pkce",
     webhookSigningKey: "key",
+    now: () => Date.parse("2026-08-03T00:00:00.000Z"),
     vault: new MemoryVault({
       provider: "xero",
       accessToken: "access",
@@ -917,10 +1275,12 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
         }]);
       }
       xeroFilters.push(new Headers(init?.headers).get("if-modified-since") ?? "");
+      xeroWheres.push(url.searchParams.get("where") ?? "");
+      xeroOrders.push(url.searchParams.get("order") ?? "");
       xeroPages.push(Number(url.searchParams.get("page")));
       assert.equal(url.searchParams.get("pageSize"), "1000");
       xeroPageCalls += 1;
-      return xeroPageCalls === 1
+      return xeroPageCalls === 1 || xeroPageCalls === 3
         ? Response.json(xeroFixture.responses.invoices)
         : Response.json({ Invoices: [] });
     },
@@ -945,15 +1305,35 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
   assert.equal(firstXeroPage.hasMore, true);
   assert.equal(midXeroCursor.watermark, originalWatermark);
   assert.ok(midXeroCursor.observedWatermark && midXeroCursor.observedWatermark > originalWatermark);
-  const finalXeroPage = await xero.incremental_sync(context, invoiceStream, firstXeroPage.nextCursor!);
+  const verificationRestart = await xero.incremental_sync(
+    context,invoiceStream,firstXeroPage.nextCursor!,
+  );
+  const restartCursor=decodeCursor(verificationRestart.nextCursor!,{
+    connector:"xero",stream:"invoices",
+  });
+  assert.equal(verificationRestart.hasMore,true);
+  assert.equal(restartCursor.continuation,undefined);
+  assert.match(restartCursor.verificationDigest ?? "",/^[0-9a-f]{64}$/u);
+  const verificationPage = await xero.incremental_sync(
+    context,invoiceStream,verificationRestart.nextCursor!,
+  );
+  const finalXeroPage = await xero.incremental_sync(
+    context,invoiceStream,verificationPage.nextCursor!,
+  );
   const finalXeroCursor = decodeCursor(finalXeroPage.nextCursor!, {
     connector: "xero",
     stream: "invoices",
   });
   assert.equal(finalXeroPage.hasMore, false);
-  assert.equal(finalXeroCursor.watermark, midXeroCursor.observedWatermark);
-  assert.deepEqual(xeroPages, [1, 2]);
-  assert.equal(xeroFilters[0], xeroFilters[1]);
+  assert.equal(finalXeroCursor.watermark,"2026-08-03T00:00:00.000Z");
+  assert.deepEqual(xeroPages,[1,2,1,2]);
+  assert.equal(new Set(xeroFilters).size,1);
+  assert.deepEqual(new Set(xeroWheres),new Set([
+    "UpdatedDateUTC<DateTime(2026,8,3,0,0,0)",
+  ]));
+  assert.deepEqual(new Set(xeroOrders),new Set([
+    "UpdatedDateUTC ASC,InvoiceID ASC",
+  ]));
 
   const deputyQueries: Array<Record<string, unknown>> = [];
   let deputyCalls = 0;
@@ -1028,12 +1408,183 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
   assert.deepEqual(secondDeputyFilter.s3, { field: "Id", data: 500, type: "gt" });
 });
 
+test("Xero page scans require two identical bounded passes before advancing", async () => {
+  const fixtureData=fixture("../../connectors/xero/fixtures/sanitized-recording.json");
+  const base=structuredClone(
+    (fixtureData.responses.invoices as {Invoices:Array<Record<string,unknown>>}).Invoices[0]!,
+  );
+  const invoice=(id:string,updated:string) => ({
+    ...structuredClone(base),InvoiceID:id,
+    UpdatedDateUTC:`/Date(${Date.parse(updated)}+0000)/`,
+    UpdatedDateUTCString:updated,
+  });
+  const firstPass=[
+    invoice("10000000-0000-4000-8000-000000000001","2026-07-02T00:00:00.000Z"),
+    invoice("10000000-0000-4000-8000-000000000002","2026-07-03T00:00:00.000Z"),
+  ];
+  const changedPass=[
+    firstPass[0]!,
+    invoice("10000000-0000-4000-8000-000000000003","2026-07-04T00:00:00.000Z"),
+  ];
+  let dataCall=0;
+  const calls=[firstPass,[],changedPass,[],changedPass,[]] as const;
+  const xero=new XeroConnector({
+    clientId:"client",oauthMode:"pkce",
+    now:()=>Date.parse("2026-08-03T00:00:00.000Z"),
+    vault:new MemoryVault({
+      provider:"xero",accessToken:"access",refreshToken:"refresh",
+      tokenType:"Bearer",expiresAt:"2099-01-01T00:00:00.000Z",
+      scopes:["accounting.invoices.read"],metadata:{xeroTenantId:"xero-tenant"},
+    }),
+    fetcher:async(input)=>{
+      const url=new URL(input instanceof Request?input.url:input.toString());
+      if(url.pathname==="/connections")return Response.json([{
+        id:"connection-1",tenantId:"xero-tenant",tenantType:"ORGANISATION",tenantName:"Demo Xero",
+      }]);
+      assert.equal(url.searchParams.get("order"),"UpdatedDateUTC ASC,InvoiceID ASC");
+      assert.equal(url.searchParams.get("where"),"UpdatedDateUTC<DateTime(2026,8,3,0,0,0)");
+      const response=calls[dataCall++];
+      assert.ok(response,"unexpected extra Xero verification pass");
+      return Response.json({Invoices:response});
+    },
+  });
+  const stream=(await xero.list_streams(context)).find((candidate)=>candidate.id==="invoices");
+  assert.ok(stream);
+  let cursor=encodeCursor({
+    v:1,connector:"xero",stream:"invoices",mode:"incremental",
+    watermark:"2026-07-01T00:00:00.000Z",
+  });
+  let page:Awaited<ReturnType<typeof xero.incremental_sync>>;
+  do{
+    page=await xero.incremental_sync(context,stream,cursor);
+    assert.ok(page.nextCursor);
+    cursor=page.nextCursor;
+  }while(page.hasMore);
+
+  assert.equal(dataCall,6,"a changed verification pass must be scanned again");
+  assert.equal(
+    decodeCursor(cursor,{connector:"xero",stream:"invoices"}).watermark,
+    "2026-08-03T00:00:00.000Z",
+  );
+});
+
+test("malformed vendor pagination identities quarantine without creating a looping cursor", async () => {
+  const xero = new XeroConnector({
+    clientId: "client",
+    oauthMode: "pkce",
+    vault: new MemoryVault({
+      provider: "xero",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["accounting.journals.read"],
+      metadata: { xeroTenantId: "xero-tenant" },
+    }),
+    fetcher: async (input) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      return url.pathname === "/connections"
+        ? Response.json([{
+            id: "connection-1",
+            tenantId: "xero-tenant",
+            tenantType: "ORGANISATION",
+            tenantName: "Demo Xero",
+          }])
+        : Response.json({
+            Journals: [{
+              JournalID: "00000000-0000-4000-8000-000000000099",
+              JournalLines: [],
+            }],
+          });
+    },
+  });
+  const journalStream = (await xero.list_streams(context)).find(({ id }) => id === "journals");
+  assert.ok(journalStream);
+  const journalPage = await xero.initial_sync(
+    context,
+    journalStream,
+    { from: "1970-01-01T00:00:00.000Z", to: "2026-08-03T00:00:00.000Z" },
+  );
+  assert.equal(journalPage.hasMore, true);
+  assert.equal(journalPage.nextCursor, null);
+  assert.equal(journalPage.paginationBlock?.code, "pagination_identity_invalid");
+  assert.equal(journalPage.records[0]?.validationIssues?.[0]?.code, "schema_invalid");
+
+  const deputyQueries: Array<Record<string, unknown>> = [];
+  let deputyCall = 0;
+  const deputy = new DeputyConnector({
+    clientId: "client",
+    clientSecret: "secret",
+    redirectUri: "https://albert.example/oauth/deputy/callback",
+    now: () => Date.parse("2026-08-03T00:00:00.000Z"),
+    vault: new MemoryVault({
+      provider: "deputy",
+      accessToken: "access",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["longlife_refresh_token"],
+      metadata: { endpoint: "demo.au.deputy.com" },
+    }),
+    fetcher: async (_input, init) => {
+      deputyQueries.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      deputyCall += 1;
+      return Response.json(deputyCall === 1
+        ? [
+            ...Array.from({ length: 499 }, (_, index) => ({
+              Id: index + 1,
+              CompanyName: `Company ${index + 1}`,
+              Active: true,
+            })),
+            { CompanyName: "Missing source identity", Active: true },
+          ]
+        : Array.from({ length: 500 }, () => ({
+            CompanyName: "Still missing source identity",
+            Active: true,
+          })));
+    },
+  });
+  const companyStream = (await deputy.list_streams(context)).find(({ id }) => id === "companies");
+  assert.ok(companyStream);
+  const firstDeputyPage = await deputy.incremental_sync(
+    context,
+    companyStream,
+    encodeCursor({
+      v: 1,
+      connector: "deputy",
+      stream: "companies",
+      mode: "incremental",
+      watermark: "2026-07-01T00:00:00.000Z",
+    }),
+  );
+  assert.equal(firstDeputyPage.hasMore, true);
+  assert.equal(
+    decodeCursor(firstDeputyPage.nextCursor!, { connector: "deputy", stream: "companies" }).continuation,
+    499,
+  );
+  assert.match(firstDeputyPage.records.at(-1)?.sourceRecordId ?? "", /^invalid:/u);
+
+  const blockedDeputyPage = await deputy.incremental_sync(
+    context,
+    companyStream,
+    firstDeputyPage.nextCursor!,
+  );
+  assert.equal(blockedDeputyPage.hasMore, true);
+  assert.equal(blockedDeputyPage.nextCursor, null);
+  assert.equal(blockedDeputyPage.paginationBlock?.code, "pagination_identity_invalid");
+  assert.deepEqual(
+    (deputyQueries[1]?.search as Record<string, Record<string, unknown>>).s3,
+    { field: "Id", data: 499, type: "gt" },
+  );
+});
+
 test("Xero treats 304 Not Modified as a successful empty incremental page", async () => {
   const watermark = "2026-07-01T00:00:00.000Z";
   const xero = new XeroConnector({
     clientId: "client",
     oauthMode: "pkce",
     webhookSigningKey: "key",
+    now: () => Date.parse("2026-08-03T00:00:00.000Z"),
     vault: new MemoryVault({
       provider: "xero",
       accessToken: "access",
@@ -1066,5 +1617,8 @@ test("Xero treats 304 Not Modified as a successful empty incremental page", asyn
   }));
   assert.deepEqual(page.records, []);
   assert.equal(page.hasMore, false);
-  assert.equal(decodeCursor(page.nextCursor!, { connector: "xero", stream: "invoices" }).watermark, watermark);
+  assert.equal(
+    decodeCursor(page.nextCursor!,{connector:"xero",stream:"invoices"}).watermark,
+    "2026-08-03T00:00:00.000Z",
+  );
 });

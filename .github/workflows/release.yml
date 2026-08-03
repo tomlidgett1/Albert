@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  id-token: write
 
 concurrency:
   group: albert-release-${{ inputs.environment }}
@@ -28,11 +30,373 @@ jobs:
         with:
           node-version: 22.23.1
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run check
 
-  migrate:
+  attest-transform-fleet-capacity:
+    if: inputs.environment == 'production'
     needs: verify
+    environment: staging-capacity
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - run: npm ci --ignore-scripts
+      - name: Quiesce the dedicated capacity cell before resetting run attribution
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+        run: |
+          test -n "$TARGET_APP"
+          test -n "$AUTOSCALER_APP"
+          flyctl scale count 0 --app "$AUTOSCALER_APP" --yes
+          flyctl scale count 0 --app "$TARGET_APP" --yes
+          flyctl machines list --app "$TARGET_APP" --json | jq -e \
+            '[.[] | select(.state == "started" or .state == "starting")] | length == 0'
+      - name: Apply the candidate schema to the dedicated capacity cell
+        run: npm run migrate
+        env:
+          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CAPACITY_CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_DATABASE_URL: ${{ secrets.CAPACITY_ANALYTICAL_MIGRATION_URL }}
+          CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
+          ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+      - name: Verify the maintained 20k corpus and clear only prior run attribution
+        run: node scripts/prepare-transform-capacity-cell.mjs
+        env:
+          CAPACITY_CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CAPACITY_CONTROL_PLANE_MIGRATION_URL }}
+          ALBERT_CAPACITY_STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          ALBERT_CAPACITY_RESET_APPROVED: reset-staging-capacity:${{ github.sha }}:${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+      - name: Derive the immutable run barrier and per-Machine claim ceiling
+        id: run_contract
+        env:
+          REQUESTED_FLOOR: ${{ vars.ALBERT_CAPACITY_REQUESTED_FLOOR }}
+        run: |
+          node --input-type=module - <<'NODE' >> "$GITHUB_OUTPUT"
+          import { CAPACITY_ATTESTATION_HARNESS_HOLD_MS } from "./scripts/capacity-attestation-timing.mjs";
+          const floor = Number(process.env.REQUESTED_FLOOR || "2");
+          if (!Number.isInteger(floor) || floor < 2 || floor > 40) throw new Error("invalid protected capacity floor");
+          const now = Date.now();
+          console.log(`floor=${floor}`);
+          console.log(`max_claims=${Math.ceil(20_000 / floor)}`);
+          console.log(`not_before=${new Date(now + 8 * 60_000).toISOString()}`);
+          console.log(`hold_until=${new Date(now + CAPACITY_ATTESTATION_HARNESS_HOLD_MS).toISOString()}`);
+          NODE
+      - name: Stage only the candidate transform runtime identities
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          APP_NAME: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          CONTROL_RUNTIME_URL: ${{ secrets.CAPACITY_TRANSFORM_CONTROL_PLANE_DATABASE_URL }}
+          ANALYTICAL_RUNTIME_URL: ${{ secrets.CAPACITY_TRANSFORM_DATABASE_URL }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$FLY_API_TOKEN"
+          test -n "$CONTROL_RUNTIME_URL"
+          test -n "$ANALYTICAL_RUNTIME_URL"
+          flyctl secrets set --app "$APP_NAME" --stage \
+            TRANSFORM_CONTROL_PLANE_DATABASE_URL="$CONTROL_RUNTIME_URL" \
+            TRANSFORM_DATABASE_URL="$ANALYTICAL_RUNTIME_URL"
+      - name: Deploy the exact candidate harness behind the future start barrier
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          APP_NAME: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          CAPACITY_PROJECT_REF: ${{ vars.ALBERT_CAPACITY_CONTROL_PLANE_PROJECT_REF }}
+          FLOOR: ${{ steps.run_contract.outputs.floor }}
+          MAX_CLAIMS: ${{ steps.run_contract.outputs.max_claims }}
+          NOT_BEFORE: ${{ steps.run_contract.outputs.not_before }}
+          HOLD_UNTIL: ${{ steps.run_contract.outputs.hold_until }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$CAPACITY_PROJECT_REF"
+          flyctl deploy . --app "$APP_NAME" --config deploy/capacity/transform-fleet.toml \
+            --ha=false --remote-only --strategy immediate --wait-timeout 10m \
+            --build-arg "ALBERT_BUILD_SHA=$GITHUB_SHA" \
+            --env "ALBERT_SERVICE_VERSION=$GITHUB_SHA" \
+            --env "ALBERT_DEPLOYMENT_ID=capacity-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --env "ALBERT_CONTROL_PLANE_PROJECT_REF=$CAPACITY_PROJECT_REF" \
+            --env "ALBERT_CAPACITY_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --env "ALBERT_CAPACITY_RUN_APPROVED=load-staging:$GITHUB_SHA" \
+            --env "ALBERT_CAPACITY_MIN_SAMPLES=500" \
+            --env "ALBERT_CAPACITY_MAX_CLAIMS=$MAX_CLAIMS" \
+            --env "ALBERT_CAPACITY_NOT_BEFORE=$NOT_BEFORE" \
+            --env "ALBERT_CAPACITY_HOLD_UNTIL=$HOLD_UNTIL"
+      - name: Deploy the protected constant-signal autoscaler for the measured floor
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          TARGET_SCALING_TOKEN: ${{ secrets.FLY_TRANSFORM_CAPACITY_SCALING_TOKEN }}
+          PROMETHEUS_READ_TOKEN: ${{ secrets.FLY_PROMETHEUS_READ_TOKEN }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          FLOOR: ${{ steps.run_contract.outputs.floor }}
+        run: |
+          test -n "$AUTOSCALER_APP"
+          test -n "$TARGET_APP"
+          test -n "$TARGET_SCALING_TOKEN"
+          test -n "$PROMETHEUS_READ_TOKEN"
+          flyctl secrets set --app "$AUTOSCALER_APP" --stage \
+            FAS_API_TOKEN="$TARGET_SCALING_TOKEN" \
+            FAS_PROMETHEUS_TOKEN="$PROMETHEUS_READ_TOKEN"
+          flyctl deploy . --app "$AUTOSCALER_APP" \
+            --config deploy/capacity/transform-fleet-autoscaler.toml \
+            --ha=false --remote-only --wait-timeout 10m \
+            --env "FAS_APP_NAME=$TARGET_APP" \
+            --env "FAS_PROMETHEUS_ADDRESS=https://api.fly.io/prometheus/$FLY_ORGANIZATION_SLUG" \
+            --env "FAS_PROMETHEUS_QUERY=vector($FLOOR)" \
+            --env "FAS_CREATED_MACHINE_COUNT=$FLOOR"
+      - name: Ask the independently pinned attestor to observe and sign the run
+        run: node scripts/request-independent-capacity-attestation.mjs "$RUNNER_TEMP/transform-fleet-capacity-attestation.json"
+        env:
+          ATTESTOR_URL: ${{ vars.ALBERT_CAPACITY_ATTESTOR_URL }}
+          REQUESTED_FLOOR: ${{ steps.run_contract.outputs.floor }}
+          STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+      - name: Preserve the immutable same-workflow envelope
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: transform-fleet-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transform-fleet-capacity-attestation.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Quiesce capacity-only Machines after observation
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_CAPACITY_ORG_API_TOKEN }}
+          TARGET_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_APP }}
+          AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_CAPACITY_AUTOSCALER_APP }}
+        run: |
+          flyctl scale count 0 --app "$AUTOSCALER_APP" --yes
+          flyctl scale count 0 --app "$TARGET_APP" --yes
+
+  preflight-release:
+    if: >-
+      always() && needs.verify.result == 'success' &&
+      (inputs.environment == 'staging' || needs.attest-transform-fleet-capacity.result == 'success')
+    needs:
+      - verify
+      - attest-transform-fleet-capacity
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      transform_machine_floor: ${{ steps.release_preflight.outputs.transform_machine_floor }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+      - name: Retrieve the protected capacity envelope
+        if: inputs.environment == 'production'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          name: transform-fleet-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capacity
+      - name: Retrieve the newest unexpired protected dogfood envelope for this SHA
+        if: inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: dogfood-acceptance-${{ github.sha }}
+        run: |
+          archive_url="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$ARTIFACT_NAME&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .archive_download_url')"
+          test -n "$archive_url"
+          mkdir -p "$RUNNER_TEMP/dogfood"
+          curl --fail --location --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "$archive_url" --output "$RUNNER_TEMP/dogfood.zip"
+          unzip -q "$RUNNER_TEMP/dogfood.zip" -d "$RUNNER_TEMP/dogfood"
+          test -s "$RUNNER_TEMP/dogfood/dogfood-acceptance.json"
+      - name: Make the same-workflow envelope available to preflight
+        if: inputs.environment == 'production'
+        run: echo "ALBERT_TRANSFORM_FLEET_CAPACITY_ATTESTATION_BASE64=$(base64 -w0 "$RUNNER_TEMP/capacity/transform-fleet-capacity-attestation.json")" >> "$GITHUB_ENV"
+      - name: Make the signed dogfood envelope available to its one-use consumer
+        if: inputs.environment == 'production'
+        run: echo "ALBERT_DOGFOOD_ACCEPTANCE_EVIDENCE=$(jq -c . "$RUNNER_TEMP/dogfood/dogfood-acceptance.json")" >> "$GITHUB_ENV"
+      - name: Verify release identity, residency, data controls, and migration targets
+        id: release_preflight
+        run: npm run release:preflight
+        env:
+          ALBERT_RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          ALBERT_RELEASE_COMMIT_SHA: ${{ github.sha }}
+          ALBERT_CONTROL_PLANE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          ALBERT_CONTROL_PLANE_REGION: ${{ vars.ALBERT_CONTROL_PLANE_REGION }}
+          ALBERT_ANALYTICAL_REGION: ${{ vars.ALBERT_ANALYTICAL_REGION }}
+          SUPABASE_STORAGE_S3_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          SUPABASE_STORAGE_S3_REGION: ${{ vars.SUPABASE_STORAGE_S3_REGION }}
+          ALBERT_MODEL_DATA_RESIDENCY_REGION: ${{ vars.ALBERT_MODEL_DATA_RESIDENCY_REGION }}
+          ALBERT_MODEL_DATA_CONTROL_APPROVED: ${{ vars.ALBERT_MODEL_DATA_CONTROL_APPROVED }}
+          ALBERT_LIGHTSPEED_PRODUCT: ${{ vars.ALBERT_LIGHTSPEED_PRODUCT }}
+          ALBERT_PUBLIC_ORIGIN: ${{ vars.ALBERT_PUBLIC_ORIGIN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          SEMANTIC_QUERY_SERVICE_URL: ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+          OPERATOR_DIAGNOSTIC_SERVICE_URL: ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
+          SYNC_WORKER_INTERNAL_URL: ${{ vars.SYNC_WORKER_INTERNAL_URL }}
+          WEBHOOK_GATEWAY_PUBLIC_URL: ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
+          CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
+          SUPABASE_MANAGEMENT_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_TOKEN }}
+          FLY_SEMANTIC_APP: ${{ vars.FLY_SEMANTIC_APP }}
+          FLY_SYNC_APP: ${{ vars.FLY_SYNC_APP }}
+          FLY_TRANSFORM_APP: ${{ vars.FLY_TRANSFORM_APP }}
+          FLY_WEBHOOK_APP: ${{ vars.FLY_WEBHOOK_APP }}
+          FLY_DELETION_APP: ${{ vars.FLY_DELETION_APP }}
+          FLY_OPERATOR_DIAGNOSTIC_APP: ${{ vars.FLY_OPERATOR_DIAGNOSTIC_APP }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          FLY_SYNC_AUTOSCALER_APP: ${{ vars.FLY_SYNC_AUTOSCALER_APP }}
+          FLY_TRANSFORM_AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_AUTOSCALER_APP }}
+          ALBERT_SNAPSHOT_P95_MS: ${{ vars.ALBERT_SNAPSHOT_P95_MS }}
+          ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64: ${{ secrets.ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64 }}
+          ALBERT_CAPACITY_STAGING_CELL_ID: ${{ vars.ALBERT_CAPACITY_STAGING_CELL_ID }}
+          ALBERT_CAPACITY_CORPUS_FINGERPRINT: ${{ vars.ALBERT_CAPACITY_CORPUS_FINGERPRINT }}
+          ALBERT_CAPACITY_ATTESTOR_TOOL_REF: ${{ vars.ALBERT_CAPACITY_ATTESTOR_TOOL_REF }}
+          ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST: ${{ vars.ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+      - name: Verify and atomically consume one-use dogfood acceptance
+        if: inputs.environment == 'production'
+        run: node scripts/dogfood-acceptance-attestation.mjs
+        env:
+          ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PUBLIC_KEY_BASE64URL: ${{ secrets.ALBERT_DOGFOOD_ACCEPTANCE_ED25519_PUBLIC_KEY_BASE64URL }}
+          ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF: ${{ vars.ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF }}
+          ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA: ${{ vars.ALBERT_DOGFOOD_TRUSTED_TOOLING_SHA }}
+          ALBERT_DOGFOOD_CONTROL_DATABASE_URL: ${{ secrets.ALBERT_DOGFOOD_CONTROL_DATABASE_URL }}
+          ALBERT_RELEASE_COMMIT_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+
+  stage-raw-storage-session-secrets:
+    needs: preflight-release
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app_variable: FLY_SYNC_APP
+            token_secret: FLY_SYNC_API_TOKEN
+            password_secret: ALBERT_RAW_STORAGE_SYNC_PASSWORD
+            password_name: ALBERT_RAW_STORAGE_SYNC_PASSWORD
+          - app_variable: FLY_WEBHOOK_APP
+            token_secret: FLY_WEBHOOK_API_TOKEN
+            password_secret: ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD
+            password_name: ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD
+          - app_variable: FLY_DELETION_APP
+            token_secret: FLY_DELETION_API_TOKEN
+            password_secret: ALBERT_RAW_STORAGE_DELETION_PASSWORD
+            password_name: ALBERT_RAW_STORAGE_DELETION_PASSWORD
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Stage the RLS-scoped S3 session coordinates for the exact service principal
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+          MACHINE_PASSWORD: ${{ secrets[matrix.password_secret] }}
+          MACHINE_PASSWORD_NAME: ${{ matrix.password_name }}
+          STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          STORAGE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          STORAGE_LEGACY_ANON_KEY: ${{ secrets.SUPABASE_STORAGE_S3_LEGACY_ANON_KEY }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$FLY_API_TOKEN"
+          test -n "$MACHINE_PASSWORD"
+          test -n "$STORAGE_ENDPOINT"
+          test -n "$STORAGE_PROJECT_REF"
+          test -n "$STORAGE_LEGACY_ANON_KEY"
+          flyctl secrets set --app "$APP_NAME" --stage \
+            SUPABASE_STORAGE_S3_ENDPOINT="$STORAGE_ENDPOINT" \
+            SUPABASE_STORAGE_S3_ACCESS_KEY_ID="$STORAGE_PROJECT_REF" \
+            SUPABASE_STORAGE_S3_LEGACY_ANON_KEY="$STORAGE_LEGACY_ANON_KEY" \
+            "$MACHINE_PASSWORD_NAME=$MACHINE_PASSWORD"
+
+  preflight-service-targets:
+    needs:
+      - verify
+      - preflight-release
+      - stage-raw-storage-session-secrets
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: semantic-query
+            config: deploy/fly/semantic-query.toml
+            app_variable: FLY_SEMANTIC_APP
+            token_secret: FLY_SEMANTIC_API_TOKEN
+          - runtime: sync-worker
+            config: deploy/fly/sync-worker.toml
+            app_variable: FLY_SYNC_APP
+            token_secret: FLY_SYNC_API_TOKEN
+          - runtime: transform-worker
+            config: deploy/fly/transform-worker.toml
+            app_variable: FLY_TRANSFORM_APP
+            token_secret: FLY_TRANSFORM_API_TOKEN
+          - runtime: webhook-gateway
+            config: deploy/fly/webhook-gateway.toml
+            app_variable: FLY_WEBHOOK_APP
+            token_secret: FLY_WEBHOOK_API_TOKEN
+          - runtime: deletion-worker
+            config: deploy/fly/deletion-worker.toml
+            app_variable: FLY_DELETION_APP
+            token_secret: FLY_DELETION_API_TOKEN
+          - runtime: operator-diagnostic
+            config: deploy/fly/operator-diagnostic.toml
+            app_variable: FLY_OPERATOR_DIAGNOSTIC_APP
+            token_secret: FLY_OPERATOR_DIAGNOSTIC_API_TOKEN
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Verify target manifest and exact secret boundary before migration
+        env:
+          APP_NAME: ${{ vars[matrix.app_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
+        run: |
+          test -n "$APP_NAME"
+          test -n "$FLY_API_TOKEN"
+          flyctl config validate --strict --app "$APP_NAME" --config "${{ matrix.config }}"
+          flyctl secrets list --app "$APP_NAME" --json > "$RUNNER_TEMP/fly-secrets.json"
+          node scripts/validate-runtime-secrets.mjs "${{ matrix.runtime }}" "$RUNNER_TEMP/fly-secrets.json"
+
+  upgrade-control-bootstrap:
+    needs: preflight-service-targets
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - name: Reconcile reviewed privileged control-plane bootstrap additions
+        run: npm run bootstrap:upgrade:control-plane
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+
+  migrate:
+    needs: upgrade-control-bootstrap
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -50,9 +414,74 @@ jobs:
           ANALYTICAL_DATABASE_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
           CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
           ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+
+  provision-runtime-security:
+    needs: migrate
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - name: Reconcile exact, one-group runtime logins in both cells
+        run: npm run provision:runtime-logins
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ANALYTICAL_ADMIN_DATABASE_URL: ${{ secrets.ANALYTICAL_ADMIN_DATABASE_URL }}
+          ALBERT_CONTROL_DEPLOYER_DB_PASSWORD: ${{ secrets.ALBERT_CONTROL_DEPLOYER_DB_PASSWORD }}
+          ALBERT_SYNC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_SYNC_CONTROL_DB_PASSWORD }}
+          ALBERT_TRANSFORM_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_TRANSFORM_CONTROL_DB_PASSWORD }}
+          ALBERT_SEMANTIC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_CONTROL_DB_PASSWORD }}
+          ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD }}
+          ALBERT_WEBHOOK_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_WEBHOOK_CONTROL_DB_PASSWORD }}
+          ALBERT_DELETION_CONTROL_DB_PASSWORD: ${{ secrets.ALBERT_DELETION_CONTROL_DB_PASSWORD }}
+          ALBERT_ANALYTICAL_DEPLOYER_DB_PASSWORD: ${{ secrets.ALBERT_ANALYTICAL_DEPLOYER_DB_PASSWORD }}
+          ALBERT_INGEST_DB_PASSWORD: ${{ secrets.ALBERT_INGEST_DB_PASSWORD }}
+          ALBERT_TRANSFORM_DB_PASSWORD: ${{ secrets.ALBERT_TRANSFORM_DB_PASSWORD }}
+          ALBERT_SEMANTIC_READ_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_READ_DB_PASSWORD }}
+          ALBERT_SEMANTIC_METADATA_DB_PASSWORD: ${{ secrets.ALBERT_SEMANTIC_METADATA_DB_PASSWORD }}
+          ALBERT_OPERATOR_DIAGNOSTIC_ANALYTICAL_DB_PASSWORD: ${{ secrets.ALBERT_OPERATOR_DIAGNOSTIC_ANALYTICAL_DB_PASSWORD }}
+          ALBERT_DELETION_DB_PASSWORD: ${{ secrets.ALBERT_DELETION_DB_PASSWORD }}
+      - name: Create or rotate the three dedicated raw Storage Auth principals
+        run: npm run provision:raw-storage-machine-users
+        env:
+          SUPABASE_AUTH_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY }}
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ALBERT_CONTROL_PLANE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          SUPABASE_STORAGE_S3_ENDPOINT: ${{ vars.SUPABASE_STORAGE_S3_ENDPOINT }}
+          SUPABASE_STORAGE_S3_REGION: ${{ vars.SUPABASE_STORAGE_S3_REGION }}
+          SUPABASE_STORAGE_S3_ACCESS_KEY_ID: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          SUPABASE_STORAGE_S3_LEGACY_ANON_KEY: ${{ secrets.SUPABASE_STORAGE_S3_LEGACY_ANON_KEY }}
+          ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION: ${{ vars.ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION }}
+          ALBERT_RAW_STORAGE_SYNC_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_SYNC_PASSWORD }}
+          ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD }}
+          ALBERT_RAW_STORAGE_DELETION_PASSWORD: ${{ secrets.ALBERT_RAW_STORAGE_DELETION_PASSWORD }}
+      - name: Install and fingerprint-verify the shared analytical capability key
+        run: npm run provision:analytical-capability-key
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          ANALYTICAL_ADMIN_DATABASE_URL: ${{ secrets.ANALYTICAL_ADMIN_DATABASE_URL }}
+          ANALYTICAL_CAPABILITY_KEY_ID: ${{ vars.ANALYTICAL_CAPABILITY_KEY_ID }}
+          ANALYTICAL_CAPABILITY_SECRET_BASE64: ${{ secrets.ANALYTICAL_CAPABILITY_SECRET_BASE64 }}
+          ANALYTICAL_CAPABILITY_ACTIVE_AT: ${{ vars.ANALYTICAL_CAPABILITY_ACTIVE_AT }}
+          ANALYTICAL_CAPABILITY_RETIRE_AT: ${{ vars.ANALYTICAL_CAPABILITY_RETIRE_AT }}
+          ANALYTICAL_CAPABILITY_PREVIOUS_KEY_ID: ${{ vars.ANALYTICAL_CAPABILITY_PREVIOUS_KEY_ID }}
+          ANALYTICAL_CAPABILITY_PREVIOUS_RETIRE_AT: ${{ vars.ANALYTICAL_CAPABILITY_PREVIOUS_RETIRE_AT }}
+      - name: Install the webhook attestation key after schema migration
+        run: npm run provision:webhook-attestation-key
+        env:
+          CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
+          WEBHOOK_ATTESTATION_KEY_ID: ${{ vars.WEBHOOK_ATTESTATION_KEY_ID }}
+          WEBHOOK_ATTESTATION_SECRET: ${{ secrets.WEBHOOK_ATTESTATION_SECRET }}
 
   publish-semantic-registry:
-    needs: migrate
+    needs: provision-runtime-security
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -68,12 +497,14 @@ jobs:
         env:
           CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
           ALBERT_SEMANTIC_PUBLISH_ROLE: albert_control_migration_owner
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://au.api.openai.com/v1' }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
 
   deploy-services:
     needs:
       - verify
+      - preflight-release
       - publish-semantic-registry
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
@@ -107,9 +538,16 @@ jobs:
             app_variable: FLY_DELETION_APP
             token_secret: FLY_DELETION_API_TOKEN
             exposure: private
+          - service: operator-diagnostic
+            config: deploy/fly/operator-diagnostic.toml
+            app_variable: FLY_OPERATOR_DIAGNOSTIC_APP
+            token_secret: FLY_OPERATOR_DIAGNOSTIC_API_TOKEN
+            exposure: public
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
       - name: Require a protected app target and app-scoped deploy token
         env:
           APP_NAME: ${{ vars[matrix.app_variable] }}
@@ -133,13 +571,26 @@ jobs:
           --remote-only
           --strategy rolling
           --wait-timeout 10m
+          --build-arg "ALBERT_BUILD_SHA=${GITHUB_SHA}"
           --env "ALBERT_SERVICE_VERSION=${GITHUB_SHA}"
           --env "ALBERT_DEPLOYMENT_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-      - name: Maintain two production Machines
+      - name: Apply the attested transform floor without destroying autoscaled capacity
         env:
           APP_NAME: ${{ vars[matrix.app_variable] }}
           FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
-        run: flyctl scale count 2 --app "$APP_NAME" --yes
+          TARGET_FLOOR: ${{ matrix.service == 'transform-worker' && needs.preflight-release.outputs.transform_machine_floor || 2 }}
+        run: |
+          test "$TARGET_FLOOR" -ge 2
+          test "$TARGET_FLOOR" -le 40
+          running_count="$(flyctl machines list --app "$APP_NAME" --json | jq '[.[] | select(.state == "started")] | length')"
+          if [ "$running_count" -lt "$TARGET_FLOOR" ]; then
+            flyctl scale count "$TARGET_FLOOR" --app "$APP_NAME" --yes
+          fi
+          flyctl machines list --app "$APP_NAME" --json | jq -e \
+            --argjson floor "$TARGET_FLOOR" \
+            --arg sha "$GITHUB_SHA" \
+            '([.[] | select(.state == "started")] | length) >= $floor and
+             ([.[] | select(.state == "started") | .config.env.ALBERT_SERVICE_VERSION] | all(. == $sha))'
       - name: Verify private workers have no public IP
         if: matrix.exposure == 'private'
         env:
@@ -154,8 +605,69 @@ jobs:
           flyctl status --app "$APP_NAME"
           flyctl checks list --app "$APP_NAME"
 
+  deploy-worker-autoscalers:
+    needs:
+      - deploy-services
+      - preflight-release
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_variable: FLY_SYNC_APP
+            autoscaler_variable: FLY_SYNC_AUTOSCALER_APP
+            config: deploy/fly-autoscalers/sync-worker.toml
+            deploy_token_secret: FLY_SYNC_AUTOSCALER_API_TOKEN
+            scaling_token_secret: FLY_SYNC_SCALING_TOKEN
+          - target_variable: FLY_TRANSFORM_APP
+            autoscaler_variable: FLY_TRANSFORM_AUTOSCALER_APP
+            config: deploy/fly-autoscalers/transform-worker.toml
+            deploy_token_secret: FLY_TRANSFORM_AUTOSCALER_API_TOKEN
+            scaling_token_secret: FLY_TRANSFORM_SCALING_TOKEN
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
+      - name: Require protected autoscaler targets and narrowly scoped tokens
+        env:
+          AUTOSCALER_APP: ${{ vars[matrix.autoscaler_variable] }}
+          TARGET_APP: ${{ vars[matrix.target_variable] }}
+          FLY_API_TOKEN: ${{ secrets[matrix.deploy_token_secret] }}
+          TARGET_SCALING_TOKEN: ${{ secrets[matrix.scaling_token_secret] }}
+          PROMETHEUS_READ_TOKEN: ${{ secrets.FLY_PROMETHEUS_READ_TOKEN }}
+          FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
+          TRANSFORM_MACHINE_FLOOR: ${{ needs.preflight-release.outputs.transform_machine_floor }}
+        run: |
+          test -n "$AUTOSCALER_APP"
+          test -n "$TARGET_APP"
+          test -n "$FLY_API_TOKEN"
+          test -n "$TARGET_SCALING_TOKEN"
+          test -n "$PROMETHEUS_READ_TOKEN"
+          test -n "$FLY_ORGANIZATION_SLUG"
+          flyctl secrets set --app "$AUTOSCALER_APP" --stage \
+            FAS_API_TOKEN="$TARGET_SCALING_TOKEN" \
+            FAS_PROMETHEUS_TOKEN="$PROMETHEUS_READ_TOKEN"
+          flyctl config validate --strict --app "$AUTOSCALER_APP" --config "${{ matrix.config }}"
+          created_count_expression="min(40, 2 + queue_pressure)"
+          if [ "${{ matrix.target_variable }}" = "FLY_TRANSFORM_APP" ]; then
+            test "$TRANSFORM_MACHINE_FLOOR" -ge 2
+            test "$TRANSFORM_MACHINE_FLOOR" -le 40
+            created_count_expression="min(40, $TRANSFORM_MACHINE_FLOOR + queue_pressure)"
+          fi
+          flyctl deploy . --app "$AUTOSCALER_APP" --config "${{ matrix.config }}" \
+            --ha=false --remote-only --wait-timeout 10m \
+            --env "FAS_APP_NAME=$TARGET_APP" \
+            --env "FAS_PROMETHEUS_ADDRESS=https://api.fly.io/prometheus/$FLY_ORGANIZATION_SLUG" \
+            --env "FAS_CREATED_MACHINE_COUNT=$created_count_expression"
+          flyctl status --app "$AUTOSCALER_APP"
+
   smoke-public-services:
-    needs: deploy-services
+    needs:
+      - deploy-services
+      - deploy-worker-autoscalers
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -166,11 +678,40 @@ jobs:
           - SEMANTIC_QUERY_SERVICE_URL
           - SYNC_WORKER_INTERNAL_URL
           - WEBHOOK_GATEWAY_PUBLIC_URL
+          - OPERATOR_DIAGNOSTIC_SERVICE_URL
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
       - name: Require HTTPS and wait for readiness
         env:
           SERVICE_URL: ${{ vars[matrix.url_variable] }}
+          ALBERT_RELEASE_READINESS_ATTEMPTS: "12"
+          ALBERT_RELEASE_READINESS_DELAY_MS: "5000"
         run: |
           test -n "$SERVICE_URL"
-          case "$SERVICE_URL" in https://*) ;; *) exit 1 ;; esac
-          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "${SERVICE_URL%/}/readyz"
+          node scripts/verify-release-readiness.mjs \
+            "$SERVICE_URL" /readyz "$GITHUB_SHA" \
+            "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+  verify-web-release:
+    needs: smoke-public-services
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+      - name: Require the protected Sites promotion to become healthy at the exact release SHA
+        env:
+          WEB_ORIGIN: ${{ vars.ALBERT_PUBLIC_ORIGIN }}
+          ALBERT_RELEASE_READINESS_ATTEMPTS: "240"
+          ALBERT_RELEASE_READINESS_DELAY_MS: "5000"
+        run: |
+          test -n "$WEB_ORIGIN"
+          node scripts/verify-release-readiness.mjs \
+            "$WEB_ORIGIN" /api/health "$GITHUB_SHA" \
+            "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

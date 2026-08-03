@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import { assertRuntimeEnvironment } from "../../packages/config/src/env";
 
 const AUTH_CACHE_HEADERS = ["cache-control", "expires", "pragma"] as const;
 
@@ -34,6 +35,7 @@ function redirectWithAuthCookies(
 }
 
 export async function updateSession(request: NextRequest) {
+  assertRuntimeEnvironment("web");
   let supabaseResponse = NextResponse.next({ request });
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabasePublishableKey =

@@ -1,5 +1,10 @@
-import { loadRawStorageS3Config,type RawStorageS3Config } from "../../../packages/storage/src/index.js";
+import {
+  loadRawStorageS3Config,
+  type RawStorageS3Config,
+} from "../../../packages/storage/src/s3.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
+import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
+import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import {
   loadXeroWebhookInboxKeyring,
   type XeroWebhookInboxKeyring,
@@ -13,6 +18,8 @@ export type WebhookGatewayConfig = Readonly<{
   xeroWebhookEncryptedRetentionDays: number;
   xeroWebhookMetadataRetentionDays: number;
   xeroWebhookPersistenceTimeoutMs: number;
+  webhookAttestationKeyId: string;
+  webhookAttestationSecret: string;
   xeroWebhookProcessor: Readonly<{
     workerId: string;
     leaseSeconds: number;
@@ -53,6 +60,17 @@ function boundedInteger(
 export function loadWebhookGatewayConfig(
   source: NodeJS.ProcessEnv = process.env,
 ): WebhookGatewayConfig {
+  assertProductionRuntimeBoundary(source, {
+    label: "webhook gateway",
+    controlProject: true,
+    analyticalRegion: false,
+    storageRegion: true,
+    modelDataResidency: false,
+    lightspeedProduct: false,
+    databaseLogins: {
+      CONTROL_PLANE_DATABASE_URL: "albert_webhook_control_runtime",
+    },
+  });
   const controlPlaneDatabaseUrl = required(source, "CONTROL_PLANE_DATABASE_URL");
   try {
     if (!["postgres:", "postgresql:"].includes(new URL(controlPlaneDatabaseUrl).protocol)) {
@@ -79,34 +97,49 @@ export function loadWebhookGatewayConfig(
     throw new Error("Xero inbox and Deputy webhook material must use distinct encryption keys.");
   }
   const xeroWebhookSigningKey = required(source, "XERO_WEBHOOK_SIGNING_KEY");
+  const webhookAttestationKeyId = required(source, "WEBHOOK_ATTESTATION_KEY_ID");
+  if (!/^[a-z][a-z0-9._-]{0,63}$/u.test(webhookAttestationKeyId)) {
+    throw new Error("WEBHOOK_ATTESTATION_KEY_ID is invalid.");
+  }
+  const webhookAttestationSecret = required(source, "WEBHOOK_ATTESTATION_SECRET");
+  const decodedAttestationSecret = Buffer.from(webhookAttestationSecret, "base64url");
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(webhookAttestationSecret) ||
+      decodedAttestationSecret.byteLength !== 32 ||
+      decodedAttestationSecret.toString("base64url") !== webhookAttestationSecret) {
+    throw new Error(
+      "WEBHOOK_ATTESTATION_SECRET must encode exactly 32 bytes as unpadded base64url.",
+    );
+  }
   if (xeroInboxKeys.includes(xeroWebhookSigningKey)) {
     throw new Error("The Xero signing key and webhook inbox encryption key must be distinct.");
   }
   if (deputyKeys.has(xeroWebhookSigningKey)) {
     throw new Error("The Xero signing key and Deputy webhook encryption keys must be distinct.");
   }
+  if (xeroInboxKeys.includes(webhookAttestationSecret) ||
+      deputyKeys.has(webhookAttestationSecret) ||
+      webhookAttestationSecret === xeroWebhookSigningKey) {
+    throw new Error("Webhook attestation material must be independent from vendor and payload keys.");
+  }
   const xeroWebhookEncryptedRetentionDays = boundedInteger(
     source,
     "WEBHOOK_INBOX_ENCRYPTED_RETENTION_DAYS",
-    32,
-    31,
-    35,
+    3,
+    1,
+    7,
   );
   const xeroWebhookMetadataRetentionDays = boundedInteger(
     source,
     "WEBHOOK_INBOX_METADATA_RETENTION_DAYS",
-    40,
+    14,
     xeroWebhookEncryptedRetentionDays,
-    45,
+    30,
   );
-  const configuredWorkerId = required(source, "ALBERT_WEBHOOK_WORKER_ID");
-  const allocationId = source.FLY_MACHINE_ID?.trim();
-  const workerId = allocationId
-    ? `${configuredWorkerId}:${allocationId}`
-    : configuredWorkerId;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(workerId)) {
-    throw new Error("ALBERT_WEBHOOK_WORKER_ID is invalid.");
-  }
+  const workerId = loadReplicaWorkerId(
+    source,
+    "ALBERT_WEBHOOK_WORKER_ID",
+    "Albert webhook gateway is missing ALBERT_WEBHOOK_WORKER_ID.",
+  );
   const retryBaseSeconds = boundedInteger(
     source,
     "WEBHOOK_INBOX_RETRY_BASE_SECONDS",
@@ -131,7 +164,10 @@ export function loadWebhookGatewayConfig(
   }
   return Object.freeze({
     controlPlaneDatabaseUrl,
-    rawStorage:loadRawStorageS3Config(source),
+    rawStorage: loadRawStorageS3Config(source, {
+      machinePurpose: "webhook",
+      passwordEnvironmentName: "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
+    }),
     xeroWebhookSigningKey,
     xeroWebhookInboxKeyring,
     xeroWebhookEncryptedRetentionDays,
@@ -143,6 +179,8 @@ export function loadWebhookGatewayConfig(
       500,
       4_000,
     ),
+    webhookAttestationKeyId,
+    webhookAttestationSecret,
     xeroWebhookProcessor: Object.freeze({
       workerId,
       leaseSeconds: boundedInteger(source, "WEBHOOK_INBOX_LEASE_SECONDS", 90, 30, 300),

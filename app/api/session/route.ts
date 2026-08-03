@@ -2,11 +2,11 @@ import { z } from "zod";
 import {
   bootstrapTenant,
   ControlPlaneError,
-  currentTenantContext,
+  currentTenantSessionState,
   requireUser,
 } from "@/services/control-plane/src/web-repository";
 import { isInternalOperator } from "@/services/control-plane/src/operator-repository";
-import { assertSameOriginMutation } from "@/services/control-plane/src/request-security";
+import { assertSameOriginMutation, readBoundedJsonBody } from "@/services/control-plane/src/request-security";
 
 const bootstrapSchema = z.object({
   displayName: z.string().trim().min(1).max(100),
@@ -23,8 +23,10 @@ function errorResponse(error: unknown) {
 export async function GET() {
   try {
     const { user } = await requireUser();
-    const context = await currentTenantContext();
-    const internalOperator = await isInternalOperator();
+    const [sessionState, internalOperator] = await Promise.all([
+      currentTenantSessionState(),
+      isInternalOperator(),
+    ]);
     return Response.json({
       user: {
         id: user.id,
@@ -38,9 +40,10 @@ export async function GET() {
             ? user.user_metadata.timezone
             : "Australia/Melbourne",
       },
-      context,
+      context: sessionState.context,
       internalOperator,
-      needsBootstrap: context === null,
+      deletionReceipt: sessionState.deletionReceipt,
+      needsBootstrap: sessionState.needsBootstrap,
     });
   } catch (error) {
     return errorResponse(error);
@@ -50,7 +53,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     assertSameOriginMutation(request);
-    const body = bootstrapSchema.safeParse(await request.json());
+    const body = bootstrapSchema.safeParse(await readBoundedJsonBody(request));
     if (!body.success) {
       return Response.json({ error: "A valid organisation name and timezone are required." }, { status: 400 });
     }

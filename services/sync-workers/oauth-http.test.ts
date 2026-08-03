@@ -1,14 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { signInternalRequest } from "../../packages/security/src/index.js";
-import type { CredentialVaultFactory } from "./src/credential-vault.js";
 import type { OAuthConnectorPack, WorkerCredentialVault } from "../../packages/connector-sdk/src/index.js";
-import type { DisconnectStore, OAuthConnectorFactory } from "./src/oauth-http.js";
+import type { OAuthConnectorFactory } from "./src/oauth-http.js";
 import { OAuthWorkerHttpHandler } from "./src/oauth-http.js";
 import type { OAuthSessionStore } from "./src/oauth-session-store.js";
-import type { DeputyWebhookSetupCoordinator } from "./src/deputy-webhooks.js";
-
-const unusedDeputyWebhooks = {} as DeputyWebhookSetupCoordinator;
 
 test("OAuth worker stores the web-bound state hash and encrypted-PKCE input contract", async () => {
   const secret = "s".repeat(48);
@@ -27,10 +23,7 @@ test("OAuth worker stores the web-bound state hash and encrypted-PKCE input cont
     oauthWorkerSigningSecret: secret,
     allowedRedirectUris: new Set(["https://albert.example/api/oauth/xero/callback"]),
     sessions,
-    credentialVaults: {} as CredentialVaultFactory,
     connectors,
-    disconnects: {} as DisconnectStore,
-    deputyWebhooks: unusedDeputyWebhooks,
   });
   const payload = {
     tenantId: "01J00000000000000000000002",
@@ -50,7 +43,10 @@ test("OAuth worker stores the web-bound state hash and encrypted-PKCE input cont
   }));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    result: { oauthSessionId: "01J00000000000000000000001" },
+    result: {
+      oauthSessionId: "01J00000000000000000000001",
+      scopes: ["accounting.transactions.read"],
+    },
   });
   assert.equal(captured[0]?.stateNonceHash, payload.stateNonceHash);
   assert.equal(captured[0]?.codeVerifier, payload.codeVerifier);
@@ -61,10 +57,7 @@ test("OAuth worker rejects unsigned internal calls", async () => {
     oauthWorkerSigningSecret: "s".repeat(48),
     allowedRedirectUris: new Set(),
     sessions: {} as OAuthSessionStore,
-    credentialVaults: {} as CredentialVaultFactory,
     connectors: {} as OAuthConnectorFactory,
-    disconnects: {} as DisconnectStore,
-    deputyWebhooks: unusedDeputyWebhooks,
   });
   const response = await handler.handle(new Request("https://worker.internal/v1/oauth/start", {
     method: "POST",
@@ -74,6 +67,78 @@ test("OAuth worker rejects unsigned internal calls", async () => {
   assert.deepEqual(await response.json(), { error: "unauthorised" });
 });
 
+test("OAuth callback replays committed selection and terminal outcomes after response loss", async () => {
+  const secret = "s".repeat(48);
+  const tenantId = "01J00000000000000000000002";
+  const oauthSessionId = "01J00000000000000000000003";
+  const userId = "00000000-0000-4000-8000-000000000001";
+  const redirectUri = "https://albert.example/api/oauth/xero/callback";
+  const replays = [
+    {
+      replay: {
+        provider: "xero" as const,
+        redirectUri,
+        status: "selection_required" as const,
+        choices: [
+          { externalAccountId: "tenant-a", displayName: "A", metadata: {} },
+          { externalAccountId: "tenant-b", displayName: "B", metadata: {} },
+        ],
+      },
+      expectedStatus: 202,
+    },
+    {
+      replay: {
+        provider: "xero" as const,
+        redirectUri,
+        status: "connected" as const,
+        connectionId: "01J00000000000000000000004",
+        jobRequestId: "01J00000000000000000000005",
+      },
+      expectedStatus: 200,
+    },
+  ] as const;
+
+  for (const { replay, expectedStatus } of replays) {
+    const sessions = {
+      async loadCallbackReplay() { return replay; },
+      async loadForCallback() { throw new Error("committed_replay_must_not_load_secrets"); },
+    } as unknown as OAuthSessionStore;
+    const handler = new OAuthWorkerHttpHandler({
+      oauthWorkerSigningSecret: secret,
+      allowedRedirectUris: new Set(),
+      sessions,
+      connectors: {
+        scopes() { return []; },
+        create() { throw new Error("committed_replay_must_not_call_provider"); },
+      },
+    });
+    const body = JSON.stringify({
+      tenantId,
+      oauthSessionId,
+      userId,
+      provider: "xero",
+      redirectUri,
+      stateNonceHash: "a".repeat(64),
+      code: "already-consumed",
+    });
+    const signed = await signInternalRequest({
+      method: "POST",
+      path: "/v1/oauth/callback",
+      body,
+      secret,
+    });
+    const response = await handler.handle(new Request("https://worker.internal/v1/oauth/callback", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...signed },
+      body,
+    }));
+
+    assert.equal(response.status, expectedStatus);
+    const payload = await response.json() as { result?: { status?: string } };
+    assert.equal(payload.result?.status, replay.status);
+  }
+});
+
 test("OAuth callbacks cancel a hung vendor exchange before the web callback deadline", async () => {
   const secret = "s".repeat(48);
   const tenantId = "01J00000000000000000000002";
@@ -81,6 +146,7 @@ test("OAuth callbacks cancel a hung vendor exchange before the web callback dead
   const userId = "00000000-0000-4000-8000-000000000001";
   let exchangeSignal: AbortSignal | undefined;
   const sessions = {
+    async loadCallbackReplay() { return null; },
     async loadForCallback() {
       return {
         tenantId,
@@ -113,10 +179,7 @@ test("OAuth callbacks cancel a hung vendor exchange before the web callback dead
     oauthWorkerSigningSecret: secret,
     allowedRedirectUris: new Set(),
     sessions,
-    credentialVaults: {} as CredentialVaultFactory,
     connectors,
-    disconnects: {} as DisconnectStore,
-    deputyWebhooks: unusedDeputyWebhooks,
     operationTimeoutMs: 20,
   });
   const body = JSON.stringify({
@@ -145,7 +208,7 @@ test("OAuth callbacks cancel a hung vendor exchange before the web callback dead
   assert.equal(exchangeSignal?.aborted, true);
 });
 
-test("Deputy OAuth completion provisions connection-bound webhooks after durable finalisation", async () => {
+test("Deputy OAuth completion finalises the connection without a webhook provisioning path", async () => {
   const secret = "s".repeat(48);
   const tenantId = "01J00000000000000000000002";
   const oauthSessionId = "01J00000000000000000000003";
@@ -153,7 +216,6 @@ test("Deputy OAuth completion provisions connection-bound webhooks after durable
   const userId = "00000000-0000-4000-8000-000000000001";
   const order: string[] = [];
   const provisionalVault = {} as WorkerCredentialVault;
-  const liveVault = {} as WorkerCredentialVault;
   const account = {
     externalAccountId: "demo.au.deputy.com",
     displayName: "Albert Deputy",
@@ -163,8 +225,8 @@ test("Deputy OAuth completion provisions connection-bound webhooks after durable
     async discover_accounts() { return [account]; },
     async select_account() { return account; },
   } as unknown as OAuthConnectorPack;
-  const liveConnector = { provision_webhooks() { throw new Error("coordinator_owns_call"); } };
   const sessions = {
+    async loadCallbackReplay() { return null; },
     async loadForCallback() {
       return {
         tenantId,
@@ -194,36 +256,16 @@ test("Deputy OAuth completion provisions connection-bound webhooks after durable
   const connectors = {
     scopes() { return ["longlife_refresh_token"]; },
     create(_provider: string, vault: WorkerCredentialVault) {
-      return vault === provisionalVault
-        ? selectionConnector
-        : liveConnector as unknown as OAuthConnectorPack;
+      assert.equal(vault, provisionalVault);
+      order.push("connector_created");
+      return selectionConnector;
     },
   } as OAuthConnectorFactory;
-  const deputyWebhooks = {
-    async provision(input: { connector: unknown; context: Record<string, unknown> }) {
-      order.push("provisioned");
-      assert.equal(input.connector, liveConnector);
-      assert.deepEqual(input.context, {
-        tenantId,
-        connectionId,
-        credentialRef: "live-credential",
-        abortSignal: input.context.abortSignal,
-      });
-      assert.ok(input.context.abortSignal instanceof AbortSignal);
-      return {
-        state: "active" as const,
-        provisionedTopics: ["Timesheet.Update"],
-      };
-    },
-  } as unknown as DeputyWebhookSetupCoordinator;
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: secret,
     allowedRedirectUris: new Set(),
     sessions,
-    credentialVaults: { reader: () => liveVault } as CredentialVaultFactory,
     connectors,
-    disconnects: {} as DisconnectStore,
-    deputyWebhooks,
   });
   const body = JSON.stringify({
     tenantId,
@@ -245,17 +287,42 @@ test("Deputy OAuth completion provisions connection-bound webhooks after durable
     body,
   }));
   assert.equal(response.status, 200);
-  assert.deepEqual(order, ["finalized", "provisioned"]);
+  assert.deepEqual(order, ["connector_created", "finalized"]);
   assert.deepEqual(await response.json(), {
     result: {
       oauthSessionId,
       status: "connected",
       connectionId,
       jobRequestId: "01J00000000000000000000005",
-      webhookSetup: {
-        state: "active",
-        provisionedTopics: ["Timesheet.Update"],
-      },
     },
   });
+});
+
+test("OAuth worker exposes no disconnect endpoint or client-supplied actor path", async () => {
+  const secret = "s".repeat(48);
+  const handler = new OAuthWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set(),
+    sessions: {} as OAuthSessionStore,
+    connectors: {} as OAuthConnectorFactory,
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000002",
+    connectionId: "01J00000000000000000000004",
+    userId: "00000000-0000-4000-8000-000000000001",
+  });
+  const signed = await signInternalRequest({
+    method: "POST",
+    path: "/v1/oauth/disconnect",
+    body,
+    secret,
+  });
+  const response = await handler.handle(new Request("https://worker.internal/v1/oauth/disconnect", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "not_found" });
 });

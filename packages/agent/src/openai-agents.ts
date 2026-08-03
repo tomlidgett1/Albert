@@ -45,7 +45,7 @@ export function createAlbertOpenAIAgent<TContext = unknown>(
 
   const runConfig = buildOpenAIAgentRunConfig(preferences);
   const modelSettings: ModelSettings = {
-    reasoning: { effort: runConfig.modelSettings.reasoning.effort },
+    reasoning: { ...runConfig.modelSettings.reasoning },
     providerData: { ...runConfig.modelSettings.providerData },
   };
 

@@ -6,7 +6,7 @@ import { mapDeputyCanonical } from "../../connectors/deputy/canonical.js";
 import { deputyManifest } from "../../connectors/deputy/manifest.js";
 import { mapLightspeedCanonical } from "../../connectors/lightspeed-r/canonical.js";
 import { lightspeedRManifest } from "../../connectors/lightspeed-r/manifest.js";
-import { mapXeroCanonical } from "../../connectors/xero/canonical.js";
+import { classifyXeroAccount, mapXeroCanonical } from "../../connectors/xero/canonical.js";
 import { xeroManifest } from "../../connectors/xero/manifest.js";
 import {
   buildIdentitySuggestions,
@@ -24,7 +24,9 @@ import type {
   CanonicalProjectionCommand,
   CanonicalStagingRow,
   CanonicalStreamMapper,
+  CanonicalTransformBatch,
 } from "../../services/sync-workers/src/canonical-contract.js";
+import { isolateCanonicalMappings } from "../../services/sync-workers/src/canonical-pipeline.js";
 
 type Fixture = Readonly<{ responses: Readonly<Record<string, unknown>> }>;
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -69,6 +71,31 @@ test("all 30 connector streams produce non-empty, schema-bounded canonical comma
   assert.equal(streamCount, 30);
 });
 
+test("email-less Deputy and Lightspeed workers retain resolvable location references", () => {
+  const lightspeedWorker = mapLightspeedCanonical(
+    "employees",
+    { ...fixtureRow("lightspeed-r", "employees"), contact: null },
+    context,
+  ).find((command) => command.kind === "identity_hint" && command.entityType === "worker");
+  const deputyWorker = mapDeputyCanonical(
+    "employees",
+    fixtureRow("deputy", "employees"),
+    context,
+  ).find((command) => command.kind === "identity_hint" && command.entityType === "worker");
+  assert.ok(lightspeedWorker?.kind === "identity_hint");
+  assert.ok(deputyWorker?.kind === "identity_hint");
+  assert.deepEqual(lightspeedWorker.corroboratingScopeRef, {
+    sourceObjectType: "Shop",
+    sourceRecordId: "101",
+  });
+  assert.deepEqual(deputyWorker.corroboratingScopeRef, {
+    sourceObjectType: "Company",
+    sourceRecordId: "101",
+  });
+  assert.equal(lightspeedWorker.corroboratingScope, undefined);
+  assert.equal(deputyWorker.corroboratingScope, undefined);
+});
+
 test("documented Xero payment and Deputy leave variants have explicit typed coverage", () => {
   const xeroPayments = contracts.find(
     (contract) => contract.connectorId === "xero" && contract.stream === "payments",
@@ -85,10 +112,10 @@ test("documented Xero payment and Deputy leave variants have explicit typed cove
         .map((field) => [field.sourceField, [field.column, field.type, field.disposition, field.pii]]),
     ),
     {
-      BankAmount: ["bank_amount", "numeric", "governed_extension", "none"],
-      BatchPayment: ["batch_payment", "jsonb", "governed_extension", "business_contact"],
-      Prepayment: ["prepayment", "jsonb", "governed_extension", "customer_contact"],
-      Overpayment: ["overpayment", "jsonb", "governed_extension", "customer_contact"],
+      BankAmount: ["bank_amount", "numeric", "canonical", "none"],
+      BatchPayment: ["batch_payment", "jsonb", "canonical", "business_contact"],
+      Prepayment: ["prepayment", "jsonb", "canonical", "customer_contact"],
+      Overpayment: ["overpayment", "jsonb", "canonical", "customer_contact"],
     },
   );
 
@@ -102,10 +129,10 @@ test("documented Xero payment and Deputy leave variants have explicit typed cove
       .filter((field) => field.stream === "leave")
       .map((field) => [field.field, field]),
   );
-  assert.equal(xeroPaymentCoverage.BankAmount?.target, "source_xero.payments.bank_amount");
-  assert.equal(xeroPaymentCoverage.Prepayment?.target, "source_xero.payments.prepayment");
-  assert.equal(xeroPaymentCoverage.Overpayment?.target, "source_xero.payments.overpayment");
-  assert.equal(xeroPaymentCoverage.BatchPayment?.target, "source_xero.payments.batch_payment");
+  assert.equal(xeroPaymentCoverage.BankAmount?.target, "event_link.evidence.bank_amount");
+  assert.equal(xeroPaymentCoverage.Prepayment?.target, "event_link.to.source_record_id");
+  assert.equal(xeroPaymentCoverage.Overpayment?.target, "event_link.to.source_record_id");
+  assert.equal(xeroPaymentCoverage.BatchPayment?.target, "event_link.to.source_record_id");
   assert.equal(deputyLeaveCoverage.Start?.target, "workforce_leave.started_at");
   assert.equal(deputyLeaveCoverage.End?.target, "workforce_leave.ended_at");
   assert.equal(deputyLeaveCoverage.TimeZone?.target, "source_deputy.leave.time_zone");
@@ -212,6 +239,90 @@ test("Lightspeed refunds become reversal facts linked to the native original sal
   assert.equal(reversal.to.sourceRecordId, "611");
 });
 
+test("canonical mapping isolates malformed Xero and Lightspeed records from valid peers", () => {
+  const cases = [
+    {
+      connectorId: "xero" as const,
+      stream: "invoices",
+      mapper: mapXeroCanonical,
+      valid: fixtureRow("xero", "invoices"),
+      invalid(base:CanonicalStagingRow):CanonicalStagingRow {
+        const id="00000000-0000-4000-8000-000000000099";
+        return {
+          ...base,
+          namespaced_source_key:`xero:${base.external_account_reference}:Invoices:${id}`,
+          source_record_id:id,
+          invoice_id:id,
+          date:null,
+        };
+      },
+      errorCode:"canonical.xero_canonical_date_missing",
+    },
+    {
+      connectorId: "lightspeed-r" as const,
+      stream: "sales",
+      mapper: mapLightspeedCanonical,
+      valid: fixtureRow("lightspeed-r", "sales"),
+      invalid(base:CanonicalStagingRow):CanonicalStagingRow {
+        return {
+          ...base,
+          namespaced_source_key:`lightspeed-r:${base.external_account_reference}:Sale:missing-shop`,
+          source_record_id:"missing-shop",
+          sale_id:"missing-shop",
+          shop_id:null,
+        };
+      },
+      errorCode:"canonical.lightspeed_canonical_id_missing",
+    },
+    {
+      connectorId: "lightspeed-r" as const,
+      stream: "sales",
+      mapper: mapLightspeedCanonical,
+      valid: fixtureRow("lightspeed-r", "sales"),
+      invalid(base:CanonicalStagingRow):CanonicalStagingRow {
+        return {
+          ...base,
+          namespaced_source_key:`lightspeed-r:${base.external_account_reference}:Sale:missing-refund-parent`,
+          source_record_id:"missing-refund-parent",
+          sale_id:"missing-refund-parent",
+          total:"-25.0000",
+          tax_total:"-2.2727",
+          sale_payments:null,
+          sale_lines:{SaleLine:[{
+            saleLineID:"refund-without-parent",
+            itemID:"401",
+            unitQuantity:"-1.0000",
+            unitPrice:"25.0000",
+            normalUnitPrice:"25.0000",
+            calcTotal:"-25.0000",
+          }]},
+        };
+      },
+      errorCode:"canonical.lightspeed_refund_parent_missing",
+    },
+  ];
+
+  for(const scenario of cases){
+    const job:CanonicalTransformBatch={
+      tenantId:scenario.valid.tenant_id,
+      batchId:scenario.valid.payload_batch_id,
+      syncRunId:scenario.valid.sync_run_id,
+      connectionId:scenario.valid.connection_id,
+      connectorId:scenario.connectorId,
+      mappingVersion:scenario.valid.mapping_version,
+    };
+    const isolated=isolateCanonicalMappings(
+      [scenario.invalid(scenario.valid),scenario.valid],job,scenario.stream,
+      scenario.valid.mapping_version,scenario.mapper,context,
+    );
+    assert.equal(isolated.accepted.length,1,`${scenario.connectorId}.${scenario.stream} valid peer`);
+    assert.equal(isolated.rejected.length,1,`${scenario.connectorId}.${scenario.stream} rejection`);
+    assert.equal(isolated.rejected[0]?.errorCode,scenario.errorCode);
+    assert.equal(isolated.accepted[0]?.row.source_record_id,scenario.valid.source_record_id);
+    assert.ok((isolated.accepted[0]?.commands.length??0)>0);
+  }
+});
+
 test("Lightspeed product mapping retains effective-dated category membership", () => {
   const row = fixtureRow("lightspeed-r", "items");
   const commands = mapLightspeedCanonical("items", row, context);
@@ -220,6 +331,77 @@ test("Lightspeed product mapping retains effective-dated category membership", (
   assert.equal(assignment.sourceRecordId, "401");
   assert.equal(assignment.productVariant.sourceRef.sourceRecordId, "401");
   assert.equal(assignment.productCategory.sourceRef.sourceRecordId, "301");
+});
+
+test("Lightspeed current balances become date-grained observations even when unchanged", () => {
+  const row = fixtureRow("lightspeed-r", "item_shops");
+  const first = upsert(mapLightspeedCanonical("item_shops", {
+    ...row,
+    ingested_at: "2026-08-01T02:00:00.000Z",
+  }, context), "inventory_balance_snapshot");
+  const unchangedNextDay = upsert(mapLightspeedCanonical("item_shops", {
+    ...row,
+    ingested_at: "2026-08-02T02:00:00.000Z",
+  }, context), "inventory_balance_snapshot");
+
+  assert.equal(first.values.snapshot_date, "2026-08-01");
+  assert.equal(unchangedNextDay.values.snapshot_date, "2026-08-02");
+  assert.notEqual(first.sourceRecordId, unchangedNextDay.sourceRecordId);
+  assert.match(first.sourceRecordId, /#snapshot:2026-08-01$/u);
+  assert.equal(first.sourceObjectType, "ItemShopDailySnapshot");
+  assert.equal(first.values.quantity_on_hand, unchangedNextDay.values.quantity_on_hand);
+});
+
+test("Lightspeed purchase orders have one complete arrival-order-independent projection", () => {
+  const embedded=mapLightspeedCanonical("orders",fixtureRow("lightspeed-r","orders"),context);
+  const standalone=mapLightspeedCanonical("order_lines",fixtureRow("lightspeed-r","order_lines"),context);
+  const embeddedLine=upsert(embedded,"purchase_order_line");
+
+  assert.equal(upserts(standalone,"purchase_order_line").length,0);
+  assert.equal(standalone[0]?.kind,"metadata");
+  assert.notEqual(embeddedLine.values.supplier_id,null);
+  assert.notEqual(embeddedLine.values.stock_location_id,null);
+  assert.notEqual(embeddedLine.values.ordered_at,null);
+  assert.ok("expected_at" in embeddedLine.values);
+  assert.ok("received_at" in embeddedLine.values);
+
+  const materialize=(sequence:readonly (readonly CanonicalProjectionCommand[])[])=>{
+    let value:Readonly<Record<string,unknown>>|null=null;
+    for(const commands of sequence){
+      for(const command of commands){
+        if((command.kind==="fact"||command.kind==="dimension")
+          &&command.table==="purchase_order_line"&&!command.updateOnly){
+          value={sourceObjectType:command.sourceObjectType,sourceRecordId:command.sourceRecordId,...command.values};
+        }
+      }
+    }
+    return value;
+  };
+  assert.deepEqual(materialize([standalone,embedded]),materialize([embedded,standalone]));
+
+  const deletion=mapLightspeedCanonical("order_lines",{
+    ...fixtureRow("lightspeed-r","order_lines"),tombstone:true,
+  },context)[0];
+  assert.equal(deletion?.kind,"fact");
+  if(deletion?.kind!=="fact")assert.fail("Expected purchase-order deletion projection");
+  assert.equal(deletion.updateOnly,true);
+  assert.deepEqual(deletion.values,{status:"cancelled"});
+});
+
+test("Xero AU account types classify direct costs separately from operating expenses", () => {
+  const expected: Readonly<Record<string, string>> = {
+    BANK: "asset", CURRENT: "asset", FIXED: "asset", INVENTORY: "asset",
+    NONCURRENT: "asset", PREPAYMENT: "asset", CURRLIAB: "liability",
+    LIABILITY: "liability", TERMLIAB: "liability", EQUITY: "equity",
+    REVENUE: "revenue", SALES: "revenue", OTHERINCOME: "revenue",
+    DIRECTCOSTS: "cost_of_sales", DEPRECIATN: "operating_expense",
+    EXPENSE: "operating_expense", OVERHEADS: "operating_expense",
+  };
+  for (const [type, accountClass] of Object.entries(expected)) {
+    assert.equal(classifyXeroAccount(type, "EXPENSE"), accountClass, type);
+  }
+  assert.equal(classifyXeroAccount(undefined, "ASSET"), "asset");
+  assert.equal(classifyXeroAccount("future_type", "future_class"), "unknown");
 });
 
 test("Xero nested finance rows expand without floating point and preserve posting/settlement links", () => {
@@ -275,6 +457,31 @@ test("Xero nested finance rows expand without floating point and preserve postin
   );
   assert.ok(batchLink);
 
+  for (const type of [
+    "RECEIVE","RECEIVE-PREPAYMENT","RECEIVE-OVERPAYMENT","RECEIVE-TRANSFER",
+  ]) {
+    const bank=upsert(mapXeroCanonical("bank_transactions",{
+      ...fixtureRow("xero","bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
+    },context),"finance_bank_transaction");
+    assert.equal(bank.values.amount,"100.0000",`${type} must remain an inbound receipt`);
+    assert.equal(bank.values.tax_amount,"10.0000");
+  }
+  for (const type of [
+    "SPEND","SPEND-PREPAYMENT","SPEND-OVERPAYMENT","SPEND-TRANSFER",
+  ]) {
+    const bank=upsert(mapXeroCanonical("bank_transactions",{
+      ...fixtureRow("xero","bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
+    },context),"finance_bank_transaction");
+    assert.equal(bank.values.amount,"-100.0000",`${type} must remain an outbound spend`);
+    assert.equal(bank.values.tax_amount,"-10.0000");
+  }
+  assert.throws(
+    ()=>mapXeroCanonical("bank_transactions",{
+      ...fixtureRow("xero","bank_transactions"),type:"UNREVIEWED-CASH-DIRECTION",
+    },context),
+    /xero_bank_transaction_type_invalid/iu,
+  );
+
   const paymentBase: CanonicalStagingRow = {
     ...fixtureRow("xero", "payments"),
     invoice: [],
@@ -327,6 +534,7 @@ test("Deputy keeps planned, actual, and leave grains separate and uses tenant co
   );
   assert.equal(shift.values.rostered_minutes, 480);
   assert.equal(time.values.worked_minutes, 480);
+  assert.equal(time.values.overtime_minutes, null, "unknown overtime is never fabricated as zero");
   assert.equal(time.values.labour_cost, "264.0000");
   assert.equal(leave.values.leave_minutes, 480);
   assert.equal(leave.values.starts_at, "2026-08-09T14:00:00.000Z");
@@ -355,6 +563,54 @@ test("Deputy keeps planned, actual, and leave grains separate and uses tenant co
     }, context),
     /deputy_canonical_leave_interval_partial/u,
   );
+});
+
+test("Deputy rehire creates a new effective-dated episode against the same worker", () => {
+  const initial=fixtureRow("deputy","employees");
+  const terminated:CanonicalStagingRow={
+    ...initial,
+    active:false,
+    termination_date:"2026-03-31",
+    source_updated_at:"2026-03-31T12:00:00.000Z",
+  };
+  const rehired:CanonicalStagingRow={
+    ...initial,
+    active:true,
+    start_date:"2026-07-01",
+    termination_date:null,
+    source_updated_at:"2026-07-01T00:00:00.000Z",
+  };
+  const initialEpisode=upsert(mapDeputyCanonical("employees",initial,context),"employment_episode");
+  const terminatedEpisode=upsert(mapDeputyCanonical("employees",terminated,context),"employment_episode");
+  const rehireEpisode=upsert(mapDeputyCanonical("employees",rehired,context),"employment_episode");
+  const initialWorker=upsert(mapDeputyCanonical("employees",initial,context),"worker");
+  const rehireWorker=upsert(mapDeputyCanonical("employees",rehired,context),"worker");
+
+  assert.equal(initialEpisode.sourceRecordId,terminatedEpisode.sourceRecordId);
+  assert.notEqual(initialEpisode.sourceRecordId,rehireEpisode.sourceRecordId);
+  assert.match(rehireEpisode.sourceRecordId,/#episode:2026-07-01$/u);
+  assert.equal(terminatedEpisode.values.effective_to,"2026-03-31");
+  assert.equal(terminatedEpisode.values.status,"terminated");
+  assert.equal(rehireEpisode.values.effective_from,"2026-07-01");
+  assert.equal(rehireEpisode.values.effective_to,null);
+  assert.equal(rehireEpisode.values.status,"active");
+  assert.equal(initialWorker.sourceRecordId,rehireWorker.sourceRecordId);
+
+  const shift=upsert(mapDeputyCanonical("rosters",fixtureRow("deputy","rosters"),context),"workforce_shift");
+  assert.deepEqual(shift.values.employment_episode_id,{
+    sourceRef:{
+      table:"employment_episode",
+      sourceObjectType:"EmployeeEpisode",
+      connectionId:"connection-deputy",
+      nullable:true,
+      lookup:{
+        kind:"employment_episode_on",
+        workerSourceObjectType:"Employee",
+        workerSourceRecordId:"301",
+        businessDate:"2026-07-31",
+      },
+    },
+  });
 });
 
 test("Deputy and Lightspeed fixtures produce source-neutral worker and location review candidates", () => {

@@ -1,0 +1,48 @@
+# Reference only. Production must build and deploy this service from the
+# separately reviewed immutable repository/ref named by
+# ALBERT_CAPACITY_ATTESTOR_TOOL_REF. Candidate release CI must never deploy it.
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile.capacity-attestor"
+
+[env]
+  ALBERT_CAPACITY_ATTESTOR_HOST = "0.0.0.0"
+  ALBERT_CAPACITY_ATTESTOR_PORT = "8791"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8791
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 1
+    hard_limit = 2
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "3s"
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    timeout = "3s"
+
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

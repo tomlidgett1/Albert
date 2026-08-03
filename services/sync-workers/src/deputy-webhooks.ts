@@ -3,20 +3,14 @@ import { ulid } from "ulid";
 
 import {
   DEPUTY_WEBHOOK_TOPICS,
-  DeputyConnector,
   parseDeputyWebhookVerificationMaterial,
   type DeputyWebhookVerificationMaterial,
-} from "../../../connectors/deputy/index.js";
-import {
-  ConnectorHttpError,
-  type ConnectorContext,
-} from "../../../packages/connector-sdk/src/index.js";
+} from "../../../connectors/deputy/webhooks.js";
 import {
   openSecret,
   sealSecret,
   type SealedSecret,
 } from "../../../packages/security/src/index.js";
-import type { PostgresQueryClient } from "../../../packages/queue/src/index.js";
 import type { TransactionalPostgres } from "./database.js";
 
 type MaterialRow = Readonly<{
@@ -32,8 +26,6 @@ type MaterialRow = Readonly<{
   ciphertext: string;
   callback_url: string;
   setup_status: string;
-  attempt_count: number | string;
-  provisioning_lease_active: boolean;
   retired_at: string | Date | null;
 }>;
 
@@ -48,17 +40,10 @@ type RewrapMaterialRow = Readonly<{
   ciphertext: string;
 }>;
 
-export type DeputyWebhookSetupResult = Readonly<{
-  state: "active" | "action_required" | "retryable";
-  reasonCode?: string;
-  provisionedTopics: readonly string[];
-}>;
-
-export type PreparedDeputyWebhook = Readonly<{
+export type DeputyWebhookOperatorMaterial = Readonly<{
   tenantId: string;
   connectionId: string;
   materialId: string;
-  attemptCount: number;
   callbackUrl: string;
   material: DeputyWebhookVerificationMaterial;
 }>;
@@ -98,22 +83,6 @@ function isCanonicalBase64Url256(value: string): boolean {
   return decoded.byteLength === 32 && decoded.toString("base64url") === value;
 }
 
-function safeFailure(error: unknown): Readonly<{
-  status: "blocked_permission" | "blocked_vendor_approval" | "retry_wait";
-  reasonCode: string;
-  state: "action_required" | "retryable";
-}> {
-  if (error instanceof ConnectorHttpError) {
-    if (error.status === 401 || error.status === 403) {
-      return { status: "blocked_permission", reasonCode: "deputy_webhook_permission_required", state: "action_required" };
-    }
-    if (error.status === 404 || error.status === 405 || error.status === 422) {
-      return { status: "blocked_vendor_approval", reasonCode: "deputy_webhook_vendor_approval_required", state: "action_required" };
-    }
-  }
-  return { status: "retry_wait", reasonCode: "deputy_webhook_setup_retry_required", state: "retryable" };
-}
-
 export class DeputyWebhookMaterialStore {
   private readonly gatewayOrigin: URL;
   private readonly encryptionKeys: ReadonlyMap<string, string>;
@@ -146,7 +115,15 @@ export class DeputyWebhookMaterialStore {
     this.gatewayOrigin = cleanGatewayOrigin(gatewayPublicUrl);
   }
 
-  async prepare(tenantId: string, connectionId: string): Promise<PreparedDeputyWebhook> {
+  /**
+   * Create or recover connection-bound material for an explicit privileged
+   * installation workflow. OAuth and sync composition never call this method,
+   * and this store has no vendor client or vendor-write capability.
+   */
+  async prepareForOperatorInstallation(
+    tenantId: string,
+    connectionId: string,
+  ): Promise<DeputyWebhookOperatorMaterial> {
     const candidateMaterialId = ulid();
     const candidateMaterial: DeputyWebhookVerificationMaterial = Object.freeze({
       version: 1,
@@ -166,10 +143,10 @@ export class DeputyWebhookMaterialStore {
            tenant_id, connection_id, material_id, material_version,
            verification_mode, envelope_version, algorithm, key_id, iv,
            ciphertext, callback_url, setup_status, required_topics,
-           attempt_count, last_attempted_at
+           attempt_count
          ) values (
            $1, $2, $3, 1, 'custom_header', $4, $5, $6, $7, $8, $9,
-           'provisioning', $10::text[], 1, now()
+           'installation_required', $10::text[], 0
          ) on conflict (tenant_id, connection_id) do nothing`,
         [
           tenantId,
@@ -187,12 +164,7 @@ export class DeputyWebhookMaterialStore {
       const selected = await client.query<MaterialRow>(
         `select tenant_id, connection_id, material_id, material_version,
                 verification_mode, envelope_version, algorithm, key_id, iv,
-                ciphertext, callback_url, setup_status, attempt_count,
-                case when setup_status = 'provisioning'
-                  then coalesce(last_attempted_at > clock_timestamp() - interval '2 minutes', true)
-                  else false
-                end as provisioning_lease_active,
-                retired_at
+                ciphertext, callback_url, setup_status, retired_at
            from control_plane.deputy_webhook_material
           where tenant_id = $1 and connection_id = $2
           for update`,
@@ -200,26 +172,30 @@ export class DeputyWebhookMaterialStore {
       );
       const material = selected.rows[0];
       if (!material || material.retired_at) throw new Error("deputy_webhook_material_unavailable");
-      const currentAttempt = Number(material.attempt_count);
-      if (!Number.isSafeInteger(currentAttempt) || currentAttempt < 1) {
-        throw new Error("deputy_webhook_attempt_invalid");
-      }
-      const candidateOwnsAttempt = material.material_id === candidateMaterialId;
-      if (!candidateOwnsAttempt && material.provisioning_lease_active) {
-        throw new Error("deputy_webhook_setup_in_progress");
-      }
       const nextCallback = callbackUrl(this.gatewayOrigin, connectionId, material.material_id);
-      const nextAttempt = candidateOwnsAttempt ? currentAttempt : currentAttempt + 1;
       await client.query(
         `update control_plane.deputy_webhook_material
-            set callback_url = $3, setup_status = 'provisioning',
-                last_error_code = null,
-                attempt_count = $4,
-                last_attempted_at = now()
+            set callback_url = $3,
+                setup_status = case
+                  when setup_status = 'active' then setup_status
+                  else 'installation_required'
+                end,
+                last_error_code = null
           where tenant_id = $1 and connection_id = $2`,
-        [tenantId, connectionId, nextCallback, nextAttempt],
+        [tenantId, connectionId, nextCallback],
       );
-      return { ...material, callback_url: nextCallback, attempt_count: nextAttempt };
+      await client.query(
+        `insert into control_plane.audit_log (
+           tenant_id, audit_id, actor_type, action, resource_type, resource_id,
+           audit_metadata
+         ) values ($1, $2, 'service', 'deputy.webhook_material_prepared_for_operator',
+           'connection', $3, jsonb_build_object(
+             'topic_count', $4::integer,
+             'vendor_write_performed', false
+           ))`,
+        [tenantId, ulid(), connectionId, DEPUTY_WEBHOOK_TOPICS.length],
+      );
+      return { ...material, callback_url: nextCallback };
     });
 
     const decryptionKey = this.encryptionKeys.get(row.key_id);
@@ -239,16 +215,15 @@ export class DeputyWebhookMaterialStore {
       });
       const updated = await this.db.query(
         `update control_plane.deputy_webhook_material
-            set envelope_version = $5, algorithm = $6, key_id = $7,
-                iv = $8, ciphertext = $9
+            set envelope_version = $4, algorithm = $5, key_id = $6,
+                iv = $7, ciphertext = $8
           where tenant_id = $1 and connection_id = $2 and material_id = $3
-            and attempt_count = $4 and key_id = $10 and retired_at is null
+            and key_id = $9 and retired_at is null
         returning material_id`,
         [
           row.tenant_id,
           row.connection_id,
           row.material_id,
-          Number(row.attempt_count),
           rotated.version,
           rotated.algorithm,
           rotated.keyId,
@@ -263,48 +238,8 @@ export class DeputyWebhookMaterialStore {
       tenantId: row.tenant_id,
       connectionId: row.connection_id,
       materialId: row.material_id,
-      attemptCount: Number(row.attempt_count),
       callbackUrl: row.callback_url,
       material: parsed,
-    });
-  }
-
-  async markActive(
-    prepared: PreparedDeputyWebhook,
-    vendorWebhookIds: Readonly<Record<string, string>>,
-  ): Promise<void> {
-    const topics = Object.keys(vendorWebhookIds).sort();
-    if (topics.length !== DEPUTY_WEBHOOK_TOPICS.length ||
-        !DEPUTY_WEBHOOK_TOPICS.every((topic) => topics.includes(topic))) {
-      throw new Error("deputy_webhook_topics_incomplete");
-    }
-    await this.db.transaction(async (client) => {
-      const updated = await client.query(
-        `update control_plane.deputy_webhook_material
-            set setup_status = 'active', provisioned_topics = $5::text[],
-                vendor_webhook_ids = $6::jsonb, last_error_code = null,
-                provisioned_at = now(), retired_at = null
-          where tenant_id = $1 and connection_id = $2 and material_id = $3
-            and attempt_count = $4
-            and retired_at is null
-        returning material_id`,
-        [
-          prepared.tenantId,
-          prepared.connectionId,
-          prepared.materialId,
-          prepared.attemptCount,
-          topics,
-          JSON.stringify(vendorWebhookIds),
-        ],
-      );
-      if (!updated.rows[0]) throw new Error("deputy_webhook_material_changed");
-      await this.updateConnectionState(client, prepared, "connected", "active", null);
-      await this.audit(client, prepared, "deputy.webhooks_provisioned", {
-        topic_count: topics.length,
-        verification_mode: prepared.material.enterpriseHmacKey
-          ? "custom_header_and_enterprise_hmac"
-          : "custom_header",
-      });
     });
   }
 
@@ -385,99 +320,4 @@ export class DeputyWebhookMaterialStore {
     });
   }
 
-  async markFailure(
-    prepared: PreparedDeputyWebhook,
-    failure: ReturnType<typeof safeFailure>,
-  ): Promise<void> {
-    await this.db.transaction(async (client) => {
-      const updated = await client.query(
-        `update control_plane.deputy_webhook_material
-            set setup_status = $5, last_error_code = $6
-          where tenant_id = $1 and connection_id = $2 and material_id = $3
-            and attempt_count = $4
-            and retired_at is null
-        returning material_id`,
-        [
-          prepared.tenantId,
-          prepared.connectionId,
-          prepared.materialId,
-          prepared.attemptCount,
-          failure.status,
-          failure.reasonCode,
-        ],
-      );
-      if (!updated.rows[0]) throw new Error("deputy_webhook_material_changed");
-      await this.updateConnectionState(client, prepared, "degraded", failure.status, failure.reasonCode);
-      await this.audit(client, prepared, "deputy.webhooks_setup_blocked", {
-        reason_code: failure.reasonCode,
-      });
-    });
-  }
-
-  private async updateConnectionState(
-    client: PostgresQueryClient,
-    prepared: PreparedDeputyWebhook,
-    status: "connected" | "degraded",
-    setupStatus: string,
-    reasonCode: string | null,
-  ): Promise<void> {
-    await client.query(
-      `update control_plane.connections
-          set status = $3,
-              account_metadata = coalesce(account_metadata, '{}'::jsonb)
-                || jsonb_build_object('webhook_setup', jsonb_build_object(
-                  'status', $4::text,
-                  'reason_code', $5::text,
-                  'recoverable', true,
-                  'updated_at', now()
-                ))
-        where tenant_id = $1 and connection_id = $2 and connector_key = 'deputy'`,
-      [prepared.tenantId, prepared.connectionId, status, setupStatus, reasonCode],
-    );
-  }
-
-  private async audit(
-    client: PostgresQueryClient,
-    prepared: PreparedDeputyWebhook,
-    action: string,
-    metadata: Readonly<Record<string, unknown>>,
-  ): Promise<void> {
-    await client.query(
-      `insert into control_plane.audit_log (
-         tenant_id, audit_id, actor_type, action, resource_type, resource_id,
-         audit_metadata
-       ) values ($1, $2, 'service', $3, 'connection', $4, $5::jsonb)`,
-      [prepared.tenantId, ulid(), action, prepared.connectionId, JSON.stringify(metadata)],
-    );
-  }
-}
-
-export class DeputyWebhookSetupCoordinator {
-  constructor(private readonly store: DeputyWebhookMaterialStore) {}
-
-  async provision(input: Readonly<{
-    connector: DeputyConnector;
-    context: ConnectorContext;
-  }>): Promise<DeputyWebhookSetupResult> {
-    const prepared = await this.store.prepare(input.context.tenantId, input.context.connectionId);
-    try {
-      const installed = await input.connector.provision_webhooks(input.context, {
-        callbackUrl: prepared.callbackUrl,
-        customHeaderSecret: prepared.material.customHeaderSecret,
-      });
-      await this.store.markActive(prepared, installed.vendorWebhookIds);
-      return Object.freeze({
-        state: "active",
-        provisionedTopics: Object.freeze(Object.keys(installed.vendorWebhookIds).sort()),
-      });
-    } catch (error) {
-      const failure = safeFailure(error);
-      await this.store.markFailure(prepared, failure);
-      return Object.freeze({
-        state: failure.state,
-        reasonCode: failure.reasonCode,
-        provisionedTopics: Object.freeze([]),
-      });
-    }
-  }
 }

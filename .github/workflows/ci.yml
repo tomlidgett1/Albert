@@ -45,7 +45,19 @@ jobs:
     env:
       PGPASSWORD: albert-ci-only
       ANALYTICAL_DATABASE_URL: postgresql://postgres:albert-ci-only@127.0.0.1:5432/albert_ci
+      ANALYTICAL_ADMIN_DATABASE_URL: postgresql://postgres:albert-ci-only@127.0.0.1:5432/albert_ci
       ANALYTICAL_MIGRATION_ROLE: albert_migration_owner
+      ALBERT_ANALYTICAL_DEPLOYER_DB_PASSWORD: ci-analytical-deployer-password-0001
+      ALBERT_INGEST_DB_PASSWORD: ci-analytical-ingest-password-0000001
+      ALBERT_TRANSFORM_DB_PASSWORD: ci-analytical-transform-password-00001
+      ALBERT_SEMANTIC_READ_DB_PASSWORD: ci-analytical-semantic-read-password-01
+      ALBERT_SEMANTIC_METADATA_DB_PASSWORD: ci-analytical-semantic-meta-password-1
+      ALBERT_OPERATOR_DIAGNOSTIC_ANALYTICAL_DB_PASSWORD: ci-analytical-diagnostic-password-0001
+      ALBERT_DELETION_DB_PASSWORD: ci-analytical-deletion-password-000001
+      ANALYTICAL_CAPABILITY_KEY_ID: ci-capability-v1
+      ANALYTICAL_CAPABILITY_SECRET_BASE64: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+      ANALYTICAL_CAPABILITY_ACTIVE_AT: "2020-01-01T00:00:00.000Z"
+      ANALYTICAL_CAPABILITY_RETIRE_AT: "2099-01-01T00:00:00.000Z"
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -56,19 +68,46 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f infra/bootstrap/analytical_roles.sql
+      - run: npm run migrate -- --target=analytical --bootstrap
       - run: npm run migrate -- --target=analytical
-      - run: npm run migrate -- --target=analytical
+      - run: npm run provision:runtime-logins -- --target=analytical
+      - run: npm run provision:analytical-capability-key -- --target=analytical
+      - run: npm run test:analytical-capability-boundary
+        env:
+          ALBERT_CAPABILITY_TEST_MODE: ci
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-role-isolation.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-deletion-residual-attestation.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-identity-resolution.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-settlement-bridge.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-gates.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-canonical-record-hardening.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-multi-account-authority.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-reconciliation-lifecycle.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-capability-scoped-health.sql
 
   control-plane-database:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CONTROL_PLANE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      CONTROL_PLANE_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
       CONTROL_PLANE_MIGRATION_ROLE: albert_control_migration_owner
       PGPASSWORD: postgres
+      ALBERT_CONTROL_DEPLOYER_DB_PASSWORD: ci-control-deployer-password-00000001
+      ALBERT_SYNC_CONTROL_DB_PASSWORD: ci-control-sync-password-00000000001
+      ALBERT_TRANSFORM_CONTROL_DB_PASSWORD: ci-control-transform-password-0000001
+      ALBERT_SEMANTIC_CONTROL_DB_PASSWORD: ci-control-semantic-password-00000001
+      ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD: ci-control-diagnostic-password-000001
+      ALBERT_WEBHOOK_CONTROL_DB_PASSWORD: ci-control-webhook-password-00000001
+      ALBERT_DELETION_CONTROL_DB_PASSWORD: ci-control-deletion-password-0000001
+      ANALYTICAL_CAPABILITY_KEY_ID: ci-capability-v1
+      ANALYTICAL_CAPABILITY_SECRET_BASE64: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+      ANALYTICAL_CAPABILITY_ACTIVE_AT: "2020-01-01T00:00:00.000Z"
+      ANALYTICAL_CAPABILITY_RETIRE_AT: "2099-01-01T00:00:00.000Z"
+      ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION: "1"
+      ALBERT_RAW_STORAGE_SYNC_PASSWORD: ci-sync-raw-storage-password-000000001
+      ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: ci-webhook-raw-storage-password-00001
+      ALBERT_RAW_STORAGE_DELETION_PASSWORD: ci-deletion-raw-storage-password-0001
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -91,8 +130,141 @@ jobs:
           -c 'CREATE EXTENSION IF NOT EXISTS pgmq'
           -c 'CREATE EXTENSION IF NOT EXISTS pg_cron'
           -c 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions'
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/bootstrap/control_plane_role.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/supabase-auth-bootstrap-precondition.sql
+      - run: npm run migrate -- --target=control-plane --bootstrap
       - run: npm run migrate -- --target=control-plane
+      - run: npm run provision:runtime-logins -- --target=control-plane
+      - name: Provision and exercise real RLS-scoped raw Storage S3 sessions
+        run: |
+          set -a
+          source <(supabase status -o env)
+          set +a
+          export SUPABASE_AUTH_URL="$API_URL"
+          export SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
+          export SUPABASE_STORAGE_S3_ENDPOINT="$STORAGE_S3_URL"
+          export SUPABASE_STORAGE_S3_REGION="local"
+          export SUPABASE_STORAGE_S3_ACCESS_KEY_ID="stub"
+          export SUPABASE_STORAGE_S3_LEGACY_ANON_KEY="$ANON_KEY"
+          npm run provision:raw-storage-machine-users
+          psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -f tests/sql/control-plane-raw-storage-runtime-seed.sql
+          sync_user_id="$(psql "$CONTROL_PLANE_DATABASE_URL" -At \
+            -c "select auth_user_id from albert_bootstrap.raw_storage_machine_principal where purpose='sync' and active")"
+          webhook_user_id="$(psql "$CONTROL_PLANE_DATABASE_URL" -At \
+            -c "select auth_user_id from albert_bootstrap.raw_storage_machine_principal where purpose='webhook' and active")"
+          deletion_user_id="$(psql "$CONTROL_PLANE_DATABASE_URL" -At \
+            -c "select auth_user_id from albert_bootstrap.raw_storage_machine_principal where purpose='deletion' and active")"
+          PGPASSWORD="$ALBERT_SYNC_CONTROL_DB_PASSWORD" psql \
+            -h 127.0.0.1 -p 54322 -U albert_sync_control_runtime -d postgres \
+            -v ON_ERROR_STOP=1 -v sync_user_id="$sync_user_id" \
+            -f tests/sql/control-plane-raw-storage-sync-runtime.sql
+          PGPASSWORD="$ALBERT_WEBHOOK_CONTROL_DB_PASSWORD" psql \
+            -h 127.0.0.1 -p 54322 -U albert_webhook_control_runtime -d postgres \
+            -v ON_ERROR_STOP=1 -v webhook_user_id="$webhook_user_id" \
+            -f tests/sql/control-plane-raw-storage-webhook-runtime.sql
+          PGPASSWORD="$ALBERT_DELETION_CONTROL_DB_PASSWORD" psql \
+            -h 127.0.0.1 -p 54322 -U albert_deletion_control_runtime -d postgres \
+            -v ON_ERROR_STOP=1 -v deletion_user_id="$deletion_user_id" \
+            -f tests/sql/control-plane-raw-storage-deletion-runtime.sql
+          npm run test:raw-storage-s3-session
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-raw-storage-authority.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-auth-compatibility.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-test-role-delegation.sql
+        env:
+          PGOPTIONS: -c albert.test_role_delegation=on
       - run: npm run migrate -- --target=control-plane
+        env:
+          CONTROL_PLANE_DATABASE_URL: postgresql://albert_control_deployer:ci-control-deployer-password-00000001@127.0.0.1:54322/postgres
+          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
+      - run: npm run provision:analytical-capability-key -- --target=control-plane
+      - run: npm run provision:webhook-attestation-key
+        env:
+          CONTROL_PLANE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          WEBHOOK_ATTESTATION_KEY_ID: ci-webhook-v1
+          WEBHOOK_ATTESTATION_SECRET: CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-pipeline-retention-seed.sql
+      - run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_transform_control_runtime
+          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-pipeline-retention-runtime.sql
+        env:
+          PGPASSWORD: ci-control-transform-password-0000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-capability-runtime-seed.sql
+      - run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_operator_diagnostic_control_runtime
+          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-capability-runtime.sql
+        env:
+          PGPASSWORD: ci-control-diagnostic-password-000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-seed.sql
+      - run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_semantic_control_runtime
+          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay.sql
+        env:
+          PGPASSWORD: ci-control-semantic-password-00000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-verify.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-rls.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-runtime-isolation.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-connection-mutation-boundary.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-webhook-attestation.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-answer-lineage.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-clarification-confirmations.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-model-usage-durability.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-conversation-leases.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-operator-console.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-operator-diagnostic.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-disconnect-durability.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-tenant-deletion-receipt.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-tenant-deletion-concurrency.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-explicit-organisation-targets.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-user-organisation-rate-limit.sql
+      - name: Record protected dogfood sync-worker deployment observation
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_sync_control_runtime -d postgres
+          -v ON_ERROR_STOP=1
+          -v dogfood_login=albert_sync_control_runtime
+          -v dogfood_group=albert_sync_control
+          -v dogfood_worker_id=ci-dogfood-sync
+          -v dogfood_service=sync-worker
+          -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
+        env:
+          PGPASSWORD: ci-control-sync-password-00000000001
+      - name: Record protected dogfood transform-worker deployment observation
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_transform_control_runtime -d postgres
+          -v ON_ERROR_STOP=1
+          -v dogfood_login=albert_transform_control_runtime
+          -v dogfood_group=albert_transform_control
+          -v dogfood_worker_id=ci-dogfood-transform
+          -v dogfood_service=transform-worker
+          -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
+        env:
+          PGPASSWORD: ci-control-transform-password-0000001
+      - name: Record protected dogfood deletion-worker deployment observation
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_deletion_control_runtime -d postgres
+          -v ON_ERROR_STOP=1
+          -v dogfood_login=albert_deletion_control_runtime
+          -v dogfood_group=albert_deletion_control
+          -v dogfood_worker_id=ci-dogfood-deletion
+          -v dogfood_service=deletion-worker
+          -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
+        env:
+          PGPASSWORD: ci-control-deletion-password-0000001
+      - name: Prove one worker credential cannot forge the deployment barrier
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_sync_control_runtime -d postgres
+          -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-worker-forgery.sql
+        env:
+          PGPASSWORD: ci-control-sync-password-00000000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-seed.sql
+      - run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_operator_diagnostic_control_runtime
+          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-runtime.sql
+        env:
+          PGPASSWORD: ci-control-diagnostic-password-000001
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-verify.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-sync-lifecycle.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-progressive-dependency-barriers.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-reconciliation-lifecycle.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-code-only-worker-failure-evidence.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-multi-account-authority.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-owner-concurrency.sql

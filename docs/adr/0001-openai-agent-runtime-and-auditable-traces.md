@@ -20,8 +20,8 @@ The UI must be transparent without exposing private chain-of-thought. Free-form 
 - Use `@openai/agents` in TypeScript over the OpenAI Responses transport.
 - Pin an explicit model per run. Do not depend on an SDK default.
 - Keep the model provider behind an Albert-owned runtime interface so regional inference and future provider changes do not affect the semantic layer.
-- Use one primary analytical agent initially. Add specialists only when an evaluation shows a clear quality or latency benefit.
-- Continue conversations from a bounded, tenant-scoped context rebuilt from Albert's own completed narrative artefacts. Send Responses requests with `store: false`; provider response IDs are audit correlation only, never the source of conversational continuity.
+- Use one primary analytical agent plus a narrow result-summarisation sub-agent for governed tables over 100 rows. The sub-agent receives the complete table in its own context, has no tools, cannot calculate new figures, and returns a grounded summary while the full table remains the tenant-visible artefact.
+- Continue conversations from a bounded, tenant-scoped context rebuilt from Albert's own completed narrative artefacts. Send Responses requests with `store: false` and `reasoning.context: "current_turn"`; provider response IDs are audit correlation only, never the source of conversational continuity.
 
 ### Model catalogue and user controls
 
@@ -46,6 +46,7 @@ Expose a server-owned catalogue and persist the resolved selection on every turn
 - Trusted backend code injects tenant identity, validates capabilities/budgets/permissions, compiles SQL deterministically, and executes only as `semantic_ro`.
 - Control-plane reads run as the constrained `albert_semantic_control` role. It can read the active registry and tenant overlay, and append explicitly confirmed overlay/audit changes; it has no privilege on OAuth token references or encrypted credential envelopes.
 - Tables and charts are rendered only from semantic-query result artefacts. The model may choose presentation, but it never invents or recalculates values.
+- A large-result summary is checked against every governed row before it enters the visible trace. Any numeric token absent from a governed cell (other than the server-derived row count) is withheld. The nested run's request and token usage is combined into the turn's immutable usage ledger.
 
 ### User-visible execution trace
 
@@ -78,6 +79,7 @@ Provider/SDK traces are operator observability only. The product trace is saniti
 ### Positive
 
 - The UI can show a natural sequential analysis without conflating transparency with hidden chain-of-thought.
+- Large tables do not consume the primary planner's context unboundedly, while their complete result and summarized interpretation remain auditable.
 - Every number remains reproducible from a result artefact and semantic bundle hash.
 - Model, speed, and reasoning changes are explicit, measurable, and auditable.
 - The agent runtime can evolve without relaxing the semantic or tenant-isolation boundary.

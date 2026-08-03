@@ -23,6 +23,7 @@ export interface DeletionControlPort {
   purge(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>>;
   verify(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>>;
   markVerifying(claim: DeletionClaim): Promise<void>;
+  issueAnalyticalCapability(claim: DeletionClaim, operation: "purge" | "verify"): Promise<string>;
   complete(claim: DeletionClaim, proof: Readonly<{
     proofId: string;
     tenantReferenceHash: string;
@@ -36,13 +37,13 @@ export interface DeletionControlPort {
 }
 
 export interface DeletionAnalyticalPort {
-  purge(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>>;
-  verify(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>>;
+  purge(claim: DeletionClaim, capability: string): Promise<Readonly<Record<string, unknown>>>;
+  verify(claim: DeletionClaim, capability: string): Promise<Readonly<Record<string, unknown>>>;
 }
 
 export interface DeletionRawStoragePort {
-  purge(tenantId: string, connectionId: string | null): Promise<Readonly<Record<string, unknown>>>;
-  verify(tenantId: string, connectionId: string | null): Promise<Readonly<Record<string, unknown> & { verified: boolean }>>;
+  purge(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>>;
+  verify(claim: DeletionClaim): Promise<Readonly<Record<string, unknown> & { verified: boolean }>>;
 }
 
 export interface CredentialRevoker {
@@ -67,8 +68,89 @@ function stable(value: unknown): string {
   throw new Error("proof_contains_unsupported_value");
 }
 
-function verified(value: Readonly<Record<string, unknown>>, store: string): void {
-  if (value.verified !== true) throw new Error(`${store}_deletion_not_verified`);
+const analyticalResidualKeys = Object.freeze([
+  "stagingRows",
+  "canonicalRows",
+  "bridgeRows",
+  "linkRows",
+  "embeddingRows",
+  "cacheRows",
+  "otherAnalyticalRows",
+] as const);
+const analyticalAttestationKeys = Object.freeze([
+  "verified",
+  "scope",
+  "measurement",
+  "remainingRows",
+  "residuals",
+] as const);
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactKeys(
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): boolean {
+  return Object.keys(value).length === keys.length
+    && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function deletionEvidenceCount(value: unknown, store: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`${store}_deletion_attestation_invalid`);
+  }
+  return value as number;
+}
+
+/**
+ * A boolean from the analytical database is insufficient deletion evidence.
+ * Require the catalog-measured residual contract and prove that its total is
+ * internally consistent before it can enter the immutable deletion proof.
+ */
+function normalizeAnalyticalAttestation(
+  value: Readonly<Record<string, unknown>>,
+  claim: DeletionClaim,
+): Readonly<Record<string, unknown>> {
+  const residuals = value.residuals;
+  if (
+    !hasExactKeys(value, analyticalAttestationKeys)
+    || value.measurement !== "post_purge_row_counts_v1"
+    || value.scope !== claim.scope
+    || !isRecord(residuals)
+  ) {
+    throw new Error("analytical_deletion_attestation_invalid");
+  }
+  if (!hasExactKeys(residuals, analyticalResidualKeys)) {
+    throw new Error("analytical_deletion_attestation_invalid");
+  }
+  const residualTotal = analyticalResidualKeys.reduce(
+    (sum, key) => sum + deletionEvidenceCount(residuals[key], "analytical"),
+    0,
+  );
+  const remainingRows = deletionEvidenceCount(value.remainingRows, "analytical");
+  if (remainingRows !== residualTotal) {
+    throw new Error("analytical_deletion_attestation_invalid");
+  }
+  if (value.verified !== true || remainingRows !== 0) {
+    throw new Error("analytical_deletion_not_verified");
+  }
+  return Object.freeze({
+    verified: true,
+    scope: claim.scope,
+    measurement: "post_purge_row_counts_v1",
+    remainingRows,
+    residuals: Object.freeze({
+      stagingRows: deletionEvidenceCount(residuals.stagingRows, "analytical"),
+      canonicalRows: deletionEvidenceCount(residuals.canonicalRows, "analytical"),
+      bridgeRows: deletionEvidenceCount(residuals.bridgeRows, "analytical"),
+      linkRows: deletionEvidenceCount(residuals.linkRows, "analytical"),
+      embeddingRows: deletionEvidenceCount(residuals.embeddingRows, "analytical"),
+      cacheRows: deletionEvidenceCount(residuals.cacheRows, "analytical"),
+      otherAnalyticalRows: deletionEvidenceCount(residuals.otherAnalyticalRows, "analytical"),
+    }),
+  });
 }
 
 const connectorFailureCodes = new Set([
@@ -97,6 +179,292 @@ const databaseFailureCodes: Readonly<Record<string, string>> = Object.freeze({
   "23505": "database_integrity_violation",
 });
 
+const remoteRevocationKeys = Object.freeze([
+  "attemptedAt",
+  "priorStatus",
+  "targetCount",
+  "targets",
+  "bestEffort",
+] as const);
+const forcedRemoteRevocationKeys = Object.freeze([
+  ...remoteRevocationKeys,
+  "forcedLocalDestruction",
+  "reason",
+] as const);
+const remoteTargetKeys = Object.freeze([
+  "provider",
+  "connectionGeneration",
+  "status",
+] as const);
+const remoteFailedTargetKeys = Object.freeze([
+  ...remoteTargetKeys,
+  "errorCode",
+  "errorClass",
+  "correlationId",
+] as const);
+const remotePriorStatuses = new Set([
+  "pending",
+  "succeeded",
+  "unsupported",
+  "failed",
+  "not_applicable",
+]);
+const remoteProviders = new Set(["lightspeed-r", "xero", "deputy"]);
+const remoteTargetStatuses = new Set(["succeeded", "unsupported", "failed"]);
+const remoteFailureClasses = new Map<string, string>([
+  ...[...connectorFailureCodes].map((code) => [
+    `connector_${code.toLowerCase()}`,
+    "connector",
+  ] as const),
+  ...Object.values(databaseFailureCodes).map((code) => [code, "database"] as const),
+  ["operation_aborted", "timeout"],
+  ["operation_timeout", "timeout"],
+  ["internal_type_error", "internal"],
+  ["internal_syntax_error", "internal"],
+  ["unexpected_deletion_failure", "internal"],
+]);
+
+function normalizeRemoteRevocation(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const forcedLocalDestruction = hasExactKeys(value, forcedRemoteRevocationKeys);
+  if (!forcedLocalDestruction && !hasExactKeys(value, remoteRevocationKeys)) {
+    throw new Error("remote_revocation_attestation_invalid");
+  }
+  const attemptedAt = value.attemptedAt;
+  const priorStatus = value.priorStatus;
+  const targetCount = deletionEvidenceCount(value.targetCount, "remote_revocation");
+  const targets = value.targets;
+  if (
+    typeof attemptedAt !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(attemptedAt)
+    || !Number.isFinite(Date.parse(attemptedAt))
+    || new Date(attemptedAt).toISOString() !== attemptedAt
+    || typeof priorStatus !== "string"
+    || !remotePriorStatuses.has(priorStatus)
+    || !Array.isArray(targets)
+    || targetCount !== targets.length
+    || value.bestEffort !== true
+    || (forcedLocalDestruction && (
+      value.forcedLocalDestruction !== true
+      || value.reason !== "remote_revocation_grace_expired"
+      || priorStatus !== "failed"
+      || targetCount !== 0
+    ))
+  ) {
+    throw new Error("remote_revocation_attestation_invalid");
+  }
+  const normalizedTargets = targets.map((candidate) => {
+    if (!isRecord(candidate)) throw new Error("remote_revocation_attestation_invalid");
+    const status = candidate.status;
+    const provider = candidate.provider;
+    const connectionGeneration = deletionEvidenceCount(
+      candidate.connectionGeneration,
+      "remote_revocation",
+    );
+    if (
+      typeof status !== "string"
+      || !remoteTargetStatuses.has(status)
+      || typeof provider !== "string"
+      || !remoteProviders.has(provider)
+      || connectionGeneration < 1
+    ) {
+      throw new Error("remote_revocation_attestation_invalid");
+    }
+    if (status !== "failed") {
+      if (!hasExactKeys(candidate, remoteTargetKeys)) {
+        throw new Error("remote_revocation_attestation_invalid");
+      }
+      return Object.freeze({ provider, connectionGeneration, status });
+    }
+    if (!hasExactKeys(candidate, remoteFailedTargetKeys)) {
+      throw new Error("remote_revocation_attestation_invalid");
+    }
+    const errorCode = candidate.errorCode;
+    const errorClass = candidate.errorClass;
+    const correlationId = candidate.correlationId;
+    if (
+      typeof errorCode !== "string"
+      || typeof errorClass !== "string"
+      || remoteFailureClasses.get(errorCode) !== errorClass
+      || typeof correlationId !== "string"
+      || !/^[0-9A-HJKMNP-TV-Z]{26}$/u.test(correlationId)
+    ) {
+      throw new Error("remote_revocation_attestation_invalid");
+    }
+    return Object.freeze({
+      provider,
+      connectionGeneration,
+      status,
+      errorCode,
+      errorClass,
+      correlationId,
+    });
+  });
+  return Object.freeze({
+    attemptedAt,
+    priorStatus,
+    targetCount,
+    targets: Object.freeze(normalizedTargets),
+    bestEffort: true,
+    ...(forcedLocalDestruction
+      ? { forcedLocalDestruction: true, reason: "remote_revocation_grace_expired" }
+      : {}),
+  });
+}
+
+function normalizeCredentialVerification(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const keys = ["verified", "tokenReferences", "credentialEnvelopes", "sessionEnvelopes"];
+  if (!hasExactKeys(value, keys)) throw new Error("credential_vault_deletion_attestation_invalid");
+  const tokenReferences = deletionEvidenceCount(value.tokenReferences, "credential_vault");
+  const credentialEnvelopes = deletionEvidenceCount(value.credentialEnvelopes, "credential_vault");
+  const sessionEnvelopes = deletionEvidenceCount(value.sessionEnvelopes, "credential_vault");
+  if (value.verified !== true || tokenReferences + credentialEnvelopes + sessionEnvelopes !== 0) {
+    throw new Error("credential_vault_deletion_not_verified");
+  }
+  return Object.freeze({ verified: true, tokenReferences, credentialEnvelopes, sessionEnvelopes });
+}
+
+function normalizeRawVerification(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (!hasExactKeys(value, ["verified", "remainingObjects"])) {
+    throw new Error("raw_storage_deletion_attestation_invalid");
+  }
+  const remainingObjects = deletionEvidenceCount(value.remainingObjects, "raw_storage");
+  if (value.verified !== true || remainingObjects !== 0) {
+    throw new Error("raw_storage_deletion_not_verified");
+  }
+  return Object.freeze({ verified: true, remainingObjects });
+}
+
+function normalizeControlVerification(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const keys = [
+    "verified",
+    "remainingTenantOrConnectionRows",
+    "remainingDerivedArtifacts",
+    "remainingQueueMessages",
+  ];
+  if (!hasExactKeys(value, keys)) throw new Error("control_plane_deletion_attestation_invalid");
+  const remainingTenantOrConnectionRows = deletionEvidenceCount(
+    value.remainingTenantOrConnectionRows,
+    "control_plane",
+  );
+  const remainingDerivedArtifacts = deletionEvidenceCount(
+    value.remainingDerivedArtifacts,
+    "control_plane",
+  );
+  const remainingQueueMessages = deletionEvidenceCount(
+    value.remainingQueueMessages,
+    "control_plane",
+  );
+  if (
+    value.verified !== true
+    || remainingTenantOrConnectionRows + remainingDerivedArtifacts + remainingQueueMessages !== 0
+  ) {
+    throw new Error("control_plane_deletion_not_verified");
+  }
+  return Object.freeze({
+    verified: true,
+    remainingTenantOrConnectionRows,
+    remainingDerivedArtifacts,
+    remainingQueueMessages,
+  });
+}
+
+function normalizeRawPurge(
+  value: Readonly<Record<string, unknown>>,
+  claim: DeletionClaim,
+): Readonly<Record<string, unknown>> {
+  if (!hasExactKeys(value, ["verified", "prefix", "objectsRemoved"])) {
+    throw new Error("raw_storage_deletion_progress_invalid");
+  }
+  const expectedPrefix = claim.connectionId
+    ? `tenant/${claim.tenantId}/connection/${claim.connectionId}/`
+    : `tenant/${claim.tenantId}/`;
+  const objectsRemoved = deletionEvidenceCount(value.objectsRemoved, "raw_storage");
+  if (value.verified !== true || value.prefix !== expectedPrefix) {
+    throw new Error("raw_storage_deletion_progress_invalid");
+  }
+  return Object.freeze({ verified: true, objectsRemoved });
+}
+
+function normalizeAnalyticalPurge(
+  value: Readonly<Record<string, unknown>>,
+  claim: DeletionClaim,
+): Readonly<Record<string, unknown>> {
+  if (claim.scope === "tenant") {
+    if (!hasExactKeys(value, ["verified", "scope", "rowsRemoved", "remainingRows"])) {
+      throw new Error("analytical_deletion_progress_invalid");
+    }
+    const rowsRemoved = deletionEvidenceCount(value.rowsRemoved, "analytical");
+    const remainingRows = deletionEvidenceCount(value.remainingRows, "analytical");
+    if (value.verified !== true || value.scope !== "tenant" || remainingRows !== 0) {
+      throw new Error("analytical_deletion_progress_invalid");
+    }
+    return Object.freeze({ verified: true, scope: "tenant", rowsRemoved });
+  }
+  if (!hasExactKeys(value, [
+    "verified",
+    "scope",
+    "rowsRemoved",
+    "canonicalDependencyRowsAdded",
+    "canonicalResidual",
+    "reconciliationRowsRemoved",
+    "marts",
+  ])) {
+    throw new Error("analytical_deletion_progress_invalid");
+  }
+  const rowsRemoved = deletionEvidenceCount(value.rowsRemoved, "analytical");
+  deletionEvidenceCount(value.canonicalDependencyRowsAdded, "analytical");
+  const canonicalResidual = deletionEvidenceCount(value.canonicalResidual, "analytical");
+  deletionEvidenceCount(value.reconciliationRowsRemoved, "analytical");
+  const marts = value.marts;
+  if (!isRecord(marts) || !hasExactKeys(marts, ["refreshed", "chunks", "from", "to"])) {
+    throw new Error("analytical_deletion_progress_invalid");
+  }
+  const chunks = deletionEvidenceCount(marts.chunks, "analytical");
+  const from = marts.from;
+  const to = marts.to;
+  const validBounds = chunks === 0
+    ? from === null && to === null
+    : typeof from === "string"
+      && typeof to === "string"
+      && /^\d{4}-\d{2}-\d{2}$/u.test(from)
+      && /^\d{4}-\d{2}-\d{2}$/u.test(to);
+  if (
+    value.verified !== true
+    || value.scope !== "connection"
+    || canonicalResidual !== 0
+    || marts.refreshed !== true
+    || !validBounds
+  ) {
+    throw new Error("analytical_deletion_progress_invalid");
+  }
+  return Object.freeze({ verified: true, scope: "connection", rowsRemoved });
+}
+
+function normalizeControlPurge(
+  value: Readonly<Record<string, unknown>>,
+  claim: DeletionClaim,
+): Readonly<Record<string, unknown>> {
+  const completionKey = claim.scope === "tenant"
+    ? "tenantAnchorPendingProof"
+    : "connectionTombstoned";
+  if (!hasExactKeys(value, ["scope", "rowsRemoved", completionKey])) {
+    throw new Error("control_plane_deletion_progress_invalid");
+  }
+  const rowsRemoved = deletionEvidenceCount(value.rowsRemoved, "control_plane");
+  if (value.scope !== claim.scope || value[completionKey] !== true) {
+    throw new Error("control_plane_deletion_progress_invalid");
+  }
+  return Object.freeze({ verified: true, scope: claim.scope, rowsRemoved });
+}
+
 export type DeletionFailureEvidence = Readonly<{
   code: string;
   errorClass: "connector" | "database" | "timeout" | "internal";
@@ -104,6 +472,14 @@ export type DeletionFailureEvidence = Readonly<{
   retryable: true;
   failedAt: string;
 }>;
+
+export type DeletionProcessOutcome =
+  | Readonly<{ status: "completed" }>
+  | Readonly<{
+      status: "retry_scheduled";
+      failure: DeletionFailureEvidence;
+      retryDelaySeconds: number;
+    }>;
 
 /** Never persist an exception message: vendor and database text may contain secrets. */
 export function deletionFailureEvidence(error: unknown): DeletionFailureEvidence {
@@ -187,6 +563,33 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
 
   async revoke(claim: DeletionClaim): Promise<Readonly<Record<string, unknown>>> {
     const context = await this.control.revocationContext(claim);
+    const priorRemote = context.priorProgress.remote_revocation;
+    if (context.targets.length === 0 && priorRemote !== undefined) {
+      const forcedLocalDestruction = isRecord(priorRemote)
+        && hasExactKeys(priorRemote, ["forcedLocalDestruction", "reason"])
+        && priorRemote.forcedLocalDestruction === true
+        && priorRemote.reason === "remote_revocation_grace_expired";
+      if (forcedLocalDestruction) {
+        const credentialProgress = context.priorProgress.credential_vault;
+        const completedAt = isRecord(credentialProgress)
+          ? credentialProgress.completedAt
+          : undefined;
+        if (typeof completedAt !== "string" || !Number.isFinite(Date.parse(completedAt))) {
+          throw new Error("forced_remote_revocation_attestation_invalid");
+        }
+        return normalizeRemoteRevocation(Object.freeze({
+          attemptedAt: new Date(completedAt).toISOString(),
+          priorStatus: "failed",
+          targetCount: 0,
+          targets: Object.freeze([]),
+          bestEffort: true,
+          forcedLocalDestruction: true,
+          reason: "remote_revocation_grace_expired",
+        }));
+      }
+      if (!isRecord(priorRemote)) throw new Error("remote_revocation_attestation_invalid");
+      return normalizeRemoteRevocation(priorRemote);
+    }
     const vault = this.vaultForClaim(claim);
     const targets: Array<Readonly<Record<string, unknown>>> = [];
     for (const target of context.targets) {
@@ -207,6 +610,7 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
       }
       targets.push(Object.freeze({
         provider: target.connectorId,
+        connectionGeneration: target.connectionGeneration,
         status,
         ...(errorCode ? { errorCode } : {}),
         ...(errorClass ? { errorClass } : {}),
@@ -237,52 +641,62 @@ export class DeletionProcessor {
     return createHmac("sha256", this.proofHmacKey).update(`albert-deletion-v1:${kind}:${value}`).digest("hex");
   }
 
-  async process(claim: DeletionClaim): Promise<void> {
+  async process(claim: DeletionClaim): Promise<DeletionProcessOutcome> {
     try {
       await this.control.extend(claim);
-      const remoteRevocation = await this.revoker.revoke(claim);
+      const remoteRevocation = normalizeRemoteRevocation(await this.revoker.revoke(claim));
       await this.control.destroyCredentials(claim, remoteRevocation);
-      const credentialVault = await this.control.credentialVerification(claim);
-      verified(credentialVault, "credential_vault");
+      const credentialVault = normalizeCredentialVerification(
+        await this.control.credentialVerification(claim),
+      );
       await this.control.progress(claim, "remote_revocation", remoteRevocation);
       await this.control.progress(claim, "credential_vault", credentialVault);
 
       await this.control.extend(claim);
       const quiescence = await this.control.assertQuiescent(claim);
-      verified(quiescence, "sync_write_quiescence");
-      const rawPurge = await this.raw.purge(claim.tenantId, claim.connectionId);
-      await this.control.progress(claim, "raw_storage", rawPurge);
+      if (quiescence.verified !== true) throw new Error("sync_write_quiescence_deletion_not_verified");
+      const rawPurge = await this.raw.purge(claim);
+      await this.control.progress(claim, "raw_storage", normalizeRawPurge(rawPurge, claim));
 
       await this.control.extend(claim);
-      const analyticalPurge = await this.analytical.purge(claim);
-      await this.control.progress(claim, "analytical", analyticalPurge);
+      const purgeCapability = await this.control.issueAnalyticalCapability(claim, "purge");
+      const analyticalPurge = await this.analytical.purge(claim, purgeCapability);
+      await this.control.progress(
+        claim,
+        "analytical",
+        normalizeAnalyticalPurge(analyticalPurge, claim),
+      );
 
       await this.control.extend(claim);
       const controlPurge = await this.control.purge(claim);
-      await this.control.progress(claim, "control_plane", controlPurge);
+      await this.control.progress(
+        claim,
+        "control_plane",
+        normalizeControlPurge(controlPurge, claim),
+      );
 
       await this.control.extend(claim);
       await this.control.markVerifying(claim);
+      const verifyCapability = await this.control.issueAnalyticalCapability(claim, "verify");
       const [rawStorage, analytical, controlPlane, finalCredentialVault] = await Promise.all([
-        this.raw.verify(claim.tenantId, claim.connectionId),
-        this.analytical.verify(claim),
+        this.raw.verify(claim),
+        this.analytical.verify(claim, verifyCapability),
         this.control.verify(claim),
         this.control.credentialVerification(claim),
       ]);
-      verified(rawStorage, "raw_storage");
-      verified(analytical, "analytical");
-      verified(controlPlane, "control_plane");
-      verified(finalCredentialVault, "credential_vault");
+      const normalizedRawStorage = normalizeRawVerification(rawStorage);
+      const normalizedAnalytical = normalizeAnalyticalAttestation(analytical, claim);
+      const normalizedControlPlane = normalizeControlVerification(controlPlane);
+      const normalizedCredentialVault = normalizeCredentialVerification(finalCredentialVault);
       const storeVerification = Object.freeze({
-        credential_vault: finalCredentialVault,
-        raw_storage: rawStorage,
-        analytical,
-        control_plane: controlPlane,
+        credential_vault: normalizedCredentialVault,
+        raw_storage: normalizedRawStorage,
+        analytical: normalizedAnalytical,
+        control_plane: normalizedControlPlane,
       });
       await this.control.progress(claim, "verification", Object.freeze({
         verified: true,
-        stores: Object.keys(storeVerification),
-        verifiedAt: new Date().toISOString(),
+        storesVerified: Object.keys(storeVerification).length,
       }));
 
       const proofId = ulid();
@@ -310,11 +724,20 @@ export class DeletionProcessor {
         proofDigest,
         serviceVersion: this.serviceVersion,
       });
+      return Object.freeze({ status: "completed" });
     } catch (error) {
       const errorEvidence = deletionFailureEvidence(error);
       logFailure("deletion_job_attempt_failed", errorEvidence);
       const delaySeconds = Math.min(900, Math.max(10, 2 ** Math.min(claim.readCount, 9) * 5));
-      await this.control.retry(claim, errorEvidence, delaySeconds).catch(() => undefined);
+      // A retry outcome is only returned after the durable retry transition has
+      // succeeded. If scheduling itself fails, propagate that failure so the
+      // worker loop and its operational heartbeat cannot report a completion.
+      await this.control.retry(claim, errorEvidence, delaySeconds);
+      return Object.freeze({
+        status: "retry_scheduled",
+        failure: errorEvidence,
+        retryDelaySeconds: delaySeconds,
+      });
     }
   }
 }

@@ -2,14 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadDeletionWorkerConfig } from "./config.js";
 
+const legacyAnonKey = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature";
+
 const valid: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
-  CONTROL_PLANE_DATABASE_URL: "postgresql://deletion_control:secret@control.example:5432/postgres?sslmode=require",
-  DELETION_ANALYTICAL_DATABASE_URL: "postgresql://deletion_analytics:secret@analytics.example:5432/postgres?sslmode=require",
-  SUPABASE_STORAGE_S3_ENDPOINT: "https://project.storage.supabase.co/storage/v1/s3",
+  CONTROL_PLANE_DATABASE_URL: "postgresql://albert_deletion_control_runtime.abcdefghijklmnopqrst:secret@control.example:5432/postgres?sslmode=require",
+  DELETION_ANALYTICAL_DATABASE_URL: "postgresql://albert_deletion_analytical_runtime:secret@analytics.example:5432/postgres?sslmode=require",
+  ALBERT_CONTROL_PLANE_PROJECT_REF: "abcdefghijklmnopqrst",
+  ALBERT_CONTROL_PLANE_REGION: "ap-southeast-2",
+  ALBERT_ANALYTICAL_REGION: "ap-southeast-2",
+  SUPABASE_STORAGE_S3_ENDPOINT: "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
   SUPABASE_STORAGE_S3_REGION: "ap-southeast-2",
-  SUPABASE_STORAGE_S3_ACCESS_KEY_ID: "deletion-storage-access-key",
-  SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY: "deletion-storage-secret-key",
+  SUPABASE_STORAGE_S3_ACCESS_KEY_ID: "abcdefghijklmnopqrst",
+  SUPABASE_STORAGE_S3_LEGACY_ANON_KEY: legacyAnonKey,
+  ALBERT_RAW_STORAGE_DELETION_PASSWORD: "deletion-machine-password-material-00001",
   TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 11).toString("base64url"),
   TOKEN_ENCRYPTION_KEY_ID: "deletion-v1",
   LIGHTSPEED_CLIENT_ID: "lightspeed-client",
@@ -17,7 +23,9 @@ const valid: NodeJS.ProcessEnv = {
   XERO_CLIENT_ID: "xero-client",
   DELETION_PROOF_HMAC_KEY: "p".repeat(48),
   ALBERT_DELETION_WORKER_ID: "deletion-worker-01",
-  ALBERT_SERVICE_VERSION: "test",
+  ALBERT_WORKER_INSTANCE_ID: "deletion-test-01",
+  ALBERT_SERVICE_VERSION: "a".repeat(40),
+  ALBERT_DEPLOYMENT_ID: "test-deployment-1",
 };
 
 test("deletion config requires a dedicated analytical login", () => {
@@ -42,4 +50,29 @@ test("deletion config excludes service-role, webhook, and sync settings", () => 
   assert.doesNotMatch(serialized, /must-not-load/);
   assert.equal(config.analyticalDatabaseUrl, valid.DELETION_ANALYTICAL_DATABASE_URL);
   assert.equal(config.rawStorage.bucket, "raw-payloads");
+});
+
+test("deletion config namespaces leases to the running Fly machine", () => {
+  const config = loadDeletionWorkerConfig({ ...valid, FLY_MACHINE_ID: "90801abcdef123" });
+  assert.equal(config.workerId, "deletion-worker-01:90801abcdef123");
+});
+
+test("deletion worker retains decrypt access to overlap token KEKs", () => {
+  const previous = Buffer.alloc(32, 10).toString("base64url");
+  const config = loadDeletionWorkerConfig({
+    ...valid,
+    TOKEN_PREVIOUS_ENCRYPTION_KEYS: JSON.stringify({ "deletion-v0": previous }),
+  });
+  assert.equal(config.tokenEncryptionKeys.get("deletion-v0"), previous);
+  assert.equal(config.tokenEncryptionKeys.get("deletion-v1"), valid.TOKEN_ENCRYPTION_KEY);
+
+  assert.throws(
+    () => loadDeletionWorkerConfig({
+      ...valid,
+      TOKEN_PREVIOUS_ENCRYPTION_KEYS: JSON.stringify({
+        "deletion-v0": valid.TOKEN_ENCRYPTION_KEY,
+      }),
+    }),
+    /reuse key material/,
+  );
 });

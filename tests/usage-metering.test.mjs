@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   meterOpenAIUsage,
   OPENAI_GPT_5_6_RATE_CARD,
+  toModelUsageRpcPayload,
 } from "../packages/usage-metering/src/index.ts";
-import { toModelUsageRpcPayload } from "../services/conversation/src/artifact-store.ts";
 
 test("meters standard, cached, cache-write, output, and Fast usage exactly", () => {
   const metered = meterOpenAIUsage({
@@ -23,8 +23,8 @@ test("meters standard, cached, cache-write, output, and Fast usage exactly", () 
     },
   });
 
-  // Standard cost: 700*5µ + 200*0.5µ + 100*6.25µ + 100*30µ = 7,225µ.
-  assert.equal(metered.estimatedCostUsdMicros, 14_450);
+  // Standard cost is 7,225µ, then Fast is 2x and AU data residency is 1.1x.
+  assert.equal(metered.estimatedCostUsdMicros, 15_895);
   assert.equal(metered.cachedInputTokens, 200);
   assert.equal(metered.cacheWriteInputTokens, 100);
   assert.equal(metered.pricingCompleteness, "request_level");
@@ -47,7 +47,26 @@ test("applies long-context rates per provider request", () => {
   });
 
   // Exactly 272K is standard; the separate 1K request is not long-context.
-  assert.equal(metered.estimatedCostUsdMicros, 285_000);
+  assert.equal(metered.estimatedCostUsdMicros, 62_700);
+});
+
+test("uses the published Terra and Luna short-context rate card", () => {
+  const terra = meterOpenAIUsage({
+    model: "gpt-5.6-terra",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 },
+  });
+  const luna = meterOpenAIUsage({
+    model: "gpt-5.6-luna",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 100_000, outputTokens: 10_000, totalTokens: 110_000 },
+  });
+
+  // The first request crosses the 272K long-context threshold: $4/M + 10% AU.
+  assert.equal(terra.estimatedCostUsdMicros, 4_400_000);
+  // $0.02 input + $0.012 output, plus the 10% AU data-residency uplift.
+  assert.equal(luna.estimatedCostUsdMicros, 35_200);
+  assert.equal(OPENAI_GPT_5_6_RATE_CARD.source, "https://developers.openai.com/api/docs/pricing");
 });
 
 test("rejects usage details that cannot reconcile", () => {
@@ -62,6 +81,29 @@ test("rejects usage details that cannot reconcile", () => {
       requestUsageEntries: [{ inputTokens: 9, outputTokens: 1 }],
     },
   }), /does not reconcile/);
+
+  assert.throws(() => meterOpenAIUsage({
+    model: "gpt-5.6-terra",
+    fastMode: false,
+    usage: {
+      requests: 1,
+      inputTokens: 10,
+      outputTokens: 1,
+      totalTokens: 12,
+    },
+  }), /total tokens do not reconcile/);
+
+  assert.throws(() => meterOpenAIUsage({
+    model: "gpt-5.6-terra",
+    fastMode: false,
+    usage: {
+      requests: 2,
+      inputTokens: 10,
+      outputTokens: 1,
+      totalTokens: 11,
+      requestUsageEntries: [{ inputTokens: 10, outputTokens: 1 }],
+    },
+  }), /request count/);
 });
 
 test("model usage preserves the control-plane RPC contract", () => {

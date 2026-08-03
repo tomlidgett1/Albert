@@ -3,10 +3,24 @@ import { readFile } from "node:fs/promises";
 
 const sync=await readFile(".albert-build/services/sync-worker.js","utf8");
 const transform=await readFile(".albert-build/services/transform-worker.js","utf8");
+const transformCapacity=await readFile(".albert-build/services/transform-capacity-harness.js","utf8");
 const webhook=await readFile(".albert-build/services/webhook-gateway.js","utf8");
+const semantic=await readFile(".albert-build/services/semantic-query.js","utf8");
+const deletion=await readFile(".albert-build/services/deletion-worker.js","utf8");
+const diagnostic=await readFile(".albert-build/services/operator-diagnostic.js","utf8");
+const buildIdentity=JSON.parse(await readFile(".albert-build/services/build-identity.json","utf8"));
 
 for(const required of ["albert_sync_control","ingest_rw"]){
   assert.equal(sync.includes(required),true,`sync-worker bundle is missing its required database boundary: ${required}`);
+}
+for(const required of [
+  "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY",
+  "ALBERT_RAW_STORAGE_SYNC_PASSWORD",
+  "PutObjectCommand",
+  "GetObjectCommand",
+  "sessionToken",
+]){
+  assert.equal(sync.includes(required),true,`sync-worker bundle is missing its RLS-scoped raw Storage boundary: ${required}`);
 }
 
 for(const forbidden of [
@@ -14,6 +28,9 @@ for(const forbidden of [
   "SUPABASE_SERVICE_ROLE_KEY",
   "set local role transform_rw",
   "CanonicalTransformPipeline",
+  "DeleteObjectsCommand",
+  "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
+  "ALBERT_RAW_STORAGE_DELETION_PASSWORD",
 ]){
   assert.equal(sync.includes(forbidden),false,`sync-worker bundle crossed transform boundary: ${forbidden}`);
 }
@@ -40,15 +57,40 @@ for(const required of [
   "albert_webhook_control",
   "SUPABASE_STORAGE_S3_ENDPOINT",
   "SUPABASE_STORAGE_S3_ACCESS_KEY_ID",
+  "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY",
+  "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
   "WEBHOOK_INBOX_ENCRYPTION_KEY",
   "WEBHOOK_INBOX_ENCRYPTION_KEY_ID",
-  "assert_deputy_webhook_gateway_ready",
-  "accept_xero_webhook_inbox",
-  "claim_xero_webhook_inbox",
-  "enqueue_xero_webhook_gap_sweeps",
+  "WEBHOOK_ATTESTATION_KEY_ID",
+  "WEBHOOK_ATTESTATION_SECRET",
+  "assert_attested_webhook_gateway_ready",
+  "resolve_attested_deputy_webhook_material",
+  "resolve_attested_xero_webhook_connections",
+  "reserve_attested_webhook_receipt",
+  "attach_attested_webhook_raw",
+  "finalize_attested_deputy_webhook",
+  "enqueue_attested_xero_webhook_incremental",
+  "fail_attested_webhook_receipt",
+  "accept_attested_xero_webhook_inbox",
+  "claim_attested_xero_webhook_inbox",
+  "renew_attested_xero_webhook_inbox_lease",
+  "record_attested_xero_webhook_sequence",
+  "record_attested_xero_webhook_connection_delivery",
+  "enqueue_attested_xero_webhook_gap_sweeps",
+  "complete_attested_xero_webhook_inbox",
+  "fail_attested_xero_webhook_inbox",
+  "attested_xero_webhook_inbox_health",
   "IfNoneMatch",
+  "sessionToken",
 ]){
   assert.equal(webhook.includes(required),true,`webhook-gateway bundle is missing its storage-only boundary: ${required}`);
+}
+for(const forbidden of [
+  "DeleteObjectsCommand",
+  "ALBERT_RAW_STORAGE_SYNC_PASSWORD",
+  "ALBERT_RAW_STORAGE_DELETION_PASSWORD",
+]){
+  assert.equal(webhook.includes(forbidden),false,`webhook-gateway bundle crossed its raw Storage command boundary: ${forbidden}`);
 }
 
 for(const forbidden of [
@@ -79,4 +121,117 @@ for(const required of [
   "CanonicalTransformPipeline",
 ]){
   assert.equal(transform.includes(required),true,`transform-worker bundle is missing its required boundary: ${required}`);
+}
+
+for(const required of [
+  "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
+  "TRANSFORM_DATABASE_URL",
+  "CanonicalTransformPipeline",
+  "snapshotAllTenants",
+  "transformMaintenanceMetrics",
+]){
+  assert.equal(transformCapacity.includes(required),true,`transform capacity bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "TOKEN_ENCRYPTION_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "XERO_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY",
+  "CONTROL_PLANE_MIGRATION_URL",
+  "ANALYTICAL_MIGRATION_URL",
+]){
+  assert.equal(transformCapacity.includes(forbidden),false,`transform capacity bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+for(const required of [
+  "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
+  "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
+  "albert_operator_diagnostic_control",
+  "SET LOCAL ROLE diagnostic_ro",
+  "claim_operator_diagnostic_reveal",
+]){
+  assert.equal(diagnostic.includes(required),true,`operator-diagnostic bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "OPENAI_API_KEY",
+  "ALBERT_SEMANTIC_SIGNING_SECRET",
+  "TOKEN_ENCRYPTION_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "semantic_ro",
+]){
+  assert.equal(diagnostic.includes(forbidden),false,`operator-diagnostic bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+for(const required of [
+  "SET LOCAL ROLE albert_semantic_control",
+  "SET LOCAL ROLE semantic_ro",
+  "SET LOCAL ROLE semantic_meta_rw",
+  "ALBERT_SEMANTIC_SIGNING_SECRET",
+  "OPENAI_API_KEY",
+]){
+  assert.equal(semantic.includes(required),true,`semantic-query bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "TOKEN_ENCRYPTION_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "XERO_WEBHOOK_SIGNING_KEY",
+  "WEBHOOK_INBOX_ENCRYPTION_KEY",
+  "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY",
+  "DELETION_PROOF_HMAC_KEY",
+  "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+  "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+  "deletion_rw",
+]){
+  assert.equal(semantic.includes(forbidden),false,`semantic-query bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+for(const required of [
+  "set local role albert_deletion_control",
+  "set local role deletion_rw",
+  "DELETION_ANALYTICAL_DATABASE_URL",
+  "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY",
+  "ALBERT_RAW_STORAGE_DELETION_PASSWORD",
+  "DeleteObjectsCommand",
+  "ListObjectsV2Command",
+  "sessionToken",
+  "TOKEN_ENCRYPTION_KEY",
+  "DELETION_PROOF_HMAC_KEY",
+]){
+  assert.equal(deletion.includes(required),true,`deletion-worker bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "OPENAI_API_KEY",
+  "ALBERT_SEMANTIC_SIGNING_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "XERO_WEBHOOK_SIGNING_KEY",
+  "WEBHOOK_INBOX_ENCRYPTION_KEY",
+  "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+  "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
+  "semantic_ro",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+  "PutObjectCommand",
+  "GetObjectCommand",
+  "ALBERT_RAW_STORAGE_SYNC_PASSWORD",
+  "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
+]){
+  assert.equal(deletion.includes(forbidden),false,`deletion-worker bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+for(const [name,bundle] of Object.entries({sync,webhook,transform,transformCapacity,semantic,deletion,diagnostic})){
+  assert.match(buildIdentity.buildSha,/^(?:development|[a-f0-9]{40})$/u,"service build identity is invalid");
+  assert.equal(bundle.includes(buildIdentity.buildSha),true,`${name} does not contain the recorded compile-time build identity`);
+  assert.equal(bundle.includes("__ALBERT_SERVICE_BUILD_SHA__"),false,`${name} retained an unresolved build-identity placeholder`);
+  assert.equal(bundle.includes("does not match the service image build identity"),true,`${name} does not fail closed on runtime relabelling`);
+  assert.equal(bundle.includes("SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY"),false,`${name} retained the RLS-bypassing generated S3 credential vocabulary`);
+  assert.equal(bundle.includes("SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY"),false,`${name} contains the protected Auth administrator key name`);
 }

@@ -1,22 +1,46 @@
-import {
-  DeleteObjectsCommand,
-  GetObjectCommand,
-  HeadBucketCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import type { RawObjectStore } from "./raw-batch.js";
-
 const RAW_BUCKET = "raw-payloads";
 const SAFE_REGION = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/u;
-const SAFE_RAW_KEY = /^tenant\/[0-9A-HJKMNP-TV-Z]{26}(?:\/[A-Za-z0-9._-]+)+$/u;
+const PROJECT_REF = /^[a-z0-9]{20}$/u;
+
+export type RawStorageMachinePurpose = "sync" | "webhook" | "deletion";
+
+const READINESS_ID = "00000000000000000000000000";
+
+/**
+ * Fixed non-customer objects used to prove that a machine session is mapped
+ * through Storage RLS. These keys are never part of a tenant deletion scope.
+ */
+export function rawStorageReadinessKey(
+  purpose: Exclude<RawStorageMachinePurpose, "deletion">,
+): string {
+  const stream = purpose === "webhook" ? "webhook_xero" : "albert_readiness";
+  const suffix = purpose === "webhook" ? "json.gz" : "jsonl.gz";
+  return [
+    "tenant",
+    READINESS_ID,
+    "connection",
+    READINESS_ID,
+    "stream",
+    stream,
+    "date",
+    "2000-01-01",
+    `batch-${READINESS_ID}.${suffix}`,
+  ].join("/");
+}
+
+export function rawStorageMachineEmail(purpose: RawStorageMachinePurpose): string {
+  return `raw-storage-${purpose}@machine.albert.invalid`;
+}
 
 export type RawStorageS3Config = Readonly<{
   endpoint: string;
+  authUrl: string;
   region: string;
   accessKeyId: string;
-  secretAccessKey: string;
+  legacyAnonKey: string;
+  machinePurpose: RawStorageMachinePurpose;
+  machineEmail: string;
+  machinePassword: string;
   bucket: typeof RAW_BUCKET;
 }>;
 
@@ -25,132 +49,136 @@ export type RawStoragePage = Readonly<{
   continuationToken?: string;
 }>;
 
-export function loadRawStorageS3Config(source: Readonly<Record<string,string|undefined>> = process.env): RawStorageS3Config {
-  const endpoint = required(source,"SUPABASE_STORAGE_S3_ENDPOINT");
-  let parsed: URL;
-  try { parsed = new URL(endpoint); }
-  catch { throw new Error("SUPABASE_STORAGE_S3_ENDPOINT is not a valid URL."); }
-  if (
-    parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash ||
-    !parsed.pathname.endsWith("/storage/v1/s3")
-  ) throw new Error("SUPABASE_STORAGE_S3_ENDPOINT must be the HTTPS S3 endpoint from Supabase Storage settings.");
-  const region = required(source,"SUPABASE_STORAGE_S3_REGION");
-  if (!SAFE_REGION.test(region)) throw new Error("SUPABASE_STORAGE_S3_REGION is invalid.");
-  const accessKeyId = required(source,"SUPABASE_STORAGE_S3_ACCESS_KEY_ID");
-  const secretAccessKey = required(source,"SUPABASE_STORAGE_S3_SECRET_ACCESS_KEY");
-  if (accessKeyId.length > 256 || Buffer.byteLength(secretAccessKey,"utf8") < 16 || secretAccessKey.length > 512) {
-    throw new Error("Supabase Storage S3 credentials are malformed.");
-  }
-  return Object.freeze({endpoint:parsed.toString().replace(/\/$/u,""),region,accessKeyId,secretAccessKey,bucket:RAW_BUCKET});
+export type RawStorageConfigOptions = Readonly<{
+  machinePurpose: RawStorageMachinePurpose;
+  passwordEnvironmentName: string;
+}>;
+
+function required(
+  source: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string {
+  const value = source[name];
+  if (!value?.trim()) throw new Error(`${name} is required.`);
+  return value.trim();
 }
 
-/**
- * Immutable raw-object adapter using storage-only S3 credentials. Supabase S3
- * access keys bypass Storage RLS, but unlike a service-role JWT they cannot
- * query Auth or control-plane tables. Deploy each process with its own pair.
- */
-export class S3RawObjectStore implements RawObjectStore {
-  private readonly client: S3Client;
+function jwtPayload(value: string, name: string): Readonly<Record<string, unknown>> {
+  if (value.startsWith("sb_publishable_")) {
+    throw new Error(`${name} must be the legacy anon JWT; publishable keys cannot authenticate S3 sessions.`);
+  }
+  const segments = value.split(".");
+  if (segments.length !== 3) throw new Error(`${name} must be a legacy Supabase JWT.`);
+  try {
+    const parsed = JSON.parse(Buffer.from(segments[1]!, "base64url").toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    return parsed as Readonly<Record<string, unknown>>;
+  } catch {
+    throw new Error(`${name} must be a legacy Supabase JWT.`);
+  }
+}
 
-  constructor(
-    private readonly config: RawStorageS3Config,
-    client?: S3Client,
+function storageCoordinates(endpoint: string): Readonly<{
+  endpoint: string;
+  authUrl: string;
+  local: boolean;
+  projectRef?: string;
+}> {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error("SUPABASE_STORAGE_S3_ENDPOINT is not a valid URL.");
+  }
+  if (
+    parsed.username || parsed.password || parsed.search || parsed.hash ||
+    parsed.pathname.replace(/\/+$/u, "") !== "/storage/v1/s3"
   ) {
-    if (config.bucket !== RAW_BUCKET) throw new Error("Raw objects must use raw-payloads.");
-    this.client = client ?? new S3Client({
-      endpoint: config.endpoint,
-      region: config.region,
-      forcePathStyle: true,
-      maxAttempts: 3,
-      credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+    throw new Error("SUPABASE_STORAGE_S3_ENDPOINT must be the S3 endpoint from Supabase Storage settings.");
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  if (local) {
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("Local Supabase Storage S3 must use HTTP or HTTPS.");
+    }
+    return Object.freeze({
+      endpoint: parsed.toString().replace(/\/$/u, ""),
+      authUrl: parsed.origin,
+      local: true,
     });
   }
+  const match = /^([a-z0-9]{20})\.storage\.supabase\.co$/u.exec(parsed.hostname);
+  if (parsed.protocol !== "https:" || !match) {
+    throw new Error(
+      "SUPABASE_STORAGE_S3_ENDPOINT must use the direct HTTPS project Storage hostname.",
+    );
+  }
+  return Object.freeze({
+    endpoint: parsed.toString().replace(/\/$/u, ""),
+    authUrl: `https://${match[1]}.supabase.co`,
+    local: false,
+    projectRef: match[1],
+  });
+}
 
-  async ready(): Promise<void> {
-    await this.client.send(new HeadBucketCommand({Bucket:this.config.bucket}));
+export function loadRawStorageS3Config(
+  source: Readonly<Record<string, string | undefined>>,
+  options: RawStorageConfigOptions,
+): RawStorageS3Config {
+  const expectedPasswordName =
+    `ALBERT_RAW_STORAGE_${options.machinePurpose.toUpperCase()}_PASSWORD`;
+  if (expectedPasswordName !== options.passwordEnvironmentName) {
+    throw new Error("Raw Storage machine purpose and password secret name do not match.");
+  }
+  const coordinates = storageCoordinates(required(source, "SUPABASE_STORAGE_S3_ENDPOINT"));
+  const region = required(source, "SUPABASE_STORAGE_S3_REGION");
+  if (!SAFE_REGION.test(region)) throw new Error("SUPABASE_STORAGE_S3_REGION is invalid.");
+  if (coordinates.local ? region !== "local" : region !== "ap-southeast-2") {
+    throw new Error(
+      coordinates.local
+        ? "Local Supabase Storage S3 must use region local."
+        : "Production Supabase Storage S3 must use region ap-southeast-2.",
+    );
   }
 
-  async putIfAbsent(input: Parameters<RawObjectStore["putIfAbsent"]>[0]): Promise<"created" | "exists"> {
-    assertRawKey(input.key);
-    for (let attempt=1;attempt<=3;attempt+=1) {
-      try {
-        await this.client.send(new PutObjectCommand({
-          Bucket:this.config.bucket,
-          Key:input.key,
-          Body:input.body,
-          CacheControl:"private, max-age=31536000, immutable",
-          ContentType:input.contentType,
-          Metadata:{...input.metadata},
-          IfNoneMatch:"*",
-        }));
-        return "created";
-      } catch (error) {
-        const status=httpStatus(error);
-        if (status===412)return"exists";
-        if (status===409&&attempt<3)continue;
-        throw new Error(`Immutable raw upload failed (${safeStorageCode(error)}).`);
-      }
+  const accessKeyId = required(source, "SUPABASE_STORAGE_S3_ACCESS_KEY_ID");
+  if (coordinates.local) {
+    if (accessKeyId !== "stub") {
+      throw new Error("Local Supabase Storage S3 session credentials must use access key ID stub.");
     }
-    throw new Error("Immutable raw upload failed (conditional_conflict).");
+  } else if (!PROJECT_REF.test(accessKeyId) || accessKeyId !== coordinates.projectRef) {
+    throw new Error("Supabase Storage S3 access key ID must equal the selected project ref.");
   }
 
-  async read(key:string):Promise<Uint8Array|null>{
-    assertRawKey(key);
-    try{
-      const result=await this.client.send(new GetObjectCommand({Bucket:this.config.bucket,Key:key}));
-      if(!result.Body)throw new Error("empty_body");
-      return new Uint8Array(await result.Body.transformToByteArray());
-    }catch(error){
-      if(httpStatus(error)===404||errorName(error)==="NoSuchKey")return null;
-      throw new Error(`Immutable raw download failed (${safeStorageCode(error)}).`);
-    }
+  const legacyAnonKey = required(source, "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY");
+  const anonClaims = jwtPayload(legacyAnonKey, "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY");
+  if (anonClaims.role !== "anon") {
+    throw new Error("SUPABASE_STORAGE_S3_LEGACY_ANON_KEY must carry the anon role.");
+  }
+  if (
+    !coordinates.local && typeof anonClaims.ref === "string" && anonClaims.ref !== accessKeyId
+  ) {
+    throw new Error("The legacy anon key does not belong to the selected Supabase project.");
   }
 
-  async listPrefix(prefix:string,continuationToken?:string):Promise<RawStoragePage>{
-    assertRawPrefix(prefix);
-    const result=await this.client.send(new ListObjectsV2Command({
-      Bucket:this.config.bucket,Prefix:prefix,MaxKeys:1_000,
-      ...(continuationToken?{ContinuationToken:continuationToken}:{}),
-    }));
-    const keys=(result.Contents??[]).flatMap((item)=>typeof item.Key==="string"?[item.Key]:[]);
-    for(const key of keys)assertRawKey(key);
-    return Object.freeze({keys:Object.freeze(keys),...(result.IsTruncated&&result.NextContinuationToken?{continuationToken:result.NextContinuationToken}:{})});
+  const machinePassword = source[options.passwordEnvironmentName];
+  if (
+    !machinePassword || machinePassword.trim() !== machinePassword ||
+    Buffer.byteLength(machinePassword, "utf8") < 32 || machinePassword.length > 256 ||
+    /[\u0000-\u001f\u007f]/u.test(machinePassword)
+  ) {
+    throw new Error(`${options.passwordEnvironmentName} must be a 32 to 256 byte machine secret without surrounding whitespace.`);
   }
 
-  async deleteKeys(keys:readonly string[]):Promise<void>{
-    if(keys.length<1||keys.length>1_000)throw new Error("Raw object deletion batch must contain 1 to 1000 keys.");
-    for(const key of keys)assertRawKey(key);
-    const result=await this.client.send(new DeleteObjectsCommand({
-      Bucket:this.config.bucket,
-      Delete:{Quiet:true,Objects:keys.map((Key)=>({Key}))},
-    }));
-    if(result.Errors?.length){
-      const code=result.Errors[0]?.Code?.replaceAll(/[^A-Za-z0-9_.-]/gu,"_")||"delete_error";
-      throw new Error(`Raw object deletion failed (${code}).`);
-    }
-  }
-
-  destroy():void{this.client.destroy();}
-}
-
-function required(source:Readonly<Record<string,string|undefined>>,name:string):string{
-  const value=source[name]?.trim();if(!value)throw new Error(`${name} is required.`);return value;
-}
-function assertRawKey(value:string):void{
-  if(value.length>1_024||!SAFE_RAW_KEY.test(value)||value.includes(".."))throw new Error("Raw storage object key is outside the governed tenant prefix.");
-}
-function assertRawPrefix(value:string):void{
-  if(!/^tenant\/[0-9A-HJKMNP-TV-Z]{26}(?:\/connection\/[0-9A-HJKMNP-TV-Z]{26})?\/?$/u.test(value))throw new Error("Raw storage prefix is outside the governed tenant scope.");
-}
-function httpStatus(error:unknown):number|undefined{
-  if(!error||typeof error!=="object")return undefined;
-  const metadata=(error as {$metadata?:unknown}).$metadata;
-  if(!metadata||typeof metadata!=="object")return undefined;
-  const status=(metadata as {httpStatusCode?:unknown}).httpStatusCode;
-  return typeof status==="number"?status:undefined;
-}
-function errorName(error:unknown):string|undefined{return error instanceof Error?error.name:undefined;}
-function safeStorageCode(error:unknown):string{
-  const status=httpStatus(error);if(status)return`http_${status}`;
-  const name=errorName(error);return name?.replaceAll(/[^A-Za-z0-9_.-]/gu,"_")||"storage_error";
+  return Object.freeze({
+    endpoint: coordinates.endpoint,
+    authUrl: coordinates.authUrl,
+    region,
+    accessKeyId,
+    legacyAnonKey,
+    machinePurpose: options.machinePurpose,
+    machineEmail: rawStorageMachineEmail(options.machinePurpose),
+    machinePassword,
+    bucket: RAW_BUCKET,
+  });
 }

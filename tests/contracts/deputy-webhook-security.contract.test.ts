@@ -3,24 +3,14 @@ import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { DeputyConnector } from "../../connectors/deputy/index.js";
 import {
   DEPUTY_WEBHOOK_TOPICS,
   parseDeputyWebhook,
 } from "../../connectors/deputy/webhooks.js";
-import type {
-  CredentialRefreshLeaseContext,
-  OAuthCredentialSecret,
-  VersionedCredential,
-  WorkerCredentialVault,
-} from "../../packages/connector-sdk/src/index.js";
 import type { PostgresQueryClient } from "../../packages/queue/src/index.js";
 import { sealSecret } from "../../packages/security/src/index.js";
 import { toConnectionsWorkspace } from "../../services/control-plane/src/connections-workspace.js";
-import {
-  DeputyWebhookMaterialStore,
-  DeputyWebhookSetupCoordinator,
-} from "../../services/sync-workers/src/deputy-webhooks.js";
+import { DeputyWebhookMaterialStore } from "../../services/sync-workers/src/deputy-webhooks.js";
 import type { TransactionalPostgres } from "../../services/sync-workers/src/database.js";
 import { DeputyWebhookVerifier } from "../../services/webhook-gateway/src/deputy.js";
 
@@ -145,29 +135,6 @@ test("Deputy gateway accepts a bounded decrypt-only key during verifier rotation
   assert.deepEqual(disposition.streams, ["rosters"]);
 });
 
-class StaticVault implements WorkerCredentialVault {
-  private readonly value: VersionedCredential;
-
-  constructor(secret: OAuthCredentialSecret) {
-    this.value = { credentialRef: "oauth-fixture", revision: "1", secret };
-  }
-
-  async create(): Promise<VersionedCredential> { throw new Error("not_used"); }
-  async read(): Promise<VersionedCredential> { return this.value; }
-  async compareAndSwap(): Promise<VersionedCredential> { throw new Error("not_used"); }
-  withRefreshLease<T>(
-    _credentialRef: string,
-    operation: (lease: CredentialRefreshLeaseContext) => Promise<T>,
-    abortSignal = new AbortController().signal,
-  ): Promise<T> {
-    return operation({
-      abortSignal,
-      proof: { leaseId: "01H00000000000000000000000", fencingToken: "1" },
-    });
-  }
-  async destroy(): Promise<void> { throw new Error("not_used"); }
-}
-
 type StoredMaterial = Record<string, unknown> & {
   tenant_id: string;
   connection_id: string;
@@ -181,14 +148,12 @@ type StoredMaterial = Record<string, unknown> & {
   ciphertext: string;
   callback_url: string;
   setup_status: string;
-  attempt_count: number;
-  provisioning_lease_active: boolean;
   retired_at: null;
 };
 
 class MaterialDatabase implements TransactionalPostgres {
   readonly rows = new Map<string, StoredMaterial>();
-  readonly connectionStates: unknown[][] = [];
+  readonly statements: string[] = [];
 
   async transaction<T>(work: (client: PostgresQueryClient) => Promise<T>): Promise<T> {
     return work(this);
@@ -199,6 +164,7 @@ class MaterialDatabase implements TransactionalPostgres {
     values: readonly unknown[] = [],
   ): Promise<Readonly<{ rows: readonly Row[] }>> {
     const statement = sql.replace(/\s+/gu, " ").trim();
+    this.statements.push(statement);
     const key = `${String(values[0])}:${String(values[1])}`;
     if (statement.startsWith("insert into control_plane.deputy_webhook_material")) {
       if (!this.rows.has(key)) {
@@ -214,9 +180,7 @@ class MaterialDatabase implements TransactionalPostgres {
           iv: String(values[6]),
           ciphertext: String(values[7]),
           callback_url: String(values[8]),
-          setup_status: "provisioning",
-          attempt_count: 1,
-          provisioning_lease_active: true,
+          setup_status: "installation_required",
           retired_at: null,
         });
       }
@@ -233,37 +197,29 @@ class MaterialDatabase implements TransactionalPostgres {
     }
     if (statement.includes("from control_plane.deputy_webhook_material") && statement.endsWith("for update")) {
       const row = this.rows.get(key);
-      if (row) row.provisioning_lease_active = row.setup_status === "provisioning";
       return { rows: (row ? [row] : []) as Row[] };
     }
     if (statement.startsWith("update control_plane.deputy_webhook_material") && statement.includes("set callback_url")) {
       const row = this.rows.get(key);
       if (row) {
         row.callback_url = String(values[2]);
-        row.setup_status = "provisioning";
-        row.attempt_count = Number(values[3]);
-        row.provisioning_lease_active = true;
+        if (row.setup_status !== "active") row.setup_status = "installation_required";
       }
       return { rows: [] };
     }
-    if (statement.startsWith("update control_plane.deputy_webhook_material") && statement.includes("set setup_status = 'active'")) {
+    if (statement.startsWith("update control_plane.deputy_webhook_material") && statement.includes("set envelope_version = $4")) {
       const row = this.rows.get(key);
-      if (!row || row.material_id !== values[2] || row.attempt_count !== values[3]) return { rows: [] };
-      row.setup_status = "active";
-      return { rows: [{ material_id: row.material_id } as unknown as Row] };
-    }
-    if (statement.startsWith("update control_plane.deputy_webhook_material") && statement.includes("set setup_status = $5")) {
-      const row = this.rows.get(key);
-      if (!row || row.material_id !== values[2] || row.attempt_count !== values[3]) return { rows: [] };
-      row.setup_status = String(values[4]);
+      if (!row || row.material_id !== values[2] || row.key_id !== values[8]) return { rows: [] };
+      row.envelope_version = Number(values[3]) as 1;
+      row.algorithm = String(values[4]) as "A256GCM";
+      row.key_id = String(values[5]);
+      row.iv = String(values[6]);
+      row.ciphertext = String(values[7]);
       return { rows: [{ material_id: row.material_id } as unknown as Row] };
     }
     if (statement.startsWith("update control_plane.deputy_webhook_material") && statement.includes("set envelope_version = $5")) {
       const row = this.rows.get(key);
-      const reconnectRewrap = statement.includes("and attempt_count = $4");
-      const expectedKeyId = reconnectRewrap ? values[9] : values[3];
-      if (!row || row.material_id !== values[2] || row.key_id !== expectedKeyId) return { rows: [] };
-      if (reconnectRewrap && row.attempt_count !== values[3]) return { rows: [] };
+      if (!row || row.material_id !== values[2] || row.key_id !== values[3]) return { rows: [] };
       row.envelope_version = Number(values[4]) as 1;
       row.algorithm = String(values[5]) as "A256GCM";
       row.key_id = String(values[6]);
@@ -271,182 +227,77 @@ class MaterialDatabase implements TransactionalPostgres {
       row.ciphertext = String(values[8]);
       return { rows: [{ material_id: row.material_id } as unknown as Row] };
     }
-    if (statement.startsWith("update control_plane.connections")) {
-      this.connectionStates.push([...values]);
-      return { rows: [] };
-    }
     if (statement.startsWith("insert into control_plane.audit_log")) return { rows: [] };
     throw new Error(`Unhandled material-store query: ${statement}`);
   }
 }
 
-test("Deputy webhook material is encrypted, unique per connection, and stable across setup retries", async () => {
+test("explicit operator preparation creates encrypted, stable, connection-bound material without a vendor client", async () => {
   const database = new MaterialDatabase();
+  const firstKey = Buffer.alloc(32, 21).toString("base64url");
   const store = new DeputyWebhookMaterialStore(
     database,
-    Buffer.alloc(32, 21).toString("base64url"),
+    firstKey,
     "deputy-webhook-v1",
     "https://hooks.albert.example",
   );
-  const first = await store.prepare(
+  const first = await store.prepareForOperatorInstallation(
     "01J00000000000000000000003",
     "01J00000000000000000000001",
   );
-  await assert.rejects(store.prepare(
-    "01J00000000000000000000003",
-    "01J00000000000000000000001",
-  ), /setup_in_progress/u);
-  const firstStored = database.rows.get("01J00000000000000000000003:01J00000000000000000000001");
-  assert.ok(firstStored);
-  firstStored.setup_status = "retry_wait";
-  const retry = await store.prepare(
+  const repeated = await store.prepareForOperatorInstallation(
     "01J00000000000000000000003",
     "01J00000000000000000000001",
   );
-  const other = await store.prepare(
+  const other = await store.prepareForOperatorInstallation(
     "01J00000000000000000000006",
     "01J00000000000000000000007",
   );
-  assert.equal(retry.materialId, first.materialId);
-  assert.equal(retry.material.customHeaderSecret, first.material.customHeaderSecret);
+  assert.equal(repeated.materialId, first.materialId);
+  assert.equal(repeated.material.customHeaderSecret, first.material.customHeaderSecret);
   assert.notEqual(other.material.customHeaderSecret, first.material.customHeaderSecret);
   assert.equal(first.callbackUrl, `https://hooks.albert.example/v1/webhooks/deputy/01J00000000000000000000001/${first.materialId}`);
   const stored = database.rows.get("01J00000000000000000000003:01J00000000000000000000001");
-  assert.ok(stored);
-  assert.equal(stored.ciphertext.includes(first.material.customHeaderSecret), false);
+  assert.equal(stored?.setup_status, "installation_required");
+  assert.equal(stored?.ciphertext.includes(first.material.customHeaderSecret), false);
+  assert.ok(database.statements.some((statement) =>
+    statement.includes("deputy.webhook_material_prepared_for_operator") &&
+    statement.includes("vendor_write_performed")
+  ));
 
-  const vendorWebhookIds = Object.fromEntries(
-    DEPUTY_WEBHOOK_TOPICS.map((topic, index) => [topic, String(index + 1)]),
-  );
-  await assert.rejects(store.markActive(first, vendorWebhookIds), /material_changed/u);
-  await store.markActive(retry, vendorWebhookIds);
-  assert.equal(stored.setup_status, "active");
-  assert.equal(database.connectionStates.at(-1)?.[2], "connected");
-  assert.equal(database.connectionStates.at(-1)?.[3], "active");
-
-  const rotatedKey = Buffer.alloc(32, 23).toString("base64url");
+  const secondKey = Buffer.alloc(32, 23).toString("base64url");
   const rotatedStore = new DeputyWebhookMaterialStore(
     database,
-    rotatedKey,
+    secondKey,
     "deputy-webhook-v2",
     "https://hooks.albert.example",
-    new Map([["deputy-webhook-v1", Buffer.alloc(32, 21).toString("base64url")]]),
+    new Map([["deputy-webhook-v1", firstKey]]),
   );
-  const rotated = await rotatedStore.prepare(
+  const rotated = await rotatedStore.prepareForOperatorInstallation(
     "01J00000000000000000000003",
     "01J00000000000000000000001",
   );
   assert.equal(rotated.material.customHeaderSecret, first.material.customHeaderSecret);
-  assert.equal(stored.key_id, "deputy-webhook-v2");
-  assert.equal(stored.ciphertext.includes(rotated.material.customHeaderSecret), false);
+  assert.equal(stored?.key_id, "deputy-webhook-v2");
+  assert.equal(stored?.ciphertext.includes(rotated.material.customHeaderSecret), false);
 
-  const backgroundRotatedStore = new DeputyWebhookMaterialStore(
+  const thirdKey = Buffer.alloc(32, 24).toString("base64url");
+  const backgroundStore = new DeputyWebhookMaterialStore(
     database,
-    Buffer.alloc(32, 24).toString("base64url"),
+    thirdKey,
     "deputy-webhook-v3",
     "https://hooks.albert.example",
     new Map([
-      ["deputy-webhook-v1", Buffer.alloc(32, 21).toString("base64url")],
-      ["deputy-webhook-v2", rotatedKey],
+      ["deputy-webhook-v1", firstKey],
+      ["deputy-webhook-v2", secondKey],
     ]),
   );
-  assert.equal(await backgroundRotatedStore.rewrapPreviousMaterials(), 2);
-  assert.equal(stored.key_id, "deputy-webhook-v3");
-  assert.equal(database.rows.get("01J00000000000000000000006:01J00000000000000000000007")?.key_id, "deputy-webhook-v3");
-  assert.equal(await backgroundRotatedStore.rewrapPreviousMaterials(), 0);
-  stored.setup_status = "retry_wait";
-  const afterBackgroundRotation = await backgroundRotatedStore.prepare(
-    "01J00000000000000000000003",
-    "01J00000000000000000000001",
-  );
-  assert.equal(afterBackgroundRotation.material.customHeaderSecret, first.material.customHeaderSecret);
+  assert.equal(await backgroundStore.rewrapPreviousMaterials(), 2);
+  assert.equal(stored?.key_id, "deputy-webhook-v3");
+  assert.equal(await backgroundStore.rewrapPreviousMaterials(), 0);
 });
 
-test("normal Deputy OAuth provisioning reconciles every required vendor topic with a unique connection header", async () => {
-  const writes: Record<string, unknown>[] = [];
-  const connector = new DeputyConnector({
-    clientId: "client",
-    clientSecret: "secret",
-    redirectUri: "https://albert.example/api/oauth/deputy/callback",
-    vault: new StaticVault({
-      provider: "deputy",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      tokenType: "Bearer",
-      expiresAt: "2099-01-01T00:00:00.000Z",
-      scopes: ["longlife_refresh_token"],
-      metadata: { endpoint: "demo.au.deputy.com" },
-    }),
-    fetcher: async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : input.toString());
-      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer access-token");
-      if (url.pathname.endsWith("/Webhook/QUERY")) return Response.json([]);
-      assert.equal(url.pathname, "/api/v1/resource/Webhook");
-      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      writes.push(payload);
-      return Response.json({ Id: writes.length });
-    },
-  });
-  const result = await connector.provision_webhooks({
-    tenantId: "01J00000000000000000000003",
-    connectionId: "01J00000000000000000000001",
-    credentialRef: "oauth-fixture",
-  }, { callbackUrl, customHeaderSecret });
-
-  assert.equal(writes.length, DEPUTY_WEBHOOK_TOPICS.length);
-  assert.deepEqual(writes.map((value) => value.Topic), [...DEPUTY_WEBHOOK_TOPICS]);
-  assert.ok(writes.every((value) =>
-    value.Address === callbackUrl &&
-    value.Headers === `X-Albert-Webhook-Secret: ${customHeaderSecret}` &&
-    value.Enabled === 1 && value.Type === "URL"
-  ));
-  assert.deepEqual(Object.keys(result.vendorWebhookIds), [...DEPUTY_WEBHOOK_TOPICS]);
-});
-
-test("Deputy webhook permission denial preserves OAuth and exposes an action-required retry state", async () => {
-  const database = new MaterialDatabase();
-  const coordinator = new DeputyWebhookSetupCoordinator(new DeputyWebhookMaterialStore(
-    database,
-    Buffer.alloc(32, 22).toString("base64url"),
-    "deputy-webhook-v1",
-    "https://hooks.albert.example",
-  ));
-  const connector = new DeputyConnector({
-    clientId: "client",
-    clientSecret: "secret",
-    redirectUri: "https://albert.example/api/oauth/deputy/callback",
-    vault: new StaticVault({
-      provider: "deputy",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      tokenType: "Bearer",
-      expiresAt: "2099-01-01T00:00:00.000Z",
-      scopes: ["longlife_refresh_token"],
-      metadata: { endpoint: "demo.au.deputy.com" },
-    }),
-    fetcher: async () => new Response("permission denied", { status: 403 }),
-  });
-  const result = await coordinator.provision({
-    connector,
-    context: {
-      tenantId: "01J00000000000000000000003",
-      connectionId: "01J00000000000000000000001",
-      credentialRef: "oauth-fixture",
-    },
-  });
-  assert.deepEqual(result, {
-    state: "action_required",
-    reasonCode: "deputy_webhook_permission_required",
-    provisionedTopics: [],
-  });
-  const stored = database.rows.get("01J00000000000000000000003:01J00000000000000000000001");
-  assert.equal(stored?.setup_status, "blocked_permission");
-  assert.equal(database.connectionStates.at(-1)?.[2], "degraded");
-  assert.equal(database.connectionStates.at(-1)?.[3], "blocked_permission");
-  assert.equal(database.connectionStates.at(-1)?.[4], "deputy_webhook_permission_required");
-});
-
-test("a connected Deputy account with incomplete webhook setup is visibly recoverable", () => {
+test("optional Deputy webhook installation is visible without degrading the core connection", () => {
   const workspace = toConnectionsWorkspace({
     tenant_id: "01J00000000000000000000003",
     tenant_name: "Albert Cycle Co.",
@@ -454,8 +305,16 @@ test("a connected Deputy account with incomplete webhook setup is visibly recove
       connection_id: "01J00000000000000000000001",
       connector_key: "deputy",
       display_name: "Albert Deputy",
-      status: "degraded",
+      status: "connected",
       auth_health: "healthy",
+      account_metadata: {
+        webhook_setup: {
+          status: "operator_installation_required",
+          reason_code: "deputy_webhook_operator_installation_required",
+          optional: true,
+          completeness_mode: "scheduled_polling_and_reconciliation",
+        },
+      },
       authorised_at: receivedAt,
       last_checked_at: receivedAt,
       readiness: [],
@@ -466,30 +325,50 @@ test("a connected Deputy account with incomplete webhook setup is visibly recove
     oauth_sessions: [],
   }, "Australia/Melbourne");
   const deputy = workspace.providers.find((provider) => provider.id === "deputy");
-  assert.equal(deputy?.auth.state, "error");
-  assert.equal(deputy?.auth.label, "Connected · setup needs attention");
-  assert.match(deputy?.auth.detail ?? "", /Reconnect to retry/u);
+  const deputyConnection = deputy?.connections[0];
+  assert.equal(deputyConnection?.auth.state, "healthy");
+  assert.equal(deputyConnection?.auth.label, "Connected");
+  assert.match(deputyConnection?.auth.detail ?? "", /polling and reconciliation provide complete ingestion/iu);
+  assert.match(deputyConnection?.auth.detail ?? "", /optional webhooks require explicit owner or operator installation/iu);
 });
 
-test("Deputy ingress SQL exposes one material resolver and one fixed enqueue path without OAuth-table grants", async () => {
-  const [migration, gateway, oauth, sessionStore, environment] = await Promise.all([
+test("Deputy ingress remains connection-bound while OAuth and sync composition have no provisioning authority", async () => {
+  const [migration, boundaryMigration, proofBoundary, gateway, connector, oauth, sessionStore, main, config, environment] = await Promise.all([
     readFile(new URL("infra/migrations/control-plane/0009_deputy_webhook_security.sql", root), "utf8"),
+    readFile(new URL("infra/migrations/control-plane/0028_m7_deputy_read_only_webhook_boundary.sql", root), "utf8"),
+    readFile(new URL("infra/migrations/control-plane/0039_m7_proof_gated_webhook_lifecycle.sql", root), "utf8"),
     readFile(new URL("services/webhook-gateway/src/deputy.ts", root), "utf8"),
+    readFile(new URL("connectors/deputy/index.ts", root), "utf8"),
     readFile(new URL("services/sync-workers/src/oauth-http.ts", root), "utf8"),
     readFile(new URL("services/sync-workers/src/oauth-session-store.ts", root), "utf8"),
+    readFile(new URL("services/sync-workers/src/main.ts", root), "utf8"),
+    readFile(new URL("services/sync-workers/src/config.ts", root), "utf8"),
     readFile(new URL(".env.example", root), "utf8"),
   ]);
   assert.match(migration, /REVOKE ALL ON TABLE control_plane\.oauth_token_refs FROM albert_webhook_control/i);
   assert.match(migration, /resolve_deputy_webhook_material[\s\S]*SECURITY DEFINER/i);
-  assert.match(migration, /assert_deputy_webhook_gateway_ready[\s\S]*SECURITY DEFINER/i);
   assert.match(migration, /enqueue_deputy_webhook_sync[\s\S]*SECURITY DEFINER/i);
   assert.match(migration, /webhook\.received_at\s*=\s*p_received_at/i);
   assert.doesNotMatch(migration, /GRANT[^;]*oauth_(?:token_refs|secret_envelopes)[^;]*albert_webhook_control/i);
-  assert.match(gateway, /resolve_deputy_webhook_material\(\$1, \$2\)/u);
+  assert.match(gateway, /resolve_attested_deputy_webhook_material\([\s\S]*\$1, \$2, \$3, \$4, \$5/u);
+  assert.match(
+    proofBoundary,
+    /REVOKE EXECUTE ON FUNCTION[\s\S]*resolve_deputy_webhook_material\(text,text\)[\s\S]*FROM PUBLIC,[\s\S]*albert_webhook_control/iu,
+  );
+  assert.match(
+    proofBoundary,
+    /GRANT EXECUTE ON FUNCTION[\s\S]*resolve_attested_deputy_webhook_material\(text,bigint,text,text,text\)[\s\S]*TO albert_webhook_control/iu,
+  );
   assert.match(gateway, /associatedData\(resolved\)/u);
-  assert.match(oauth, /finalizeConnection[\s\S]*provisionDeputyWebhooks/u);
-  assert.match(sessionStore, /provider === "deputy" \? "degraded" : "connected"/u);
-  assert.match(sessionStore, /webhook_setup:[\s\S]*status: "pending"[\s\S]*recoverable: true/u);
+  assert.doesNotMatch(connector, /provision_webhooks|resource\/Webhook/u);
+  assert.doesNotMatch(oauth, /provisionDeputyWebhooks|webhookSetup|DeputyWebhookSetupCoordinator/u);
+  assert.doesNotMatch(main, /DeputyWebhookMaterialStore|DeputyWebhookSetupCoordinator/u);
+  assert.doesNotMatch(config, /DEPUTY_WEBHOOK_ENCRYPTION_KEY|WEBHOOK_GATEWAY_PUBLIC_URL/u);
+  assert.match(sessionStore, /finalize_oauth_connection_identity/u);
+  assert.match(sessionStore, /status: "operator_installation_required"/u);
+  assert.match(boundaryMigration, /scheduled_polling_and_reconciliation/u);
+  assert.match(boundaryMigration, /account_metadata/u);
   assert.doesNotMatch(environment, /DEPUTY_WEBHOOK_(?:SHARED_SECRET|SIGNING_KEY)=/u);
   assert.match(environment, /DEPUTY_WEBHOOK_ENCRYPTION_KEY=/u);
+  assert.deepEqual([...DEPUTY_WEBHOOK_TOPICS].sort(), [...new Set(DEPUTY_WEBHOOK_TOPICS)].sort());
 });

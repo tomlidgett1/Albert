@@ -20,7 +20,7 @@ $$;
 -- RLS functions; service processes receive only the grants below.
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA control_plane FROM service_role;
-REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM service_role;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM PUBLIC,service_role;
 REVOKE USAGE ON SCHEMA control_plane FROM service_role;
 
 GRANT USAGE ON SCHEMA control_plane TO albert_sync_control, albert_webhook_control;

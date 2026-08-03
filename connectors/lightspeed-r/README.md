@@ -8,7 +8,7 @@ Pinned against the official documentation retrieved **2026-08-03**:
 - [Leaky-bucket and burst limits](https://developers.lightspeedhq.com/retail/introduction/ratelimits/)
 - [Relations](https://developers.lightspeedhq.com/retail/introduction/relations/)
 - [Query parameters and timestamp operators](https://developers.lightspeedhq.com/retail/introduction/parameters/)
-- [Official Lightspeed Postman collection](https://www.postman.com/lightspeedhq/r-series-api/documentation/01jc01h/r-series-collection)
+- [Official R-Series authentication collection](https://www.postman.com/lightspeedhq/r-series-api/documentation/j3gxxum/r-series-authentication)
 
 The pack is deliberately R-Series-only. Successful `GET /API/V3/Account.json`
 discovery is the variant check; X-Series uses different identity and API hosts.
@@ -18,10 +18,14 @@ shop is R-Series before M3 live-account acceptance can pass.
 Albert only issues GET requests to the R-Series data API. Some resources have
 no documented read-only scope, so the narrowest resource scopes are requested
 and the absence of write methods is enforced in code. The authorization-code
-flow is state-bound and uses S256 PKCE. Refresh tokens rotate and the new pair
-is committed with compare-and-swap before use; disconnect calls the documented
-`/auth/oauth/revoke` endpoint and destroys the local encrypted credential even
-if the remote call fails. R-Series does not publish a webhook contract, so
+flow is state-bound and uses S256 PKCE. R-Series' documented confidential-client
+exchange binds the same registered redirect URI, client secret, short-lived code
+and one-use PKCE verifier used by the authorization request.
+Refresh tokens rotate and the new pair is committed with compare-and-swap before use;
+disconnect calls the documented
+`/auth/oauth/access_token` endpoint with `grant_type=revoke_refresh_token` and
+destroys the local encrypted credential even if the remote call fails. R-Series
+does not publish a webhook contract, so
 scheduled incremental polling and nightly reconciliation recover changes and
 deletes.
 
@@ -35,3 +39,10 @@ headers; it does not use a fixed vendor sleep.
 Unknown additive fields are preserved in immutable raw storage, raise a schema-
 drift finding, and are excluded from the approved staging projection. Malformed
 required fields or invalid decimals remain quarantined and cannot enter staging.
+
+Purchase-order truth is materialised only from `Order.json` with the requested
+`OrderLines` relation. That parent response carries supplier, shop, lifecycle
+dates, status, and currency. The standalone `OrderLine` stream is retained for
+typed identity scans and verified deletion tombstones, but active standalone
+rows cannot overwrite complete canonical lines with absent header fields. The
+result is deterministic whichever stream is scheduled first.

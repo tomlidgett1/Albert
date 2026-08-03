@@ -30,6 +30,9 @@ type XeroRouteStore = Pick<
     receiptId: string;
     stream: XeroWebhookStream;
     receivedAt: string;
+    workerId: string;
+    leaseToken: string;
+    leaseVersion: number;
   }>): Promise<boolean>;
 }>;
 
@@ -120,7 +123,7 @@ export class XeroWebhookProcessor {
     config: XeroWebhookProcessorConfig;
     inbox: Pick<XeroWebhookInboxStore,
       "claim" | "renew" | "recordSequence" | "recordConnection" |
-      "enqueueGapSweeps" | "complete" | "fail" | "purge" | "health"
+      "enqueueGapSweeps" | "complete" | "fail" | "health"
     >;
     routes: XeroRouteStore;
     raw: Pick<WebhookRawWriter, "put">;
@@ -134,19 +137,8 @@ export class XeroWebhookProcessor {
   async run(signal: AbortSignal): Promise<void> {
     if (this.running) throw new Error("xero_processor_already_running");
     this.running = true;
-    let nextRetentionSweepAt = 0;
     try {
       while (!signal.aborted) {
-        const now = Date.now();
-        if (now >= nextRetentionSweepAt) {
-          // Retention must advance even during a quiet webhook period. In
-          // particular, permanently failed ciphertext cannot wait for another
-          // successful delivery before reaching its cryptographic expiry.
-          nextRetentionSweepAt = now + 60_000;
-          await this.dependencies.inbox.purge().catch((error) => {
-            this.logger.warn("retention_purge_failed", { code: errorEvidence(error).code });
-          });
-        }
         let item: ClaimedXeroWebhook | null = null;
         try {
           item = await this.dependencies.inbox.claim(
@@ -181,6 +173,8 @@ export class XeroWebhookProcessor {
       void this.dependencies.inbox.renew(
         item.inboxId,
         this.dependencies.config.workerId,
+        item.leaseToken,
+        item.leaseVersion,
         this.dependencies.config.leaseSeconds,
       ).then((value) => {
         if (!value) leaseLost = true;
@@ -203,6 +197,8 @@ export class XeroWebhookProcessor {
       const status = await this.dependencies.inbox.fail({
         inboxId: item.inboxId,
         workerId: this.dependencies.config.workerId,
+        leaseToken: item.leaseToken,
+        leaseVersion: item.leaseVersion,
         errorCode: evidence.code,
         retryDelaySeconds: retryDelay(this.dependencies.config, item.attemptCount),
         maxAttempts: this.dependencies.config.maxAttempts,
@@ -233,11 +229,17 @@ export class XeroWebhookProcessor {
     const sequence = await this.dependencies.inbox.recordSequence(
       item.inboxId,
       this.dependencies.config.workerId,
+      item.leaseToken,
+      item.leaseVersion,
     );
     let gapRecoveryCount = 0;
     if (sequence.gapId) {
       gapRecoveryCount = await this.dependencies.inbox.enqueueGapSweeps(
         sequence.gapId,
+        item.inboxId,
+        this.dependencies.config.workerId,
+        item.leaseToken,
+        item.leaseVersion,
         item.firstReceivedAt,
       );
     }
@@ -270,6 +272,10 @@ export class XeroWebhookProcessor {
           dedupeKey: `xero:${item.inboxId}:${partition.stream}`,
           vendorEventId: item.inboxId,
           bodySha256: partitionSha256,
+          verificationReference: item.inboxId,
+          leaseOwner: this.dependencies.config.workerId,
+          leaseToken: item.leaseToken,
+          leaseVersion: item.leaseVersion,
           safeHeaders: Object.freeze({
             source_body_sha256: item.bodySha256,
             inbox_key_id: item.encryptionKeyId,
@@ -283,8 +289,14 @@ export class XeroWebhookProcessor {
               connectionId: connection.connectionId,
               receiptId: reservation.receiptId,
               connectorKey: "xero",
-              receivedAt: item.firstReceivedAt,
+              receivedAt: reservation.receivedAt,
               body: partitionBody,
+              authority: {
+                verificationReference: item.inboxId,
+                xeroLeaseOwner: this.dependencies.config.workerId,
+                xeroLeaseToken: item.leaseToken,
+                xeroLeaseVersion: item.leaseVersion,
+              },
             });
             if (raw.bodySha256 !== partitionSha256) {
               throw new XeroProcessingError("webhook_raw_hash_mismatch", true);
@@ -293,6 +305,10 @@ export class XeroWebhookProcessor {
               connection,
               reservation.receiptId,
               raw.objectKey,
+              item.inboxId,
+              this.dependencies.config.workerId,
+              item.leaseToken,
+              item.leaseVersion,
             );
           }
           await this.dependencies.routes.finalizeXero({
@@ -300,12 +316,19 @@ export class XeroWebhookProcessor {
             inboxId: item.inboxId,
             receiptId: reservation.receiptId,
             stream: partition.stream,
-            receivedAt: item.firstReceivedAt,
+            receivedAt: reservation.receivedAt,
+            workerId: this.dependencies.config.workerId,
+            leaseToken: item.leaseToken,
+            leaseVersion: item.leaseVersion,
           });
         } catch (error) {
           await this.dependencies.routes.markFailed(
             connection,
             reservation.receiptId,
+            item.inboxId,
+            this.dependencies.config.workerId,
+            item.leaseToken,
+            item.leaseVersion,
           ).catch(() => undefined);
           throw error;
         }
@@ -317,6 +340,9 @@ export class XeroWebhookProcessor {
         tenantId: connection.tenantId,
         connectionId: connection.connectionId,
         inboxId: item.inboxId,
+        workerId: this.dependencies.config.workerId,
+        leaseToken: item.leaseToken,
+        leaseVersion: item.leaseVersion,
         streams: [...new Set(streams)].sort(),
       });
       matchedConnections.add(`${connection.tenantId}:${connection.connectionId}`);
@@ -325,6 +351,8 @@ export class XeroWebhookProcessor {
     await this.dependencies.inbox.complete(
       item.inboxId,
       this.dependencies.config.workerId,
+      item.leaseToken,
+      item.leaseVersion,
       Object.freeze({
         partitionCount: partitions.length,
         matchedConnectionCount: matchedConnections.size,
