@@ -168,7 +168,8 @@ test("OAuth callbacks never fall back to an insecure production redirect origin"
   assert.match(callbackRoute, /process\.env\.NODE_ENV !== "production" && candidate\.protocol === "http:"/u);
   assert.match(callbackRoute, /candidate\.username \|\| candidate\.password/u);
   assert.match(callbackRoute, /configured && \(candidate\.pathname !== "\/" \|\| candidate\.search \|\| candidate\.hash\)/u);
-  assert.match(webFlow, /process\.env\.NODE_ENV !== "production" && origin\.protocol === "http:"/u);
+  assert.match(webFlow, /function isLocalLoopbackHttp\(url: URL\): boolean/u);
+  assert.match(webFlow, /process\.env\.NODE_ENV !== "production" && url\.protocol === "http:"/u);
   assert.match(webFlow, /origin\.username \|\| origin\.password \|\| origin\.pathname !== "\/" \|\| origin\.search \|\| origin\.hash/u);
   assert.match(callbackRoute, /OAuth callback routing is not configured[\s\S]*status: 503/u);
   assert.match(callbackRoute, /candidate\.protocol !== "https:" && !localHttp/u);
@@ -178,9 +179,12 @@ test("OAuth callbacks never fall back to an insecure production redirect origin"
 
 test("Lightspeed browser authorization binds the sealed verifier as S256 PKCE", () => {
   const source = readFileSync("services/oauth/src/web-flow.ts", "utf8");
+  const lightspeedStart = source.indexOf('if (input.provider === "lightspeed")');
+  const xeroStart = source.indexOf('if (input.provider === "xero")', lightspeedStart);
+  const lightspeedBlock = source.slice(lightspeedStart, xeroStart);
   assert.match(
-    source,
-    /input\.provider === "lightspeed"[\s\S]*buildLightspeedRAuthorizationUrl\([\s\S]*redirectUri[\s\S]*codeChallenge:\s*await pkceChallenge\(codeVerifier\)/u,
+    lightspeedBlock,
+    /buildLightspeedRAuthorizationUrl\(\{[\s\S]*redirectUri[\s\S]*codeChallenge:\s*await pkceChallenge\(codeVerifier\)/u,
   );
 });
 

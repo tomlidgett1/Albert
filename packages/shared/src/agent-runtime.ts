@@ -9,19 +9,19 @@ export const ALBERT_MODELS = [
   {
     id: "gpt-5.6-sol",
     label: "Sol",
-    description: "Highest-quality reasoning for complex business questions.",
+    description: "Most capable",
     tier: "frontier",
   },
   {
     id: "gpt-5.6-terra",
     label: "Terra",
-    description: "Balanced intelligence, latency, and cost.",
+    description: "Best balance",
     tier: "balanced",
   },
   {
     id: "gpt-5.6-luna",
     label: "Luna",
-    description: "Cost-sensitive, high-volume analysis.",
+    description: "Most efficient",
     tier: "efficient",
   },
 ] as const;

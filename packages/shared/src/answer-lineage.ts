@@ -31,12 +31,25 @@ export const answerArtifactFinalizationInputSchema = z.object({
   turnResultDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   metering: answerArtifactMeteringSchema,
   queryAuditIds: z.array(ulidSchema).max(20),
+  directoryEvidence: z.object({
+    field: z.literal("worker"),
+    valueCount: z.number().int().nonnegative().max(50),
+  }).strict().optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.queryAuditIds).size !== value.queryAuditIds.length) {
     context.addIssue({ code: "custom", path: ["queryAuditIds"], message: "Query audit references must be unique." });
   }
-  if (["verified", "qualified", "exploratory"].includes(value.answerState) && value.queryAuditIds.length === 0) {
+  const directoryAnswer = value.directoryEvidence !== undefined
+    && value.answerState === "qualified"
+    && value.directoryEvidence.valueCount > 0
+    && value.queryAuditIds.length === 0;
+  if (["verified", "qualified", "exploratory"].includes(value.answerState)
+    && value.queryAuditIds.length === 0
+    && !directoryAnswer) {
     context.addIssue({ code: "custom", path: ["queryAuditIds"], message: "An analytical answer requires query evidence." });
+  }
+  if (value.directoryEvidence && value.queryAuditIds.length > 0) {
+    context.addIssue({ code: "custom", path: ["directoryEvidence"], message: "Directory answers cannot also bind query audits." });
   }
   if (value.answerState === "clarification" && value.queryAuditIds.length > 0) {
     context.addIssue({ code: "custom", path: ["queryAuditIds"], message: "A clarification cannot include executed query evidence." });

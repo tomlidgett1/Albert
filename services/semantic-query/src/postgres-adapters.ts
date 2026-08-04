@@ -410,12 +410,16 @@ export class PostgresCatalogueSearchProvider implements CatalogueSearchProvider 
       const result=await withControlPlaneGlobalRead(this.controlPlanePool,(client)=>client.query(
         `SELECT count(*)::int AS document_count,
                 count(*) FILTER (
-                  WHERE embedding_model=$3 AND embedding_dimensions=$4
-                    AND extensions.vector_dims(embedding)=$4
+                  WHERE catalogue_documents.embedding_model=$3
+                    AND catalogue_documents.embedding_dimensions=$4
+                    AND extensions.vector_dims(catalogue_documents.embedding)=$4
                 )::int AS compatible_count
          FROM control_plane.catalogue_documents
-         JOIN control_plane.semantic_publications USING (publication_id)
-         WHERE status='published' AND registry_version=$1 AND registry_hash=$2`,
+         JOIN control_plane.semantic_publications
+           USING (publication_id)
+         WHERE semantic_publications.status='published'
+           AND semantic_publications.registry_version=$1
+           AND semantic_publications.registry_hash=$2`,
         [this.registryVersion,this.registryHash,this.embeddings.model,this.embeddings.dimensions],
       ));
       const row=result.rows[0];

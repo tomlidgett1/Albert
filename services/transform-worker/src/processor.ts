@@ -16,14 +16,23 @@ export type TransformProcessOutcome=
       retryDelaySeconds:number;
     }>;
 
-const databaseFailureCodes:Readonly<Record<string,Readonly<{code:string;retryable:boolean}>>>=Object.freeze({
+const databaseFailureCodes:Readonly<Record<string,Readonly<{
+  code:string;
+  retryable:boolean;
+  retryDelaySeconds?:number;
+}>>>=Object.freeze({
   "40001":Object.freeze({code:"database_serialization_conflict",retryable:true}),
   "40P01":Object.freeze({code:"database_deadlock",retryable:true}),
   "42501":Object.freeze({code:"database_permission_denied",retryable:false}),
   "57P01":Object.freeze({code:"database_unavailable",retryable:true}),
+  "57014":Object.freeze({
+    code:"database_statement_timeout",retryable:true,retryDelaySeconds:300,
+  }),
+  "25P03":Object.freeze({code:"database_unavailable",retryable:true}),
   "08000":Object.freeze({code:"database_unavailable",retryable:true}),
   "08003":Object.freeze({code:"database_unavailable",retryable:true}),
   "08006":Object.freeze({code:"database_unavailable",retryable:true}),
+  "53300":Object.freeze({code:"database_unavailable",retryable:true}),
   "23503":Object.freeze({code:"database_integrity_violation",retryable:false}),
   "23505":Object.freeze({code:"database_integrity_violation",retryable:false}),
 });
@@ -36,7 +45,11 @@ export function transformFailure(error:unknown):TransformFailureEvidence{
     const candidate=error as Readonly<{code?:unknown;name?:unknown}>;
     if(typeof candidate.code==="string"&&databaseFailureCodes[candidate.code]){
       const mapped=databaseFailureCodes[candidate.code]!;
-      return Object.freeze({...mapped,retryDelaySeconds:mapped.retryable?30:0});
+      return Object.freeze({
+        code:mapped.code,
+        retryable:mapped.retryable,
+        retryDelaySeconds:mapped.retryDelaySeconds??(mapped.retryable?30:0),
+      });
     }
     if(candidate.name==="AbortError"||candidate.name==="TimeoutError"){
       return Object.freeze({code:"transform_operation_timeout",retryable:true,retryDelaySeconds:30});

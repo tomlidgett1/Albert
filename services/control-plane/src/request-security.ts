@@ -3,17 +3,33 @@ import { ControlPlaneError } from "./web-repository.js";
 
 export const COOKIE_MUTATION_BODY_LIMIT_BYTES = 32_000;
 
+function isLocalLoopbackHttp(url: URL): boolean {
+  return process.env.NODE_ENV !== "production" && url.protocol === "http:" &&
+    ["localhost", "127.0.0.1"].includes(url.hostname);
+}
+
+function isLocalHttpsPublicOrigin(url: URL): boolean {
+  return process.env.NODE_ENV !== "production" && url.protocol === "https:" &&
+    !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+}
+
+/**
+ * Resolves the browser-facing origin for same-origin checks.
+ * In local HTTP loopback development, vinext often binds a different port than
+ * ALBERT_PUBLIC_ORIGIN; prefer the actual request origin when both are loopback.
+ */
 function configuredOrigin(request: Request): string {
   const configured = process.env.ALBERT_PUBLIC_ORIGIN?.trim();
+  const requestUrl = new URL(request.url);
   if (configured) {
     try {
       const parsed = new URL(configured);
-      const localHttp = process.env.NODE_ENV !== "production" && parsed.protocol === "http:" &&
-        ["localhost", "127.0.0.1"].includes(parsed.hostname);
+      const localHttp = isLocalLoopbackHttp(parsed);
       if (
         (parsed.protocol !== "https:" && !localHttp) || parsed.username || parsed.password ||
         parsed.pathname !== "/" || parsed.search || parsed.hash
       ) throw new Error("unsafe_public_origin");
+      if (localHttp && isLocalLoopbackHttp(requestUrl)) return requestUrl.origin;
       return parsed.origin;
     } catch {
       throw new ControlPlaneError("The public application origin is invalid.", 503);
@@ -22,9 +38,7 @@ function configuredOrigin(request: Request): string {
   if (process.env.NODE_ENV === "production") {
     throw new ControlPlaneError("The public application origin is not configured.", 503);
   }
-  const requestUrl = new URL(request.url);
-  const localHttp = requestUrl.protocol === "http:" &&
-    ["localhost", "127.0.0.1"].includes(requestUrl.hostname);
+  const localHttp = isLocalLoopbackHttp(requestUrl);
   if ((requestUrl.protocol !== "https:" && !localHttp) || requestUrl.username || requestUrl.password) {
     throw new ControlPlaneError("The public application origin is invalid.", 503);
   }
@@ -39,6 +53,26 @@ function requestHeaderOrigin(value: string | null): string | null {
       !parsed.username && !parsed.password
       ? parsed.origin
       : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When local OAuth uses an HTTPS tunnel as ALBERT_PUBLIC_ORIGIN, Connect clicks
+ * from http://localhost must bounce onto that public origin before cookies and
+ * Lightspeed's HTTPS redirect URI can work.
+ */
+export function localHttpsOAuthBootstrapTarget(request: Request): string | null {
+  if (process.env.NODE_ENV === "production") return null;
+  const configured = process.env.ALBERT_PUBLIC_ORIGIN?.trim();
+  if (!configured) return null;
+  try {
+    const publicOrigin = new URL(configured);
+    const requestUrl = new URL(request.url);
+    if (!isLocalHttpsPublicOrigin(publicOrigin) || !isLocalLoopbackHttp(requestUrl)) return null;
+    if (requestUrl.origin === publicOrigin.origin) return null;
+    return new URL(`${requestUrl.pathname}${requestUrl.search}`, publicOrigin).toString();
   } catch {
     return null;
   }
@@ -116,12 +150,24 @@ export async function readBoundedJsonBody(
 /** OAuth starts are navigations, so validate Fetch Metadata and the referrer. */
 export function assertSameOriginNavigation(request: Request): void {
   const expected = configuredOrigin(request);
+  const requestUrl = new URL(request.url);
   const fetchSite = request.headers.get("sec-fetch-site");
+  const referrerOrigin = requestHeaderOrigin(request.headers.get("referer"));
+  // Local HTTPS-tunnel bootstrap: browser hops from loopback onto the configured
+  // public origin. Sec-Fetch-Site is cross-site for that one navigation.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    requestUrl.origin === expected &&
+    referrerOrigin &&
+    isLocalLoopbackHttp(new URL(referrerOrigin)) &&
+    isLocalHttpsPublicOrigin(new URL(expected))
+  ) {
+    return;
+  }
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
     throw new ControlPlaneError("Cross-site OAuth initiation rejected.", 403);
   }
-  const referrer = request.headers.get("referer");
-  if (fetchSite !== "none" && requestHeaderOrigin(referrer) !== expected) {
+  if (fetchSite !== "none" && referrerOrigin !== expected) {
     throw new ControlPlaneError("OAuth initiation requires a same-origin navigation.", 403);
   }
 }

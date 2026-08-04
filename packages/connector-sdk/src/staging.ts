@@ -63,7 +63,7 @@ const moneyFields: Readonly<Record<ConnectorId, ReadonlySet<string>>> = {
     "otherVendorCost", "totalDiscount", "subTotalCost", "totalCost", "discountMoneyValue",
     "discountMoneyVendorValue", "quantity", "price", "originalPrice", "vendorCost", "checkedIn",
     "numReceived", "shippingCost", "shippingVendorCost", "tax1Rate", "tax2Rate", "qohChange",
-    "costChange", "unitQuantity", "unitPrice", "normalUnitPrice", "discountAmount", "tax",
+    "costChange", "unitQuantity", "unitPrice", "normalUnitPrice", "discountAmount",
     "amount", "serviceRate", "leftNode", "rightNode", "discountPercent", "change",
     "displayableSubtotal", "calcSurcharges", "calcItemFees", "tippableAmount", "discount",
     "totalQuantity", "vendorCurrencyRate", "discountPercentValue",
@@ -116,6 +116,8 @@ const booleanFields = new Set([
   "discountIsPercent", "costsModifiedAfterShipment", "requireCustomer", "internalReserved",
   "automated", "causedNegative", "EnablePaymentsToAccount", "updatePrice", "updateCost",
   "updateDescription", "shareSellThrough",
+  // Item.tax / SaleLine.tax are taxable flags in current R-Series payloads, not money.
+  "tax",
 ]);
 
 const numericFields = new Set(["JournalNumber", "nodeDepth", "RosterSortOrder"]);
@@ -274,9 +276,10 @@ function convertField(
   }
   if (field.type === "numeric") {
     const exact = projection.money?.[field.sourceField]?.exact ?? normalizeDecimal(raw).exact;
-    return exact === null || !fitsNumeric19_4(exact)
+    const coerced = exact === null ? null : coerceNumeric19_4(exact);
+    return coerced === null
       ? invalid(field, "Expected an exact decimal compatible with numeric(19,4).")
-      : { value: exact };
+      : { value: coerced };
   }
   if (field.type === "date") {
     const normalized = normalizeDate(raw);
@@ -338,6 +341,41 @@ function fitsNumeric19_4(value: string): boolean {
   if (!match) return false;
   const integerDigits = match[1].replace(/^0+(?=\d)/u, "").length;
   return integerDigits <= 15 && (match[2]?.length ?? 0) <= 4;
+}
+
+/**
+ * Coerce a base-10 decimal into numeric(19,4).
+ * Values with more than 4 fractional digits are half-up rounded so Lightspeed
+ * averages (avgCost etc.) can land without quarantine while staying in-column.
+ */
+function coerceNumeric19_4(value: string): string | null {
+  if (fitsNumeric19_4(value)) return value;
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/u.exec(value);
+  if (!match) return null;
+  const sign = match[1] ?? "";
+  const integerRaw = match[2] ?? "0";
+  const fractionRaw = match[3] ?? "";
+  if (fractionRaw.length <= 4) return null;
+
+  const integerDigits = integerRaw.replace(/^0+(?=\d)/u, "");
+  if (integerDigits.length > 15) return null;
+
+  const keep = fractionRaw.slice(0, 4);
+  const nextDigit = fractionRaw.charAt(4);
+  let fraction = BigInt(keep || "0");
+  let integer = BigInt(integerRaw);
+  if (nextDigit >= "5") fraction += 1n;
+  if (fraction === 10000n) {
+    integer += 1n;
+    fraction = 0n;
+  }
+  if (integer.toString().replace(/^-/u, "").length > 15) return null;
+
+  const fractionText = fraction.toString().padStart(4, "0").replace(/0+$/u, "");
+  const integerText = integer.toString();
+  return fractionText.length === 0
+    ? `${sign}${integerText}`
+    : `${sign}${integerText}.${fractionText}`;
 }
 
 function normalizeDate(value: unknown): string | null {

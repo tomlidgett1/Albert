@@ -1,31 +1,50 @@
-# ADR 0055: Use one Lightspeed R-Series `employee:all` consent grant
+# ADR 0055: Lightspeed R-Series consent scopes
 
-- Status: Accepted
+- Status: Superseded for live authorize requests
 - Date: 2026-08-04
+- Updated: 2026-08-04
 
 ## Context
 
 Albert V1 extracts sales, inventory, customers, employees, shops, product cost,
-categories, vendors, and purchase orders from Lightspeed Retail R-Series. The
-previous authorization request enumerated ten granular employee scopes. Product
-direction requires the documented `employee:all` grant so a new connection does
-not lose a V1 domain because an individual grant was omitted.
+categories, vendors, and purchase orders from Lightspeed Retail R-Series. A
+brief product experiment requested the documented `employee:all` grant so one
+consent covered every V1 domain.
+
+Live Safari authorize attempts with `employee:all` entered Lightspeed's identity
+broker on the legacy `merchantos.com` login domain and failed with a redirect
+loop before consent. The prior granular employee scope set completed the same
+broker path on `lightspeedapp.com`.
 
 ## Decision
 
-New Lightspeed R-Series authorization requests use only `employee:all`. The
-OAuth builder keeps a fixed allowlist and rejects caller-supplied scopes outside
-that list. A stored `employee:all` grant satisfies every granular capability
-check used by the connector.
+New Lightspeed R-Series authorization requests use the documented granular
+employee scopes that cover V1 extraction domains:
 
-Albert remains operationally read-only: its R-Series data-plane implementation
-issues GET requests and exposes no source mutation methods. Existing credentials
-with granular scopes remain valid and retain granular capability evaluation.
+- `employee:register_read`
+- `employee:inventory_read`
+- `employee:customers_read`
+- `employee:product_cost`
+- `employee:admin_employees`
+- `employee:admin_shops`
+- `employee:categories`
+- `employee:vendors`
+- `employee:purchase_orders`
+- `employee:admin_purchases`
+
+Capability evaluation still treats a stored `employee:all` grant as satisfying
+every granular check, so any connection that already holds `employee:all`
+continues to work.
+
+Authorize requests also send the exact registered `redirect_uri` with S256
+PKCE. Token exchange remains JSON with `client_id`, `client_secret`,
+`grant_type`, code, and `code_verifier` per the R-Series Authorization Code
+Grant docs.
 
 ## Consequences
 
-- New merchants see one broad Lightspeed employee-level consent grant.
-- All V1 Lightspeed extraction domains become available from that grant.
-- Existing granular connections require re-consent if `employee:all` is desired.
-- The authorization grant is broader than least privilege, while Albert's own
-  connector continues to enforce read-only behaviour.
+- Merchants see the previous multi-scope consent list again.
+- Live authorize avoids the `employee:all` broker path that looped on
+  `merchantos.com` in Safari.
+- Re-introducing `employee:all` needs a verified live authorize against the
+  production API client before it is requested again.

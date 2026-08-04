@@ -46,7 +46,7 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
   async finalize(rawInput: AnswerArtifactFinalizationInput): Promise<AnswerArtifactFinalizationResult> {
     const input = answerArtifactFinalizationInputSchema.parse(rawInput);
     const queryExecutions = await this.loadQueryExecutions(input);
-    assertEvidenceMatchesAnswerState(input.answerState, queryExecutions);
+    assertEvidenceMatchesAnswerState(input, queryExecutions);
 
     const client = await this.controlPlanePool.connect();
     try {
@@ -150,14 +150,19 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
 }
 
 function assertEvidenceMatchesAnswerState(
-  state: AnswerArtifactFinalizationInput["answerState"],
+  input: AnswerArtifactFinalizationInput,
   executions: readonly Readonly<Record<string, unknown>>[],
 ): void {
+  const state = input.answerState;
   const routes = executions.map((execution) => execution.route);
   if (state === "clarification" && executions.length !== 0) {
     throw new Error("Clarification turns cannot bind analytical query evidence.");
   }
-  if (["verified", "qualified", "exploratory"].includes(state) && executions.length === 0) {
+  const directoryAnswer = input.directoryEvidence !== undefined
+    && state === "qualified"
+    && input.directoryEvidence.valueCount > 0
+    && executions.length === 0;
+  if (["verified", "qualified", "exploratory"].includes(state) && executions.length === 0 && !directoryAnswer) {
     throw new Error("Analytical answers require at least one immutable query audit reference.");
   }
   if (state === "exploratory" && !routes.includes("source_exploration")) {

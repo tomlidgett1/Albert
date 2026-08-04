@@ -5,8 +5,13 @@ import { installAppApiRoutes, installSupabaseBrowserAuthRoutes } from "./support
 async function openDashboard(page: Parameters<typeof installAppApiRoutes>[0]) {
   const capture = await installAppApiRoutes(page);
   await page.goto("/dash");
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
   return capture;
+}
+
+async function openConnections(page: Parameters<typeof installAppApiRoutes>[0]) {
+  await page.getByRole("button", { name: /Albert Bike Store account menu/u }).click();
+  await page.getByRole("button", { name: "Connections" }).click();
 }
 
 async function expectNoWcagViolations(
@@ -61,7 +66,7 @@ test.describe("unauthenticated account journey", () => {
   });
 });
 
-test("light, dark, and system themes remain accessible", async ({ page }) => {
+test("light, dark, green, and system themes remain accessible", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await openDashboard(page);
 
@@ -74,6 +79,14 @@ test("light, dark, and system themes remain accessible", async ({ page }) => {
   const darkBackground = await dash.evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(await page.evaluate(() => localStorage.getItem("albert-theme"))).toBe("dark");
   await expectNoWcagViolations(page, "dark");
+
+  await page.getByRole("button", { name: "Green theme" }).click();
+  await expect(dash).toHaveAttribute("data-theme", "green");
+  const greenBackground = await dash.evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(greenBackground).toBe("rgb(18, 32, 28)");
+  expect(greenBackground).not.toBe(darkBackground);
+  expect(await page.evaluate(() => localStorage.getItem("albert-theme"))).toBe("green");
+  await expectNoWcagViolations(page, "green");
 
   await page.getByRole("button", { name: "Light theme" }).click();
   await expect(dash).toHaveAttribute("data-theme", "light");
@@ -191,11 +204,8 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
 
   const composer = page.getByRole("textbox", { name: "Ask me anything" });
   await composer.focus();
-  const historyTrigger = page.getByRole("button", { name: "History" });
-  await historyTrigger.click();
-  await expect(page.getByRole("button", { name: "Close conversation history" })).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(historyTrigger).toBeFocused();
+  await expect(page.getByRole("button", { name: "New Analysis" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Conversations" })).toBeVisible();
 
   await composer.fill("Show category performance");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -205,6 +215,7 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
   await page.keyboard.press("Escape");
   await expect(sourcesTrigger).toBeFocused();
 
+  await accountTrigger.click();
   await page.getByRole("button", { name: "Connections" }).click();
   const xeroConnections = page.getByLabel("Xero connections");
   const manageTrigger = xeroConnections.getByRole("button", { name: "Manage" });
@@ -218,21 +229,17 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
 
 test("Connections supports keyboard navigation, progressive readiness, onboarding review, and account selection", async ({ page }) => {
   const capture = await openDashboard(page);
-  await page.getByRole("button", { name: "Connections" }).click();
+  await openConnections(page);
   await expect(page.getByRole("heading", { name: "Your business data, coming together" })).toBeVisible();
-  await expect(page.getByText("2 of 2 domains are queryable")).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: /sync progress/u }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Xero" }).first()).toBeVisible();
 
   const appsTab = page.getByRole("tab", { name: "Apps" });
   await appsTab.focus();
   await page.keyboard.press("ArrowRight");
-  const readinessTab = page.getByRole("tab", { name: "Readiness" });
-  await expect(readinessTab).toBeFocused();
-  await expect(readinessTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("Current accounting period is queryable")).toBeVisible();
-
-  await page.keyboard.press("End");
   const reviewTab = page.getByRole("tab", { name: /Review/u });
   await expect(reviewTab).toBeFocused();
+  await expect(reviewTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Independent bicycle retail")).toBeVisible();
   await expect(page.getByText("Should sales normally include or exclude GST?")).toBeVisible();
   await expect(page.getByText("Is this the same employee?")).toBeVisible();
@@ -278,7 +285,7 @@ test("Connections launches the exact same-origin OAuth start path", async ({ pag
     });
   });
 
-  await page.getByRole("button", { name: "Connections" }).click();
+  await openConnections(page);
   await page.getByLabel("Lightspeed connections").getByRole("button", { name: "Connect" }).click();
   await expect(page.getByText("Provider handoff boundary reached.")).toBeVisible();
   expect(launch).toEqual({
@@ -306,7 +313,7 @@ test("mobile layout has no page overflow and reduced motion disables analytical 
   expect(motion.animationName).toBe("none");
   expect(Number.parseFloat(motion.animationDuration)).toBeLessThanOrEqual(0.001);
 
-  await page.getByRole("button", { name: "Connections" }).click();
+  await openConnections(page);
   await expect(page.getByRole("heading", { name: "Your business data, coming together" })).toBeVisible();
   const layout = await page.evaluate(() => ({
     innerWidth,

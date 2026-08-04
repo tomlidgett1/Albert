@@ -46,14 +46,23 @@ export type ConversationModelMessage = Readonly<{
   text: string;
 }>;
 
+/** Supabase client captured before an SSE response starts streaming. */
+export type ConversationSupabase = Awaited<ReturnType<typeof requireUser>>["supabase"];
+
+async function resolveSupabase(client?: ConversationSupabase): Promise<ConversationSupabase> {
+  if (client) return client;
+  return (await requireUser()).supabase;
+}
+
 export async function beginConversationTurn(input: Readonly<{
   conversationId?: string;
   turnId: string;
   message: string;
   runtimeProfile: Readonly<Record<string, unknown>>;
   confirmedOption?: Readonly<{ offeredTurnId: string; optionId: string }>;
+  supabase?: ConversationSupabase;
 }>): Promise<BegunConversationTurn> {
-  const { supabase } = await requireUser();
+  const supabase = await resolveSupabase(input.supabase);
   const { data, error } = await supabase.rpc("begin_albert_turn", {
     p_conversation_id: input.conversationId ?? null,
     p_turn_id: input.turnId,
@@ -79,32 +88,34 @@ export async function beginConversationTurn(input: Readonly<{
 }
 
 export async function loadConversationModelContext(
-  conversationId:string,
-):Promise<readonly ConversationModelMessage[]> {
-  const { supabase } = await requireUser();
-  const { data,error } = await supabase.rpc("albert_model_context",{
-    p_conversation_id:conversationId,
-    p_turn_limit:12,
+  conversationId: string,
+  supabaseClient?: ConversationSupabase,
+): Promise<readonly ConversationModelMessage[]> {
+  const supabase = await resolveSupabase(supabaseClient);
+  const { data, error } = await supabase.rpc("albert_model_context", {
+    p_conversation_id: conversationId,
+    p_turn_limit: 12,
   });
-  if(error)throw new ControlPlaneError("The bounded conversation context could not be loaded.",503);
-  const parsed=modelContextSchema.safeParse(data);
-  if(!parsed.success)throw new ControlPlaneError("The conversation context returned invalid state.",503);
-  const messages=parsed.data.flatMap((turn):ConversationModelMessage[]=>{
-    const values:ConversationModelMessage[]=[{role:"user",text:turn.user_message}];
-    const event=turn.assistant_event;
-    if(event?.type==="answer"&&event.text)values.push({role:"assistant",text:event.text});
-    if(event?.type==="clarification"&&event.question)values.push({role:"assistant",text:event.question});
+  if (error) throw new ControlPlaneError("The bounded conversation context could not be loaded.", 503);
+  const parsed = modelContextSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("The conversation context returned invalid state.", 503);
+  const messages = parsed.data.flatMap((turn): ConversationModelMessage[] => {
+    const values: ConversationModelMessage[] = [{ role: "user", text: turn.user_message }];
+    const event = turn.assistant_event;
+    if (event?.type === "answer" && event.text) values.push({ role: "assistant", text: event.text });
+    if (event?.type === "clarification" && event.question) values.push({ role: "assistant", text: event.question });
     return values;
   });
-  return Object.freeze(messages.map((message)=>Object.freeze(message)));
+  return Object.freeze(messages.map((message) => Object.freeze(message)));
 }
 
 export async function appendConversationEvent(input: Readonly<{
   conversationId: string;
   turnId: string;
   event: TraceEvent;
+  supabase?: ConversationSupabase;
 }>): Promise<void> {
-  const { supabase } = await requireUser();
+  const supabase = await resolveSupabase(input.supabase);
   const { error } = await supabase.rpc("albert_answer_event_append", {
     p_conversation_id: input.conversationId,
     p_turn_id: input.turnId,
@@ -120,8 +131,9 @@ export async function completeConversationTurn(input: Readonly<{
   usage: Readonly<Record<string, unknown>>;
   answerState: string;
   resultDigest: string;
+  supabase?: ConversationSupabase;
 }>): Promise<void> {
-  const { supabase } = await requireUser();
+  const supabase = await resolveSupabase(input.supabase);
   const { error } = await supabase.rpc("complete_albert_turn", {
     p_conversation_id: input.conversationId,
     p_turn_id: input.turnId,
@@ -137,8 +149,9 @@ export async function failConversationTurn(input: Readonly<{
   conversationId: string;
   turnId: string;
   failureCode: string;
+  supabase?: ConversationSupabase;
 }>): Promise<void> {
-  const { supabase } = await requireUser();
+  const supabase = await resolveSupabase(input.supabase);
   const { error } = await supabase.rpc("fail_albert_turn", {
     p_conversation_id: input.conversationId,
     p_turn_id: input.turnId,

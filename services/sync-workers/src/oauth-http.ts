@@ -76,7 +76,15 @@ function publicError(error: unknown) {
         : /invalid|mismatch|expired|no_accounts|choice/.test(code)
           ? 400
           : 503;
-  return errorResponse(code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 100), status);
+  const safeCode = code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 100);
+  if (process.env.NODE_ENV === "production") return errorResponse(safeCode, status);
+  const detail = error instanceof Error
+    ? error.message.replace(/[\r\n\t]+/g, " ").slice(0, 280)
+    : "unknown";
+  return Response.json({ error: safeCode, detail }, {
+    status,
+    headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" },
+  });
 }
 
 export class OAuthWorkerHttpHandler {
@@ -136,6 +144,12 @@ export class OAuthWorkerHttpHandler {
       }, operationSignal);
     } catch (error) {
       if (operationSignal.aborted) return publicError(new Error("oauth_worker_timeout"));
+      console.error("Albert OAuth worker request failed", {
+        path: url.pathname,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : "unknown",
+        code: error instanceof ConnectorError ? error.code : undefined,
+      });
       return publicError(error);
     } finally {
       deadline.clear();

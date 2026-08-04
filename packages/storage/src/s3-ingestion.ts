@@ -3,7 +3,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { RawObjectStore } from "./raw-batch.js";
 import {
   rawStorageReadinessKey,
@@ -81,7 +81,8 @@ export class S3RawIngestionObjectStore implements RawObjectStore {
       throw new Error("Raw ingestion readiness requires an ingestion principal.");
     }
     const probeKey = rawStorageReadinessKey(purpose);
-    const probeBody = gzipSync(`albert-raw-storage-${purpose}-readiness-v1\n`, { level: 9 });
+    const sentinelText = `albert-raw-storage-${purpose}-readiness-v1\n`;
+    const probeBody = gzipSync(sentinelText, { level: 9 });
     const sentinelVisible = async (): Promise<boolean> => {
       try {
         const result = await this.client.send(new GetObjectCommand({
@@ -90,10 +91,16 @@ export class S3RawIngestionObjectStore implements RawObjectStore {
         }));
         if (!result.Body) throw new Error("empty_body");
         const received = new Uint8Array(await result.Body.transformToByteArray());
-        if (
-          received.byteLength !== probeBody.byteLength ||
-          received.some((value, index) => value !== probeBody[index])
-        ) {
+        // Compare the decompressed sentinel: gzip bytes for identical content
+        // differ across zlib builds, so a sentinel written by one platform
+        // must still validate on another.
+        let receivedText: string;
+        try {
+          receivedText = gunzipSync(received).toString("utf8");
+        } catch {
+          throw new Error("sentinel_mismatch");
+        }
+        if (receivedText !== sentinelText) {
           throw new Error("sentinel_mismatch");
         }
         return true;
@@ -146,7 +153,9 @@ export class S3RawIngestionObjectStore implements RawObjectStore {
         return "created";
       } catch (error) {
         const status = httpStatus(error);
-        if (status === 412) return "exists";
+        // Supabase Storage has no UPDATE policy on raw-payloads. A colliding
+        // IfNoneMatch create is often reported as 403 RLS denial instead of 412.
+        if (status === 412 || isImmutableCollision(error, status)) return "exists";
         if (status === 409 && attempt < 3) continue;
         throw new Error(`Immutable raw upload failed (${safeStorageCode(error)}).`);
       }
@@ -195,13 +204,36 @@ function httpStatus(error: unknown): number | undefined {
   return typeof status === "number" ? status : undefined;
 }
 
+function isImmutableCollision(error: unknown, status: number | undefined): boolean {
+  if (status !== 403 && status !== 409) return false;
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("row-level security")
+    || message.includes("policy")
+    || message.includes("already exists")
+    || message.includes("duplicate");
+}
+
 function errorName(error: unknown): string | undefined {
   return error instanceof Error ? error.name : undefined;
 }
 
 function safeStorageCode(error: unknown): string {
   const status = httpStatus(error);
-  if (status) return `http_${status}`;
   const name = errorName(error);
+  const code = error && typeof error === "object" && "Code" in error
+    && typeof (error as { Code?: unknown }).Code === "string"
+    ? (error as { Code: string }).Code
+    : undefined;
+  const message = error instanceof Error ? error.message : undefined;
+  if (process.env.NODE_ENV !== "production") {
+    console.error("Albert raw storage upload detail", {
+      status,
+      name,
+      code,
+      message: message?.slice(0, 300),
+    });
+  }
+  if (status) return `http_${status}`;
+  if (code) return code.replaceAll(/[^A-Za-z0-9_.-]/gu, "_");
   return name?.replaceAll(/[^A-Za-z0-9_.-]/gu, "_") || "storage_error";
 }

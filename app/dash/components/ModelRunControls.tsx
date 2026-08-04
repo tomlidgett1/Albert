@@ -22,7 +22,7 @@ type ModelRunControlsProps = {
   onChange: (value: AgentRunPreferences) => void;
   disabled?: boolean;
   runActive?: boolean;
-  compact?: boolean;
+  popoverPlacement?: "above" | "below";
 };
 
 const effortLabels: Record<ReasoningEffort, string> = {
@@ -38,8 +38,7 @@ export function ModelRunControls({
   value,
   onChange,
   disabled = false,
-  runActive = false,
-  compact = false,
+  popoverPlacement = "above",
 }: ModelRunControlsProps) {
   const [open, setOpen] = useState(false);
   const popoverId = useId().replaceAll(":", "");
@@ -126,70 +125,49 @@ export function ModelRunControls({
         data-testid="model-run-controls-trigger"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className={styles.modelControlsSpark} aria-hidden="true">✦</span>
         <span className={styles.modelControlsSummary}>
-          <strong>{selectedModel.label}</strong>
-          {!compact ? (
-            <small>
-              {value.fastMode ? "Fast" : "Standard"} · {effortLabels[value.reasoningEffort]}
-            </small>
-          ) : null}
+          <strong className={styles.modelControlsModelName}>{selectedModel.label}</strong>
         </span>
-        <span className={`${styles.modelControlsChevron} ${open ? styles.modelControlsChevronOpen : ""}`} aria-hidden="true">⌄</span>
       </button>
 
       <div
         id={popoverId}
-        className={`${styles.modelControlsPopover} ${open ? styles.modelControlsPopoverOpen : ""}`}
+        className={`${styles.modelControlsPopover} ${popoverPlacement === "below" ? styles.modelControlsPopoverBelow : ""} ${open ? styles.modelControlsPopoverOpen : ""}`}
         role="dialog"
         aria-label="Model and run settings"
         aria-hidden={!open}
         inert={!open || undefined}
       >
-        <div className={styles.modelControlsHeader}>
-          <div>
-            <p>RUN SETTINGS</p>
-            <h3>Choose how Albert works</h3>
-          </div>
-          {runActive ? <span>Applies next turn</span> : null}
+        <div ref={modelListRef} className={styles.modelControlsModelList} role="radiogroup" aria-label="Model">
+          {ALBERT_MODELS.map((model, index) => {
+            const selected = model.id === value.model;
+            return (
+              <button
+                ref={selected ? selectedModelRef : undefined}
+                className={`${styles.modelControlsModelRow} ${selected ? styles.modelControlsModelRowActive : ""}`}
+                key={model.id}
+                type="button"
+                role="radio"
+                tabIndex={selected ? 0 : -1}
+                aria-checked={selected}
+                data-model-id={model.id}
+                onClick={() => updateModel(model.id)}
+                onKeyDown={(event) => moveModelFocus(event, index)}
+              >
+                <span className={styles.modelControlsModelCopy}>
+                  <strong>{model.label}</strong>
+                  <small>{model.description}</small>
+                </span>
+                {selected ? (
+                  <span className={styles.modelControlsCheck} aria-hidden="true">✓</span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
 
-        <fieldset className={styles.modelControlsFieldset}>
-          <legend>Model</legend>
-          <div ref={modelListRef} className={styles.modelControlsModelList} role="radiogroup" aria-label="OpenAI model">
-            {ALBERT_MODELS.map((model, index) => {
-              const selected = model.id === value.model;
-              return (
-                <button
-                  ref={selected ? selectedModelRef : undefined}
-                  className={`${styles.modelControlsModelRow} ${selected ? styles.modelControlsModelRowActive : ""}`}
-                  key={model.id}
-                  type="button"
-                  role="radio"
-                  tabIndex={selected ? 0 : -1}
-                  aria-checked={selected}
-                  data-model-id={model.id}
-                  onClick={() => updateModel(model.id)}
-                  onKeyDown={(event) => moveModelFocus(event, index)}
-                >
-                  <span className={styles.modelControlsModelMark} aria-hidden="true">
-                    {model.label.slice(0, 1)}
-                  </span>
-                  <span className={styles.modelControlsModelCopy}>
-                    <strong>{model.label}</strong>
-                    <small>{model.description}</small>
-                  </span>
-                  <span className={styles.modelControlsCheck} aria-hidden="true">
-                    {selected ? "✓" : ""}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        <fieldset className={styles.modelControlsFieldset}>
-          <legend>Speed</legend>
+        <div className={styles.modelControlsSection}>
+          <p className={styles.modelControlsLabel}>Speed</p>
           <div className={styles.modelControlsSegment} role="group" aria-label="Processing speed">
             <span
               className={styles.modelControlsSegmentIndicator}
@@ -215,13 +193,10 @@ export function ModelRunControls({
               Fast
             </button>
           </div>
-          <p className={styles.modelControlsHint}>
-            Fast uses OpenAI&apos;s Fast processing tier without changing the model or reasoning level.
-          </p>
-        </fieldset>
+        </div>
 
-        <fieldset className={styles.modelControlsFieldset}>
-          <legend>Reasoning</legend>
+        <div className={styles.modelControlsSection}>
+          <p className={styles.modelControlsLabel}>Reasoning</p>
           <div className={styles.modelControlsEffort} role="group" aria-label="Reasoning effort">
             {REASONING_EFFORTS.map((effort) => (
               <button
@@ -237,10 +212,7 @@ export function ModelRunControls({
               </button>
             ))}
           </div>
-          <p className={styles.modelControlsHint}>
-            Medium is the balanced default. Use Max only for the hardest quality-first analysis.
-          </p>
-        </fieldset>
+        </div>
       </div>
     </div>
   );

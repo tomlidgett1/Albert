@@ -11,13 +11,13 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "shopID", "name", "serviceRate", "timeZone", "taxLabor", "labelTitle",
     "labelMsrp", "archived", "contactID", "taxCategoryID", "receiptSetupID",
     "ccGatewayID", "priceLevelID", "Contact", "TaxCategory", "ReceiptSetup",
-    "CCGateway", "PriceLevel", "Registers",
+    "CCGateway", "PriceLevel", "Registers", "networkHealthTool",
   ]),
   employees: Object.freeze([
     "employeeID", "firstName", "lastName", "lockOut", "archived", "contactID",
     "clockInEmployeeHoursID", "employeeRoleID", "limitToShopID", "lastShopID",
     "lastSaleID", "lastRegisterID", "Contact", "EmployeeRole", "EmployeeRights",
-    "timeStamp",
+    "timeStamp", "createTime",
   ]),
   categories: Object.freeze([
     "categoryID", "name", "nodeDepth", "fullPathName", "leftNode", "rightNode",
@@ -31,6 +31,7 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "manufacturerID", "seasonID", "defaultVendorID", "Category", "TaxClass",
     "Department", "ItemAttributes", "Manufacturer", "Note", "Season", "ItemShops",
     "ItemComponents", "ItemShelfLocations", "ItemVendorNums", "CustomFieldValues",
+    "laborDurationMinutes",
   ]),
   item_shops: Object.freeze([
     "itemShopID", "qoh", "sellable", "backorder", "componentQoh",
@@ -57,7 +58,7 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "companyRegistrationNumber", "vatNumber", "createTime", "timeStamp",
     "creditAccountID", "customerTypeID", "discountID", "taxCategoryID", "Contact",
     "CreditAccount", "CustomerType", "Discount", "Note", "TaxCategory",
-    "CustomFieldValues",
+    "CustomFieldValues", "contactID",
   ]),
   vendors: Object.freeze([
     "vendorID", "name", "archived", "accountNumber", "priceLevel", "updatePrice",
@@ -83,7 +84,7 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
   ]),
   payment_types: Object.freeze([
     "paymentTypeID", "name", "requireCustomer", "archived", "internalReserved",
-    "type", "refundAsPaymentTypeID",
+    "type", "refundAsPaymentTypeID", "code", "channel",
   ]),
   tax_categories: Object.freeze([
     "taxCategoryID", "isTaxInclusive", "tax1Name", "tax2Name", "tax1Rate",

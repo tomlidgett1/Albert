@@ -54,9 +54,9 @@ export function checkTenderReconciliation(
   const paymentByOrder = new Map<string, Decimal4>();
   for (const payment of payments) {
     if (payment.status === "voided") continue;
-    const signed = payment.status === "refunded"
-      ? Decimal4.zero().subtract(payment.amount)
-      : Decimal4.from(payment.amount);
+    // Canonical tender amounts are signed facts. Refunded tenders therefore
+    // carry negative amounts, matching settlement marts and database quality.
+    const signed = Decimal4.from(payment.amount);
     paymentByOrder.set(
       payment.orderId,
       (paymentByOrder.get(payment.orderId) ?? Decimal4.zero()).add(signed),

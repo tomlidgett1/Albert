@@ -1,0 +1,55 @@
+# Dogfood sync worker. Runs against the unified Tokyo dogfood Supabase project,
+# so NODE_ENV stays "development": the production runtime boundary requires
+# Sydney regions, split control/analytical databases, and a release SHA that
+# dogfood deliberately does not have.
+app = "albert-sync-worker-dogfood"
+primary_region = "nrt"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "../../Dockerfile.services"
+
+[env]
+  ALBERT_METRICS_PORT = "9091"
+  ALBERT_QUEUE_SLA_SECONDS = "300"
+  ALBERT_RUNTIME_IDENTITY = "sync-worker"
+  # Shared Lightspeed bucket per account; 2 overlaps upload/API waits
+  # without the 429 thrash we saw at 4. Resume-safe for in-flight backfill.
+  ALBERT_WORKER_CONCURRENCY = "2"
+  ALBERT_WORKER_ID = "sync-worker-dogfood"
+  ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED = "false"
+  NODE_ENV = "development"
+  PORT = "8080"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
+
+[processes]
+  app = "node --enable-source-maps services/sync-worker.js"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "45s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "8s"
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+  processes = ["app"]

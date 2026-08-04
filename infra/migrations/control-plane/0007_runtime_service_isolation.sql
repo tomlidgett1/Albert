@@ -46,10 +46,8 @@ GRANT SELECT, INSERT, UPDATE ON TABLE
   control_plane.deletion_requests
 TO albert_sync_control;
 GRANT SELECT, INSERT ON TABLE control_plane.raw_batch_manifests TO albert_sync_control;
-GRANT INSERT ON TABLE
-  control_plane.quarantine_items,
-  control_plane.audit_log
-TO albert_sync_control;
+GRANT SELECT, INSERT ON TABLE control_plane.quarantine_items TO albert_sync_control;
+GRANT INSERT ON TABLE control_plane.audit_log TO albert_sync_control;
 
 -- The public webhook edge can resolve active connection identities, create and
 -- advance deduplicated receipts, and invoke the fixed sync enqueue wrapper. It

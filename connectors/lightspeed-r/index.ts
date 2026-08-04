@@ -119,6 +119,8 @@ function latestTimestamp(values: readonly (string | undefined)[], fallback?: str
   }, fallback);
 }
 
+const DISCOVERED_ACCOUNT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 function oldestRecordTimestamp(records: readonly RawSourceRecord[], fallback?: string): string | undefined {
   return records.flatMap((record) => [
     record.sourceUpdatedAt,
@@ -141,6 +143,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
   private readonly refreshes = new Map<string, Promise<VersionedCredential>>();
   private readonly successfulStreams = new Set<string>();
   private readonly observedStocktakes = new Set<string>();
+  private readonly discoveredAccountCache = new Map<string, { account: ConnectionDiscovery; at: number }>();
 
   constructor(config: LightspeedRConnectorConfig) {
     this.config = {
@@ -183,20 +186,22 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     if (!request.codeVerifier) {
       throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed R-Series PKCE requires the original code verifier.");
     }
-    const body = new URLSearchParams({
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      grant_type: "authorization_code",
-      code: required(request.code, "Lightspeed authorization code"),
-      redirect_uri: required(request.redirectUri, "Lightspeed redirect URI"),
-      code_verifier: request.codeVerifier,
-    });
+    // Official R-Series examples post multipart form fields (`curl -F`). JSON is
+    // also documented, but live exchanges with redirect_uri + PKCE are pinned to
+    // the multipart shape from the Authorization Code Grant page.
+    const body = new FormData();
+    body.set("client_id", this.config.clientId);
+    body.set("client_secret", this.config.clientSecret);
+    body.set("grant_type", "authorization_code");
+    body.set("code", required(request.code, "Lightspeed authorization code"));
+    body.set("redirect_uri", required(request.redirectUri, "Lightspeed redirect URI"));
+    body.set("code_verifier", request.codeVerifier);
     const { value } = await requestJson<unknown>(
       this.fetcher,
       TOKEN_ENDPOINT,
       {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        headers: { accept: "application/json" },
         body,
         signal: request.abortSignal,
       },
@@ -259,18 +264,32 @@ export class LightspeedRConnector implements OAuthConnectorPack {
   }
 
   async discover_account(context: ConnectorContext): Promise<ConnectionDiscovery> {
+    // Every sync page calls this; without a cache the Account.json lookup
+    // consumes half of the shared 1 req/s vendor budget. The account binding
+    // is stable for a connection, so cache it briefly per process.
+    const cacheKey = `${context.tenantId}:${context.connectionId}`;
+    const cached = this.discoveredAccountCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < DISCOVERED_ACCOUNT_CACHE_TTL_MS) {
+      return cached.account;
+    }
     const credential = await this.readCredential(context);
     const selected = credential.secret.metadata.lightspeedAccountId;
     const accounts = await this.discover_accounts(context);
     if (typeof selected === "string") {
       const match = accounts.find((account) => account.externalAccountId === selected);
-      if (match) return match;
+      if (match) {
+        this.discoveredAccountCache.set(cacheKey, { account: match, at: Date.now() });
+        return match;
+      }
       throw new ConnectorError(
         "AUTHENTICATION_REQUIRED",
         "The selected Lightspeed R-Series account is no longer accessible.",
       );
     }
-    if (accounts.length === 1 && accounts[0]) return accounts[0];
+    if (accounts.length === 1 && accounts[0]) {
+      this.discoveredAccountCache.set(cacheKey, { account: accounts[0], at: Date.now() });
+      return accounts[0];
+    }
     throw new ConnectorError(
       "CONFIGURATION_INVALID",
       accounts.length === 0
@@ -378,20 +397,17 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     const current = await this.readCredential(context);
     try {
       if (current.secret.refreshToken) {
+        const body = new FormData();
+        body.set("client_id", this.config.clientId);
+        body.set("client_secret", this.config.clientSecret);
+        body.set("refresh_token", current.secret.refreshToken);
         const response = await fetchWithRetry(
           this.fetcher,
           REVOCATION_ENDPOINT,
           {
             method: "POST",
-            headers: {
-              "content-type": "application/x-www-form-urlencoded",
-              accept: "application/json",
-            },
-            body: new URLSearchParams({
-              client_id: this.config.clientId,
-              client_secret: this.config.clientSecret,
-              refresh_token: current.secret.refreshToken,
-            }),
+            headers: { accept: "application/json" },
+            body,
             signal: context.abortSignal,
           },
           withVendorRateBudget(this.config.retry, context.vendorRateBudget),
@@ -794,18 +810,17 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     if (!current.secret.refreshToken) {
       throw new ConnectorError("AUTHENTICATION_REQUIRED", "Lightspeed refresh token is missing.");
     }
-    const body = new URLSearchParams({
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      grant_type: "refresh_token",
-      refresh_token: current.secret.refreshToken,
-    });
+    const body = new FormData();
+    body.set("client_id", this.config.clientId);
+    body.set("client_secret", this.config.clientSecret);
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", current.secret.refreshToken);
     const { value } = await requestJson<unknown>(
       this.fetcher,
       TOKEN_ENDPOINT,
       {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        headers: { accept: "application/json" },
         body,
         signal,
       },

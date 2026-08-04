@@ -15,6 +15,7 @@ const localBindingConfig = {
   main: "./worker/index.ts",
   // Sites still injects nodejs_compat, so pin the last date where that flag is explicit.
   compatibility_date: "2026-07-31",
+  compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {
@@ -48,9 +49,14 @@ export default defineConfig(async () => {
     // Match Next's public-variable contract for the browser environment.
     // Server-only values remain workerd bindings and are never exposed here.
     envPrefix: ["VITE_", "NEXT_PUBLIC_"],
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      // Local Lightspeed OAuth requires an HTTPS callback. Cloudflare quick
+      // tunnels terminate on *.trycloudflare.com and proxy to this Vite server.
+      allowedHosts: [".trycloudflare.com", "localhost", "127.0.0.1"],
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),

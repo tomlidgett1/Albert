@@ -24,6 +24,9 @@ import {
   failConversationTurn,
   loadConversationModelContext,
 } from "@/services/conversation/src/artifact-store";
+import { SemanticServiceError } from "@/services/conversation/src/semantic-client";
+import type { SemanticToolResponse } from "@/packages/agent/src/semantic-tools";
+import type { TraceEvent } from "@/packages/shared/src";
 import {
   ControlPlaneError,
   consumeAlbertRateLimit,
@@ -58,6 +61,123 @@ function jsonError(
     { error: message, ...details },
     { status, headers: { "x-request-id": correlationId } },
   );
+}
+
+function isSemanticUnreachable(error: unknown): boolean {
+  // Only treat true transport failures as unreachable. Application 5xx codes
+  // from the semantic service (for example SEMANTIC_TOOL_ERROR) must surface so
+  // soft stubs do not hide a live but failing tool path.
+  if (error instanceof SemanticServiceError) {
+    return error.status === 502 || error.status === 504;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECONNREFUSED|ENOTFOUND|ECONNRESET|fetch failed|network|The operation was aborted|TimeoutError/i.test(message);
+}
+
+function unavailableSemanticToolResponse(toolName: string, input: unknown): SemanticToolResponse {
+  const topic = input && typeof input === "object" && "topic" in input && typeof (input as { topic?: unknown }).topic === "string"
+    ? (input as { topic: string }).topic
+    : "unknown";
+  const domain = input && typeof input === "object" && "domain" in input && typeof (input as { domain?: unknown }).domain === "string"
+    ? (input as { domain: string }).domain
+    : topic;
+  const emptyProvenance = {
+    bundleHash: "sha256:unavailable-local-semantic",
+    registryVersion: "unavailable",
+    identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    sources: [] as string[],
+    sourceWatermarks: {} as Record<string, string>,
+    sourceDetails: [] as [],
+    definitionsApplied: [] as string[],
+    definitionDetails: [] as [],
+  };
+  const blocked = {
+    status: "blocked" as const,
+    checks: [{ name: "semantic_service", outcome: "failed", detail: "Governed analytics service is unavailable." }],
+    warnings: ["Connected analytical data is not reachable yet. Albert cannot invent figures."],
+  };
+  const performance = { cacheHit: false, durationMs: 0, rowCount: 0 };
+  if (toolName === "get_capabilities") {
+    return {
+      state: "unavailable",
+      capabilities: {
+        topic,
+        answerable: false,
+        required: [`topic:${topic}`],
+        available: [],
+        missing: [`topic:${topic}`, "semantic_service"],
+        details: [],
+      },
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  if (toolName === "get_data_health") {
+    return {
+      state: "unavailable",
+      dataHealth: {
+        domain,
+        status: "blocked",
+        checks: [{ name: "semantic_service", outcome: "failed" }],
+        warnings: ["Analytical readiness cannot be checked until the governed query service and synced data are available."],
+      },
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  if (toolName === "search_catalogue") {
+    return {
+      state: "unavailable",
+      catalogue: {
+        topics: [],
+        metrics: [],
+        dimensions: [],
+        fields: [],
+        tenantContext: { defaults: {}, dossier: {} },
+      },
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  if (toolName === "get_definition") {
+    return {
+      state: "unavailable",
+      definition: {
+        unavailable: true,
+        reason: "Governed definitions are unavailable until the analytical query service is reachable.",
+      },
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  if (toolName === "list_field_values") {
+    return {
+      state: "unavailable",
+      fieldValues: [],
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  if (toolName === "remember") {
+    return {
+      state: "unavailable",
+      rememberedPreference: { preference: "unavailable", overlayVersion: 1 },
+      provenance: emptyProvenance,
+      validation: blocked,
+      performance,
+    };
+  }
+  return {
+    state: "unavailable",
+    provenance: emptyProvenance,
+    validation: blocked,
+    performance,
+  };
 }
 
 function turnTimeoutMilliseconds():number{
@@ -98,8 +218,9 @@ export async function POST(request: Request) {
   }
   let user;
   let tenant;
+  let supabase;
   try {
-    ({ user } = await requireUser());
+    ({ user, supabase } = await requireUser());
     tenant = await currentTenantContext();
     if (!tenant) return jsonError("Create your organisation before starting a conversation.", 409, correlationId);
     const rateLimit = await consumeAlbertRateLimit("conversation.turn");
@@ -181,6 +302,7 @@ export async function POST(request: Request) {
         runtime: "openai-agents-sdk",
       },
       confirmedOption: parsed.data.confirmedOption,
+      supabase,
     });
   } catch (error) {
     const status = error instanceof ControlPlaneError ? error.status : 503;
@@ -201,7 +323,7 @@ export async function POST(request: Request) {
   let modelContext;
   try {
     modelContext = appendCurrentUserMessage(
-      await loadConversationModelContext(begun.conversationId),
+      await loadConversationModelContext(begun.conversationId, supabase),
       parsed.data.message,
     );
   } catch (error) {
@@ -209,6 +331,7 @@ export async function POST(request: Request) {
       conversationId: begun.conversationId,
       turnId,
       failureCode: "context_unavailable",
+      supabase,
     }).catch(() => undefined);
     const status = error instanceof ControlPlaneError ? error.status : 503;
     logger.error("conversation.context_failed", {
@@ -230,25 +353,52 @@ export async function POST(request: Request) {
         configuration.semanticServiceUrl!,
         configuration.semanticSigningSecret!,
       );
+      const resilientSemantic = {
+        execute: async (
+          name: Parameters<SemanticServiceClient["execute"]>[0],
+          input: unknown,
+          context: Parameters<SemanticServiceClient["execute"]>[2],
+        ) => {
+          try {
+            return await semanticClient.execute(name, input, context);
+          } catch (error) {
+            if (!isSemanticUnreachable(error)) throw error;
+            logger.warn("conversation.semantic_tool_unavailable", {
+              tool: name,
+              ...safeErrorEvidence(error),
+            }, correlationId);
+            return unavailableSemanticToolResponse(name, input);
+          }
+        },
+      };
       const usageLifecycle = new DurableModelUsageLifecycle(async (usage, outcome) => {
-        await semanticClient.checkpointModelUsage({
-          tenantId: tenant.tenant_id,
-          actorUserId: user.id,
-          conversationId: begun.conversationId,
-          turnId,
-          providerResponseId: usage.providerResponseId,
-          providerUsage: usage.providerUsage,
-          metering: toModelUsageRpcPayload(usage.metering),
-          outcome,
-        });
+        try {
+          await semanticClient.checkpointModelUsage({
+            tenantId: tenant.tenant_id,
+            actorUserId: user.id,
+            conversationId: begun.conversationId,
+            turnId,
+            providerResponseId: usage.providerResponseId,
+            providerUsage: usage.providerUsage,
+            metering: toModelUsageRpcPayload(usage.metering),
+            outcome,
+          });
+        } catch (error) {
+          if (!isSemanticUnreachable(error)) throw error;
+          logger.warn("conversation.usage_checkpoint_unavailable", {
+            outcome,
+            ...safeErrorEvidence(error),
+          }, correlationId);
+        }
       });
-      let deferredTerminalEvent: Parameters<typeof deliver>[0] | undefined;
+      let deferredTerminalEvent: TraceEvent | undefined;
       let finalizationAttempted = false;
       const emit = createTraceEmitter({
         persist: (event) => appendConversationEvent({
           conversationId: begun.conversationId,
           turnId,
           event,
+          supabase,
         }),
         // Persist the terminal event so the semantic service can bind it into
         // the immutable artefact, but do not expose it until that transaction
@@ -276,6 +426,7 @@ export async function POST(request: Request) {
           openaiBaseUrl: configuration.openaiBaseUrl!,
           semanticServiceUrl: configuration.semanticServiceUrl!,
           semanticSigningSecret: configuration.semanticSigningSecret!,
+          semanticClient: resilientSemantic,
           safetyIdentifier: await safetyIdentifier(user.id, configuration.userHashSecret!),
           openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
           onProviderUsage: async (providerUsage, providerResponseId) => {
@@ -295,42 +446,77 @@ export async function POST(request: Request) {
         const usageCheckpoint = usageLifecycle.checkpoint;
         if (!usageCheckpoint) throw new Error("The completed provider run did not produce durable usage.");
         finalizationAttempted = true;
-        const finalization = await semanticClient.finalizeAnswerArtifact({
-          tenantId:tenant.tenant_id,
-          actorUserId:user.id,
-          conversationId: begun.conversationId,
-          turnId,
-          providerResponseId: result.lastResponseId,
-          providerUsage: result.usage,
-          answerState: persistedAnswerState(result.answerState),
-          turnResultDigest: result.resultDigest,
-          metering: toModelUsageRpcPayload(usageCheckpoint.metering),
-          queryAuditIds: [...result.queryAuditIds],
-        });
         try {
-          await usageLifecycle.terminal("answer_finalized");
-        } catch (usageOutcomeError) {
-          logger.error("conversation.usage_outcome_failed", {
+          const finalization = await semanticClient.finalizeAnswerArtifact({
+            tenantId:tenant.tenant_id,
+            actorUserId:user.id,
+            conversationId: begun.conversationId,
+            turnId,
+            providerResponseId: result.lastResponseId,
+            providerUsage: result.usage,
+            answerState: persistedAnswerState(result.answerState),
+            turnResultDigest: result.resultDigest,
+            metering: toModelUsageRpcPayload(usageCheckpoint.metering),
+            queryAuditIds: [...result.queryAuditIds],
+            ...(result.directoryEvidence ? { directoryEvidence: result.directoryEvidence } : {}),
+          });
+          try {
+            await usageLifecycle.terminal("answer_finalized");
+          } catch (usageOutcomeError) {
+            logger.error("conversation.usage_outcome_failed", {
+              tenantId: tenant.tenant_id,
+              conversationId: begun.conversationId,
+              turnId,
+              outcome: "answer_finalized",
+              ...safeErrorEvidence(usageOutcomeError),
+            }, correlationId);
+          }
+          if (!deferredTerminalEvent) {
+            throw new Error("The finalized turn did not produce a terminal trace event.");
+          }
+          deliver(deferredTerminalEvent);
+          logger.info("conversation.turn_completed", {
             tenantId: tenant.tenant_id,
             conversationId: begun.conversationId,
             turnId,
-            outcome: "answer_finalized",
-            ...safeErrorEvidence(usageOutcomeError),
+            answerState: result.answerState,
+            model: preferences.model,
+            answerArtifactId: finalization.answerArtifactId,
+            artifactDigest: finalization.artifactDigest,
           }, correlationId);
+        } catch (finalizationError) {
+          // Without a local semantic cell, still stream the Unavailable answer
+          // so the UI is never left empty. Authenticated clients cannot call
+          // complete_albert_turn; release the lease instead.
+          if (!isSemanticUnreachable(finalizationError) || !deferredTerminalEvent) {
+            throw finalizationError;
+          }
+          logger.warn("conversation.answer_finalization_unavailable", {
+            tenantId: tenant.tenant_id,
+            conversationId: begun.conversationId,
+            turnId,
+            answerState: result.answerState,
+            ...safeErrorEvidence(finalizationError),
+          }, correlationId);
+          try {
+            await usageLifecycle.terminal("artifact_finalization_failed");
+          } catch (usageOutcomeError) {
+            logger.error("conversation.usage_outcome_failed", {
+              tenantId: tenant.tenant_id,
+              conversationId: begun.conversationId,
+              turnId,
+              outcome: "artifact_finalization_failed",
+              ...safeErrorEvidence(usageOutcomeError),
+            }, correlationId);
+          }
+          deliver(deferredTerminalEvent);
+          await failConversationTurn({
+            conversationId: begun.conversationId,
+            turnId,
+            failureCode: "artifact_finalization_failed",
+            supabase,
+          });
         }
-        if (!deferredTerminalEvent) {
-          throw new Error("The finalized turn did not produce a terminal trace event.");
-        }
-        deliver(deferredTerminalEvent);
-        logger.info("conversation.turn_completed", {
-          tenantId: tenant.tenant_id,
-          conversationId: begun.conversationId,
-          turnId,
-          answerState: result.answerState,
-          model: preferences.model,
-          answerArtifactId: finalization.answerArtifactId,
-          artifactDigest: finalization.artifactDigest,
-        }, correlationId);
       } catch (error) {
         const disconnected = streamSignal.aborted;
         const timedOut=timeoutSignal.aborted&&!disconnected;
@@ -346,6 +532,7 @@ export async function POST(request: Request) {
           conversationId: begun.conversationId,
           turnId,
           ...safeErrorEvidence(error),
+          errorMessage: error instanceof Error ? error.message.slice(0, 500) : "unknown",
         }, correlationId);
         try {
           await usageLifecycle.terminal(usageOutcome).catch((usageError) => {
@@ -358,19 +545,34 @@ export async function POST(request: Request) {
             }, correlationId);
           });
           if (!disconnected) {
-            await emit({
-              type: "error",
-              status: "error",
-              message: timedOut
-                ? "Albert reached the safe analysis time limit. The partial trace was recorded and the turn can be retried."
-                : "Albert could not complete the governed analysis. The failed step was recorded and can be retried safely.",
-              recoverable: true,
-            });
+            try {
+              await emit({
+                type: "error",
+                status: "error",
+                message: timedOut
+                  ? "Albert reached the safe analysis time limit. The partial trace was recorded and the turn can be retried."
+                  : "Albert could not complete the governed analysis. The failed step was recorded and can be retried safely.",
+                recoverable: true,
+              });
+            } catch {
+              deliver({
+                id: ulid(),
+                sequence: 1,
+                type: "error",
+                status: "error",
+                occurredAt: new Date().toISOString(),
+                message: timedOut
+                  ? "Albert reached the safe analysis time limit. The partial trace was recorded and the turn can be retried."
+                  : (error instanceof Error ? error.message.slice(0, 400) : "Albert could not complete the governed analysis."),
+                recoverable: true,
+              });
+            }
           }
           await failConversationTurn({
             conversationId: begun.conversationId,
             turnId,
             failureCode: disconnected ? "client_disconnected" : timedOut ? "turn_timeout" : "runtime_failure",
+            supabase,
           });
         } catch (finalizeError) {
           logger.error("conversation.turn_finalize_failed", {
@@ -378,6 +580,7 @@ export async function POST(request: Request) {
             conversationId: begun.conversationId,
             turnId,
             ...safeErrorEvidence(finalizeError),
+            errorMessage: finalizeError instanceof Error ? finalizeError.message.slice(0, 500) : "unknown",
           }, correlationId);
         }
       }

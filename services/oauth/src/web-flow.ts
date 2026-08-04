@@ -47,13 +47,29 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function publicOrigin(): URL {
+function isLocalLoopbackHttp(url: URL): boolean {
+  return process.env.NODE_ENV !== "production" && url.protocol === "http:" &&
+    ["localhost", "127.0.0.1"].includes(url.hostname);
+}
+
+function publicOrigin(requestOrigin?: string): URL {
   const origin = new URL(requiredEnvironment("ALBERT_PUBLIC_ORIGIN"));
-  const localHttp = process.env.NODE_ENV !== "production" && origin.protocol === "http:" &&
-    ["localhost", "127.0.0.1"].includes(origin.hostname);
+  const localHttp = isLocalLoopbackHttp(origin);
   if (origin.protocol !== "https:" && !localHttp) throw new OAuthFlowError("The public OAuth origin must use HTTPS.", 503);
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
     throw new OAuthFlowError("The public OAuth origin must be a clean origin.", 503);
+  }
+  // Local vinext ports drift; bind the OAuth session callback to the browser's
+  // actual loopback origin so Connect from :3001 does not require env churn.
+  if (requestOrigin && localHttp) {
+    try {
+      const request = new URL(requestOrigin);
+      if (isLocalLoopbackHttp(request) && request.pathname === "/" && !request.search && !request.hash) {
+        return new URL(request.origin);
+      }
+    } catch {
+      throw new OAuthFlowError("The OAuth request origin is invalid.", 400);
+    }
   }
   return origin;
 }
@@ -83,8 +99,18 @@ async function callWorker<T>(path: string, bodyValue: unknown): Promise<T> {
     body,
     signal: AbortSignal.timeout(45_000),
   });
-  const payload = await response.json().catch(() => null) as { result?: T; error?: string } | null;
-  if (!response.ok) throw new OAuthFlowError(payload?.error || "The OAuth worker rejected the request.", response.status);
+  const payload = await response.json().catch(() => null) as {
+    result?: T;
+    error?: string;
+    detail?: string;
+  } | null;
+  if (!response.ok) {
+    throw new OAuthFlowError(
+      payload?.error || "The OAuth worker rejected the request.",
+      response.status,
+      typeof payload?.detail === "string" ? payload.detail : undefined,
+    );
+  }
   if (!payload || !("result" in payload)) throw new OAuthFlowError("The OAuth worker returned an invalid response.", 502);
   return payload.result as T;
 }
@@ -93,12 +119,16 @@ export async function beginOAuthFlow(input: Readonly<{
   provider: OAuthWebProvider;
   tenantId: string;
   userId: string;
+  requestOrigin?: string;
 }>): Promise<string> {
   const now = Date.now();
   const expiresAt = now + 10 * 60_000;
   const nonce = createNonce();
   const codeVerifier = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(48)));
-  const redirectUri = new URL(`/api/oauth/${input.provider}/callback`, publicOrigin()).toString();
+  const redirectUri = new URL(
+    `/api/oauth/${input.provider}/callback`,
+    publicOrigin(input.requestOrigin),
+  ).toString();
   const connector = providerToConnector[input.provider];
   const result = await callWorker<{ oauthSessionId: string; scopes: string[] }>("/v1/oauth/start", {
     tenantId: input.tenantId,
@@ -138,7 +168,10 @@ export async function beginOAuthFlow(input: Readonly<{
   const cookieStore = await cookies();
   cookieStore.set(cookieName(input.provider), cookie, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    // Local HTTPS tunnels (Cloudflare quick tunnel) must mark the cookie Secure
+    // or browsers may drop it on the Lightspeed return navigation.
+    secure: process.env.NODE_ENV === "production" ||
+      requiredEnvironment("ALBERT_PUBLIC_ORIGIN").startsWith("https:"),
     sameSite: "lax",
     path: "/",
     maxAge: 10 * 60,
@@ -249,7 +282,11 @@ export async function selectOAuthAccount(input: Readonly<{
 }
 
 export class OAuthFlowError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail?: string,
+  ) {
     super(message);
     this.name = "OAuthFlowError";
   }

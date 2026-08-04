@@ -1,0 +1,48 @@
+app = "albert-transform-worker-dogfood"
+primary_region = "nrt"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "../../Dockerfile.services"
+
+[env]
+  ALBERT_METRICS_PORT = "9091"
+  ALBERT_QUEUE_SLA_SECONDS = "120"
+  ALBERT_RUNTIME_IDENTITY = "transform-worker"
+  ALBERT_SNAPSHOT_CLAIM_BATCH_SIZE = "8"
+  ALBERT_SNAPSHOT_MAX_CLAIMS_PER_RUN = "20000"
+  ALBERT_TRANSFORM_WORKER_ID = "transform-worker-dogfood"
+  # One lane: same-tenant transforms take a tenant advisory xact lock, so
+  # concurrency>1 only stacks idle-in-transaction capability sessions.
+  ALBERT_WORKER_CONCURRENCY = "1"
+  NODE_ENV = "development"
+  PORT = "8080"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
+
+[processes]
+  app = "node --enable-source-maps services/transform-worker.js"
+
+[checks]
+  [checks.readiness]
+    grace_period = "45s"
+    interval = "15s"
+    method = "get"
+    path = "/readyz"
+    port = 8080
+    timeout = "8s"
+    type = "http"
+    processes = ["app"]
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+  processes = ["app"]

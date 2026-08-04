@@ -85,7 +85,62 @@ test("fleet and tenant views cover the complete Section 19 operating path", asyn
   assert.match(workspace, /\?stage=\$\{encodeURIComponent\(stage\)\}/);
   assert.match(workspace, /aria-current=\{active \? "step"/);
   assert.match(workspace, /aria-busy=\{loadingScope === "detail"\}/);
+  assert.match(workspace, /ArchitectureMap/);
+  assert.match(workspace, /\/api\/admin\/architecture/);
+  assert.match(workspace, /How Albert works/);
   assert.doesNotMatch(workspace, /ANALYTICAL_DATABASE_URL|diagnostic_ro|semantic_ro/);
+});
+
+test("architecture map explains the backend for non-technical operators", async () => {
+  const [architectureRoute, architectureMap, workspace] = await Promise.all([
+    readFile(new URL("../../app/api/admin/architecture/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../app/dash/components/ArchitectureMap.tsx", import.meta.url), "utf8"),
+    readFile(workspaceUrl, "utf8"),
+  ]);
+
+  assert.match(architectureRoute, /isInternalOperator/);
+  assert.match(architectureRoute, /parseRegistryDocument/);
+  assert.match(architectureRoute, /registry\.yaml\?raw/);
+  assert.match(architectureRoute, /registry-build/);
+  assert.match(architectureRoute, /loadOperatorFleet/);
+  assert.match(architectureRoute, /dimension_count/);
+  assert.match(architectureRoute, /metrics,/);
+  assert.match(architectureRoute, /Cache-Control": "private, no-store"/);
+  assert.doesNotMatch(architectureRoute, /loadRegistryFile|process\.cwd\(/);
+  assert.match(architectureMap, /HOW ALBERT WORKS/);
+  assert.match(architectureMap, /SEMANTIC LAYER/);
+  assert.match(architectureMap, /SEMANTIC DICTIONARY/);
+  assert.match(architectureMap, /Browse the full catalogue/);
+  assert.match(architectureMap, /PLAN PREVIEW CHAT|PlanPreviewChat/);
+  assert.match(architectureMap, /HOW THE DICTIONARY FITS TOGETHER/);
+  assert.match(architectureMap, /Lightspeed bike store/);
+  assert.match(architectureMap, /commerce\.net_sales_ex_gst/);
+  assert.match(architectureMap, /sales_performance/);
+  assert.match(architectureMap, /WHERE THINGS LIVE/);
+  assert.match(architectureMap, /Six steps, left to right/);
+  assert.match(architectureMap, /onOpenFleet/);
+  assert.match(workspace, /\{ key: "architecture" as const, label: "Architecture" \}/);
+  assert.match(workspace, /\{ key: "fleet" as const, label: "Fleet" \}/);
+});
+
+test("plan preview reuses chat agent tools without executing answers", async () => {
+  const [planPreview, route] = await Promise.all([
+    readFile(new URL("../../services/conversation/src/plan-preview.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../app/api/admin/plan-preview/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(planPreview, /PLAN ONLY/);
+  assert.match(planPreview, /run_semantic_query/);
+  assert.match(planPreview, /run_source_query/);
+  assert.match(planPreview, /search_catalogue/);
+  assert.match(planPreview, /albert-admin-plan-preview/);
+  assert.match(planPreview, /applyLocalCatalogue/);
+  assert.match(planPreview, /catalogueIsEmpty/);
+  assert.match(planPreview, /Plan preview must keep working when the semantic service is down/);
+  assert.doesNotMatch(planPreview, /finalizeAnswerArtifact/);
+  assert.match(route, /isInternalOperator/);
+  assert.match(route, /runPlanPreviewTurn/);
+  assert.match(route, /Cache-Control": "private, no-store"/);
 });
 
 test("operator UI remains dash-native across dark mode, mobile and reduced motion", async () => {
@@ -101,5 +156,8 @@ test("operator UI remains dash-native across dark mode, mobile and reduced motio
   assert.match(operatorStyles, /@media \(max-width: 700px\)/);
   assert.match(operatorStyles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(operatorStyles, /\.opsWorkspace,[\s\S]*animation: none/);
+  assert.match(operatorStyles, /\.archMap/);
+  assert.match(operatorStyles, /\.archDictionary/);
+  assert.match(operatorStyles, /\.opsViewTabIndicator/);
   assert.doesNotMatch(operatorStyles, /#[0-9a-f]{3,8}\b/i);
 });

@@ -82,7 +82,11 @@ function userPromptFrom(request: ModelRequest): string {
 
 function assertRouteInstruction(request: ModelRequest, contract: PromptRouteContract): void {
   const instructions = request.systemInstructions ?? "";
-  const expectedRoute = contract.route === "clarification" ? "Route: Clarification" : "Route: Unavailable";
+  const expectedRoute = contract.route === "clarification"
+    ? "Route: Clarification"
+    : contract.route === "directory"
+      ? "Route: Directory"
+      : "Route: Unavailable";
   if (!instructions.includes("Current-turn server route contract") || !instructions.includes(expectedRoute)) {
     throw new Error("Prompt-sensitive model did not receive the trusted route instruction.");
   }
@@ -90,6 +94,10 @@ function assertRouteInstruction(request: ModelRequest, contract: PromptRouteCont
     if (!instructions.includes(contract.question)
       || contract.optionIds.some((optionId) => !instructions.includes(optionId))) {
       throw new Error("Prompt-sensitive model received a substituted clarification instruction.");
+    }
+  } else if (contract.route === "directory") {
+    if (!instructions.includes(`Field: ${contract.field}`)) {
+      throw new Error("Prompt-sensitive model received a substituted directory instruction.");
     }
   } else if (!instructions.includes(contract.reasonCode)
     || !instructions.includes(contract.missingObservation)

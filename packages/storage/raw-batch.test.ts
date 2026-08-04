@@ -47,6 +47,27 @@ class MemoryManifests implements RawManifestRepository {
   }
 }
 
+function withContentIdentityLookup(manifests: MemoryManifests): RawManifestRepository {
+  return {
+    find:manifests.find.bind(manifests),
+    registerUploaded:manifests.registerUploaded.bind(manifests),
+    async findByContentIdentity(identity) {
+      for (const manifest of manifests.values.values()) {
+        if (
+          manifest.tenantId === identity.tenantId &&
+          manifest.syncRunId === identity.syncRunId &&
+          manifest.connectionId === identity.connectionId &&
+          manifest.stream === identity.stream &&
+          manifest.contentHash === identity.contentHash &&
+          JSON.stringify(manifest.cursorStart) === JSON.stringify(identity.cursorStart) &&
+          JSON.stringify(manifest.cursorEnd) === JSON.stringify(identity.cursorEnd)
+        ) return manifest;
+      }
+      return null;
+    },
+  };
+}
+
 const context = {
   ...ids,
   connectorKey: "stub",
@@ -112,6 +133,44 @@ test("reusing a batch id with different content is rejected", async () => {
     ]),
     RawBatchConflictError,
   );
+});
+
+test("a replayed page in the same sync run reuses the original immutable batch", async () => {
+  const store = new MemoryStore();
+  const manifests = new MemoryManifests();
+  const writer = new RawBatchWriter(store, withContentIdentityLookup(manifests));
+
+  const original = await writer.write(context, records);
+  const replayed = await writer.write(
+    { ...context, batchId: "01J00000000000000000000009" },
+    records,
+  );
+
+  assert.deepEqual(replayed, original);
+  assert.equal(store.writes, 1);
+  assert.equal(manifests.values.size, 1);
+});
+
+test("identical pages in distinct sync runs retain distinct immutable lineage", async () => {
+  const store = new MemoryStore();
+  const manifests = new MemoryManifests();
+  const writer = new RawBatchWriter(store, withContentIdentityLookup(manifests));
+
+  const original = await writer.write(context, records);
+  const nextRun = await writer.write(
+    {
+      ...context,
+      batchId: "01J00000000000000000000009",
+      syncRunId: "01J0000000000000000000000A",
+    },
+    records,
+  );
+
+  assert.notEqual(nextRun.batchId, original.batchId);
+  assert.notEqual(nextRun.syncRunId, original.syncRunId);
+  assert.equal(nextRun.contentHash, original.contentHash);
+  assert.equal(store.writes, 2);
+  assert.equal(manifests.values.size, 2);
 });
 
 test("raw writer verifies and registers an object left behind before manifest commit", async () => {

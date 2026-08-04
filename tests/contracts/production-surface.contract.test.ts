@@ -87,7 +87,7 @@ test("the browser receives only public Supabase configuration and CSP permits it
 test("expanded composer popovers are not clipped by the collapse animation container", () => {
   assert.match(
     dashPage,
-    /overflow:\s*chatComposerCompact\s*\?\s*"hidden"\s*:\s*"visible"/u,
+    /overflow:\s*"visible"/u,
   );
   assert.match(dashPage, /chatComposerHero\s*\?\s*styles\.chatComposerStackEmpty/u);
   assert.match(
@@ -233,10 +233,11 @@ test("immutable lineage is retained for live and restored turns and rendered thr
   assert.equal(parseSafeAnswerLineage({ ...raw, queries: Array(21).fill(raw.queries[0]) }, { conversationId, turnId }), null);
 });
 
-test("authentication and trace surfaces retain light, dark, system, mobile, focus and reduced-motion behavior", () => {
+test("authentication and trace surfaces retain light, dark, green, system, mobile, focus and reduced-motion behavior", () => {
   for (const styles of [dashStyles, loginStyles]) {
     assert.match(styles, /light-dark\(/u);
     assert.match(styles, /\[data-theme="dark"\][\s\S]{0,100}color-scheme:\s*dark/u);
+    assert.match(styles, /\[data-theme="green"\][\s\S]{0,100}color-scheme:\s*dark/u);
     assert.match(styles, /\[data-theme="system"\][\s\S]{0,100}color-scheme:\s*light dark/u);
     assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/u);
     assert.match(styles, /:focus-visible/u);

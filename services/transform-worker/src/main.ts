@@ -105,7 +105,27 @@ export async function runTransformWorker():Promise<void>{
       }),
     ]);
   };
-  await dependenciesReady();
+  {
+    const maxAttempts=12;
+    let lastError:unknown;
+    for(let attempt=1;attempt<=maxAttempts;attempt+=1){
+      try{
+        await dependenciesReady();
+        lastError=undefined;
+        break;
+      }catch(error){
+        lastError=error;
+        if(attempt>=maxAttempts)break;
+        const delayMs=Math.min(30_000,1_000*2**(attempt-1));
+        console.error("Albert transform worker dependency readiness retry",{
+          attempt,maxAttempts,delayMs,
+          code:error instanceof Error?error.message.split(":",1)[0]:"unknown_error",
+        });
+        await new Promise((resolve)=>setTimeout(resolve,delayMs));
+      }
+    }
+    if(lastError)throw lastError;
+  }
 
   const server=createServer({maxHeaderSize:16*1024},(request,response)=>{
     void (async()=>{

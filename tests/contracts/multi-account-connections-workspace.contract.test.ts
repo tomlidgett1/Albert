@@ -149,18 +149,47 @@ test("a pending OAuth session with no discovered accounts keeps connection contr
   );
 });
 
-test("the Connections component exposes per-account manage, readiness, disconnect, and add-another actions", () => {
+test("the Connections component exposes per-account manage, sync progress, disconnect, and add-another actions", () => {
   assert.match(connectionsComponent, /provider\.connections\.map\(\(connection\)/u);
   assert.match(connectionsComponent, /if \(onManage\) onManage\(connection\.connectionId\)/u);
   assert.match(
     connectionsComponent,
     /onDisconnect\?\.\(managedConnection\.connection\.connectionId\)/u,
   );
-  assert.match(connectionsComponent, /Only this connection stops syncing/u);
+  assert.match(connectionsComponent, /Disconnect \{managedConnection\.connection\.auth\.accountName \|\| managedConnection\.provider\.name\}\?/u);
   assert.match(connectionsComponent, /provider\.additionalConnectionLabel/u);
   assert.match(connectionsComponent, /onClick=\{\(\) => onConnect\?\.\(provider\.id\)\}/u);
   assert.match(connectionsComponent, /data-connection-id=\{connection\.connectionId\}/u);
+  assert.match(connectionsComponent, /ConnectionSyncProgress/u);
+  assert.match(connectionsComponent, /CONNECTION_VIEWS = \["apps", "review"\]/u);
+  assert.doesNotMatch(connectionsComponent, /activeView === "readiness"/u);
   assert.match(dashPage, /window\.location\.assign\(`\/api\/oauth\/\$\{providerId\}\/start`\)/u);
+});
+
+test("app cards use fat animated blue progress bars with a domain hover popup", () => {
+  assert.match(dashStyles, /\.connectionsProgressTrackFat\s*\{[\s\S]*height:\s*10px/u);
+  assert.match(dashStyles, /@keyframes connectionsProgressSheen/u);
+  assert.match(dashStyles, /@keyframes connectionsProgressShimmer/u);
+  assert.match(dashStyles, /\.connectionsProgressFill\[data-sheen="true"\]::after/u);
+  assert.match(dashStyles, /\.connectionsCardSyncPopup\s*\{/u);
+  assert.match(dashStyles, /\.connectionsCardSync:hover \.connectionsCardSyncPopup/u);
+  assert.doesNotMatch(dashStyles, /\.connectionsProviderRow:hover \.connectionsCardSyncPopup/u);
+  assert.match(dashStyles, /\.connectionsCardSync\s*\{[\s\S]*width:\s*112px/u);
+  assert.doesNotMatch(connectionsComponent, /DOMAIN SYNC/u);
+});
+
+test("the sidebar profile section mirrors the connections sync progress bar", () => {
+  assert.match(dashPage, /ConnectionSyncProgress/u);
+  assert.match(dashPage, /collectWorkspaceSyncDomains/u);
+  assert.match(dashPage, /buildSidebarSyncCommentary/u);
+  assert.match(dashPage, /layout="sidebar"/u);
+  assert.match(dashPage, /popupPlacement="above"/u);
+  assert.match(dashPage, /8_000/u);
+  assert.match(dashStyles, /\.sidebarSync\s*\{/u);
+  assert.match(dashStyles, /\.sidebarSyncCommentary/u);
+  assert.match(dashStyles, /\.sidebarSyncProgress:hover \.connectionsCardSyncPopup/u);
+  assert.match(dashStyles, /\.collapsed \.sidebarSync\s*\{[\s\S]*display:\s*none/u);
+  assert.match(connectionsComponent, /export function buildSidebarSyncCommentary/u);
 });
 
 test("the additional-account control follows dash sizing, focus, responsive, and reduced-motion rules", () => {

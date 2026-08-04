@@ -103,3 +103,22 @@ test("auth-health mutation is queue-lease and generation fenced", async () => {
   assert.doesNotMatch(store, /update control_plane\.connections/iu);
   assert.match(worker, /recordConnectionAuthHealth\(claim,/u);
 });
+
+test("sync page commits fence connection generation without table UPDATE privilege", async () => {
+  const [migration, store] = await Promise.all([
+    source("infra/migrations/control-plane/0072_m2_sync_connection_generation_fence.sql"),
+    source("services/sync-workers/src/control-plane-store.ts"),
+  ]);
+  assert.match(
+    migration,
+    /CREATE OR REPLACE FUNCTION control_plane\.assert_sync_connection_generation_fence/u,
+  );
+  assert.match(migration, /SECURITY DEFINER/u);
+  assert.match(migration, /FOR SHARE/u);
+  assert.match(migration, /GRANT EXECUTE[\s\S]*TO albert_sync_control/u);
+  assert.match(store, /assert_sync_connection_generation_fence\(/u);
+  assert.doesNotMatch(
+    store,
+    /from control_plane\.connections[\s\S]{0,200}for (?:update|share)/iu,
+  );
+});

@@ -36,6 +36,7 @@ import {
   type CanonicalMappingContext,
   type CanonicalProjectionCommand,
   type CanonicalProjectionTable,
+  type CanonicalSourceReference,
   type CanonicalStagingRow,
   type CanonicalStreamMapper,
   type CanonicalTransformBatch,
@@ -169,6 +170,7 @@ export type IsolatedCanonicalMapping = Readonly<{
     row: CanonicalStagingRow;
     errorCode: string;
     errorSummary: string;
+    errorPath?: "$mapper" | "$projection";
   }>[];
 }>;
 
@@ -214,6 +216,90 @@ export function isolateCanonicalMappings(
   });
 }
 
+/**
+ * A source row can map successfully while still carrying a dangling required
+ * canonical reference. Treat that as a record-scoped projection quarantine,
+ * not a batch-level retry: otherwise one historical refund can roll back every
+ * valid peer and every parent line in the same page forever.
+ *
+ * References produced by another command in this exact transaction remain
+ * eligible. Command ranking materialises those parents before their children;
+ * only references absent from both the command set and durable canonical state
+ * are isolated here.
+ */
+export async function isolateCanonicalProjectionReferences(
+  client: PostgresQueryClient,
+  job: CanonicalTransformBatch,
+  mappings: IsolatedCanonicalMapping["accepted"],
+): Promise<IsolatedCanonicalMapping> {
+  const references: CanonicalSourceReference[] = [];
+  for (const { commands } of mappings) {
+    for (const command of commands) {
+      references.push(...canonicalCommandReferences(command));
+    }
+  }
+
+  const resolutionContext: CanonicalResolutionContext = {
+    materialized: new Set<string>(),
+    missing: new Set<string>(),
+  };
+  // Query every required source reference, including references provisionally
+  // produced by this batch. If a producer is later removed from the active
+  // set, durable state is the only safe fallback for its dependants.
+  await primeCanonicalReferenceCache(client, job, references, resolutionContext);
+
+  let accepted = [...mappings];
+  const rejected: Array<IsolatedCanonicalMapping["rejected"][number]> = [];
+  while (accepted.length) {
+    const produced = new Set<string>();
+    for (const mapping of accepted) {
+      for (const command of mapping.commands) {
+        if (command.kind !== "dimension" && command.kind !== "fact") continue;
+        produced.add(canonicalResolutionKey(
+          command.table,
+          canonicalId(
+            job.tenantId, command.table, job.connectionId,
+            command.sourceObjectType, command.sourceRecordId,
+          ),
+        ));
+      }
+    }
+
+    const newlyRejected = accepted.filter((mapping) =>
+      mapping.commands.some((command) =>
+        canonicalCommandReferences(command).some((reference) => {
+          const ref = reference.sourceRef;
+          if (ref.nullable || ref.lookup || !ref.sourceRecordId?.trim()) return false;
+          const target = tableColumns[ref.table];
+          if (!target || ref.table === "calendar_day") return false;
+          const key = canonicalResolutionKey(
+            ref.table,
+            canonicalId(
+              job.tenantId, ref.table, ref.connectionId ?? job.connectionId,
+              ref.sourceObjectType, ref.sourceRecordId,
+            ),
+          );
+          return !produced.has(key) && resolutionContext.missing.has(key);
+        })
+      )
+    );
+    if (!newlyRejected.length) break;
+
+    const rejectedSet = new Set(newlyRejected);
+    const failure = canonicalMappingFailure(new Error("canonical_reference_missing"));
+    rejected.push(...newlyRejected.map((mapping) => Object.freeze({
+      row: mapping.row,
+      ...failure,
+      errorPath: "$projection" as const,
+    })));
+    accepted = accepted.filter((mapping) => !rejectedSet.has(mapping));
+  }
+  return Object.freeze({
+    accepted: Object.freeze(accepted),
+    rejected: Object.freeze(rejected),
+  });
+}
+
 export class CanonicalTransformPipeline {
   constructor(
     private readonly analytical: TransactionalPostgres,
@@ -232,6 +318,11 @@ export class CanonicalTransformPipeline {
     if(!authorization)return operation(undefined);
     return this.control.transaction(async(client)=>{
       await establishControlWorkerRole(client);
+      // This transaction intentionally stays open (idle) while the analytical
+      // callback runs, which can take minutes on large backfill batches. Lift
+      // the runtime login's 60s idle-in-transaction ceiling for this
+      // transaction only so the server does not kill the connection mid-run.
+      await client.query("set local idle_in_transaction_session_timeout='30min'");
       const query=authorization.kind==="canonical_transform"
         ? {
           sql:`select control_plane.issue_transform_job_analytical_capability(
@@ -284,11 +375,15 @@ export class CanonicalTransformPipeline {
     const mapper = this.mappers[job.connectorId];
     if (!mapper) throw new Error(`canonical_mapper_missing:${job.connectorId}`);
     const mappingContext = await loadMappingContext(this.control, job);
+    let streamPageComplete=false;
 
     const result = await this.withTransformAuthorization(authorization,(capability)=>
       this.analytical.transaction(async (client) => {
       await establishTransformScope(client, job.tenantId,capability);
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [`canonical:${job.tenantId}`]);
+      streamPageComplete=await connectorStreamPageIsComplete(
+        client,job,stream,
+      );
       const existing = await client.query<TransformCommitRow>(
         `select staged_rows, quarantined_rows, command_count, canonical_rows,
                 metadata_rows, quality_status,partial_quality_status,
@@ -300,31 +395,112 @@ export class CanonicalTransformPipeline {
       );
       if (existing.rows[0]) return transformResult(job.batchId, true, existing.rows[0]);
 
-      await assertLandingCommit(client, job, stream, this.mappingVersion);
+      const landedRows=await assertLandingCommit(
+        client,job,stream,this.mappingVersion,
+      );
       await publishAuthorityDefaults(client, job);
-      const rows = await loadStagingRows(client, contract, job, this.mappingVersion);
+      const rows = await loadStagingRows(
+        client,contract,job,this.mappingVersion,streamContract.resource,
+      );
+      if(contract.reprocessIdenticalPayloadOnNewBatch&&rows.length!==landedRows){
+        throw new Error(
+          `canonical_staging_batch_incomplete:${stream}:${rows.length}:${landedRows}`,
+        );
+      }
       const isolated = isolateCanonicalMappings(
         rows,job,stream,this.mappingVersion,mapper,mappingContext,
       );
-      for (const rejection of isolated.rejected) {
-        await recordCanonicalMappingQuarantine(
-          client,job,stream,rejection.row,rejection.errorCode,rejection.errorSummary,
-        );
-      }
-      const commands = isolated.accepted.flatMap(({ row,commands: mapped }) =>
+      await recordCanonicalMappingQuarantines(
+        client,job,stream,isolated.rejected,"$mapper",
+      );
+      const projected = await isolateCanonicalProjectionReferences(
+        client,job,isolated.accepted,
+      );
+      await recordCanonicalMappingQuarantines(
+        client,job,stream,projected.rejected,"$projection",
+      );
+      const rejectedRows = [...isolated.rejected, ...projected.rejected];
+      const commands = projected.accepted.flatMap(({ row,commands: mapped }) =>
         mapped.map((command) => ({ command,row }))
       );
-      commands.sort((left, right) => commandRank(left.command) - commandRank(right.command));
+      // Parents before children within product_category so nullable parent
+      // refs resolve when the parent is present in the same batch.
+      commands.sort((left, right) => {
+        const rank = commandRank(left.command) - commandRank(right.command);
+        if (rank !== 0) return rank;
+        return categoryTreeDepth(left) - categoryTreeDepth(right);
+      });
 
       let canonicalRows = 0;
       let metadataRows = 0;
+      let identityEvidenceChanged = false;
       const appliedCommands: CanonicalProjectionCommand[] = [];
       const previouslyMaterializedDates:string[]=[];
-      for (const item of commands) {
+      const resolutionContext:CanonicalResolutionContext={
+        materialized:new Set<string>(),missing:new Set<string>(),
+      };
+      for(const item of commands){
         assertCanonicalCommandAdmission(item.command,streamContract);
-        if (item.command.kind === "dimension" || item.command.kind === "fact") {
+      }
+      let factsPrimed=false;
+      for(let commandIndex=0;commandIndex<commands.length;){
+        const item=commands[commandIndex]!;
+        if(item.command.kind==="dimension"&&!item.command.updateOnly){
+          const batchKey=dimensionBatchKey(item.command);
+          const batch:CanonicalCommandItem<CanonicalUpsertCommand>[]=[];
+          while(commandIndex<commands.length){
+            const candidate=commands[commandIndex]!;
+            if(candidate.command.kind!=="dimension"||candidate.command.updateOnly||
+               dimensionBatchKey(candidate.command)!==batchKey)break;
+            batch.push({command:candidate.command,row:candidate.row});
+            commandIndex+=1;
+          }
+          const applied=await executeDimensionBatch(
+            client,job,batch,streamAuthority,resolutionContext,
+          );
+          canonicalRows+=applied.length;
+          appliedCommands.push(...applied.map(({command})=>command));
+          continue;
+        }
+        if(item.command.kind==="fact"&&!item.command.updateOnly){
+          if(!factsPrimed){
+            const factValues=commands.flatMap(({command})=>
+              command.kind==="fact"?Object.values(command.values):[],
+            );
+            await primeCanonicalReferenceCache(
+              client,job,factValues,resolutionContext,
+            );
+            factsPrimed=true;
+          }
+          const batchKey=factBatchKey(item.command);
+          const batch:CanonicalCommandItem<CanonicalUpsertCommand>[]=[];
+          while(commandIndex<commands.length){
+            const candidate=commands[commandIndex]!;
+            if(candidate.command.kind!=="fact"||candidate.command.updateOnly||
+               factBatchKey(candidate.command)!==batchKey)break;
+            batch.push({command:candidate.command,row:candidate.row});
+            commandIndex+=1;
+          }
+          const outcome=await executeFactBatch(
+            client,job,batch,streamAuthority,resolutionContext,
+          );
+          canonicalRows+=outcome.applied.length;
+          appliedCommands.push(...outcome.applied.map(({command})=>command));
+          previouslyMaterializedDates.push(...outcome.previousDates);
+          continue;
+        }
+        if(item.command.kind === "dimension" || item.command.kind === "fact") {
+          if(item.command.kind==="fact"&&!factsPrimed){
+            const factValues=commands.flatMap(({command})=>
+              command.kind==="fact"?Object.values(command.values):[],
+            );
+            await primeCanonicalReferenceCache(
+              client,job,factValues,resolutionContext,
+            );
+            factsPrimed=true;
+          }
           const outcome=await executeUpsert(
-            client,job,item.row,item.command,streamAuthority,
+            client,job,item.row,item.command,streamAuthority,resolutionContext,
           );
           if (outcome.applied) {
             canonicalRows += 1;
@@ -332,16 +508,36 @@ export class CanonicalTransformPipeline {
             previouslyMaterializedDates.push(...outcome.previousDates);
           }
         } else if (item.command.kind === "category_assignment") {
-          if(await executeCategoryAssignment(client, job, item.row, item.command))canonicalRows += 1;
+          const batch:CanonicalCommandItem<CanonicalCategoryAssignmentCommand>[]=[];
+          while(commandIndex<commands.length){
+            const candidate=commands[commandIndex]!;
+            if(candidate.command.kind!=="category_assignment")break;
+            batch.push({command:candidate.command,row:candidate.row});
+            commandIndex+=1;
+          }
+          canonicalRows+=await executeCategoryAssignmentBatch(
+            client,job,batch,resolutionContext,
+          );
+          continue;
         } else if (item.command.kind === "event_link") {
           await executeEventLink(client, job, item.row, item.command, this.mappingVersion);
           metadataRows += 1;
         } else if (item.command.kind === "identity_hint") {
-          await persistIdentityHint(client, job, item.row, item.command);
-          metadataRows += 1;
+          const batch:CanonicalCommandItem<CanonicalIdentityHintCommand>[]=[];
+          while(commandIndex<commands.length){
+            const candidate=commands[commandIndex]!;
+            if(candidate.command.kind!=="identity_hint")break;
+            batch.push({command:candidate.command,row:candidate.row});
+            commandIndex+=1;
+          }
+          await persistIdentityHints(client,job,batch);
+          identityEvidenceChanged = true;
+          metadataRows += batch.length;
+          continue;
         } else {
           metadataRows += 1;
         }
+        commandIndex+=1;
       }
 
       const commandCount=commands.length;
@@ -349,36 +545,49 @@ export class CanonicalTransformPipeline {
       // Healing happens only after every projection command for the accepted
       // rows has succeeded in this transaction. A later failure rolls back the
       // canonical writes and leaves the prior dead-letter record open.
-      for (const accepted of isolated.accepted) {
-        await resolveCanonicalMappingQuarantine(client,job,stream,accepted.row);
-      }
+      await resolveCanonicalMappingQuarantines(
+        client,job,stream,projected.accepted.map(({row})=>row),
+      );
 
       await publishCapabilities(client, job, manifest, stream, rows);
       await publishSourceAllowlist(client, job, manifest, contract);
-      await generateIdentitySuggestions(client, job.tenantId);
-      const acceptedRows = isolated.accepted.map(({ row }) => row);
+      // Review candidates depend only on identity observations. Fact-heavy
+      // backfill pages must not rescan tenant identity state when no identity
+      // evidence changed in this transaction.
+      if(identityEvidenceChanged){
+        await generateIdentitySuggestions(client, job.tenantId);
+      }
+      const acceptedRows = projected.accepted.map(({ row }) => row);
       const readyThrough = latestSourceTimestamp(acceptedRows);
       const dateBounds = canonicalDateBounds(appliedCommands,previouslyMaterializedDates);
       if (dateBounds) {
         await ensureCalendarDays(client,dateBounds);
-        await refreshMarts(client, job.tenantId, dateBounds);
-        await client.query(
-          "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
-          [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
-        );
+        if(requiresTenantDayMartRefresh(appliedCommands)){
+          await refreshMarts(client, job.tenantId, dateBounds);
+        }
+        if(requiresSettlementLinkRefresh(appliedCommands)){
+          await client.query(
+            "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
+            [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
+          );
+        }
       }
-      // Invariants must observe the newly refreshed marts and settlement links,
-      // never the prior committed analytical state.
-      // Refresh connector checks here as well: the ingest-side rollup precedes
-      // the control-plane run commit, while a release attestation must be
-      // causally newer than that durable completion evidence.
-      await client.query("select quality.refresh_connector_quality_rollup($1,$2)", [
-        job.tenantId,job.syncRunId,
-      ]);
-      await client.query("select quality.run_all_invariants($1,$2)", [job.tenantId, job.syncRunId]);
+      // Global invariants inspect every canonical grain. They are post-sync
+      // release gates, not per-page admission checks: database constraints,
+      // authority assertions and version claims already fence each page. Run
+      // the tenant-wide scan only after durable cursor-complete evidence, when
+      // it can observe all refreshed marts and settlement links for this sync.
+      if(streamPageComplete){
+        await client.query("select quality.refresh_connector_quality_rollup($1,$2)", [
+          job.tenantId,job.syncRunId,
+        ]);
+        await client.query("select quality.run_all_invariants($1,$2)", [
+          job.tenantId,job.syncRunId,
+        ]);
+      }
       await client.query(
         "select quality.record_canonical_mapping_quality($1,$2,$3::bigint,$4::bigint)",
-        [job.tenantId,job.syncRunId,rows.length,isolated.rejected.length],
+        [job.tenantId,job.syncRunId,rows.length,rejectedRows.length],
       );
       // The quality evidence and its snapshot live in Postgres, so use the
       // same clock for their causal ordering. An application-host timestamp
@@ -391,32 +600,43 @@ export class CanonicalTransformPipeline {
       if(!snapshotAt||!Number.isFinite(Date.parse(snapshotAt))){
         throw new Error("pipeline_snapshot_database_clock_invalid");
       }
-      await client.query(
-        "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb,$5::text)",
-        [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough }),job.syncRunId],
-      );
-      const qualityStatuses = await readinessQualityStatuses(client,job.tenantId,job.syncRunId);
+      // Pipeline stats are an operational snapshot, not a per-page ledger.
+      // Publish them after the terminal page of this sync; the maintenance
+      // worker supplies the separate hourly cadence required by the spec.
+      if(streamPageComplete){
+        await client.query(
+          "select quality.snapshot_all_pipeline_stats($1,$2::timestamptz,$3::text[],$4::jsonb,$5::text)",
+          [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough }),job.syncRunId],
+        );
+      }
+      const qualityStatuses = streamPageComplete
+        ?await readinessQualityStatuses(client,job.tenantId,job.syncRunId)
+        :Object.freeze({
+          partial:"blocked" as const,complete:"blocked" as const,
+        });
       const qualityStatus=backfillComplete
         ? qualityStatuses.complete
         : qualityStatuses.partial;
-      await enqueueReadinessProjection(
-        client,job,domains,backfillComplete,qualityStatuses,readyThrough,snapshotAt,
-      );
+      if(streamPageComplete){
+        await enqueueReadinessProjection(
+          client,job,domains,backfillComplete,qualityStatuses,readyThrough,snapshotAt,
+        );
+      }
       await client.query(
         `insert into semantic_internal.canonical_transform_commits (
            tenant_id,batch_id,sync_run_id,connection_id,connector_id,stream,mapping_version,
            staged_rows,quarantined_rows,command_count,canonical_rows,metadata_rows,
            quality_status,partial_quality_status,complete_quality_status,
            data_ready_through,completed_at
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())`,
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())`,
         [job.tenantId,job.batchId,job.syncRunId,job.connectionId,job.connectorId,stream,
-          this.mappingVersion,rows.length,isolated.rejected.length,commandCount,
+          this.mappingVersion,rows.length,rejectedRows.length,commandCount,
           canonicalRows,metadataRows,qualityStatus,qualityStatuses.partial,
           qualityStatuses.complete,readyThrough],
       );
       return {
         batchId:job.batchId,replayed:false,stagedRows:rows.length,
-        quarantinedRows:isolated.rejected.length,commandCount,
+        quarantinedRows:rejectedRows.length,commandCount,
         canonicalRows,metadataRows,qualityStatus,
         partialQualityStatus:qualityStatuses.partial,
         completeQualityStatus:qualityStatuses.complete,
@@ -434,7 +654,9 @@ export class CanonicalTransformPipeline {
 
     if(publishControl&&!compatibilityReplay.pending){
       await this.publishPendingControlProjections(job.tenantId, job.batchId,authorization);
-      await this.refreshDossier(job.tenantId,authorization);
+      if(streamPageComplete){
+        await this.refreshDossier(job.tenantId,authorization);
+      }
     }
     return Object.freeze({
       ...result,
@@ -551,11 +773,15 @@ export class CanonicalTransformPipeline {
         const dateBounds=canonicalDateBounds(appliedCommands,previousDates);
         if(dateBounds){
           await ensureCalendarDays(client,dateBounds);
-          await refreshMarts(client,job.tenantId,dateBounds);
-          await client.query(
-            "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
-            [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
-          );
+          if(requiresTenantDayMartRefresh(appliedCommands)){
+            await refreshMarts(client,job.tenantId,dateBounds);
+          }
+          if(requiresSettlementLinkRefresh(appliedCommands)){
+            await client.query(
+              "select core.refresh_daily_settlement_links($1,$2::date,$3::date,$4)",
+              [job.tenantId,dateBounds.from,dateBounds.to,job.syncRunId],
+            );
+          }
           await client.query("select quality.run_all_invariants($1,$2)",[job.tenantId,job.syncRunId]);
         }
         if(!pending)await binding.finalizeReplay();
@@ -1382,7 +1608,7 @@ function canonicalMappingFailure(error:unknown):Readonly<{
   });
 }
 
-async function assertLandingCommit(client:PostgresQueryClient,job:CanonicalTransformBatch,stream:string,mappingVersion:string):Promise<void>{
+async function assertLandingCommit(client:PostgresQueryClient,job:CanonicalTransformBatch,stream:string,mappingVersion:string):Promise<number>{
   const landed=await client.query<{staged_record_count:string|number}>(
     `select landing.staged_record_count
        from ingestion.landing_commits AS landing
@@ -1396,62 +1622,126 @@ async function assertLandingCommit(client:PostgresQueryClient,job:CanonicalTrans
     [job.tenantId,job.batchId,job.syncRunId,mappingVersion,job.connectionId,job.connectorId,stream],
   );
   if(!landed.rows[0])throw new Error(`canonical_landing_not_committed:${stream}`);
+  const stagedRows=Number(landed.rows[0].staged_record_count);
+  if(!Number.isSafeInteger(stagedRows)||stagedRows<0){
+    throw new Error(`canonical_landing_record_count_invalid:${stream}`);
+  }
+  return stagedRows;
 }
 
-async function loadStagingRows(client:PostgresQueryClient,contract:StagingStreamContract,job:CanonicalTransformBatch,mappingVersion:string):Promise<CanonicalStagingRow[]>{
+async function connectorStreamPageIsComplete(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  stream:string,
+):Promise<boolean>{
+  const page=await client.query<{cursor_complete:boolean}>(
+    `select (evidence.evidence->>'cursorComplete')::boolean as cursor_complete
+       from quality.connector_stream_page_evidence as evidence
+      where evidence.tenant_id=$1 and evidence.batch_id=$2
+        and evidence.connection_id=$3 and evidence.connection_generation=$4
+        and evidence.stream=$5`,
+    [job.tenantId,job.batchId,job.connectionId,job.connectionGeneration,stream],
+  );
+  const complete=page.rows[0]?.cursor_complete;
+  if(typeof complete!=="boolean"){
+    throw new Error(`canonical_connector_page_evidence_missing:${stream}`);
+  }
+  return complete;
+}
+
+async function loadStagingRows(
+  client:PostgresQueryClient,
+  contract:StagingStreamContract,
+  job:CanonicalTransformBatch,
+  mappingVersion:string,
+  sourceObjectType:string,
+):Promise<CanonicalStagingRow[]>{
+  if(!sourceObjectType.trim())throw new Error(`canonical_source_object_type_missing:${contract.stream}`);
+  const immutable=await client.query<{staging_row:unknown}>(
+    `select staging_row
+       from ingestion.canonical_staging_batch_records
+      where tenant_id=$1 and batch_id=$2 and sync_run_id=$3
+        and mapping_version=$4 and connection_id=$5
+        and connector_id=$6 and stream=$7 and source_object_type=$8
+      order by namespaced_source_key`,
+    [job.tenantId,job.batchId,job.syncRunId,mappingVersion,job.connectionId,
+      job.connectorId,contract.stream,sourceObjectType],
+  );
+  if(immutable.rows.length){
+    return immutable.rows.map(({staging_row})=>{
+      if(!staging_row||typeof staging_row!=="object"||Array.isArray(staging_row)){
+        throw new Error(`canonical_staging_envelope_invalid:${contract.stream}`);
+      }
+      return {...staging_row,source_object_type:sourceObjectType} as CanonicalStagingRow;
+    });
+  }
   const table=`${quoteIdentifier(contract.schema)}.${quoteIdentifier(contract.table)}`;
   const result=await client.query<CanonicalStagingRow>(
-    `select s.*,source.source_object_type
+    `select s.*,$6::text as source_object_type
        from ${table} s
-       join ingestion.source_records source
-         on source.tenant_id=s.tenant_id
-        and source.namespaced_source_key=s.namespaced_source_key
-        and source.connection_id=s.connection_id
-        and source.source_record_id=s.source_record_id
       where s.tenant_id=$1 and s.payload_batch_id=$2 and s.sync_run_id=$3
         and s.mapping_version=$4 and s.connection_id=$5
-        and source.connector_key=$6 and source.stream=$7
       order by s.namespaced_source_key`,
-    [job.tenantId,job.batchId,job.syncRunId,mappingVersion,job.connectionId,job.connectorId,contract.stream],
+    [job.tenantId,job.batchId,job.syncRunId,mappingVersion,job.connectionId,sourceObjectType],
   );
   return [...result.rows];
 }
 
-async function recordCanonicalMappingQuarantine(
+async function recordCanonicalMappingQuarantines(
   client:PostgresQueryClient,
   job:CanonicalTransformBatch,
   stream:string,
-  row:CanonicalStagingRow,
-  errorCode:string,
-  errorSummary:string,
+  rejections:IsolatedCanonicalMapping["rejected"],
+  errorPath:"$mapper"|"$projection",
 ):Promise<void>{
+  if(!rejections.length)return;
+  const records=rejections.map(({row,errorCode,errorSummary})=>({
+    source_object_type:row.source_object_type,
+    source_record_id:row.source_record_id,
+    payload_hash:row.payload_hash,
+    mapping_version:row.mapping_version,
+    error_code:errorCode,
+    error_summary:errorSummary,
+  }));
   await client.query(
     `select semantic_internal.record_canonical_mapping_quarantine(
-       $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,
-       $7::text,$8::text,$9::text,$10::text,$11::text,$12::text
-     )`,
+       $1::text,$2::text,$3::text,$4::text,$5::text,
+       input.source_object_type,input.source_record_id,input.payload_hash,
+       input.mapping_version,input.error_code,$7::text,input.error_summary
+     )
+       from jsonb_to_recordset($6::jsonb) as input(
+         source_object_type text,source_record_id text,payload_hash text,
+         mapping_version text,error_code text,error_summary text
+       )`,
     [
       job.tenantId,job.connectionId,job.syncRunId,job.batchId,stream,
-      row.source_object_type,row.source_record_id,row.payload_hash,
-      row.mapping_version,errorCode,"$mapper",errorSummary,
+      JSON.stringify(records),errorPath,
     ],
   );
 }
 
-async function resolveCanonicalMappingQuarantine(
+async function resolveCanonicalMappingQuarantines(
   client:PostgresQueryClient,
   job:CanonicalTransformBatch,
   stream:string,
-  row:CanonicalStagingRow,
+  rows:readonly CanonicalStagingRow[],
 ):Promise<void>{
+  if(!rows.length)return;
+  const records=rows.map((row)=>({
+    source_object_type:row.source_object_type,
+    source_record_id:row.source_record_id,
+    payload_hash:row.payload_hash,
+  }));
   await client.query(
     `select semantic_internal.resolve_canonical_mapping_quarantine(
-       $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text
-     )`,
-    [
-      job.tenantId,job.connectionId,job.syncRunId,job.batchId,stream,
-      row.source_object_type,row.source_record_id,row.payload_hash,
-    ],
+       $1::text,$2::text,$3::text,$4::text,$5::text,
+       input.source_object_type,input.source_record_id,input.payload_hash
+     )
+       from jsonb_to_recordset($6::jsonb) as input(
+         source_object_type text,source_record_id text,payload_hash text
+       )`,
+    [job.tenantId,job.connectionId,job.syncRunId,job.batchId,stream,
+      JSON.stringify(records)],
   );
 }
 
@@ -1461,6 +1751,25 @@ function commandRank(command:CanonicalProjectionCommand):number{
   if(command.kind==="identity_hint")return 200;
   if(command.kind==="event_link")return 210;
   return 220;
+}
+
+function canonicalCommandReferences(
+  command: CanonicalProjectionCommand,
+): readonly CanonicalSourceReference[] {
+  if (command.kind === "dimension" || command.kind === "fact") {
+    return Object.values(command.values).filter(isCanonicalSourceReference);
+  }
+  if (command.kind === "category_assignment") {
+    return [command.productVariant, command.productCategory];
+  }
+  return [];
+}
+
+function categoryTreeDepth(item:Readonly<{command:CanonicalProjectionCommand;row:CanonicalStagingRow}>):number{
+  if(item.command.kind!=="dimension"||item.command.table!=="product_category")return 0;
+  const raw=item.row.node_depth ?? item.row.nodeDepth;
+  const depth=Number(raw);
+  return Number.isFinite(depth) && depth >= 0 ? depth : 0;
 }
 
 function deterministicCanonicalId(parts:readonly string[]):string{
@@ -1476,6 +1785,448 @@ function canonicalId(tenantId:string,table:CanonicalProjectionTable,connectionId
 }
 
 type CanonicalUpsertOutcome=Readonly<{applied:boolean;previousDates:readonly string[]}>;
+type CanonicalCommandItem<Command extends CanonicalProjectionCommand=CanonicalProjectionCommand>=Readonly<{
+  command:Command;
+  row:CanonicalStagingRow;
+}>;
+type CanonicalResolutionContext={
+  readonly materialized:Set<string>;
+  readonly missing:Set<string>;
+};
+type PreparedDimensionItem=Readonly<{
+  item:CanonicalCommandItem<CanonicalUpsertCommand>;
+  id:string;
+  resolved:Readonly<Record<string,unknown>>;
+}>;
+type PreparedFactItem=Readonly<{
+  item:CanonicalCommandItem<CanonicalUpsertCommand>;
+  id:string;
+  resolved:Readonly<Record<string,unknown>>;
+  authorityScope:ResolvedAuthorityScope;
+}>;
+type CanonicalFactBatchOutcome=Readonly<{
+  applied:readonly CanonicalCommandItem<CanonicalUpsertCommand>[];
+  previousDates:readonly string[];
+}>;
+
+function dimensionBatchKey(command:CanonicalUpsertCommand):string{
+  return `${command.table}\u001f${Object.keys(command.values).sort().join("\u001f")}`;
+}
+
+function factBatchKey(command:CanonicalUpsertCommand):string{
+  return `${command.table}\u001f${Object.keys(command.values).sort().join("\u001f")}`;
+}
+
+function canonicalResolutionKey(table:CanonicalProjectionTable,id:string):string{
+  return `${table}\u001f${id}`;
+}
+
+async function executeDimensionBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly CanonicalCommandItem<CanonicalUpsertCommand>[],
+  streamAuthority:SourceAuthorityConcept,
+  resolutionContext:CanonicalResolutionContext,
+):Promise<readonly CanonicalCommandItem<CanonicalUpsertCommand>[]>{
+  const first=items[0];
+  if(!first||first.command.kind!=="dimension"||first.command.updateOnly){
+    throw new Error("canonical_dimension_batch_invalid");
+  }
+  const tableName=first.command.table;
+  const table=tableColumns[tableName];
+  if(!table||table.fact||tableName==="calendar_day"){
+    throw new Error(`canonical_dimension_batch_table_invalid:${tableName}`);
+  }
+  const batchKey=dimensionBatchKey(first.command);
+  const provisional=new Set<string>();
+  const identities=new Set<string>();
+  for(const {command} of items){
+    if(command.kind!=="dimension"||command.updateOnly||
+       command.table!==tableName||dimensionBatchKey(command)!==batchKey){
+      throw new Error("canonical_dimension_batch_mixed");
+    }
+    assertCanonicalCommandAuthority(command,streamAuthority);
+    const id=canonicalId(
+      job.tenantId,tableName,job.connectionId,
+      command.sourceObjectType,command.sourceRecordId,
+    );
+    if(identities.has(id))throw new Error("canonical_dimension_batch_duplicate");
+    identities.add(id);
+    provisional.add(canonicalResolutionKey(tableName,id));
+  }
+  await primeCanonicalReferenceCache(
+    client,job,items.flatMap(({command})=>Object.values(command.values)),
+    resolutionContext,provisional,
+  );
+
+  const prepared:PreparedDimensionItem[]=[];
+  for(const item of items){
+    const entries=Object.entries(item.command.values);
+    if(!entries.length)throw new Error(`canonical_values_empty:${tableName}`);
+    for(const [column] of entries){
+      if(!table.columns.has(column)){
+        throw new Error(`canonical_field_unsupported:${tableName}.${column}`);
+      }
+    }
+    const resolved:Record<string,unknown>={};
+    for(const [column,value] of entries){
+      resolved[column]=await resolveValue(
+        client,job,value,resolutionContext,provisional,
+      );
+    }
+    prepared.push({
+      item,
+      id:canonicalId(
+        job.tenantId,tableName,job.connectionId,
+        item.command.sourceObjectType,item.command.sourceRecordId,
+      ),
+      resolved,
+    });
+  }
+
+  const valueColumns=Object.keys(first.command.values);
+  const insertColumns=["tenant_id","id",...valueColumns,"sync_run_id"];
+  const records=prepared.map(({item,id,resolved})=>({
+    canonical_id:id,
+    source_updated_at:isoOrNull(item.row.source_updated_at)
+      ??isoOrNull(item.row.ingested_at)??new Date(0).toISOString(),
+    source_version:item.row.source_version??null,
+    payload_hash:item.row.payload_hash,
+    batch_id:item.row.payload_batch_id,
+    sync_run_id:item.row.sync_run_id,
+    connection_id:job.connectionId,
+    source_object_type:item.command.sourceObjectType,
+    source_record_id:item.command.sourceRecordId,
+    mapping_version:item.row.mapping_version,
+    canonical_row:{tenant_id:job.tenantId,id,...resolved,sync_run_id:item.row.sync_run_id},
+  }));
+  const conflict=valueColumns.length
+    ?`do update set ${valueColumns.map((column)=>
+      `${quoteIdentifier(column)}=excluded.${quoteIdentifier(column)}`,
+    ).join(",")},updated_at=now()`
+    :"do nothing";
+  const applied=await client.query<{id:string}>(
+    `with input as materialized (
+       select * from jsonb_to_recordset($1::jsonb) as record(
+         canonical_id text,source_updated_at timestamptz,source_version text,
+         payload_hash text,batch_id text,sync_run_id text,connection_id text,
+         source_object_type text,source_record_id text,mapping_version text,
+         canonical_row jsonb
+       )
+     ), claimed as (
+       insert into semantic_internal.canonical_record_state (
+         tenant_id,canonical_table,canonical_id,source_updated_at,source_version,
+         payload_hash,batch_id,sync_run_id,connection_id,source_object_type,
+         source_record_id,mapping_version
+       )
+       select $2,$3,input.canonical_id,input.source_updated_at,
+              input.source_version,input.payload_hash,input.batch_id,
+              input.sync_run_id,input.connection_id,input.source_object_type,
+              input.source_record_id,input.mapping_version
+         from input
+       on conflict (tenant_id,canonical_table,canonical_id) do update set
+         source_updated_at=excluded.source_updated_at,
+         source_version=excluded.source_version,payload_hash=excluded.payload_hash,
+         batch_id=excluded.batch_id,sync_run_id=excluded.sync_run_id,
+         connection_id=excluded.connection_id,
+         source_object_type=excluded.source_object_type,
+         source_record_id=excluded.source_record_id,
+         mapping_version=excluded.mapping_version,updated_at=now()
+       where excluded.source_updated_at>=semantic_internal.canonical_record_state.source_updated_at
+         and (
+           excluded.payload_hash<>semantic_internal.canonical_record_state.payload_hash
+           or excluded.source_version is distinct from semantic_internal.canonical_record_state.source_version
+           or excluded.mapping_version is distinct from semantic_internal.canonical_record_state.mapping_version
+         )
+       returning canonical_id
+     ), typed as (
+       select input.canonical_id,
+              jsonb_populate_record(
+                null::core.${quoteIdentifier(tableName)},input.canonical_row
+              ) as canonical_record
+         from input
+         join claimed using (canonical_id)
+     )
+     insert into core.${quoteIdentifier(tableName)} (
+       ${insertColumns.map(quoteIdentifier).join(",")}
+     )
+     select ${insertColumns.map((column)=>
+       `(typed.canonical_record).${quoteIdentifier(column)}`,
+     ).join(",")}
+       from typed
+     on conflict (tenant_id,id) ${conflict}
+     returning id`,
+    [JSON.stringify(records),job.tenantId,tableName],
+  );
+  const appliedIds=new Set(applied.rows.map(({id})=>id));
+  const appliedItems=prepared.filter(({id})=>appliedIds.has(id));
+  for(const {id} of appliedItems){
+    resolutionContext.missing.delete(canonicalResolutionKey(tableName,id));
+    resolutionContext.materialized.add(canonicalResolutionKey(tableName,id));
+  }
+  await publishCanonicalDimensionAuthorityDefaultsBatch(
+    client,job,tableName,appliedItems.map(({id})=>id),
+  );
+  await upsertDirectEntityLinksBatch(client,job,appliedItems);
+  return appliedItems.map(({item})=>item);
+}
+
+async function executeFactBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly CanonicalCommandItem<CanonicalUpsertCommand>[],
+  streamAuthority:SourceAuthorityConcept,
+  resolutionContext:CanonicalResolutionContext,
+):Promise<CanonicalFactBatchOutcome>{
+  const first=items[0];
+  if(!first||first.command.kind!=="fact"||first.command.updateOnly){
+    throw new Error("canonical_fact_batch_invalid");
+  }
+  const tableName=first.command.table;
+  const table=tableColumns[tableName];
+  if(!table||!table.fact||tableName==="calendar_day"){
+    throw new Error(`canonical_fact_batch_table_invalid:${tableName}`);
+  }
+  const batchKey=factBatchKey(first.command);
+  const identities=new Set<string>();
+  for(const {command} of items){
+    if(command.kind!=="fact"||command.updateOnly||command.table!==tableName||
+       factBatchKey(command)!==batchKey){
+      throw new Error("canonical_fact_batch_mixed");
+    }
+    const id=canonicalId(
+      job.tenantId,tableName,job.connectionId,
+      command.sourceObjectType,command.sourceRecordId,
+    );
+    // PostgreSQL cannot affect one conflict target twice in one INSERT. A
+    // duplicate source identity is unusual but valid for ordered replay, so
+    // retain the original row-at-a-time semantics for that bounded batch.
+    if(identities.has(id)){
+      return executeFactBatchSequentially(
+        client,job,items,streamAuthority,resolutionContext,
+      );
+    }
+    identities.add(id);
+  }
+
+  const unresolved:Omit<PreparedFactItem,"authorityScope">[]=[];
+  for(const item of items){
+    const {command}=item;
+    if(!command.sourceObjectType.trim()||!command.sourceRecordId.trim()){
+      throw new Error("canonical_source_identity_missing");
+    }
+    const entries=Object.entries(command.values);
+    if(!entries.length)throw new Error(`canonical_values_empty:${tableName}`);
+    if(command.tombstone&&!entries.some(([column])=>
+      column==="voided"||column==="status"||column==="order_status"
+    )){
+      throw new Error(`canonical_tombstone_unrepresented:${tableName}`);
+    }
+    for(const [column] of entries){
+      if(!table.columns.has(column)){
+        throw new Error(`canonical_field_unsupported:${tableName}.${column}`);
+      }
+    }
+    assertCanonicalCommandAuthority(command,streamAuthority);
+    const resolved:Record<string,unknown>={};
+    for(const [column,value] of entries){
+      resolved[column]=await resolveValue(client,job,value,resolutionContext);
+    }
+    unresolved.push({
+      item,
+      id:canonicalId(
+        job.tenantId,tableName,job.connectionId,
+        command.sourceObjectType,command.sourceRecordId,
+      ),
+      resolved,
+    });
+  }
+
+  const prepared=await prepareFactAuthorityScopes(client,job,unresolved);
+  await assertFactAuthorityBatch(client,job,prepared);
+
+  const valueColumns=Object.keys(first.command.values);
+  const insertColumns=[
+    "tenant_id","id",...valueColumns,"sync_run_id",
+    "primary_connection_id","primary_source_record_id","source_updated_at",
+  ];
+  const records=prepared.map(({item,id,resolved})=>({
+    canonical_id:id,
+    source_updated_at:isoOrNull(item.row.source_updated_at)
+      ??isoOrNull(item.row.ingested_at)??new Date(0).toISOString(),
+    source_version:item.row.source_version??null,
+    payload_hash:item.row.payload_hash,
+    batch_id:item.row.payload_batch_id,
+    sync_run_id:item.row.sync_run_id,
+    connection_id:job.connectionId,
+    source_object_type:item.command.sourceObjectType,
+    source_record_id:item.command.sourceRecordId,
+    mapping_version:item.row.mapping_version,
+    canonical_row:{
+      tenant_id:job.tenantId,id,...resolved,sync_run_id:item.row.sync_run_id,
+      primary_connection_id:job.connectionId,
+      primary_source_record_id:item.command.sourceRecordId,
+      source_updated_at:isoOrNull(item.row.source_updated_at),
+    },
+  }));
+  const immutable=new Set([
+    "tenant_id","id","primary_connection_id","primary_source_record_id","sync_run_id",
+  ]);
+  const mutable=insertColumns.filter((column)=>!immutable.has(column));
+  const conflict=mutable.length
+    ?`do update set ${mutable.map((column)=>
+      `${quoteIdentifier(column)}=excluded.${quoteIdentifier(column)}`,
+    ).join(",")},updated_at=now()`
+    :"do nothing";
+  const dateColumn=table.columns.has("business_date")
+    ?"business_date"
+    :table.columns.has("snapshot_date")?"snapshot_date":null;
+  const prior=dateColumn
+    ?`select input.canonical_id,
+              existing.${quoteIdentifier(dateColumn)}::text as previous_date
+         from input
+         left join core.${quoteIdentifier(tableName)} as existing
+           on existing.tenant_id=$2 and existing.id=input.canonical_id`
+    :"select input.canonical_id,null::text as previous_date from input";
+  const applied=await client.query<{id:string;previous_date:string|null}>(
+    `with input as materialized (
+       select * from jsonb_to_recordset($1::jsonb) as record(
+         canonical_id text,source_updated_at timestamptz,source_version text,
+         payload_hash text,batch_id text,sync_run_id text,connection_id text,
+         source_object_type text,source_record_id text,mapping_version text,
+         canonical_row jsonb
+       )
+     ), prior as materialized (
+       ${prior}
+     ), claimed as (
+       insert into semantic_internal.canonical_record_state (
+         tenant_id,canonical_table,canonical_id,source_updated_at,source_version,
+         payload_hash,batch_id,sync_run_id,connection_id,source_object_type,
+         source_record_id,mapping_version
+       )
+       select $2,$3,input.canonical_id,input.source_updated_at,
+              input.source_version,input.payload_hash,input.batch_id,
+              input.sync_run_id,input.connection_id,input.source_object_type,
+              input.source_record_id,input.mapping_version
+         from input
+       on conflict (tenant_id,canonical_table,canonical_id) do update set
+         source_updated_at=excluded.source_updated_at,
+         source_version=excluded.source_version,payload_hash=excluded.payload_hash,
+         batch_id=excluded.batch_id,sync_run_id=excluded.sync_run_id,
+         connection_id=excluded.connection_id,
+         source_object_type=excluded.source_object_type,
+         source_record_id=excluded.source_record_id,
+         mapping_version=excluded.mapping_version,updated_at=now()
+       where excluded.source_updated_at>=semantic_internal.canonical_record_state.source_updated_at
+         and (
+           excluded.payload_hash<>semantic_internal.canonical_record_state.payload_hash
+           or excluded.source_version is distinct from semantic_internal.canonical_record_state.source_version
+           or excluded.mapping_version is distinct from semantic_internal.canonical_record_state.mapping_version
+         )
+       returning canonical_id
+     ), typed as (
+       select input.canonical_id,
+              jsonb_populate_record(
+                null::core.${quoteIdentifier(tableName)},input.canonical_row
+              ) as canonical_record
+         from input
+         join claimed using (canonical_id)
+     ), upserted as (
+       insert into core.${quoteIdentifier(tableName)} (
+         ${insertColumns.map(quoteIdentifier).join(",")}
+       )
+       select ${insertColumns.map((column)=>
+         `(typed.canonical_record).${quoteIdentifier(column)}`,
+       ).join(",")}
+         from typed
+       on conflict (tenant_id,id) ${conflict}
+       returning id
+     )
+     select upserted.id,prior.previous_date
+       from upserted
+       join prior on prior.canonical_id=upserted.id`,
+    [JSON.stringify(records),job.tenantId,tableName],
+  );
+  const appliedIds=new Set(applied.rows.map(({id})=>id));
+  const appliedItems=prepared.filter(({id})=>appliedIds.has(id));
+  for(const {id} of appliedItems){
+    resolutionContext.missing.delete(canonicalResolutionKey(tableName,id));
+    resolutionContext.materialized.add(canonicalResolutionKey(tableName,id));
+  }
+  await publishCanonicalDimensionAuthorityDefaultsBatch(
+    client,job,tableName,appliedItems.map(({id})=>id),
+  );
+  await upsertDirectEntityLinksBatch(client,job,appliedItems);
+  await upsertFactObservationsBatch(client,job,tableName,appliedItems);
+  return{
+    applied:appliedItems.map(({item})=>item),
+    previousDates:applied.rows.flatMap(({previous_date})=>
+      previous_date?[previous_date]:[],
+    ),
+  };
+}
+
+async function executeFactBatchSequentially(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly CanonicalCommandItem<CanonicalUpsertCommand>[],
+  streamAuthority:SourceAuthorityConcept,
+  resolutionContext:CanonicalResolutionContext,
+):Promise<CanonicalFactBatchOutcome>{
+  const applied:CanonicalCommandItem<CanonicalUpsertCommand>[]=[];
+  const previousDates:string[]=[];
+  for(const item of items){
+    const outcome=await executeUpsert(
+      client,job,item.row,item.command,streamAuthority,resolutionContext,
+    );
+    if(!outcome.applied)continue;
+    applied.push(item);
+    previousDates.push(...outcome.previousDates);
+  }
+  return{applied,previousDates};
+}
+
+async function primeCanonicalReferenceCache(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  values:readonly unknown[],
+  context:CanonicalResolutionContext,
+  provisional:ReadonlySet<string>=new Set<string>(),
+):Promise<void>{
+  const byTable=new Map<CanonicalProjectionTable,Set<string>>();
+  for(const value of values){
+    if(!isCanonicalSourceReference(value))continue;
+    const ref=value.sourceRef;
+    if(ref.lookup||!ref.sourceRecordId?.trim())continue;
+    const target=tableColumns[ref.table];
+    if(!target||ref.table==="calendar_day"){
+      throw new Error(`canonical_reference_table_unsupported:${ref.table}`);
+    }
+    const id=canonicalId(
+      job.tenantId,ref.table,ref.connectionId??job.connectionId,
+      ref.sourceObjectType,ref.sourceRecordId,
+    );
+    const key=canonicalResolutionKey(ref.table,id);
+    if(context.materialized.has(key)||context.missing.has(key)||provisional.has(key))continue;
+    const ids=byTable.get(ref.table)??new Set<string>();
+    ids.add(id);
+    byTable.set(ref.table,ids);
+  }
+  for(const [table,ids] of byTable){
+    const requested=[...ids];
+    const found=await client.query<{id:string}>(
+      `select id from core.${quoteIdentifier(table)}
+        where tenant_id=$1 and id=any($2::text[])`,
+      [job.tenantId,requested],
+    );
+    const foundIds=new Set(found.rows.map(({id})=>id));
+    for(const id of requested){
+      const key=canonicalResolutionKey(table,id);
+      if(foundIds.has(id))context.materialized.add(key);
+      else context.missing.add(key);
+    }
+  }
+}
 
 /**
  * A fact mapper may not claim an authority concept different from the exact
@@ -1516,6 +2267,7 @@ async function executeUpsert(
   row:CanonicalStagingRow,
   command:CanonicalUpsertCommand,
   streamAuthority:SourceAuthorityConcept,
+  resolutionContext?:CanonicalResolutionContext,
 ):Promise<CanonicalUpsertOutcome>{
   const table=tableColumns[command.table];
   if(!table||command.table==="calendar_day")throw new Error(`canonical_table_unsupported:${command.table}`);
@@ -1540,7 +2292,9 @@ async function executeUpsert(
     if(!persisted)return{applied:false,previousDates:[]};
   }
   const resolved:Record<string,unknown>={};
-  for(const [column,value] of entries)resolved[column]=await resolveValue(client,job,value);
+  for(const [column,value] of entries){
+    resolved[column]=await resolveValue(client,job,value,resolutionContext);
+  }
   if(table.fact)await assertAuthority(client,job,row,command,resolved,persisted);
   if(!await claimCanonicalRecordVersion(
     client,job,row,command.table,id,command.sourceObjectType,command.sourceRecordId,
@@ -1568,6 +2322,10 @@ async function executeUpsert(
       [job.tenantId,id,...Object.values(resolved),row.sync_run_id],
     );
     if(!updated.rows[0])return{applied:false,previousDates};
+    if(resolutionContext){
+      resolutionContext.missing.delete(canonicalResolutionKey(command.table,id));
+      resolutionContext.materialized.add(canonicalResolutionKey(command.table,id));
+    }
     await publishCanonicalDimensionAuthorityDefaults(
       client,job,row.sync_run_id,command.table,id,
     );
@@ -1580,6 +2338,10 @@ async function executeUpsert(
   const mutable=columns.filter((column)=>!['tenant_id','id','primary_connection_id','primary_source_record_id','sync_run_id'].includes(column));
   const conflict=mutable.length?`do update set ${mutable.map((column)=>`${quoteIdentifier(column)}=excluded.${quoteIdentifier(column)}`).join(",")},updated_at=now()`:"do nothing";
   await client.query(`insert into core.${quoteIdentifier(command.table)} (${columns.map(quoteIdentifier).join(",")}) values (${columns.map((_,index)=>`$${index+1}`).join(",")}) on conflict (tenant_id,id) ${conflict}`,parameters);
+  if(resolutionContext){
+    resolutionContext.missing.delete(canonicalResolutionKey(command.table,id));
+    resolutionContext.materialized.add(canonicalResolutionKey(command.table,id));
+  }
   await publishCanonicalDimensionAuthorityDefaults(
     client,job,row.sync_run_id,command.table,id,
   );
@@ -1589,7 +2351,13 @@ async function executeUpsert(
   return{applied:true,previousDates};
 }
 
-async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBatch,value:unknown):Promise<unknown>{
+async function resolveValue(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  value:unknown,
+  resolutionContext?:CanonicalResolutionContext,
+  provisional:ReadonlySet<string>=new Set<string>(),
+):Promise<unknown>{
   if(!isCanonicalSourceReference(value))return value;
   const ref=value.sourceRef;const connectionId=ref.connectionId??job.connectionId;
   if(ref.lookup?.kind==="employment_episode_on"){
@@ -1646,11 +2414,25 @@ async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBat
       job.tenantId,ref.table,connectionId,
       resolution.sourceObjectType,resolution.sourceRecordId,
     );
+    const resolutionKey=canonicalResolutionKey(ref.table,id);
+    if(provisional.has(resolutionKey)||resolutionContext?.materialized.has(resolutionKey))return id;
+    if(resolutionContext?.missing.has(resolutionKey)){
+      if(ref.nullable)return null;
+      throw new Error(`canonical_reference_missing:${ref.table}:${ref.lookup.value}`);
+    }
     const exists=await client.query<{present:number}>(
       `select 1 as present from core.${quoteIdentifier(ref.table)} where tenant_id=$1 and id=$2`,
       [job.tenantId,id],
     );
-    if(exists.rows[0])return id;
+    if(exists.rows[0]){
+      resolutionContext?.missing.delete(resolutionKey);
+      resolutionContext?.materialized.add(resolutionKey);
+      return id;
+    }
+    resolutionContext?.missing.add(resolutionKey);
+    // Nullable parents (Lightspeed Category.parentID) may resolve later in the
+    // same batch or a later stream page. Do not fail the whole transform.
+    if(ref.nullable)return null;
     throw new Error(`canonical_reference_missing:${ref.table}:${ref.lookup.value}`);
   }
   if(!ref.sourceRecordId?.trim()){if(ref.nullable)return null;throw new Error("canonical_reference_id_missing");}
@@ -1659,14 +2441,179 @@ async function resolveValue(client:PostgresQueryClient,job:CanonicalTransformBat
   // ID here would make an undo unable to separate facts written after merge.
   const id=canonicalId(job.tenantId,ref.table,connectionId,ref.sourceObjectType,ref.sourceRecordId);
   const target=tableColumns[ref.table];if(!target||ref.table==="calendar_day")throw new Error(`canonical_reference_table_unsupported:${ref.table}`);
+  const resolutionKey=canonicalResolutionKey(ref.table,id);
+  if(provisional.has(resolutionKey)||resolutionContext?.materialized.has(resolutionKey))return id;
+  if(resolutionContext?.missing.has(resolutionKey)){
+    if(ref.nullable)return null;
+    throw new Error(`canonical_reference_missing:${ref.table}:${ref.sourceObjectType}:${ref.sourceRecordId}`);
+  }
   const exists=await client.query<{present:number}>(`select 1 as present from core.${quoteIdentifier(ref.table)} where tenant_id=$1 and id=$2`,[job.tenantId,id]);
-  if(exists.rows[0])return id;
+  if(exists.rows[0]){
+    resolutionContext?.missing.delete(resolutionKey);
+    resolutionContext?.materialized.add(resolutionKey);
+    return id;
+  }
+  resolutionContext?.missing.add(resolutionKey);
+  if(ref.nullable)return null;
   throw new Error(`canonical_reference_missing:${ref.table}:${ref.sourceObjectType}:${ref.sourceRecordId}`);
 }
 
-async function executeCategoryAssignment(client:PostgresQueryClient,job:CanonicalTransformBatch,row:CanonicalStagingRow,command:CanonicalCategoryAssignmentCommand):Promise<boolean>{
-  const productVariantId=await resolveValue(client,job,command.productVariant);
-  const productCategoryId=await resolveValue(client,job,command.productCategory);
+async function executeCategoryAssignmentBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly CanonicalCommandItem<CanonicalCategoryAssignmentCommand>[],
+  resolutionContext:CanonicalResolutionContext,
+):Promise<number>{
+  if(!items.length)return 0;
+  await primeCanonicalReferenceCache(
+    client,job,items.flatMap(({command})=>[
+      command.productVariant,command.productCategory,
+    ]),resolutionContext,
+  );
+  const prepared=[] as Array<Readonly<{
+    item:CanonicalCommandItem<CanonicalCategoryAssignmentCommand>;
+    id:string;
+    productVariantId:string;
+    productCategoryId:string;
+    effectiveFrom:string;
+  }>>;
+  const variants=new Set<string>();
+  let duplicateVariant=false;
+  for(const item of items){
+    const productVariantId=await resolveValue(
+      client,job,item.command.productVariant,resolutionContext,
+    );
+    const productCategoryId=await resolveValue(
+      client,job,item.command.productCategory,resolutionContext,
+    );
+    if(typeof productVariantId!=="string"||typeof productCategoryId!=="string"){
+      throw new Error("canonical_category_assignment_reference_missing");
+    }
+    const effectiveFrom=item.command.effectiveFrom
+      ??isoOrNull(item.row.source_updated_at)??"1970-01-01T00:00:00.000Z";
+    const id=deterministicCanonicalId([
+      "category-assignment-v1",job.tenantId,productVariantId,
+      productCategoryId,effectiveFrom,
+    ]);
+    duplicateVariant=variants.has(productVariantId)||duplicateVariant;
+    variants.add(productVariantId);
+    prepared.push({item,id,productVariantId,productCategoryId,effectiveFrom});
+  }
+  if(duplicateVariant){
+    let applied=0;
+    for(const {item} of prepared){
+      if(await executeCategoryAssignment(
+        client,job,item.row,item.command,resolutionContext,
+      ))applied+=1;
+    }
+    return applied;
+  }
+  const records=prepared.map(({item,id,productVariantId,productCategoryId,effectiveFrom})=>({
+    canonical_id:id,
+    source_updated_at:isoOrNull(item.row.source_updated_at)
+      ??isoOrNull(item.row.ingested_at)??new Date(0).toISOString(),
+    source_version:item.row.source_version??null,
+    payload_hash:item.row.payload_hash,
+    batch_id:item.row.payload_batch_id,
+    sync_run_id:item.row.sync_run_id,
+    connection_id:job.connectionId,
+    source_object_type:item.command.sourceObjectType,
+    source_record_id:item.command.sourceRecordId,
+    mapping_version:item.row.mapping_version,
+    product_variant_id:productVariantId,
+    product_category_id:productCategoryId,
+    effective_from:effectiveFrom,
+    tombstone:item.command.tombstone===true,
+  }));
+  const recordset=`jsonb_to_recordset($1::jsonb) as input(
+    canonical_id text,source_updated_at timestamptz,source_version text,
+    payload_hash text,batch_id text,sync_run_id text,connection_id text,
+    source_object_type text,source_record_id text,mapping_version text,
+    product_variant_id text,product_category_id text,effective_from timestamptz,
+    tombstone boolean
+  )`;
+  const claimed=await client.query<{canonical_id:string}>(
+    `with input as materialized (select * from ${recordset})
+     insert into semantic_internal.canonical_record_state (
+       tenant_id,canonical_table,canonical_id,source_updated_at,source_version,
+       payload_hash,batch_id,sync_run_id,connection_id,source_object_type,
+       source_record_id,mapping_version
+     )
+     select $2,'product_category_assignment',input.canonical_id,
+            input.source_updated_at,input.source_version,input.payload_hash,
+            input.batch_id,input.sync_run_id,input.connection_id,
+            input.source_object_type,input.source_record_id,input.mapping_version
+       from input
+     on conflict (tenant_id,canonical_table,canonical_id) do update set
+       source_updated_at=excluded.source_updated_at,
+       source_version=excluded.source_version,payload_hash=excluded.payload_hash,
+       batch_id=excluded.batch_id,sync_run_id=excluded.sync_run_id,
+       connection_id=excluded.connection_id,
+       source_object_type=excluded.source_object_type,
+       source_record_id=excluded.source_record_id,
+       mapping_version=excluded.mapping_version,updated_at=now()
+     where excluded.source_updated_at>=semantic_internal.canonical_record_state.source_updated_at
+       and (
+         excluded.payload_hash<>semantic_internal.canonical_record_state.payload_hash
+         or excluded.source_version is distinct from semantic_internal.canonical_record_state.source_version
+         or excluded.mapping_version is distinct from semantic_internal.canonical_record_state.mapping_version
+       )
+     returning canonical_id`,
+    [JSON.stringify(records),job.tenantId],
+  );
+  const claimedIds=new Set(claimed.rows.map(({canonical_id})=>canonical_id));
+  const eligible=records.filter(({canonical_id})=>claimedIds.has(canonical_id));
+  if(!eligible.length)return 0;
+  await client.query(
+    `with input as materialized (
+       select * from jsonb_to_recordset($1::jsonb) as record(
+         product_variant_id text,product_category_id text,
+         effective_from timestamptz,tombstone boolean
+       )
+     )
+     update core.product_category_assignment as assignment
+        set effective_to=input.effective_from
+       from input
+      where assignment.tenant_id=$2
+        and assignment.product_variant_id=input.product_variant_id
+        and assignment.effective_to is null
+        and (
+          input.tombstone
+          or (
+            assignment.product_category_id<>input.product_category_id
+            and assignment.effective_from<input.effective_from
+          )
+        )`,
+    [JSON.stringify(eligible),job.tenantId],
+  );
+  const live=eligible.filter(({tombstone})=>!tombstone);
+  if(live.length){
+    await client.query(
+      `insert into core.product_category_assignment (
+         tenant_id,id,product_variant_id,product_category_id,effective_from,sync_run_id
+       )
+       select $2,input.canonical_id,input.product_variant_id,
+              input.product_category_id,input.effective_from,input.sync_run_id
+         from jsonb_to_recordset($1::jsonb) as input(
+           canonical_id text,product_variant_id text,product_category_id text,
+           effective_from timestamptz,sync_run_id text
+         )
+       on conflict (tenant_id,id) do nothing`,
+      [JSON.stringify(live),job.tenantId],
+    );
+  }
+  return eligible.length;
+}
+
+async function executeCategoryAssignment(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  row:CanonicalStagingRow,
+  command:CanonicalCategoryAssignmentCommand,
+  resolutionContext?:CanonicalResolutionContext,
+):Promise<boolean>{
+  const productVariantId=await resolveValue(client,job,command.productVariant,resolutionContext);
+  const productCategoryId=await resolveValue(client,job,command.productCategory,resolutionContext);
   if(typeof productVariantId!=="string"||typeof productCategoryId!=="string")throw new Error("canonical_category_assignment_reference_missing");
   const effectiveFrom=command.effectiveFrom??isoOrNull(row.source_updated_at)??"1970-01-01T00:00:00.000Z";
   const id=deterministicCanonicalId(["category-assignment-v1",job.tenantId,productVariantId,productCategoryId,effectiveFrom]);
@@ -1727,6 +2674,149 @@ type ResolvedAuthorityScope=Readonly<{
   type:"account"|"location"|"legal_entity";
   id:string;
 }>;
+
+async function prepareFactAuthorityScopes(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly Omit<PreparedFactItem,"authorityScope">[],
+):Promise<PreparedFactItem[]>{
+  const stockLocationIds=[...new Set(items.flatMap(({item,resolved})=>{
+    if(item.command.table!=="inventory_movement"&&
+       item.command.table!=="inventory_balance_snapshot"&&
+       item.command.table!=="purchase_order_line")return[];
+    const stockLocationId=resolved.stock_location_id;
+    return typeof stockLocationId==="string"&&stockLocationId?[stockLocationId]:[];
+  }))];
+  const locationByStockLocation=new Map<string,string>();
+  if(stockLocationIds.length){
+    const locations=await client.query<{id:string;location_id:string}>(
+      `select id,location_id
+         from core.stock_location
+        where tenant_id=$1 and id=any($2::text[])`,
+      [job.tenantId,stockLocationIds],
+    );
+    for(const location of locations.rows){
+      locationByStockLocation.set(location.id,location.location_id);
+    }
+  }
+  return items.map((item)=>({
+    ...item,
+    authorityScope:resolvedFactAuthorityScope(
+      job,item.item.command,item.resolved,locationByStockLocation,
+    ),
+  }));
+}
+
+function resolvedFactAuthorityScope(
+  job:CanonicalTransformBatch,
+  command:CanonicalUpsertCommand,
+  resolved:Readonly<Record<string,unknown>>,
+  locationByStockLocation:ReadonlyMap<string,string>,
+):ResolvedAuthorityScope{
+  const value=(column:string):unknown=>resolved[column];
+  if(command.table==="finance_journal_line"||command.table==="finance_invoice_line"||
+     command.table==="finance_bank_transaction"){
+    return{
+      type:"legal_entity",
+      id:requiredResolvedScopeId(
+        command.table,"legal_entity_id",value("legal_entity_id"),
+      ),
+    };
+  }
+  if(command.table==="commerce_order"||command.table==="commerce_order_line"||
+     command.table==="commerce_payment"||command.table==="commerce_refund_line"||
+     command.table==="workforce_shift"||command.table==="workforce_time_entry"){
+    return{
+      type:"location",
+      id:requiredResolvedScopeId(command.table,"location_id",value("location_id")),
+    };
+  }
+  if(command.table==="workforce_leave"){
+    const locationId=value("location_id");
+    return typeof locationId==="string"&&locationId
+      ?{type:"location",id:locationId}
+      :{type:"account",id:job.connectionId};
+  }
+  if(command.table==="inventory_movement"||
+     command.table==="inventory_balance_snapshot"||
+     command.table==="purchase_order_line"){
+    const scopedStockLocationId=value("stock_location_id");
+    if((scopedStockLocationId===null||scopedStockLocationId===undefined)&&
+       command.table==="purchase_order_line"){
+      return{type:"account",id:job.connectionId};
+    }
+    const stockLocationId=requiredResolvedScopeId(
+      command.table,"stock_location_id",scopedStockLocationId,
+    );
+    const locationId=locationByStockLocation.get(stockLocationId);
+    if(!locationId){
+      throw new Error(`canonical_authority_scope_missing:${command.table}:location_id`);
+    }
+    return{type:"location",id:locationId};
+  }
+  throw new Error(`canonical_authority_scope_undefined:${command.table}`);
+}
+
+async function assertFactAuthorityBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  prepared:readonly PreparedFactItem[],
+):Promise<void>{
+  const installations=new Map<string,Readonly<{
+    concept:SourceAuthorityConcept;
+    scope_type:ResolvedAuthorityScope["type"];
+    scope_id:string;
+  }>>();
+  const assertions=new Map<string,Readonly<{
+    concept:SourceAuthorityConcept;
+    scope_type:ResolvedAuthorityScope["type"];
+    scope_id:string;
+    effective_at:string;
+  }>>();
+  for(const {item,resolved,authorityScope} of prepared){
+    const concept=item.command.authorityConcept;
+    if(!concept)throw new Error(`canonical_authority_undefined:${item.command.table}`);
+    const installation={
+      concept,scope_type:authorityScope.type,scope_id:authorityScope.id,
+    } as const;
+    installations.set(
+      `${concept}\u001f${authorityScope.type}\u001f${authorityScope.id}`,
+      installation,
+    );
+    const effectiveAt=authorityEffectiveAt(
+      item.command,resolved,undefined,item.row,
+    );
+    assertions.set(
+      `${concept}\u001f${authorityScope.type}\u001f${authorityScope.id}\u001f${effectiveAt}`,
+      {...installation,effective_at:effectiveAt},
+    );
+  }
+  if(installations.size){
+    await client.query(
+      `select core.install_default_source_authority(
+         $2::text,input.concept,input.scope_type,input.scope_id,
+         $3::text,$4::text,$5::timestamptz
+       )
+         from jsonb_to_recordset($1::jsonb) as input(
+           concept text,scope_type text,scope_id text
+         )`,
+      [JSON.stringify([...installations.values()]),job.tenantId,
+        job.connectionId,job.syncRunId,new Date(0).toISOString()],
+    );
+  }
+  if(assertions.size){
+    await client.query(
+      `select core.assert_source_authority(
+         $2::text,input.concept,input.scope_type,input.scope_id,
+         $3::text,input.effective_at
+       )
+         from jsonb_to_recordset($1::jsonb) as input(
+           concept text,scope_type text,scope_id text,effective_at timestamptz
+         )`,
+      [JSON.stringify([...assertions.values()]),job.tenantId,job.connectionId],
+    );
+  }
+}
 
 async function assertAuthority(
   client:PostgresQueryClient,
@@ -1865,6 +2955,101 @@ async function publishCanonicalDimensionAuthorityDefaults(
   }
 }
 
+async function publishCanonicalDimensionAuthorityDefaultsBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  table:CanonicalProjectionTable,
+  canonicalIds:readonly string[],
+):Promise<void>{
+  if(!canonicalIds.length)return;
+  const policies=requireManifest(job.connectorId).sourceAuthority.defaults;
+  for(const policy of policies){
+    if(policy.scope.kind!=="canonical_dimension"||policy.scope.table!==table)continue;
+    for(const concept of policy.concepts){
+      await client.query(
+        `select core.install_default_source_authority(
+           $1::text,$2::text,$3::text,scope.id,$4::text,$5::text,$6::timestamptz
+         )
+           from unnest($7::text[]) as scope(id)`,
+        [job.tenantId,concept,policy.scope.scopeType,job.connectionId,
+          job.syncRunId,new Date(0).toISOString(),canonicalIds],
+      );
+    }
+  }
+}
+
+async function upsertDirectEntityLinksBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  prepared:readonly PreparedDimensionItem[],
+):Promise<void>{
+  const records=prepared.flatMap(({item,id})=>{
+    const entityType=item.command.entityType;
+    if(!entityType)return[];
+    const linkId=deterministicCanonicalId([
+      "entity-link-v1",job.tenantId,entityType,job.connectionId,
+      item.command.sourceObjectType,item.command.sourceRecordId,
+    ]);
+    const tombstonedAt=item.command.tombstone?thisInstant(item.row):null;
+    return[{
+      link_id:linkId,
+      entity_type:entityType,
+      canonical_entity_id:id,
+      source_object_type:item.command.sourceObjectType,
+      source_record_id:item.command.sourceRecordId,
+      effective_at:thisInstant(item.row),
+      replacement_link_id:item.command.tombstone?null:linkId,
+      tombstone:item.command.tombstone===true,
+      tombstoned_at:tombstonedAt,
+      evidence:{payload_hash:item.row.payload_hash,mapping_version:item.row.mapping_version},
+      sync_run_id:item.row.sync_run_id,
+    }];
+  });
+  if(!records.length)return;
+  const recordset=`jsonb_to_recordset($1::jsonb) as input(
+    link_id text,entity_type text,canonical_entity_id text,
+    source_object_type text,source_record_id text,effective_at timestamptz,
+    replacement_link_id text,tombstone boolean,tombstoned_at timestamptz,
+    evidence jsonb,sync_run_id text
+  )`;
+  await client.query(
+    `with input as materialized (select * from ${recordset})
+     update core.entity_source_link as link
+        set valid_to=greatest(input.effective_at,link.valid_from+interval '1 microsecond'),
+            match_status='superseded',superseded_by=input.replacement_link_id
+       from input
+      where link.tenant_id=$2
+        and link.entity_type=input.entity_type
+        and link.connection_id=$3
+        and link.source_object_type=input.source_object_type
+        and link.source_record_id=input.source_record_id
+        and link.valid_to is null
+        and (link.link_id<>input.link_id or input.tombstone)`,
+    [JSON.stringify(records),job.tenantId,job.connectionId],
+  );
+  await client.query(
+    `with input as materialized (select * from ${recordset})
+     insert into core.entity_source_link (
+       tenant_id,link_id,entity_type,canonical_entity_id,connection_id,
+       source_object_type,source_record_id,match_method,match_status,
+       confidence_band,evidence,valid_from,valid_to,sync_run_id
+     )
+     select $2,input.link_id,input.entity_type,input.canonical_entity_id,$3,
+            input.source_object_type,input.source_record_id,'external_id',
+            case when input.tombstoned_at is null then 'accepted' else 'superseded' end,
+            'high',input.evidence,'1970-01-01T00:00:00Z',
+            input.tombstoned_at,input.sync_run_id
+       from input
+     on conflict (tenant_id,link_id) do update set
+       canonical_entity_id=excluded.canonical_entity_id,
+       match_method='external_id',match_status=excluded.match_status,
+       confidence_band='high',evidence=excluded.evidence,
+       valid_to=excluded.valid_to,confirmed_by=null,superseded_by=null,
+       sync_run_id=excluded.sync_run_id`,
+    [JSON.stringify(records),job.tenantId,job.connectionId],
+  );
+}
+
 async function upsertDirectEntityLink(client:PostgresQueryClient,job:CanonicalTransformBatch,row:CanonicalStagingRow,command:CanonicalUpsertCommand,canonicalEntityId:string):Promise<void>{
   const entityType=command.entityType as CanonicalEntityType;
   const linkId=deterministicCanonicalId(["entity-link-v1",job.tenantId,entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId]);
@@ -1899,6 +3084,56 @@ async function upsertDirectEntityLink(client:PostgresQueryClient,job:CanonicalTr
   );
 }
 
+async function upsertFactObservationsBatch(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  table:CanonicalProjectionTable,
+  prepared:readonly PreparedFactItem[],
+):Promise<void>{
+  if(table!=="commerce_order"&&table!=="commerce_order_line")return;
+  const records=prepared.map(({item,id})=>({
+    id,
+    source_object_type:item.command.sourceObjectType,
+    source_record_id:item.command.sourceRecordId,
+    valid_to:item.command.tombstone?thisInstant(item.row):null,
+    sync_run_id:item.row.sync_run_id,
+  }));
+  if(!records.length)return;
+  if(table==="commerce_order"){
+    await client.query(
+      `insert into core.order_source_observation (
+         tenant_id,order_id,connection_id,source_object_type,source_record_id,
+         relationship,match_method,confidence_band,valid_from,valid_to,sync_run_id
+       )
+       select $2,input.id,$3,input.source_object_type,input.source_record_id,
+              'authoritative','external_id','high','1970-01-01T00:00:00Z',
+              input.valid_to,input.sync_run_id
+         from jsonb_to_recordset($1::jsonb) as input(
+           id text,source_object_type text,source_record_id text,
+           valid_to timestamptz,sync_run_id text
+         )
+       on conflict do nothing`,
+      [JSON.stringify(records),job.tenantId,job.connectionId],
+    );
+    return;
+  }
+  await client.query(
+    `insert into core.order_line_source_observation (
+       tenant_id,order_line_id,connection_id,source_object_type,
+       source_record_id,source_line_ref,relationship,allocation,
+       match_method,confidence_band,sync_run_id
+     )
+     select $2,input.id,$3,input.source_object_type,input.source_record_id,
+            input.source_record_id,'authoritative',1,'external_id','high',
+            input.sync_run_id
+       from jsonb_to_recordset($1::jsonb) as input(
+         id text,source_object_type text,source_record_id text,sync_run_id text
+       )
+     on conflict do nothing`,
+    [JSON.stringify(records),job.tenantId,job.connectionId],
+  );
+}
+
 async function upsertOrderObservation(client:PostgresQueryClient,job:CanonicalTransformBatch,row:CanonicalStagingRow,command:CanonicalUpsertCommand,orderId:string):Promise<void>{
   await client.query(
     `insert into core.order_source_observation (tenant_id,order_id,connection_id,source_object_type,source_record_id,relationship,match_method,confidence_band,valid_from,valid_to,sync_run_id)
@@ -1926,16 +3161,84 @@ async function executeEventLink(client:PostgresQueryClient,job:CanonicalTransfor
 
 function thisInstant(row:CanonicalStagingRow):string{return isoOrNull(row.source_updated_at)??isoOrNull(row.ingested_at)??new Date(0).toISOString();}
 
-async function persistIdentityHint(client:PostgresQueryClient,job:CanonicalTransformBatch,row:CanonicalStagingRow,command:CanonicalIdentityHintCommand):Promise<void>{
-  const observationId=deterministicCanonicalId(["identity-observation-v1",job.tenantId,command.entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId]);
-  const keys=Object.fromEntries(Object.entries(command.deterministicKeys).filter((entry):entry is [string,string]=>Boolean(entry[1])).map(([key,value])=>[key,identityDigest(job.tenantId,value)]));
-  const evidenceRefs=normalizedIdentityEvidenceRefs(command);
-  const corroboratingScopeRef=normalizedCorroboratingScopeRef(command);
+async function persistIdentityHints(
+  client:PostgresQueryClient,
+  job:CanonicalTransformBatch,
+  items:readonly CanonicalCommandItem<CanonicalIdentityHintCommand>[],
+):Promise<void>{
+  if(!items.length)return;
+  const observationIds=new Set<string>();
+  const records=items.map(({row,command})=>{
+    const observationId=deterministicCanonicalId([
+      "identity-observation-v1",job.tenantId,command.entityType,
+      job.connectionId,command.sourceObjectType,command.sourceRecordId,
+    ]);
+    if(observationIds.has(observationId))throw new Error("identity_observation_batch_duplicate");
+    observationIds.add(observationId);
+    const keys=Object.fromEntries(
+      Object.entries(command.deterministicKeys)
+        .filter((entry):entry is [string,string]=>Boolean(entry[1]))
+        .map(([key,value])=>[key,identityDigest(job.tenantId,value)]),
+    );
+    const evidenceRefs=normalizedIdentityEvidenceRefs(command);
+    const corroboratingScopeRef=normalizedCorroboratingScopeRef(command);
+    return{
+      observation_id:observationId,
+      entity_type:command.entityType,
+      connection_id:job.connectionId,
+      source_object_type:command.sourceObjectType,
+      source_record_id:command.sourceRecordId,
+      external_id_digest:command.externalId
+        ?identityDigest(
+          job.tenantId,`${job.connectorId}:${command.sourceObjectType}:${command.externalId}`,
+        ):null,
+      deterministic_key_digests:keys,
+      normalized_name_digest:command.normalizedName
+        ?identityDigest(job.tenantId,command.normalizedName):null,
+      corroborating_scope_digest:corroboratingScopeRef
+        ?null
+        :command.corroboratingScope
+          ?identityDigest(job.tenantId,`${job.connectorId}:${command.corroboratingScope}`)
+          :null,
+      corroborating_scope_ref:corroboratingScopeRef,
+      evidence_refs:evidenceRefs,
+      linkable:command.evidenceOnly!==true,
+      sync_run_id:row.sync_run_id,
+      source_updated_at:isoOrNull(row.source_updated_at),
+      active:!row.tombstone,
+    };
+  });
   await client.query(
-    `insert into semantic_internal.identity_observation (tenant_id,observation_id,entity_type,connection_id,source_object_type,source_record_id,external_id_digest,deterministic_key_digests,normalized_name_digest,corroborating_scope_digest,corroborating_scope_ref,evidence_refs,linkable,sync_run_id,source_updated_at,active)
-     values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16)
-     on conflict (tenant_id,observation_id) do update set external_id_digest=excluded.external_id_digest,deterministic_key_digests=excluded.deterministic_key_digests,normalized_name_digest=excluded.normalized_name_digest,corroborating_scope_digest=excluded.corroborating_scope_digest,corroborating_scope_ref=excluded.corroborating_scope_ref,evidence_refs=excluded.evidence_refs,linkable=excluded.linkable,sync_run_id=excluded.sync_run_id,source_updated_at=excluded.source_updated_at,active=excluded.active`,
-    [job.tenantId,observationId,command.entityType,job.connectionId,command.sourceObjectType,command.sourceRecordId,command.externalId?identityDigest(job.tenantId,`${job.connectorId}:${command.sourceObjectType}:${command.externalId}`):null,JSON.stringify(keys),command.normalizedName?identityDigest(job.tenantId,command.normalizedName):null,corroboratingScopeRef?null:command.corroboratingScope?identityDigest(job.tenantId,`${job.connectorId}:${command.corroboratingScope}`):null,corroboratingScopeRef?JSON.stringify(corroboratingScopeRef):null,JSON.stringify(evidenceRefs),command.evidenceOnly!==true,row.sync_run_id,isoOrNull(row.source_updated_at),!row.tombstone],
+    `insert into semantic_internal.identity_observation (
+       tenant_id,observation_id,entity_type,connection_id,source_object_type,
+       source_record_id,external_id_digest,deterministic_key_digests,
+       normalized_name_digest,corroborating_scope_digest,corroborating_scope_ref,
+       evidence_refs,linkable,sync_run_id,source_updated_at,active
+     )
+     select $2,input.observation_id,input.entity_type,input.connection_id,
+            input.source_object_type,input.source_record_id,input.external_id_digest,
+            input.deterministic_key_digests,input.normalized_name_digest,
+            input.corroborating_scope_digest,input.corroborating_scope_ref,
+            input.evidence_refs,input.linkable,input.sync_run_id,
+            input.source_updated_at,input.active
+       from jsonb_to_recordset($1::jsonb) as input(
+         observation_id text,entity_type text,connection_id text,
+         source_object_type text,source_record_id text,external_id_digest text,
+         deterministic_key_digests jsonb,normalized_name_digest text,
+         corroborating_scope_digest text,corroborating_scope_ref jsonb,
+         evidence_refs jsonb,linkable boolean,sync_run_id text,
+         source_updated_at timestamptz,active boolean
+       )
+     on conflict (tenant_id,observation_id) do update set
+       external_id_digest=excluded.external_id_digest,
+       deterministic_key_digests=excluded.deterministic_key_digests,
+       normalized_name_digest=excluded.normalized_name_digest,
+       corroborating_scope_digest=excluded.corroborating_scope_digest,
+       corroborating_scope_ref=excluded.corroborating_scope_ref,
+       evidence_refs=excluded.evidence_refs,linkable=excluded.linkable,
+       sync_run_id=excluded.sync_run_id,
+       source_updated_at=excluded.source_updated_at,active=excluded.active`,
+    [JSON.stringify(records),job.tenantId],
   );
 }
 
@@ -2132,6 +3435,26 @@ function canonicalDateBounds(commands:readonly CanonicalProjectionCommand[],hist
   return{from:dates[0]!,to:dates.at(-1)!};
 }
 
+function requiresTenantDayMartRefresh(
+  commands:readonly CanonicalProjectionCommand[],
+):boolean{
+  return commands.some((command)=>command.kind==="fact"&&(
+    command.table==="commerce_order_line"||
+    command.table==="commerce_refund_line"||
+    command.table==="workforce_shift"||
+    command.table==="workforce_time_entry"
+  ));
+}
+
+function requiresSettlementLinkRefresh(
+  commands:readonly CanonicalProjectionCommand[],
+):boolean{
+  return commands.some((command)=>command.kind==="fact"&&(
+    command.table==="commerce_payment"||
+    command.table==="finance_bank_transaction"
+  ));
+}
+
 async function refreshMarts(client:PostgresQueryClient,tenantId:string,bounds:DateBounds):Promise<void>{
   const finalDay=new Date(`${bounds.to}T00:00:00.000Z`);
   let cursor=new Date(`${bounds.from}T00:00:00.000Z`);
@@ -2252,8 +3575,16 @@ async function projectReadiness(client:PostgresQueryClient,row:ReadinessProjecti
   const state=worst==="blocked"?"blocked":worst==="degraded"?"degraded":
     worst==="incomplete"?(anyQueryable?"ready_partial":"transforming"):
       complete?"ready_complete":"ready_partial";
-  const progress=worst==="blocked"||worst==="degraded"?Number(row.progress):complete?1:
-    Math.min(0.95,Math.max(Number(row.progress),completedCount/required.length));
+  // Floor at the readiness progress the sync worker measured against the
+  // sealed phase plan; a fixed batch value here (historically 0.8) slammed the
+  // bar to 80% on the first partial transform regardless of real coverage.
+  const existingProgressResult=await client.query<{progress:string|number|null}>(
+    "select progress from control_plane.readiness where tenant_id=$1 and connection_id=$2 and domain=$3",
+    [row.tenant_id,row.connection_id,row.domain],
+  );
+  const existingProgress=Math.min(1,Math.max(0,Number(existingProgressResult.rows[0]?.progress??0)||0));
+  const progress=worst==="blocked"||worst==="degraded"?existingProgress:complete?1:
+    Math.min(0.95,Math.max(existingProgress,completedCount/required.length));
   const progressiveFrom=progressiveQueryable&&progressiveActive
     ? progressiveResult.rows.map((coverage)=>requiredTimestamp(coverage.covered_from,"progressive start")).sort().at(-1)??null:null;
   const progressiveTo=progressiveQueryable&&progressiveActive

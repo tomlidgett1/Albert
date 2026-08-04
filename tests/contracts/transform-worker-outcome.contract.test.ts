@@ -89,6 +89,23 @@ test("retry outcome persists a bounded code and rejects arbitrary exception leak
   assert.doesNotMatch(JSON.stringify({outcome,failure:harness.persistedFailure()}),/sk-super-secret|account@example\.com|Bearer/u);
 });
 
+test("database statement timeouts use bounded evidence and a non-thrashing retry delay",async()=>{
+  const timeout=Object.assign(new Error("canceling statement due to statement timeout"),{
+    code:"57014",
+  });
+  const harness=processorHarness({failure:timeout,queueOutcome:"retry_wait"});
+
+  assert.deepEqual(await harness.processor.process(claim),{
+    status:"retry_scheduled",
+    failure:{code:"database_statement_timeout",retryable:true},
+    retryDelaySeconds:300,
+  });
+  assert.deepEqual(harness.persistedFailure(),{
+    code:"database_statement_timeout",
+    retryable:true,
+  });
+});
+
 test("permanent transform failures return failed with no message detail",async()=>{
   const harness=processorHarness({
     failure:new Error("canonical_mapping_version_mismatch:Bearer sk-never-persist"),

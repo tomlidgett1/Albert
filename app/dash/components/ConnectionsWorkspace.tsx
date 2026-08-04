@@ -13,7 +13,7 @@ import {
 import Image from "next/image";
 import styles from "../dash.module.css";
 
-export const CONNECTION_VIEWS = ["apps", "readiness", "review"] as const;
+export const CONNECTION_VIEWS = ["apps", "review"] as const;
 export type ConnectionViewId = (typeof CONNECTION_VIEWS)[number];
 
 export const READINESS_STATES = [
@@ -160,6 +160,7 @@ export interface ConnectionsWorkspaceProps {
   notice?: Readonly<{
     kind: "success" | "info" | "error";
     message: string;
+    detail?: string;
   }> | null;
   initialView?: ConnectionViewId;
   canManage?: boolean;
@@ -231,14 +232,46 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
 
 const viewLabels: Record<ConnectionViewId, string> = {
   apps: "Apps",
-  readiness: "Readiness",
   review: "Review",
 };
 
-const queryableReadinessStates = new Set<ReadinessState>([
-  "ready_partial",
-  "ready_complete",
+const activeSyncStates = new Set<ReadinessState>([
+  "syncing",
+  "transforming",
+  "validating",
 ]);
+
+export function connectionSyncSummary(domains: readonly DomainReadiness[]) {
+  if (domains.length === 0) {
+    return { progress: undefined as number | undefined, state: "syncing" as ReadinessState };
+  }
+
+  const progressValues = domains.map((domain) => {
+    if (typeof domain.progress === "number") return clampProgress(domain.progress);
+    if (domain.state === "ready_complete") return 100;
+    if (domain.state === "not_started") return 0;
+    return undefined;
+  });
+  const known = progressValues.filter((value): value is number => typeof value === "number");
+  const progress = known.length
+    ? Math.round(known.reduce((total, value) => total + value, 0) / known.length)
+    : undefined;
+
+  const priority: readonly ReadinessState[] = [
+    "blocked",
+    "degraded",
+    "syncing",
+    "transforming",
+    "validating",
+    "ready_partial",
+    "not_started",
+    "ready_complete",
+  ];
+  const state = priority.find((candidate) => domains.some((domain) => domain.state === candidate))
+    ?? "syncing";
+
+  return { progress, state };
+}
 
 function clampProgress(value: number) {
   return Math.min(100, Math.max(0, Math.round(value)));
@@ -256,21 +289,25 @@ function ProgressBar({
   value,
   label,
   state,
+  size = "default",
 }: {
   value?: number;
   label: string;
   state: ReadinessState;
+  size?: "default" | "fat";
 }) {
   const determinate = typeof value === "number";
   const safeValue = determinate ? clampProgress(value) : undefined;
   const progressStyle = determinate
     ? ({ "--connections-progress": `${safeValue}%` } as CSSProperties)
     : undefined;
+  const animating = !determinate || activeSyncStates.has(state) || (safeValue ?? 100) < 100;
 
   return (
     <div
-      className={styles.connectionsProgressTrack}
+      className={size === "fat" ? styles.connectionsProgressTrackFat : styles.connectionsProgressTrack}
       data-state={state}
+      data-animating={animating || undefined}
       role="progressbar"
       aria-label={label}
       aria-valuemin={determinate ? 0 : undefined}
@@ -281,10 +318,192 @@ function ProgressBar({
       <span
         className={styles.connectionsProgressFill}
         data-indeterminate={!determinate || undefined}
+        data-sheen={animating || undefined}
         style={progressStyle}
       />
     </div>
   );
+}
+
+export function ConnectionSyncProgress({
+  accountLabel,
+  domains,
+  popupPlacement = "below",
+  layout = "card",
+}: {
+  accountLabel: string;
+  domains: readonly DomainReadiness[];
+  popupPlacement?: "above" | "below";
+  layout?: "card" | "sidebar";
+}) {
+  const summary = connectionSyncSummary(domains);
+
+  return (
+    <div
+      className={layout === "sidebar" ? styles.sidebarSyncProgress : styles.connectionsCardSync}
+      data-popup-placement={popupPlacement}
+    >
+      <div className={layout === "sidebar" ? styles.sidebarSyncBar : styles.connectionsCardSyncBar}>
+        <ProgressBar
+          value={summary.progress}
+          state={summary.state}
+          size="fat"
+          label={`${accountLabel} sync progress`}
+        />
+      </div>
+
+      <div className={styles.connectionsCardSyncPopup} role="tooltip">
+        {domains.length === 0 ? (
+          <p className={styles.connectionsCardSyncEmpty}>
+            Domains appear here once the first sync begins.
+          </p>
+        ) : (
+          <ul className={styles.connectionsCardSyncDomains}>
+            {domains.map((domain) => {
+              const showBar =
+                typeof domain.progress === "number" ||
+                activeSyncStates.has(domain.state) ||
+                domain.state === "ready_partial" ||
+                domain.state === "ready_complete" ||
+                domain.state === "not_started";
+              return (
+                <li key={domain.id} className={styles.connectionsCardSyncDomain} data-state={domain.state}>
+                  <div className={styles.connectionsCardSyncDomainTopline}>
+                    <span>{domain.label}</span>
+                    <small>{readinessStateLabels[domain.state]}</small>
+                  </div>
+                  {showBar ? (
+                    <div className={styles.connectionsCardSyncDomainProgress}>
+                      <ProgressBar
+                        value={domain.progress}
+                        state={domain.state}
+                        size="fat"
+                        label={`${accountLabel} ${domain.label} progress`}
+                      />
+                      <em>
+                        {typeof domain.progress === "number"
+                          ? `${clampProgress(domain.progress)}%`
+                          : activeSyncStates.has(domain.state)
+                            ? "Working"
+                            : domain.state === "ready_complete"
+                              ? "100%"
+                              : "–"}
+                      </em>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function collectWorkspaceSyncDomains(
+  providers: readonly ConnectionProviderData[],
+): readonly DomainReadiness[] {
+  const accounts = providers.flatMap((provider) =>
+    provider.connections.map((connection) => ({
+      connection,
+      providerName: provider.name,
+    })),
+  );
+  if (accounts.length === 0) return Object.freeze([]);
+  if (accounts.length === 1) return accounts[0]!.connection.domains;
+  return Object.freeze(
+    accounts.flatMap(({ connection, providerName }) => {
+      const accountLabel = connection.auth.accountName || providerName;
+      return connection.domains.map((domain) => ({
+        ...domain,
+        id: `${connection.connectionId}:${domain.id}`,
+        label: `${accountLabel} · ${domain.label}`,
+      }));
+    }),
+  );
+}
+
+export function workspaceSyncIsActive(domains: readonly DomainReadiness[]): boolean {
+  return domains.some(
+    (domain) =>
+      activeSyncStates.has(domain.state) ||
+      domain.state === "ready_partial" ||
+      domain.state === "not_started" ||
+      (typeof domain.progress === "number" && domain.progress < 100),
+  );
+}
+
+const commentaryStatePriority: Readonly<Record<ReadinessState, number>> = Object.freeze({
+  blocked: 0,
+  degraded: 1,
+  syncing: 2,
+  transforming: 3,
+  validating: 4,
+  ready_partial: 5,
+  not_started: 6,
+  ready_complete: 7,
+});
+
+/** Short rotating status lines for the sidebar sync strip. */
+export function buildSidebarSyncCommentary(
+  domains: readonly DomainReadiness[],
+  syncSummary?: Readonly<{ detail: string; latestActivityAt?: string }>,
+): readonly string[] {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  const push = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    lines.push(trimmed);
+  };
+
+  const ordered = [...domains].sort(
+    (left, right) =>
+      commentaryStatePriority[left.state] - commentaryStatePriority[right.state],
+  );
+
+  for (const domain of ordered) {
+    const complete =
+      domain.state === "ready_complete" &&
+      (typeof domain.progress !== "number" || domain.progress >= 100);
+    if (complete) continue;
+
+    const percent =
+      typeof domain.progress === "number" ? ` · ${clampProgress(domain.progress)}%` : "";
+    push(`${domain.label} · ${readinessStateLabels[domain.state]}${percent}`);
+
+    if (domain.watermark?.label) {
+      push(`${domain.label} · ${domain.watermark.label}`);
+    }
+
+    const genericDetail = domain.state.replaceAll("_", " ");
+    if (
+      domain.detail &&
+      domain.detail !== genericDetail &&
+      domain.detail !== readinessStateLabels[domain.state]
+    ) {
+      push(`${domain.label} · ${domain.detail}`);
+    }
+  }
+
+  const finished = domains.filter((domain) => domain.state === "ready_complete");
+  if (finished.length > 0 && finished.length < domains.length) {
+    push(`${finished.length} of ${domains.length} domains ready`);
+  }
+
+  if (syncSummary?.detail) push(syncSummary.detail);
+
+  if (lines.length === 0) {
+    push(
+      domains.length > 0
+        ? "All connected domains are ready."
+        : "Connect a source to begin syncing.",
+    );
+  }
+
+  return Object.freeze(lines);
 }
 
 function ProviderLogo({ provider }: { provider: ConnectionProviderData }) {
@@ -328,7 +547,9 @@ function ConnectionsWorkspaceStateful({
   onDisconnect,
   onRetry,
 }: ConnectionsWorkspaceProps) {
-  const [activeView, setActiveView] = useState<ConnectionViewId>(initialView);
+  const [activeView, setActiveView] = useState<ConnectionViewId>(
+    initialView === "review" ? "review" : "apps",
+  );
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
   const tabListRef = useRef<HTMLDivElement>(null);
   const componentId = useId().replaceAll(":", "");
@@ -360,15 +581,6 @@ function ConnectionsWorkspaceStateful({
     return undefined;
   }, [data.providers, managedConnectionId]);
 
-  const allDomains = useMemo(
-    () => data.providers.flatMap((provider) =>
-      provider.connections.flatMap((connection) => connection.domains),
-    ),
-    [data.providers],
-  );
-  const readyDomainCount = allDomains.filter((domain) =>
-    queryableReadinessStates.has(domain.state),
-  ).length;
   const openQuestionCount = data.blockingQuestions.filter(
     (question) => !answers[question.id],
   ).length;
@@ -539,10 +751,6 @@ function ConnectionsWorkspaceStateful({
             query-ready data.
           </p>
         </div>
-        <div className={styles.connectionsTenantMeta}>
-          <span>{data.tenantName}</span>
-          <small>{data.timezone}</small>
-        </div>
       </div>
 
       {status.kind !== "ready" ? (
@@ -561,7 +769,12 @@ function ConnectionsWorkspaceStateful({
       {notice ? (
         <div className={styles.connectionsNotice} data-kind={notice.kind} role={notice.kind === "error" ? "alert" : "status"}>
           <span aria-hidden="true">{notice.kind === "success" ? "✓" : notice.kind === "error" ? "!" : "✦"}</span>
-          <p>{notice.message}</p>
+          <div className={styles.connectionsNoticeBody}>
+            <p>{notice.message}</p>
+            {notice.detail ? (
+              <pre className={styles.connectionsNoticeDetail}>{notice.detail}</pre>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -616,33 +829,6 @@ function ConnectionsWorkspaceStateful({
           aria-labelledby={`${componentId}-apps-tab`}
           tabIndex={0}
         >
-          <section className={styles.connectionsSyncSummary} aria-labelledby={`${componentId}-sync-title`}>
-            <div className={styles.connectionsSyncSummaryCopy}>
-              <p className={styles.connectionsSectionEyebrow}>PROGRESSIVE SYNC</p>
-              <h3 id={`${componentId}-sync-title`}>
-                {allDomains.length > 0
-                  ? `${readyDomainCount} of ${allDomains.length} domains are queryable`
-                  : "Connect a source to start preparing domains"}
-              </h3>
-              <p>{data.syncSummary.detail}</p>
-            </div>
-            <div className={styles.connectionsSyncSummaryProgress}>
-              <div>
-                <strong>{clampProgress(data.syncSummary.progress)}%</strong>
-                <span>
-                  {data.syncSummary.latestActivityAt
-                    ? `Updated ${formatLocalTime(data.syncSummary.latestActivityAt, data.timezone)}`
-                    : "Waiting for the first sync"}
-                </span>
-              </div>
-              <ProgressBar
-                value={data.syncSummary.progress}
-                state="syncing"
-                label="Overall setup progress"
-              />
-            </div>
-          </section>
-
           {data.oauthSelections?.map((selection) => (
             <section className={styles.connectionsAccountSelection} key={selection.oauthSessionId} aria-labelledby={`${componentId}-${selection.oauthSessionId}-title`}>
               <div>
@@ -683,89 +869,87 @@ function ConnectionsWorkspaceStateful({
                   <div role="list" aria-label={`${provider.name} accounts`}>
                     {provider.connections.length === 0 ? (
                       <article className={styles.connectionsProviderRow} role="listitem">
-                        <div className={styles.connectionsProviderIdentity}>
-                          <ProviderLogo provider={provider} />
-                          <div className={styles.connectionsProviderCopy}>
-                            <div className={styles.connectionsProviderTitleRow}>
-                              <h3>{provider.name}</h3>
-                              <span className={styles.connectionsAuthStatus} data-auth-state="not_connected">
-                                <i aria-hidden="true" />
-                                Not connected
-                              </span>
+                        <div className={styles.connectionsProviderMain}>
+                          <div className={styles.connectionsProviderIdentity}>
+                            <ProviderLogo provider={provider} />
+                            <div className={styles.connectionsProviderCopy}>
+                              <div className={styles.connectionsProviderTitleRow}>
+                                <h3>{provider.name}</h3>
+                                <span className={styles.connectionsAuthStatus} data-auth-state="not_connected">
+                                  <i aria-hidden="true" />
+                                  Not connected
+                                </span>
+                              </div>
                             </div>
-                            <p>{provider.description}</p>
-                            <small>{provider.connectDetail}</small>
                           </div>
-                        </div>
-                        <div className={styles.connectionsProviderActions}>
-                          <button
-                            className={styles.connectionsProviderActionPrimary}
-                            type="button"
-                            aria-busy={selectionInProgress}
-                            disabled={selectionInProgress || !mutationsEnabled || !onConnect}
-                            title={disabledActionTitle}
-                            onClick={() => onConnect?.(provider.id)}
-                          >
-                            {selectionInProgress ? "Choosing account…" : "Connect"}
-                          </button>
+                          <div className={styles.connectionsProviderActions}>
+                            <button
+                              className={styles.connectionsProviderActionPrimary}
+                              type="button"
+                              aria-busy={selectionInProgress}
+                              disabled={selectionInProgress || !mutationsEnabled || !onConnect}
+                              title={disabledActionTitle}
+                              onClick={() => onConnect?.(provider.id)}
+                            >
+                              {selectionInProgress ? "Choosing account…" : "Connect"}
+                            </button>
+                          </div>
                         </div>
                       </article>
                     ) : (
                       provider.connections.map((connection) => {
                         const authorizing = connection.auth.state === "authorizing";
-                        const providerReadyCount = connection.domains.filter((domain) =>
-                          queryableReadinessStates.has(domain.state),
-                        ).length;
+                        const accountLabel = connection.auth.accountName || provider.name;
                         return (
                           <article
                             className={styles.connectionsProviderRow}
                             key={connection.connectionId}
                             role="listitem"
                             data-connection-id={connection.connectionId}
+                            data-has-sync={connection.domains.length > 0 || authorizing || undefined}
                           >
-                            <div className={styles.connectionsProviderIdentity}>
-                              <ProviderLogo provider={provider} />
-                              <div className={styles.connectionsProviderCopy}>
-                                <div className={styles.connectionsProviderTitleRow}>
-                                  <h3>{provider.name}</h3>
-                                  <span
-                                    className={styles.connectionsAuthStatus}
-                                    data-auth-state={connection.auth.state}
-                                  >
-                                    <i aria-hidden="true" />
-                                    {connection.auth.label}
-                                  </span>
+                            <div className={styles.connectionsProviderMain}>
+                              <div className={styles.connectionsProviderIdentity}>
+                                <ProviderLogo provider={provider} />
+                                <div className={styles.connectionsProviderCopy}>
+                                  <div className={styles.connectionsProviderTitleRow}>
+                                    <h3>{provider.name}</h3>
+                                    <span
+                                      className={styles.connectionsAuthStatus}
+                                      data-auth-state={connection.auth.state}
+                                    >
+                                      <i aria-hidden="true" />
+                                      {connection.auth.label}
+                                    </span>
+                                  </div>
                                 </div>
-                                <p>{provider.description}</p>
-                                <small>
-                                  {connection.auth.accountName || "Connected account"} · {connection.auth.label}
-                                  {connection.domains.length > 0
-                                    ? ` · ${providerReadyCount} of ${connection.domains.length} domains queryable`
-                                    : ""}
-                                </small>
                               </div>
-                            </div>
-                            <div className={styles.connectionsProviderActions}>
-                              <button
-                                className={styles.connectionsProviderActionSecondary}
-                                type="button"
-                                aria-busy={authorizing}
-                                disabled={
-                                  authorizing ||
-                                  !mutationsEnabled ||
-                                  (!onManage && !onConnect && !onDisconnect)
-                                }
-                                title={disabledActionTitle}
-                                onClick={() => {
-                                  if (onManage) onManage(connection.connectionId);
-                                  else {
-                                    setManagedConnectionId(connection.connectionId);
-                                    setConfirmDisconnect(false);
+                              <ConnectionSyncProgress
+                                accountLabel={accountLabel}
+                                domains={connection.domains}
+                              />
+                              <div className={styles.connectionsProviderActions}>
+                                <button
+                                  className={styles.connectionsProviderActionSecondary}
+                                  type="button"
+                                  aria-busy={authorizing}
+                                  disabled={
+                                    authorizing ||
+                                    !mutationsEnabled ||
+                                    (!onManage && !onConnect && !onDisconnect)
                                   }
-                                }}
-                              >
-                                {authorizing ? "Authorizing…" : "Manage"}
-                              </button>
+                                  title={disabledActionTitle}
+                                  onClick={() => {
+                                    if (onManage) onManage(connection.connectionId);
+                                    else {
+                                      setManagedConnectionId(connection.connectionId);
+                                      setConfirmDisconnect(false);
+                                    }
+                                  }}
+                                >
+                                  {authorizing ? "Authorizing…" : "Manage"}
+                                </button>
+                              </div>
                             </div>
                           </article>
                         );
@@ -788,117 +972,6 @@ function ConnectionsWorkspaceStateful({
                 </section>
               );
             })}
-          </div>
-        </div>
-      ) : null}
-
-      {activeView === "readiness" ? (
-        <div
-          id={`${componentId}-readiness-panel`}
-          className={styles.connectionsViewPanel}
-          role="tabpanel"
-          aria-labelledby={`${componentId}-readiness-tab`}
-          tabIndex={0}
-        >
-          <div className={styles.connectionsSectionIntro}>
-            <div>
-              <p className={styles.connectionsSectionEyebrow}>DOMAIN READINESS</p>
-              <h3>Recent value first, deep history next</h3>
-            </div>
-            <p>
-              Every domain advances independently. Partial and degraded states are disclosed to
-              Albert with each answer.
-            </p>
-          </div>
-
-          <div className={styles.connectionsReadinessGroups}>
-            {data.providers.map((provider) => provider.connections.length === 0
-              ? (
-                <section
-                  className={styles.connectionsReadinessGroup}
-                  key={provider.id}
-                  aria-labelledby={`${componentId}-${provider.id}-readiness-title`}
-                >
-                  <div className={styles.connectionsReadinessGroupHeader}>
-                    <ProviderLogo provider={provider} />
-                    <div>
-                      <h3 id={`${componentId}-${provider.id}-readiness-title`}>{provider.name}</h3>
-                      <p>{provider.connectDetail}</p>
-                    </div>
-                  </div>
-                  <div className={styles.connectionsDomainList}>
-                    <p className={styles.connectionsEmptyState}>No domains are available until this source is connected and its first sync begins.</p>
-                  </div>
-                </section>
-              )
-              : provider.connections.map((connection) => {
-                const accountLabel = connection.auth.accountName || `${provider.name} account`;
-                const authDetail = connection.auth.detail === accountLabel
-                  ? ""
-                  : ` · ${connection.auth.detail}`;
-                return (
-                  <section
-                    className={styles.connectionsReadinessGroup}
-                    key={connection.connectionId}
-                    aria-labelledby={`${componentId}-${connection.connectionId}-readiness-title`}
-                    data-connection-id={connection.connectionId}
-                  >
-                    <div className={styles.connectionsReadinessGroupHeader}>
-                      <ProviderLogo provider={provider} />
-                      <div>
-                        <h3 id={`${componentId}-${connection.connectionId}-readiness-title`}>{provider.name}</h3>
-                        <p>{accountLabel} · {connection.auth.label}{authDetail}</p>
-                      </div>
-                    </div>
-                    <div
-                      className={styles.connectionsDomainList}
-                      role={connection.domains.length > 0 ? "list" : undefined}
-                    >
-                      {connection.domains.length === 0 ? (
-                        <p className={styles.connectionsEmptyState}>No domains are available until this account’s first sync begins.</p>
-                      ) : connection.domains.map((domain) => (
-                        <article
-                          className={styles.connectionsDomainRow}
-                          data-state={domain.state}
-                          key={domain.id}
-                          role="listitem"
-                        >
-                          <div className={styles.connectionsDomainTopline}>
-                            <div>
-                              <h4>{domain.label}</h4>
-                              <span
-                                className={styles.connectionsReadinessStatus}
-                                data-state={domain.state}
-                              >
-                                {readinessStateLabels[domain.state]}
-                              </span>
-                            </div>
-                            {domain.watermark ? (
-                              <time dateTime={domain.watermark.at}>{domain.watermark.label}</time>
-                            ) : null}
-                          </div>
-                          <p>{domain.detail}</p>
-                          {typeof domain.progress === "number" ||
-                          ["syncing", "transforming", "validating"].includes(domain.state) ? (
-                            <div className={styles.connectionsDomainProgress}>
-                              <ProgressBar
-                                value={domain.progress}
-                                state={domain.state}
-                                label={`${accountLabel} ${domain.label} progress`}
-                              />
-                              {typeof domain.progress === "number" ? (
-                                <span>{clampProgress(domain.progress)}%</span>
-                              ) : (
-                                <span>Working</span>
-                              )}
-                            </div>
-                          ) : null}
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                );
-              }))}
           </div>
         </div>
       ) : null}
@@ -1140,26 +1213,34 @@ function ConnectionsWorkspaceStateful({
             >
               ×
             </button>
-            <div className={styles.connectionsManageIdentity}>
+            <div className={styles.connectionsProviderIdentity}>
               <ProviderLogo provider={managedConnection.provider} />
-              <div>
-                <span>CONNECTED APP</span>
-                <h3 id={`${componentId}-manage-title`}>{managedConnection.provider.name}</h3>
-                <p>
+              <div className={styles.connectionsProviderCopy}>
+                <div className={styles.connectionsProviderTitleRow}>
+                  <h3 id={`${componentId}-manage-title`}>{managedConnection.provider.name}</h3>
+                </div>
+                <small>
                   {managedConnection.connection.auth.accountName ||
                     managedConnection.connection.auth.detail}
-                </p>
+                </small>
               </div>
             </div>
             {confirmDisconnect ? (
               <div className={styles.connectionsDisconnectConfirm}>
-                <strong>
+                <p>
                   Disconnect {managedConnection.connection.auth.accountName || managedConnection.provider.name}?
-                </strong>
-                <p>Only this connection stops syncing. Its credentials are revoked or destroyed, and its tenant data enters the audited deletion workflow.</p>
+                </p>
                 <div>
-                  <button ref={disconnectCancelRef} type="button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button>
                   <button
+                    className={styles.connectionsProviderActionSecondary}
+                    ref={disconnectCancelRef}
+                    type="button"
+                    onClick={() => setConfirmDisconnect(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className={styles.connectionsManageActionDanger}
                     type="button"
                     disabled={!mutationsEnabled || !onDisconnect}
                     onClick={() => {
@@ -1168,27 +1249,27 @@ function ConnectionsWorkspaceStateful({
                       setConfirmDisconnect(false);
                     }}
                   >
-                    Confirm disconnect
+                    Disconnect
                   </button>
                 </div>
               </div>
             ) : (
               <div className={styles.connectionsManageActions}>
                 <button
+                  className={styles.connectionsProviderActionSecondary}
                   type="button"
                   disabled={!mutationsEnabled || !onConnect}
                   onClick={() => onConnect?.(managedConnection.provider.id)}
                 >
-                  <strong>Refresh authorization</strong>
-                  <span>Authorize this provider account again; choosing a different account adds it separately.</span>
+                  Refresh authorization
                 </button>
                 <button
+                  className={styles.connectionsManageActionDanger}
                   type="button"
                   disabled={!mutationsEnabled || !onDisconnect}
                   onClick={() => setConfirmDisconnect(true)}
                 >
-                  <strong>Disconnect and delete</strong>
-                  <span>Stop syncs, destroy credentials, and schedule the scoped purge.</span>
+                  Disconnect
                 </button>
               </div>
             )}

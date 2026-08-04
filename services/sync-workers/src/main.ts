@@ -202,7 +202,31 @@ export async function runSyncWorker(): Promise<void> {
       analyticalDb.query("select capability_internal.assert_verifier_ready()"),
     ]);
   };
-  await dependenciesReady();
+  // Auth/session readiness can blip under dogfood connection pressure (Auth
+  // http_500, Postgres 53300). Retry instead of crashing the process loop.
+  {
+    const maxAttempts = 12;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await dependenciesReady();
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxAttempts) break;
+        const delayMs = Math.min(30_000, 1_000 * 2 ** (attempt - 1));
+        console.error("Albert sync worker dependency readiness retry", {
+          attempt,
+          maxAttempts,
+          delayMs,
+          code: error instanceof Error ? error.message.split(":", 1)[0] : "unknown_error",
+        });
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    if (lastError) throw lastError;
+  }
 
   const server = createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
     void (async () => {

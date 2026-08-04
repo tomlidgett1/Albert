@@ -621,11 +621,6 @@ export class OAuthSessionStore {
           envelope.aadDigest,
         ],
       );
-      await client.query(
-        `delete from control_plane.oauth_session_secret_envelopes
-          where tenant_id = $1 and oauth_session_id = $2`,
-        [input.context.tenantId, input.context.oauthSessionId],
-      );
       const jobPayload = {
         schemaVersion: 1,
         type: "InitialBackfill",
@@ -652,6 +647,10 @@ export class OAuthSessionStore {
       );
       const jobRequestId = enqueued.rows[0]?.job_request_id;
       if (!jobRequestId) throw new Error("oauth_initial_backfill_enqueue_failed");
+      // Match expire_oauth_sessions: mark terminal + clear PKCE in one update, then
+      // delete envelopes. Clearing PKCE while status is exchanging fails
+      // oauth_sessions_pkce_required_check; deleting envelopes first fails
+      // oauth_sessions_pkce_envelope_fk (ON DELETE RESTRICT).
       const completedSession = await client.query(
         `update control_plane.oauth_sessions
             set status = 'consumed',
@@ -677,6 +676,11 @@ export class OAuthSessionStore {
         ],
       );
       if (!completedSession.rows[0]) throw new Error("oauth_session_finalize_conflict");
+      await client.query(
+        `delete from control_plane.oauth_session_secret_envelopes
+          where tenant_id = $1 and oauth_session_id = $2`,
+        [input.context.tenantId, input.context.oauthSessionId],
+      );
       await client.query(
         `insert into control_plane.audit_log (
          tenant_id, audit_id, actor_user_id, actor_type, action,

@@ -19,6 +19,7 @@ import {
   stagingColumnName,
   type ConnectorManifest,
 } from "../../packages/connector-sdk/src/index.js";
+import type { PostgresQueryClient } from "../../packages/queue/src/index.js";
 import type {
   CanonicalMappingContext,
   CanonicalProjectionCommand,
@@ -31,6 +32,7 @@ import {
   assertCanonicalCommandAdmission,
   assertCanonicalCommandAuthority,
   isolateCanonicalMappings,
+  isolateCanonicalProjectionReferences,
 } from "../../services/sync-workers/src/canonical-pipeline.js";
 
 type Fixture = Readonly<{ responses: Readonly<Record<string, unknown>> }>;
@@ -258,6 +260,70 @@ test("Lightspeed expands sale detail, keeps exact components, and uses tenant-lo
   assert.equal(cutoffOrder.values.business_date, "2026-07-31", "04:00 cutoff belongs to prior trading day");
 });
 
+test("Lightspeed uses calculated discounts and voids archived payment attempts", () => {
+  const base = fixtureRow("lightspeed-r", "sales");
+  const row: CanonicalStagingRow = {
+    ...base,
+    total: "95.0000",
+    calc_total: "95.0000",
+    calc_discount: "15.0000",
+    calc_subtotal: "100.0000",
+    tax_total: "10.0000",
+    sale_lines: {
+      SaleLine: [{
+        saleLineID: "calculated-line",
+        itemID: "401",
+        employeeID: "201",
+        unitQuantity: "2.0000",
+        unitPrice: "50.0000",
+        normalUnitPrice: "999.0000",
+        discountAmount: "0.0000",
+        calcLineDiscount: "10.0000",
+        calcTransactionDiscount: "5.0000",
+        calcTotal: "95.0000",
+        calcTax1: "10.0000",
+        calcTax2: "0.0000",
+        avgCost: "20.0000",
+      }],
+    },
+    sale_payments: {
+      SalePayment: [
+        {
+          salePaymentID: "active-payment",
+          paymentTypeID: "901",
+          amount: "95.0000",
+          archived: "false",
+        },
+        {
+          salePaymentID: "archived-payment",
+          paymentTypeID: "901",
+          amount: "95.0000",
+          archived: "true",
+        },
+      ],
+    },
+  };
+
+  const commands = mapLightspeedCanonical("sales", row, context);
+  const order = upsert(commands, "commerce_order");
+  const line = upsert(commands, "commerce_order_line");
+  const payments = upserts(commands, "commerce_payment");
+  const active = payments.find((payment) => payment.sourceRecordId === "active-payment");
+  const archived = payments.find((payment) => payment.sourceRecordId === "archived-payment");
+
+  assert.equal(line.values.discount_amount, "15.0000");
+  assert.equal(line.values.gross_amount, "110.0000");
+  assert.equal(line.values.net_amount_inc_tax, "95.0000");
+  assert.equal(line.values.tax_amount, "10.0000");
+  assert.equal(order.values.gross_amount, line.values.gross_amount);
+  assert.equal(order.values.discount_amount, line.values.discount_amount);
+  assert.equal(order.values.net_amount_inc_tax, line.values.net_amount_inc_tax);
+  assert.equal(active?.values.status, "captured");
+  assert.equal(active?.tombstone, undefined);
+  assert.equal(archived?.values.status, "voided");
+  assert.equal(archived?.tombstone, true);
+});
+
 test("Lightspeed refunds become reversal facts linked to the native original sale line", () => {
   const base = fixtureRow("lightspeed-r", "sales");
   const row: CanonicalStagingRow = {
@@ -286,7 +352,11 @@ test("Lightspeed refunds become reversal facts linked to the native original sal
     },
   };
   const commands = mapLightspeedCanonical("sales", row, context);
+  const refundOrderLine = upsert(commands, "commerce_order_line");
   const refund = upsert(commands, "commerce_refund_line");
+  assert.equal(refundOrderLine.values.quantity, "-1.0000");
+  assert.equal(refundOrderLine.values.order_status, "refunded");
+  assert.equal(refundOrderLine.values.net_amount_inc_tax, "-100.0000");
   assert.equal(refund.sourceRecordId, "612");
   assert.equal(refund.values.quantity, "1.0000");
   assert.equal(refund.values.refund_amount_inc_tax, "100.0000");
@@ -387,6 +457,72 @@ test("canonical mapping isolates malformed Xero and Lightspeed records from vali
     assert.equal(isolated.accepted[0]?.row.source_record_id,scenario.valid.source_record_id);
     assert.ok((isolated.accepted[0]?.commands.length??0)>0);
   }
+});
+
+test("projection reference isolation preserves same-batch parents and closes rejected dependency chains", async () => {
+  const base = fixtureRow("lightspeed-r", "sales");
+  const row = (sourceRecordId:string):CanonicalStagingRow => ({
+    ...base,
+    namespaced_source_key:`lightspeed-r:account-101:Sale:${sourceRecordId}`,
+    source_record_id:sourceRecordId,
+    sale_id:sourceRecordId,
+  });
+  const job:CanonicalTransformBatch={
+    tenantId:base.tenant_id,batchId:base.payload_batch_id,
+    syncRunId:base.sync_run_id,connectionId:base.connection_id,
+    connectionGeneration:1,connectorId:"lightspeed-r",
+    mappingVersion:base.mapping_version,
+  };
+  const missingClient:PostgresQueryClient={
+    async query<Row extends Record<string,unknown>>(){
+      return {rows:[] as readonly Row[]};
+    },
+  };
+  const sourceRef=(table:"commerce_order_line"|"location",sourceRecordId:string)=>({
+    sourceRef:{table,sourceObjectType:table==="location"?"Shop":"SaleLine",sourceRecordId},
+  } as const);
+  const parent={
+    row:row("parent-row"),
+    commands:[{
+      kind:"fact",table:"commerce_order_line",sourceObjectType:"SaleLine",
+      sourceRecordId:"parent-line",values:{line_number:"1"},
+    }],
+  } as const;
+  const child={
+    row:row("child-row"),
+    commands:[{
+      kind:"fact",table:"commerce_refund_line",sourceObjectType:"SaleLine",
+      sourceRecordId:"refund-line",
+      values:{original_order_line_id:sourceRef("commerce_order_line","parent-line")},
+    }],
+  } as const;
+
+  const sameBatch=await isolateCanonicalProjectionReferences(
+    missingClient,job,[parent,child],
+  );
+  assert.deepEqual(sameBatch.accepted.map(({row:accepted})=>accepted.source_record_id),[
+    "parent-row","child-row",
+  ]);
+  assert.deepEqual(sameBatch.rejected,[]);
+
+  const rejectedParent={
+    ...parent,
+    commands:[{
+      ...parent.commands[0],
+      values:{location_id:sourceRef("location","missing-shop")},
+    }],
+  } as const;
+  const closed=await isolateCanonicalProjectionReferences(
+    missingClient,job,[rejectedParent,child],
+  );
+  assert.deepEqual(closed.accepted,[]);
+  assert.deepEqual(closed.rejected.map(({row:rejected})=>rejected.source_record_id),[
+    "parent-row","child-row",
+  ]);
+  assert.ok(closed.rejected.every((rejection)=>
+    rejection.errorCode==="canonical.canonical_reference_missing"&&
+    rejection.errorPath==="$projection"
+  ));
 });
 
 test("Lightspeed product mapping retains effective-dated category membership", () => {

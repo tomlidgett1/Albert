@@ -66,8 +66,27 @@ export interface RawObjectStore {
   read(key: string): Promise<Uint8Array | null>;
 }
 
+export type RawBatchContentIdentity = Readonly<{
+  tenantId: string;
+  syncRunId: string;
+  connectionId: string;
+  stream: string;
+  contentHash: string;
+  cursorStart: JsonValue | null;
+  cursorEnd: JsonValue | null;
+}>;
+
 export interface RawManifestRepository {
   find(tenantId: string, batchId: string): Promise<RawBatchManifest | null>;
+  /**
+   * Finds a manifest already registered under the same run-scoped immutable
+   * content identity. A recovered multi-page claim can mint a fresh batchId
+   * while replaying its last uncommitted page; reusing that run's original
+   * batch keeps the retry idempotent without collapsing distinct sync runs.
+   */
+  findByContentIdentity?(
+    identity: RawBatchContentIdentity,
+  ): Promise<RawBatchManifest | null>;
   /** Inserts the immutable manifest and its initial uploaded landing state atomically. */
   registerUploaded(manifest: RawBatchManifest): Promise<void>;
 }
@@ -289,6 +308,36 @@ export class RawBatchWriter {
       return matched;
     }
 
+    // A recovered claim can re-extract its last uncommitted page under a fresh
+    // batchId. Reuse identical content only inside that exact sync run. A new
+    // scheduled run must retain its own batch, landing, and quality lineage
+    // even when the vendor snapshot is byte-for-byte unchanged.
+    const findReplayed = async (): Promise<RawBatchManifest | null> => {
+      if (!this.manifests.findByContentIdentity) return null;
+      const replayed = await this.manifests.findByContentIdentity({
+        tenantId: context.tenantId,
+        syncRunId: context.syncRunId,
+        connectionId: context.connectionId,
+        stream: context.stream,
+        contentHash: manifest.contentHash,
+        cursorStart: context.cursorStart,
+        cursorEnd: context.cursorEnd,
+      });
+      if (!replayed) return null;
+      if (
+        replayed.schemaFingerprint !== manifest.schemaFingerprint ||
+        replayed.recordCount !== manifest.recordCount ||
+        replayed.objectKeys.length !== 1
+      ) {
+        throw new RawBatchConflictError(
+          `Batch content for stream ${context.stream} is already registered with different immutable evidence.`,
+        );
+      }
+      return replayed;
+    };
+    const replayed = await findReplayed();
+    if (replayed) return replayed;
+
     const upload = await this.objectStore.putIfAbsent({
       key: objectKey,
       body: compressed,
@@ -314,6 +363,10 @@ export class RawBatchWriter {
     } catch (error) {
       const concurrent = await this.manifests.find(context.tenantId, context.batchId);
       if (concurrent) return assertMatchingManifest(concurrent, manifest);
+      // A concurrent retry of this run may have registered the same page
+      // identity between the lookup above and this insert.
+      const replayedAfterConflict = await findReplayed();
+      if (replayedAfterConflict) return replayedAfterConflict;
       throw new RawBatchConflictError(
         `Raw object ${objectKey} was written but its manifest could not be registered: ${
           error instanceof Error ? error.message : "unknown manifest error"

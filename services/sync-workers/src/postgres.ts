@@ -46,6 +46,10 @@ export class PgTransactionalDatabase implements TransactionalPostgres {
 
   constructor(connectionString: string, options: PostgresPoolOptions) {
     this.pool = new Pool(poolConfig(connectionString, options));
+    // A backend terminated by the server (timeout, failover) surfaces as an
+    // 'error' event on an idle pooled client. Without a listener Node treats
+    // it as an unhandled 'error' event and exits the whole process.
+    this.pool.on("error", () => undefined);
     this.onPoolAcquire = options.onPoolAcquire;
     if (options.assumedRole && !/^[a-z_][a-z0-9_]{0,62}$/.test(options.assumedRole)) {
       throw new Error("PostgreSQL assumed role is invalid.");
@@ -66,6 +70,15 @@ export class PgTransactionalDatabase implements TransactionalPostgres {
     const acquireStartedAt = performance.now();
     const client = await this.pool.connect();
     this.onPoolAcquire?.(performance.now() - acquireStartedAt);
+    // While checked out, a server-terminated connection (for example an
+    // idle-in-transaction timeout) emits 'error' with no query in flight.
+    // Capture it so the next query rejects and the transaction fails,
+    // instead of the process crashing on an unhandled 'error' event.
+    let connectionError: Error | undefined;
+    const onClientError = (error: Error) => {
+      connectionError = error;
+    };
+    client.on("error", onClientError);
     try {
       await client.query("begin");
       if (this.assumedRoleSql) await client.query(this.assumedRoleSql);
@@ -76,7 +89,10 @@ export class PgTransactionalDatabase implements TransactionalPostgres {
       await client.query("rollback").catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      client.off("error", onClientError);
+      // Passing the error destroys the dead connection instead of returning
+      // it to the pool.
+      client.release(connectionError);
     }
   }
 

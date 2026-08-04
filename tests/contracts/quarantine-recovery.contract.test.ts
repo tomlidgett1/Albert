@@ -8,6 +8,12 @@ const analytical = readFileSync(
 const canonicalHardening = readFileSync(
   "infra/migrations/analytical/0088_m4_canonical_record_hardening.sql","utf8",
 );
+const canonicalLineageRepair = readFileSync(
+  "infra/migrations/analytical/0105_m4_immutable_canonical_quarantine_lineage.sql","utf8",
+);
+const immutableTransformInput = readFileSync(
+  "infra/migrations/analytical/0106_m4_immutable_transform_staging_envelopes.sql","utf8",
+);
 const control = readFileSync(
   "infra/migrations/control-plane/0044_m2_quarantine_replay_recovery.sql","utf8",
 );
@@ -47,11 +53,26 @@ test("canonical quality measures exact authoritative coverage and full continuit
 
 test("canonical mapper quarantine is record-scoped, durable, and replay-healed", () => {
   assert.match(canonicalPipeline,/isolateCanonicalMappings\([\s\S]*for \(const row of rows\)[\s\S]*catch \(error\)/u);
-  assert.match(canonicalPipeline,/recordCanonicalMappingQuarantine[\s\S]*commands\.sort/u);
-  assert.match(canonicalPipeline,/for \(const accepted of isolated\.accepted\)[\s\S]*resolveCanonicalMappingQuarantine/u);
-  assert.match(canonicalPipeline,/quarantinedRows:isolated\.rejected\.length/u);
-  assert.match(canonicalHardening,/record_canonical_mapping_quarantine[\s\S]*ingestion\.batch_manifests[\s\S]*ingestion\.source_records/iu);
-  assert.match(canonicalHardening,/resolve_canonical_mapping_quarantine[\s\S]*resolution_reason='canonical_projection_recovered'/iu);
+  assert.match(canonicalPipeline,/isolateCanonicalProjectionReferences\([\s\S]*while \(accepted\.length\)/u);
+  assert.match(canonicalPipeline,/recordCanonicalMappingQuarantines[\s\S]*commands\.sort/u);
+  assert.match(canonicalPipeline,/recordCanonicalMappingQuarantines[\s\S]*jsonb_to_recordset\(\$6::jsonb\)/u);
+  assert.match(canonicalPipeline,/input\.error_code,\$7::text,input\.error_summary/u);
+  assert.match(canonicalPipeline,/resolveCanonicalMappingQuarantines\([\s\S]*projected\.accepted\.map/u);
+  assert.match(canonicalPipeline,/quarantinedRows:rejectedRows\.length/u);
+  assert.match(canonicalLineageRepair,/record_canonical_mapping_quarantine[\s\S]*ingestion\.batch_manifests[\s\S]*ingestion\.landing_commits/iu);
+  assert.match(canonicalLineageRepair,/landing\.mapping_version=p_mapping_version[\s\S]*landing\.status='committed'/iu);
+  assert.doesNotMatch(canonicalLineageRepair,/JOIN ingestion\.source_records/iu);
+  assert.match(immutableTransformInput,/canonical_staging_batch_records[\s\S]*PRIMARY KEY \(tenant_id,batch_id,mapping_version,namespaced_source_key\)/iu);
+  assert.match(immutableTransformInput,/record_canonical_mapping_quarantine[\s\S]*JOIN ingestion\.canonical_staging_batch_records/iu);
+  assert.match(immutableTransformInput,/resolve_canonical_mapping_quarantine[\s\S]*resolution_reason='canonical_projection_recovered'/iu);
+  const stagingLoader=canonicalPipeline.slice(
+    canonicalPipeline.indexOf("async function loadStagingRows"),
+    canonicalPipeline.indexOf("async function recordCanonicalMappingQuarantines"),
+  );
+  assert.match(stagingLoader,/from ingestion\.canonical_staging_batch_records/u);
+  assert.match(stagingLoader,/select s\.\*,\$6::text as source_object_type/u);
+  assert.doesNotMatch(stagingLoader,/ingestion\.source_records/u);
+  assert.match(canonicalPipeline,/reprocessIdenticalPayloadOnNewBatch&&rows\.length!==landedRows/u);
   assert.match(canonicalHardening,/canonical_mapping_total[\s\S]*open_canonical_mapping_quarantine/iu);
   assert.match(landing,/error_code not like 'canonical\.%'/iu);
   assert.doesNotMatch(

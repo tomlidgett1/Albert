@@ -53,6 +53,21 @@ export type ReconciliationTombstoneCandidate = Readonly<{
   verificationSnapshotBatchId: string;
 }>;
 
+type CanonicalStagingBatchRecordInput = Readonly<{
+  tenantId:string;
+  batchId:string;
+  mappingVersion:string;
+  namespacedSourceKey:string;
+  connectionId:string;
+  syncRunId:string;
+  connectorId:SyncJob["connectorId"];
+  stream:string;
+  sourceObjectType:string;
+  sourceRecordId:string;
+  payloadHash:string;
+  stagingRow:Readonly<Record<string,unknown>>;
+}>;
+
 export class AnalyticalLandingStore {
   constructor(
     private readonly db: TransactionalPostgres,
@@ -448,6 +463,7 @@ export class AnalyticalLandingStore {
       let stagedRecordCount = 0;
       const quarantined: QuarantinedProjection[] = [];
       const resolvedByIdentity = new Map<string,ResolvedQuarantineProjection>();
+      const canonicalStagingRecords:CanonicalStagingBatchRecordInput[]=[];
       const preparedRecords = records.map((record) => {
         const prepared = record.normalized
           ? prepareTypedStaging(job.connectorId, manifest.stream, record.normalized)
@@ -629,6 +645,35 @@ export class AnalyticalLandingStore {
           mappingVersion: this.mappingVersion,
           values: prepared.values,
         });
+        canonicalStagingRecords.push(Object.freeze({
+          tenantId:job.tenantId,
+          batchId:job.batchId,
+          mappingVersion:this.mappingVersion,
+          namespacedSourceKey:namespacedKey,
+          connectionId:job.connectionId,
+          syncRunId:job.syncRunId,
+          connectorId:job.connectorId,
+          stream:manifest.stream,
+          sourceObjectType:record.sourceObjectType,
+          sourceRecordId:record.sourceRecordId,
+          payloadHash:record.payloadHash,
+          stagingRow:Object.freeze({
+            ...prepared.values,
+            tenant_id:job.tenantId,
+            namespaced_source_key:namespacedKey,
+            connection_id:job.connectionId,
+            external_account_reference:job.externalAccountReference,
+            source_record_id:record.sourceRecordId,
+            source_version:record.sourceUpdatedAt??record.payloadHash,
+            source_updated_at:record.sourceUpdatedAt??null,
+            payload_hash:record.payloadHash,
+            payload_batch_id:job.batchId,
+            sync_run_id:job.syncRunId,
+            tombstone:record.normalized.tombstone??false,
+            mapping_version:this.mappingVersion,
+            source_object_type:record.sourceObjectType,
+          }),
+        }));
         const resolutionIdentity = `${record.sourceObjectType}\u001f${record.sourceRecordId}`;
         if (!invalidIdentities.has(resolutionIdentity)) {
           const resolution = await client.query<{source_object_type:string;source_record_id:string}>(
@@ -652,6 +697,8 @@ export class AnalyticalLandingStore {
         stagedRecordCount += 1;
       }
 
+      await persistCanonicalStagingBatchRecords(client,canonicalStagingRecords);
+
       await client.query(
         `insert into ingestion.landing_commits (
            tenant_id, landing_commit_id, batch_id, sync_run_id, status,
@@ -670,6 +717,51 @@ export class AnalyticalLandingStore {
       return { stagedRecordCount, quarantined, resolved:[...resolvedByIdentity.values()] };
     });
   }
+}
+
+async function persistCanonicalStagingBatchRecords(
+  client:PostgresQueryClient,
+  records:readonly CanonicalStagingBatchRecordInput[],
+):Promise<void>{
+  if(!records.length)return;
+  const payload=records.map((record)=>({
+    tenant_id:record.tenantId,
+    batch_id:record.batchId,
+    mapping_version:record.mappingVersion,
+    namespaced_source_key:record.namespacedSourceKey,
+    connection_id:record.connectionId,
+    sync_run_id:record.syncRunId,
+    connector_id:record.connectorId,
+    stream:record.stream,
+    source_object_type:record.sourceObjectType,
+    source_record_id:record.sourceRecordId,
+    payload_hash:record.payloadHash,
+    staging_row:record.stagingRow,
+  }));
+  await client.query(
+    `insert into ingestion.canonical_staging_batch_records (
+       tenant_id,batch_id,mapping_version,namespaced_source_key,
+       connection_id,sync_run_id,connector_id,stream,source_object_type,
+       source_record_id,payload_hash,staging_row
+     )
+     select input.tenant_id,input.batch_id,input.mapping_version,
+            input.namespaced_source_key,input.connection_id,input.sync_run_id,
+            input.connector_id,input.stream,input.source_object_type,
+            input.source_record_id,input.payload_hash,
+            input.staging_row||jsonb_build_object(
+              'first_ingested_at',now(),'ingested_at',now()
+            )
+       from jsonb_to_recordset($1::jsonb) as input(
+         tenant_id text,batch_id text,mapping_version text,
+         namespaced_source_key text,connection_id text,sync_run_id text,
+         connector_id text,stream text,source_object_type text,
+         source_record_id text,payload_hash text,staging_row jsonb
+       )
+     on conflict (
+       tenant_id,batch_id,mapping_version,namespaced_source_key
+     ) do nothing`,
+    [JSON.stringify(payload)],
+  );
 }
 
 async function establishIngestScope(

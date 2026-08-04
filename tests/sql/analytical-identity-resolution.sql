@@ -539,6 +539,46 @@ BEGIN
 END;
 $$;
 
+-- The dogfood failure shape was thousands of active observations from one
+-- connection. Cross-source matching is impossible in that state and must
+-- finish within a small, explicit budget rather than materializing a quadratic
+-- self-join. Clear the earlier multi-source fixture before reproducing it.
+DELETE FROM semantic_internal.identity_observation
+ WHERE tenant_id='01H00000000000000000000901';
+
+INSERT INTO semantic_internal.identity_observation (
+  tenant_id,observation_id,entity_type,connection_id,source_object_type,
+  source_record_id,deterministic_key_digests,evidence_refs,linkable,
+  sync_run_id,active
+)
+SELECT
+  '01H00000000000000000000901',
+  semantic_internal.deterministic_ulid('single-source-fast-path|'||ordinal::text),
+  'product_variant',
+  '01H00000000000000000000924',
+  'Item',
+  'single-source-item-'||ordinal::text,
+  '{}'::jsonb,
+  '[]'::jsonb,
+  true,
+  '01H00000000000000000000941',
+  true
+FROM generate_series(1,5000) AS generated(ordinal);
+
+SET LOCAL statement_timeout='500ms';
+
+DO $$
+DECLARE generated bigint;
+BEGIN
+  generated:=semantic_internal.generate_identity_review_candidates(
+    '01H00000000000000000000901'
+  );
+  IF generated<>0 THEN
+    RAISE EXCEPTION 'single-source identity fast path generated candidates: %',generated;
+  END IF;
+END;
+$$;
+
 RESET ROLE;
 RESET SESSION AUTHORIZATION;
 

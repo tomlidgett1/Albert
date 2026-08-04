@@ -133,11 +133,18 @@ export function loadRawStorageS3Config(
   const coordinates = storageCoordinates(required(source, "SUPABASE_STORAGE_S3_ENDPOINT"));
   const region = required(source, "SUPABASE_STORAGE_S3_REGION");
   if (!SAFE_REGION.test(region)) throw new Error("SUPABASE_STORAGE_S3_REGION is invalid.");
-  if (coordinates.local ? region !== "local" : region !== "ap-southeast-2") {
+  // Production cells are Sydney-only. Local dogfood against a Tokyo control
+  // project must sign Storage S3 requests with that project's real region.
+  const remoteRegions: readonly string[] = source.NODE_ENV === "production"
+    ? ["ap-southeast-2"]
+    : ["ap-southeast-2", "ap-northeast-1"];
+  if (coordinates.local ? region !== "local" : !remoteRegions.includes(region)) {
     throw new Error(
       coordinates.local
         ? "Local Supabase Storage S3 must use region local."
-        : "Production Supabase Storage S3 must use region ap-southeast-2.",
+        : source.NODE_ENV === "production"
+          ? "Production Supabase Storage S3 must use region ap-southeast-2."
+          : "Supabase Storage S3 region must match the control-plane project region.",
     );
   }
 

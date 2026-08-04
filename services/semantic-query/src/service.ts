@@ -8,7 +8,7 @@ import {
 import {
   isAllowlistedRememberedPreference,
   semanticToolInputSchemas,
-  semanticQueryIrSchema,
+  toolInputToSemanticQueryIr,
   type SemanticToolResponse,
 } from "../../../packages/agent/src/semantic-tools.js";
 import type {
@@ -72,7 +72,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
 
   private async runSemanticQuery(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
     const tenant = await this.dependencies.contextProvider.load(context);
-    const ir = semanticQueryIrSchema.parse(semanticToolInputSchemas.run_semantic_query.parse(input));
+    const ir = toolInputToSemanticQueryIr(semanticToolInputSchemas.run_semantic_query.parse(input));
     const compile=(capabilities:ReadonlySet<string>)=>compileSemanticQuery(ir, this.dependencies.registry, {
       tenantId: context.tenantId,
       role: context.role,
@@ -1450,7 +1450,7 @@ function contributingSemanticSources(
     if (watermark !== undefined) sourceWatermarks[connectionId] = watermark;
     const detail = tenant.sourceDetails?.find((candidate) => candidate.connectionId === connectionId);
     if (!detail) continue;
-    sourceDetails.push({ ...detail,...(watermark === undefined ? {} : { dataThrough: watermark }) });
+    sourceDetails.push(wireSourceDetail(detail, watermark));
     const packVersion = tenant.packVersions[detail.connectorId];
     if (packVersion !== undefined) packVersions[detail.connectorId] = packVersion;
   }
@@ -1488,7 +1488,9 @@ function resultWindowForWire(
 }
 
 function sourceDetailsForTenant(tenant: TenantSemanticContext): NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]> {
-  if (tenant.sourceDetails?.length) return tenant.sourceDetails.map((detail) => ({ ...detail }));
+  if (tenant.sourceDetails?.length) {
+    return tenant.sourceDetails.map((detail) => wireSourceDetail(detail, tenant.sourceWatermarks[detail.connectionId]));
+  }
   return Object.entries(tenant.sourceWatermarks).map(([key, dataThrough]) => ({
     connectorId: connectorFromKey(key),
     connectionId: key,
@@ -1505,8 +1507,21 @@ function sourceDetailsForSource(
 ): NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]> {
   const configured = tenant.sourceDetails?.find((detail) => detail.connectionId === connectionId);
   return [configured
-    ? { ...configured, dataThrough }
+    ? wireSourceDetail(configured, dataThrough)
     : { connectorId, connectionId, label: connectorLabel(connectorId), dataThrough }];
+}
+
+function wireSourceDetail(
+  detail: NonNullable<TenantSemanticContext["sourceDetails"]>[number],
+  dataThrough?: string,
+): NonNullable<SemanticToolResponse["provenance"]["sourceDetails"]>[number] {
+  const through = (dataThrough ?? detail.dataThrough ?? "").trim() || "unavailable";
+  return {
+    connectorId: detail.connectorId,
+    connectionId: detail.connectionId,
+    label: detail.label,
+    dataThrough: through,
+  };
 }
 
 function resolvedTimeLabel(range: Readonly<{ fromBusinessDate: string; toBusinessDate: string; compare: string }>): string {

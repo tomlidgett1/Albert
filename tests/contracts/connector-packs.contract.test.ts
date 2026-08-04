@@ -383,11 +383,23 @@ test("public OAuth builders contain only public, state-bound values", () => {
     codeChallenge: "challenge-ls",
   }));
   assert.equal(lightspeed.hostname, "cloud.lightspeedapp.com");
+  assert.equal(lightspeed.searchParams.get("response_type"), "code");
   assert.equal(lightspeed.searchParams.get("state"), "state-ls");
   assert.equal(lightspeed.searchParams.get("code_challenge"), "challenge-ls");
   assert.equal(lightspeed.searchParams.get("code_challenge_method"), "S256");
   assert.equal(lightspeed.searchParams.get("redirect_uri"), "https://albert.example/oauth/lightspeed-r/callback");
-  assert.deepEqual(lightspeed.searchParams.get("scope")?.split(" "), ["employee:all"]);
+  assert.deepEqual(lightspeed.searchParams.get("scope")?.split(" "), [
+    "employee:register_read",
+    "employee:inventory_read",
+    "employee:customers_read",
+    "employee:product_cost",
+    "employee:admin_employees",
+    "employee:admin_shops",
+    "employee:categories",
+    "employee:vendors",
+    "employee:purchase_orders",
+    "employee:admin_purchases",
+  ]);
   assert.equal(lightspeed.toString().includes("secret"), false);
 
   const xero = new URL(buildXeroAuthorizationUrl({
@@ -414,8 +426,9 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(deputy.searchParams.get("state"), "state-deputy");
 });
 
-test("Lightspeed R-Series binds the documented redirect URI and PKCE verifier during token exchange", async () => {
-  let exchangeBody: URLSearchParams | undefined;
+test("Lightspeed R-Series exchanges codes as multipart form with PKCE and redirect_uri", async () => {
+  let exchangeBody: FormData | undefined;
+  let exchangeContentType: string | null = null;
   const connector = new LightspeedRConnector({
     clientId: "lightspeed-client",
     clientSecret: "lightspeed-secret",
@@ -428,7 +441,8 @@ test("Lightspeed R-Series binds the documented redirect URI and PKCE verifier du
       metadata: {},
     }),
     fetcher: async (_input, init) => {
-      exchangeBody = init?.body as URLSearchParams;
+      exchangeBody = init?.body as FormData;
+      exchangeContentType = new Headers(init?.headers).get("content-type");
       return Response.json({
         access_token: "access",
         refresh_token: "refresh",
@@ -444,20 +458,14 @@ test("Lightspeed R-Series binds the documented redirect URI and PKCE verifier du
     codeVerifier: "v".repeat(64),
   });
 
-  assert.equal(exchangeBody?.get("client_id"), "lightspeed-client");
-  assert.equal(exchangeBody?.get("client_secret"), "lightspeed-secret");
-  assert.equal(exchangeBody?.get("grant_type"), "authorization_code");
-  assert.equal(exchangeBody?.get("code"), "short-lived-code");
-  assert.equal(exchangeBody?.get("code_verifier"), "v".repeat(64));
-  assert.equal(exchangeBody?.get("redirect_uri"), "https://albert.example/api/oauth/lightspeed/callback");
-  assert.deepEqual([...(exchangeBody?.keys() ?? [])].sort(), [
-    "client_id",
-    "client_secret",
-    "code",
-    "code_verifier",
-    "grant_type",
-    "redirect_uri",
-  ]);
+  assert.equal(exchangeContentType, null);
+  assert.ok(exchangeBody instanceof FormData);
+  assert.equal(exchangeBody.get("client_id"), "lightspeed-client");
+  assert.equal(exchangeBody.get("client_secret"), "lightspeed-secret");
+  assert.equal(exchangeBody.get("grant_type"), "authorization_code");
+  assert.equal(exchangeBody.get("code"), "short-lived-code");
+  assert.equal(exchangeBody.get("redirect_uri"), "https://albert.example/api/oauth/lightspeed/callback");
+  assert.equal(exchangeBody.get("code_verifier"), "v".repeat(64));
 });
 
 test("opaque cursors are provider and stream scoped", () => {
@@ -1263,8 +1271,9 @@ test("Lightspeed and Xero disconnect remotely before cryptographically destroyin
       const url = new URL(input instanceof Request ? input.url : input.toString());
       assert.equal(url.toString(), "https://cloud.lightspeedapp.com/auth/oauth/revoke");
       assert.equal(init?.method, "POST");
-      const body = init?.body as URLSearchParams;
-      assert.deepEqual([...body.keys()].sort(), ["client_id", "client_secret", "refresh_token"]);
+      assert.equal(new Headers(init?.headers).get("content-type"), null);
+      const body = init?.body as FormData;
+      assert.ok(body instanceof FormData);
       assert.equal(body.get("client_id"), "lightspeed-client");
       assert.equal(body.get("client_secret"), "lightspeed-secret");
       assert.equal(body.get("refresh_token"), "lightspeed-refresh");

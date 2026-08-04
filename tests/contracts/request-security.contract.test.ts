@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   assertSameOriginMutation,
   assertSameOriginNavigation,
+  localHttpsOAuthBootstrapTarget,
   readBoundedJsonBody,
 } from "../../services/control-plane/src/request-security";
 import { ControlPlaneError } from "../../services/control-plane/src/web-repository";
@@ -45,6 +46,80 @@ test("same-origin checks accept the configured production origin", () => {
       "https://internal.invalid/api/oauth/xero/start",
       { headers: { referer: "https://albert.example/dash", "sec-fetch-site": "same-origin" } },
     )));
+  } finally {
+    if (previous === undefined) delete mutableEnvironment.ALBERT_PUBLIC_ORIGIN;
+    else mutableEnvironment.ALBERT_PUBLIC_ORIGIN = previous;
+    if (previousNodeEnvironment === undefined) delete mutableEnvironment.NODE_ENV;
+    else mutableEnvironment.NODE_ENV = previousNodeEnvironment;
+  }
+});
+
+test("local loopback same-origin checks follow the browser port during vinext drift", () => {
+  const previous = process.env.ALBERT_PUBLIC_ORIGIN;
+  const previousNodeEnvironment = process.env.NODE_ENV;
+  mutableEnvironment.ALBERT_PUBLIC_ORIGIN = "http://localhost:3010";
+  mutableEnvironment.NODE_ENV = "development";
+  try {
+    assert.doesNotThrow(() => assertSameOriginNavigation(new Request(
+      "http://localhost:3001/api/oauth/lightspeed/start",
+      { headers: { referer: "http://localhost:3001/dash", "sec-fetch-site": "same-origin" } },
+    )));
+    assert.doesNotThrow(() => assertSameOriginMutation(new Request(
+      "http://localhost:3001/api/oauth/select",
+      {
+        method: "POST",
+        headers: { origin: "http://localhost:3001", "content-type": "application/json" },
+      },
+    )));
+    assert.throws(
+      () => assertSameOriginNavigation(new Request(
+        "http://localhost:3001/api/oauth/lightspeed/start",
+        { headers: { referer: "http://evil.example/dash", "sec-fetch-site": "same-origin" } },
+      )),
+      (error) => status(error) === 403,
+    );
+  } finally {
+    if (previous === undefined) delete mutableEnvironment.ALBERT_PUBLIC_ORIGIN;
+    else mutableEnvironment.ALBERT_PUBLIC_ORIGIN = previous;
+    if (previousNodeEnvironment === undefined) delete mutableEnvironment.NODE_ENV;
+    else mutableEnvironment.NODE_ENV = previousNodeEnvironment;
+  }
+});
+
+test("local HTTPS tunnel OAuth allows a one-hop bootstrap from loopback", () => {
+  const previous = process.env.ALBERT_PUBLIC_ORIGIN;
+  const previousNodeEnvironment = process.env.NODE_ENV;
+  mutableEnvironment.ALBERT_PUBLIC_ORIGIN = "https://demo.trycloudflare.com";
+  mutableEnvironment.NODE_ENV = "development";
+  try {
+    assert.equal(
+      localHttpsOAuthBootstrapTarget(new Request(
+        "http://localhost:3001/api/oauth/lightspeed/start",
+        { headers: { referer: "http://localhost:3001/dash", "sec-fetch-site": "same-origin" } },
+      )),
+      "https://demo.trycloudflare.com/api/oauth/lightspeed/start",
+    );
+    assert.doesNotThrow(() => assertSameOriginNavigation(new Request(
+      "https://demo.trycloudflare.com/api/oauth/lightspeed/start",
+      {
+        headers: {
+          referer: "http://localhost:3001/api/oauth/lightspeed/start",
+          "sec-fetch-site": "cross-site",
+        },
+      },
+    )));
+    assert.throws(
+      () => assertSameOriginNavigation(new Request(
+        "https://demo.trycloudflare.com/api/oauth/lightspeed/start",
+        {
+          headers: {
+            referer: "https://evil.example/dash",
+            "sec-fetch-site": "cross-site",
+          },
+        },
+      )),
+      (error) => status(error) === 403,
+    );
   } finally {
     if (previous === undefined) delete mutableEnvironment.ALBERT_PUBLIC_ORIGIN;
     else mutableEnvironment.ALBERT_PUBLIC_ORIGIN = previous;

@@ -52,6 +52,7 @@ test("cursor commit re-locks the connection generation before any mutable public
       cursor: job.cursor,
       sourceWatermark: job.cursor.sourceUpdatedAt,
       hasMore: false,
+      keepRunOpen: true,
       recordCount: 1,
       quarantineCount: 0,
       domains: ["finance"],
@@ -63,7 +64,11 @@ test("cursor commit re-locks the connection generation before any mutable public
   );
 
   assert.equal(statements.length, 1);
-  assert.match(statements[0] ?? "", /connection_generation=\$3[\s\S]*for update/iu);
+  assert.match(
+    statements[0] ?? "",
+    /assert_sync_connection_generation_fence\([\s\S]*\$1::text, \$2::text, \$3::bigint/iu,
+  );
+  assert.doesNotMatch(statements[0] ?? "", /from control_plane\.connections/iu);
   assert.doesNotMatch(statements[0] ?? "", /raw_batch_landings/iu);
 });
 

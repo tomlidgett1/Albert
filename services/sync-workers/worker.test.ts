@@ -39,6 +39,7 @@ test("a hung connector cannot outlive the sync operation lease budget", async ()
   } as unknown as DurableSyncQueue;
   const control = {
     async beginRun() { return "run" as const; },
+    async resumeInitialBackfillCursor() { return null; },
     async acquireSyncWritePermit() { return "01ARZ3NDEKTSV4RRFFQ69G5FAY"; },
     async releaseSyncWritePermit() {},
     async withSyncWritePermit(_claim: unknown, _permitId: string, operation: (capability: string) => Promise<unknown>) {
@@ -212,6 +213,68 @@ test("long vendor backoff is durably deferred without consuming the failure budg
   assert.equal(retried, false);
 });
 
+test("deep-history claims yield while recent phases keep the connection off the critical path", async () => {
+  let deferredReason: { code: string } | undefined;
+  let deferredSeconds: number | undefined;
+  let runsBegun = 0;
+  const queue = {
+    async defer(_claim: ClaimedSyncJob, reason: { code: string }, delaySeconds: number) {
+      deferredReason = reason;
+      deferredSeconds = delaySeconds;
+      return new Date(Date.now() + delaySeconds * 1_000).toISOString();
+    },
+  } as unknown as DurableSyncQueue;
+  const control = {
+    async beginRun() { runsBegun += 1; return "run" as const; },
+    async openRecentBackfillPhases() { return 2; },
+    vendorRateBudget() {
+      return { async beforeRequest() {}, async observeResponse() {} };
+    },
+  } as unknown as ControlPlaneStore;
+  const claim = {
+    queueName: "albert_sync_backfill",
+    workerId: "worker-test",
+    messageId: "1",
+    readCount: 1,
+    enqueuedAt: new Date().toISOString(),
+    visibilityDeadline: new Date(Date.now() + 900_000).toISOString(),
+    job: {
+      schemaVersion: 1,
+      type: "InitialBackfill",
+      tenantId: "01J00000000000000000000001",
+      connectionId: "01J00000000000000000000002",
+      connectionGeneration: 1,
+      connectorId: "xero",
+      externalAccountReference: "xero-tenant",
+      syncRunId: "01J00000000000000000000003",
+      batchId: "01J00000000000000000000004",
+      requestedAt: new Date().toISOString(),
+      jobRequestId: "01J00000000000000000000005",
+      stream: "invoices",
+      range: { from: "1970-01-01T00:00:00.000Z", to: new Date().toISOString() },
+      phase: "full_history",
+      replayVersion: 1,
+      planMode: "progressive",
+    },
+  } as const satisfies ClaimedSyncJob;
+  const processor = new SyncJobProcessor(
+    queue,
+    {} as SyncOrchestrator,
+    { get: () => { throw new Error("connector must not be resolved for a yielded claim"); } },
+    control,
+    {} as AnalyticalLandingStore,
+    {} as RawBatchWriter,
+    "worker-test",
+  );
+
+  const outcome = await processor.process(claim);
+
+  assert.equal(outcome.status, "retry_scheduled");
+  assert.deepEqual(deferredReason, { code: "connection_not_ready" });
+  assert.equal(typeof deferredSeconds, "number");
+  assert.equal(runsBegun, 0);
+});
+
 test("a killed backfill replay keeps one immutable raw batch identity", async () => {
   const requestedAt = "2026-08-03T23:59:59.000Z";
   const extractedAtValues: string[] = [];
@@ -226,6 +289,7 @@ test("a killed backfill replay keeps one immutable raw batch identity", async ()
   } as unknown as DurableSyncQueue;
   const control = {
     async beginRun() { return "run" as const; },
+    async resumeInitialBackfillCursor() { return null; },
     async loadConnection() {
       return {
         tenantId: "tenant",
@@ -240,6 +304,7 @@ test("a killed backfill replay keeps one immutable raw batch identity", async ()
       return { inheritedCoverage: null, required: true, strategy: "time_windowed" as const };
     },
     async nextBackfillPhase() { return null; },
+    async openRecentBackfillPhases() { return 0; },
     async acquireSyncWritePermit() { return "01ARZ3NDEKTSV4RRFFQ69G5FAY"; },
     async releaseSyncWritePermit() {},
     async withSyncWritePermit(_claim: unknown, _permitId: string, operation: (capability: string) => Promise<unknown>) {
@@ -253,6 +318,7 @@ test("a killed backfill replay keeps one immutable raw batch identity", async ()
       commits += 1;
       if (commits === 1) throw new Error("control_plane_temporarily_unavailable");
     },
+    async completePageRun() {},
     vendorRateBudget() {
       return { async beforeRequest() {}, async observeResponse() {} };
     },

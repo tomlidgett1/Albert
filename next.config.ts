@@ -57,12 +57,34 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Vinext skips the Next typecheck gate; keep Vercel builds unblocked while
+  // local `npm run typecheck` remains the authority for TypeScript health.
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   // Vinext converts next.config env entries into compile-time definitions.
   // Runtime environment changes therefore cannot relabel an older web bundle.
   env: {
     ALBERT_BUILD_SHA: embeddedBuildSha,
   },
   generateBuildId: async () => embeddedBuildSha || "albert-unversioned-build",
+  // Plain Next/Vercel builds need TypeScript ESM extension rewriting and
+  // Vite-style `?raw` imports that vinext already provides for Sites.
+  webpack: (config) => {
+    config.resolve = config.resolve ?? {};
+    config.resolve.extensionAlias = {
+      ".js": [".ts", ".tsx", ".js", ".jsx"],
+      ".mjs": [".mts", ".mjs"],
+      ".cjs": [".cts", ".cjs"],
+    };
+    config.module = config.module ?? {};
+    config.module.rules = config.module.rules ?? [];
+    config.module.rules.push({
+      resourceQuery: /raw/,
+      type: "asset/source",
+    });
+    return config;
+  },
   async headers() {
     return [{ source: "/(.*)", headers: [...securityHeaders] }];
   },

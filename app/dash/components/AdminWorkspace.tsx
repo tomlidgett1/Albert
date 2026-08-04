@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   OperatorFleet,
   OperatorFleetConnection,
@@ -9,7 +9,10 @@ import type {
   OperatorPipelineStage,
   OperatorRowSample,
 } from "@/services/control-plane/src/operator-repository";
+import ArchitectureMap, { type ArchitectureOverview } from "./ArchitectureMap";
 import styles from "../dash.module.css";
+
+type AdminView = "architecture" | "fleet";
 
 type DetailRow = Readonly<Record<string, unknown>>;
 type CellKind = "text" | "state" | "time" | "number" | "percent" | "bytes" | "boolean" | "code" | "json" | "connector" | "quality";
@@ -550,15 +553,60 @@ function DetailGroup({
   );
 }
 
+function isRecordArchitecture(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseArchitecture(value: unknown): ArchitectureOverview | null {
+  if (!isRecordArchitecture(value) || !isRecordArchitecture(value.semantic) || !Array.isArray(value.packs)) return null;
+  if (typeof value.generated_at !== "string") return null;
+  const semantic = value.semantic;
+  if (typeof semantic.version !== "string") return null;
+  if (typeof semantic.metric_count !== "number") return null;
+  if (typeof semantic.topic_count !== "number") return null;
+  if (typeof semantic.fact_count !== "number") return null;
+  if (!Array.isArray(semantic.domains) || !Array.isArray(semantic.topics)) return null;
+  if (!Array.isArray(semantic.metrics) || !Array.isArray(semantic.facts)) return null;
+  if (!Array.isArray(semantic.dimensions)) return null;
+  return value as ArchitectureOverview;
+}
+
+const ADMIN_TABS = Object.freeze([
+  { key: "architecture" as const, label: "Architecture" },
+  { key: "fleet" as const, label: "Fleet" },
+]);
+
 export default function AdminWorkspace() {
+  const [view, setView] = useState<AdminView>("architecture");
+  const [architecture, setArchitecture] = useState<ArchitectureOverview | null>(null);
   const [fleet, setFleet] = useState<OperatorFleet | null>(null);
   const [pipeline, setPipeline] = useState<OperatorPipeline | null>(null);
   const [detail, setDetail] = useState<OperatorPipelineDetail | null>(null);
   const [activeStage, setActiveStage] = useState<OperatorPipelineStage>("connections");
-  const [loadingScope, setLoadingScope] = useState<"fleet" | "pipeline" | "detail" | null>("fleet");
+  const [loadingScope, setLoadingScope] = useState<"architecture" | "fleet" | "pipeline" | "detail" | null>("architecture");
   const [error, setError] = useState("");
   const detailRequest = useRef(0);
   const pipelineRequest = useRef(0);
+  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ architecture: null, fleet: null });
+  const tabRowRef = useRef<HTMLDivElement | null>(null);
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
+
+  const loadArchitecture = useCallback(async () => {
+    setLoadingScope("architecture");
+    setError("");
+    try {
+      const response = await fetch("/api/admin/architecture", { cache: "no-store" });
+      const payload = await response.json() as { architecture?: unknown; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Architecture overview could not be loaded.");
+      const parsed = parseArchitecture(payload.architecture);
+      if (!parsed) throw new Error("Architecture overview returned an invalid response.");
+      setArchitecture(parsed);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Architecture overview could not be loaded.");
+    } finally {
+      setLoadingScope(null);
+    }
+  }, []);
 
   const loadFleet = useCallback(async () => {
     setLoadingScope("fleet");
@@ -626,9 +674,22 @@ export default function AdminWorkspace() {
   }, [loadStage]);
 
   useEffect(() => {
-    const task = window.setTimeout(() => void loadFleet(), 0);
+    const task = window.setTimeout(() => {
+      void loadArchitecture();
+      void loadFleet();
+    }, 0);
     return () => window.clearTimeout(task);
-  }, [loadFleet]);
+  }, [loadArchitecture, loadFleet]);
+
+  useLayoutEffect(() => {
+    if (pipeline) return;
+    const button = tabRefs.current[view];
+    const row = tabRowRef.current;
+    if (!button || !row) return;
+    const rowBox = row.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    setTabIndicator({ left: buttonBox.left - rowBox.left, width: buttonBox.width });
+  }, [view, pipeline, architecture, fleet]);
 
   const sortedConnections = useMemo(() => [...(fleet?.connections ?? [])].sort((left, right) => {
     const rank = { blocked: 0, degraded: 1, healthy: 2 } as const;
@@ -660,11 +721,40 @@ export default function AdminWorkspace() {
     setPipeline(null);
     setDetail(null);
     setActiveStage("connections");
+    setView("fleet");
     setError("");
+  };
+
+  const openFleetView = () => {
+    setView("fleet");
+    if (!fleet) void loadFleet();
+  };
+
+  const refresh = () => {
+    if (pipeline) {
+      void loadPipeline(pipeline.tenant.tenant_id, activeStage);
+      return;
+    }
+    if (view === "architecture") {
+      void loadArchitecture();
+      void loadFleet();
+      return;
+    }
+    void loadFleet();
   };
 
   const currentCopy = STAGE_COPY[activeStage];
   const loading = loadingScope !== null;
+  const title = pipeline
+    ? pipeline.tenant.name
+    : view === "architecture"
+      ? "How Albert works"
+      : "Albert fleet";
+  const subtitle = pipeline
+    ? `Trace ${pipeline.tenant.timezone} operational metadata from source edge to query-ready domains.`
+    : view === "architecture"
+      ? "A plain-English map of the backend: tools, sync, business truth, the semantic dictionary, and chat."
+      : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
 
   return (
     <section className={styles.opsWorkspace} aria-labelledby="admin-workspace-title">
@@ -672,29 +762,60 @@ export default function AdminWorkspace() {
         <div>
           <span>OPERATIONS</span>
           <div className={styles.opsTitleRow}>
-            <h2 id="admin-workspace-title">{pipeline ? pipeline.tenant.name : "Albert fleet"}</h2>
+            <h2 id="admin-workspace-title">{title}</h2>
             {pipeline ? <span className={styles.opsBadge} data-state={pipeline.health}>{humanize(pipeline.health)}</span> : null}
           </div>
-          <p>{pipeline ? `Trace ${pipeline.tenant.timezone} operational metadata from source edge to query-ready domains.` : "Cross-tenant health, with blocked and degraded connections sorted to the top."}</p>
+          <p>{subtitle}</p>
           <small>{pipeline
             ? `Pipeline snapshot ${formatTime(pipeline.latest_pipeline_snapshot_at)} · Console refreshed ${formatTime(pipeline.generated_at)}`
-            : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
+            : view === "architecture"
+              ? `Architecture refreshed ${formatTime(architecture?.generated_at)}`
+              : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
         </div>
         <div className={styles.opsHeaderActions}>
           {pipeline ? <button type="button" onClick={leavePipeline}>Back to fleet</button> : null}
-          <button
-            type="button"
-            onClick={() => pipeline ? void loadPipeline(pipeline.tenant.tenant_id, activeStage) : void loadFleet()}
-            disabled={loading}
-          >
+          <button type="button" onClick={refresh} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </header>
 
+      {!pipeline ? (
+        <nav className={styles.opsViewTabs} aria-label="Admin views">
+          <div className={styles.opsViewTabRow} ref={tabRowRef}>
+            {ADMIN_TABS.map((tab) => (
+              <button
+                type="button"
+                key={tab.key}
+                ref={(node) => {
+                  tabRefs.current[tab.key] = node;
+                }}
+                className={view === tab.key ? styles.opsViewTabActive : undefined}
+                aria-current={view === tab.key ? "page" : undefined}
+                onClick={() => setView(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <span className={styles.opsViewTabIndicator} style={{ left: tabIndicator.left, width: tabIndicator.width }} aria-hidden="true" />
+          </div>
+        </nav>
+      ) : null}
+
       {error ? <div className={styles.opsError} role="alert"><strong>Operations data unavailable</strong><span>{error}</span></div> : null}
 
-      {!pipeline ? (
+      {!pipeline && view === "architecture" ? (
+        architecture ? (
+          <ArchitectureMap overview={architecture} onOpenFleet={openFleetView} />
+        ) : (
+          <div className={styles.opsDetailLoading} role="status">
+            <span aria-hidden="true" />
+            <p>{loadingScope === "architecture" ? "Drawing the architecture map…" : "Architecture overview is unavailable."}</p>
+          </div>
+        )
+      ) : null}
+
+      {!pipeline && view === "fleet" ? (
         <>
           <dl className={styles.opsSummary}>
             <div data-severity={fleetSummary.blocked ? "blocked" : "healthy"}><dt>Blocked</dt><dd>{fleetSummary.blocked}</dd></div>
@@ -776,8 +897,14 @@ export default function AdminWorkspace() {
             </div>
           </div>
         </>
-      ) : (
+      ) : null}
+
+      {pipeline ? (
         <>
+          <p className={styles.archPipelineLegend}>
+            Follow the data left to right: authorised sources become typed tables, then one shared business model,
+            then query-ready marts. Tap a stage for live counts and ledgers.
+          </p>
           <nav className={styles.opsPipeline} aria-label="Tenant pipeline stages">
             {PIPELINE_STAGES.map((stage, index) => {
               const active = activeStage === stage.key;
@@ -828,7 +955,7 @@ export default function AdminWorkspace() {
             )}
           </section>
         </>
-      )}
+      ) : null}
     </section>
   );
 }

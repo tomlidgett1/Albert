@@ -93,7 +93,7 @@ export function buildBackfillPlan(
     dependencies: [...stream.dependencies],
     required: stream.availability === "required",
     strategy: stream.backfillStrategy,
-    replayVersion: 1,
+    replayVersion: job.replayVersion,
   } as const;
 
   if (stream.backfillStrategy !== "time_windowed") {

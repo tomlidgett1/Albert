@@ -224,11 +224,14 @@ test("vendor 401 and 403 failures immediately supersede a successful health prob
 });
 
 test("health persistence remains tenant-scoped and rides the existing sync schedules", async () => {
-  const [worker, store, scheduler, scheduledRecovery, queueContracts, operatorConsole] = await Promise.all([
+  const [
+    worker, store, scheduler, scheduledRecovery, deferredDuringBackfill, queueContracts, operatorConsole,
+  ] = await Promise.all([
     readFile(new URL("../../services/sync-workers/src/worker.ts", import.meta.url), "utf8"),
     readFile(new URL("../../services/sync-workers/src/control-plane-store.ts", import.meta.url), "utf8"),
     readFile(new URL("../../infra/migrations/control-plane/0003_m2_ingestion_operations.sql", import.meta.url), "utf8"),
     readFile(new URL("../../infra/migrations/control-plane/0022_m2_schedule_pre_cursor_connection_checks.sql", import.meta.url), "utf8"),
+    readFile(new URL("../../infra/migrations/control-plane/0073_m2_defer_incremental_during_backfill.sql", import.meta.url), "utf8"),
     readFile(new URL("../../packages/queue/src/contracts.ts", import.meta.url), "utf8"),
     readFile(new URL("../../infra/migrations/control-plane/0017_m2_operator_pipeline_console.sql", import.meta.url), "utf8"),
   ]);
@@ -244,6 +247,8 @@ test("health persistence remains tenant-scoped and rides the existing sync sched
   assert.match(scheduledRecovery, /NOT EXISTS \([\s\S]*control_plane\.stream_cursors/u);
   assert.match(scheduledRecovery, /'type', 'InitialBackfill'/u);
   assert.match(scheduledRecovery, /'scheduled-auth-recovery:' \|\| candidate\.connection_id/u);
+  assert.match(deferredDuringBackfill, /coalesce\(incomplete\.backfill_complete, false\) = false/u);
+  assert.match(deferredDuringBackfill, /request\.job_type = 'InitialBackfill'/u);
   assert.match(queueContracts, /"InitialBackfill",\s*"IncrementalSync",\s*"ReconciliationSweep"/u);
   assert.match(operatorConsole, /'auth_health', connection\.auth_health/u);
   assert.match(operatorConsole, /'last_checked_at', connection\.last_checked_at/u);

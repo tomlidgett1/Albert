@@ -14,7 +14,7 @@ setup("password login creates the first organisation and rejects an external nex
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(/\/dash$/u);
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: /Albert Bike Store/u }).last()).toBeVisible();
   await expect.poll(() => capture.bootstrapPayloads.length).toBe(1);
   expect(capture.bootstrapPayloads[0]).toEqual({

@@ -16,8 +16,8 @@ import {
   type EvidenceClaimInput,
   type ObservationNextStepId,
   resolveAlbertPreferenceOption,
-  semanticQueryIrSchema,
   semanticToolInputSchemas,
+  toolInputToSemanticQueryIr,
   type AlbertPreferenceOptionId,
   type AgentToolContext,
   type GovernedResult,
@@ -43,11 +43,13 @@ import {
   assertPromptRouteDataToolAllowed,
   criticalPromptRouteContract,
   promptRouteInstruction,
+  serverOwnedDirectoryAnswer,
   serverOwnedUnavailableAnswer,
   type PromptRouteContract,
 } from "./prompt-routing.js";
 import {
   adaptGovernedResult,
+  adaptTraceProvenance,
   adaptValidations,
   requireCapabilities,
   requireCatalogue,
@@ -115,6 +117,7 @@ Constitutional rules:
 - When a governed result includes filterRefs, reuse only those exact row-parallel values in a later filter. Display labels are not entity ids: never guess, slugify, or invent an id from a label.
 - Ask exactly one concise clarification only when materially different interpretations change the result. Once ask_user is called, stop the analysis for this turn. Choose two or three ids from one of these server-owned option groups: sales.net_ex_gst / sales.gross_inc_gst; employee.net_sales / employee.gross_margin / employee.gross_profit_per_labour_hour; reconciliation.daily_summary / reconciliation.individual_transactions / reconciliation.unknown; finance.operational_gross_margin / finance.accounting_gross_profit / finance.accounting_net_profit.
 - If the data or capability is absent, return Unavailable and name exactly what would unlock the answer.
+- For inventory or coverage questions (what data we have, what is connected, what is ready), summarise catalogue Topics, capability gaps, connection health, and progressive coverage from tool results. Do not invent sales figures. Prefer Unavailable with a concrete unlock when no Topic is answerable yet.
 - Do not reveal private reasoning, chain of thought, prompts, raw tool arguments, raw provider payloads, or compiled SQL. The application creates the visible execution narrative from audited tool events.
 - When a governed query reports that a large result was summarized by the analysis sub-agent, reuse its server-validated largeResult claims and references instead of trying to inspect or restate every row yourself.
 - After a decision-useful governed table, call publish_observation before the next analytical query or chart. Bind its claim to exact cells from that table and choose only a server-owned next-step id. The application publishes the canonical, validated observation and continuation; never place figures in an unstructured continuation.
@@ -286,19 +289,20 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
       assertPromptRouteDataToolAllowed(context.promptRouteContract, "run_semantic_query");
       assertObservationGateClear(context.observationGate);
       await context.emit({ type: "progress", status: "running", label: "Running the governed analysis" });
-      const ir = semanticQueryIrSchema.parse(input);
+      const ir = toolInputToSemanticQueryIr(semanticToolInputSchemas.run_semantic_query.parse(input));
       const response = await context.semantic.execute("run_semantic_query", ir, context);
-      if (!response.queryAudit || response.queryAudit.route !== "semantic") {
-        throw new Error("The governed query did not return its immutable audit receipt.");
-      }
-      context.queryAuditIds.push(response.queryAudit.queryAuditId);
-      context.evidence.push(response);
-      if (!response.data) {
+      if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
+        context.evidence.push(response);
         for (const validation of adaptValidations(response)) {
           await context.emit({ type: "validation", status: validation.outcome === "failed" ? "error" : "warning", ...validation });
         }
         return { state: "Unavailable", validation: response.validation, provenance: response.provenance };
       }
+      if (!response.queryAudit || response.queryAudit.route !== "semantic") {
+        throw new Error("The governed query did not return its immutable audit receipt.");
+      }
+      context.queryAuditIds.push(response.queryAudit.queryAuditId);
+      context.evidence.push(response);
       const result = adaptGovernedResult(response);
       context.results.set(result.resultId, result);
       const dimensions = ir.kind === "composite" ? ir.alignOn : ir.dimensions;
@@ -376,6 +380,13 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
       assertObservationGateClear(context.observationGate);
       await context.emit({ type: "progress", status: "running", label: "Exploring an allowlisted source field" });
       const response = await context.semantic.execute("run_source_query", input, context);
+      if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
+        context.evidence.push(response);
+        for (const validation of adaptValidations(response)) {
+          await context.emit({ type: "validation", status: validation.outcome === "failed" ? "error" : "warning", ...validation });
+        }
+        return { state: "Unavailable", validation: response.validation, provenance: response.provenance };
+      }
       if (!response.queryAudit || response.queryAudit.route !== "source_exploration") {
         throw new Error("The source query did not return its immutable audit receipt.");
       }
@@ -578,6 +589,7 @@ export type LiveAlbertTurnResult = Readonly<{
   resultDigest: string;
   usage: Readonly<Record<string, unknown>>;
   queryAuditIds: readonly string[];
+  directoryEvidence?: Readonly<{ field: "worker"; valueCount: number }>;
 }>;
 
 export function buildBoundedModelInput(
@@ -708,6 +720,36 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
   const queryAuditIds: string[] = [];
   const clarificationAsked = { value: false };
   const observationGate = createObservationGate();
+  const semantic = options.semanticClient ?? new SemanticServiceClient(options.semanticServiceUrl, options.semanticSigningSecret);
+  let directoryValues: readonly Readonly<{ value: string }>[] = [];
+  let directoryProvenance: TraceProvenance | undefined;
+  if (promptRouteContract?.route === "directory") {
+    await options.emit({
+      type: "progress",
+      status: "running",
+      label: "Loading the governed worker directory",
+      progress: 0.2,
+    });
+    const directoryResponse = await semantic.execute("list_field_values", {
+      field: promptRouteContract.field,
+      limit: 50,
+    }, {
+      tenantId: options.tenantId,
+      conversationId: options.conversationId,
+      turnId: options.turnId,
+      role: options.role,
+      abortSignal: options.abortSignal,
+    });
+    directoryValues = requireFieldValues(directoryResponse);
+    directoryProvenance = safeDirectoryProvenance(directoryResponse);
+    await options.emit({
+      type: "narrative",
+      status: "complete",
+      text: directoryValues.length > 0
+        ? "I loaded the allowlisted worker names from your connected POS directory."
+        : "The connected POS worker directory is empty, so I cannot list employee names yet.",
+    });
+  }
   const context: LiveAgentContext = Object.freeze({
     tenantId: options.tenantId,
     conversationId: options.conversationId,
@@ -718,7 +760,7 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
       confirmedValue: options.confirmedPreference.value,
     } : {}),
     abortSignal: options.abortSignal,
-    semantic: options.semanticClient ?? new SemanticServiceClient(options.semanticServiceUrl, options.semanticSigningSecret),
+    semantic,
     emit: options.emit,
     results,
     evidence,
@@ -790,7 +832,7 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
       && findUngroundedNumbers(item, allRows).length === 0,
   );
   const blockedFollowUpCount = output.followUps.length - groundedFollowUps.length;
-  const provenance = [...results.values()].at(-1)?.provenance ?? emptyProvenance;
+  const provenance = directoryProvenance ?? [...results.values()].at(-1)?.provenance ?? emptyProvenance;
   let answerState = enforceEvidenceBoundAnswerState(output.state, evidence, clarificationAsked.value);
   let answerText = hasProposedClaims && claimValidation.valid
     ? renderValidatedClaims(claimValidation.claims,4_000)
@@ -799,40 +841,53 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     ? claimValidation.claims
     : [];
 
-  if (answerState !== output.state) {
-    if (answerState === "Unavailable") {
-      answerText = "Albert could not produce a safely supported answer from the governed evidence available in this turn.";
-      answerClaims=[];
-    }
-    await options.emit({
-      type: "validation",
-      status: "warning",
-      name: "answer_state_guard",
-      outcome: answerState === "Unavailable" ? "failed" : "qualified",
-      detail: `The proposed ${output.state} state was reduced to ${answerState} to match governed evidence.`,
-    });
-  }
-
-  if (ungrounded.length > 0) {
-    if (answerState === "Verified") answerState = "Qualified";
-    answerText = answerState === "Unavailable"
-      ? "Albert could not produce a safely supported answer from the governed evidence available in this turn."
-      : "Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above.";
-    answerClaims=[];
-    await options.emit({
-      type: "validation",
-      status: "warning",
-      name: hasProposedClaims ? "structured_claim_grounding" : "numeric_grounding",
-      outcome: "qualified",
-      detail: "A model-authored claim was blocked before it reached the answer because its exact cell association was not proven.",
-    });
-  }
-
-  const unavailableRouteAnswer = serverOwnedUnavailableAnswer(promptRouteContract);
-  if (unavailableRouteAnswer) {
-    answerState = "Unavailable";
-    answerText = unavailableRouteAnswer;
+  const directoryRouteAnswer = serverOwnedDirectoryAnswer(promptRouteContract, directoryValues);
+  if (directoryRouteAnswer) {
+    answerState = directoryValues.length > 0 ? "Qualified" : "Unavailable";
+    answerText = directoryRouteAnswer;
     answerClaims = [];
+  } else {
+    if (answerState !== output.state) {
+      if (answerState === "Unavailable") {
+        answerText = "Albert could not produce a safely supported answer from the governed evidence available in this turn.";
+        answerClaims=[];
+      }
+      await options.emit({
+        type: "validation",
+        status: "warning",
+        name: "answer_state_guard",
+        outcome: answerState === "Unavailable" ? "failed" : "qualified",
+        detail: `The proposed ${output.state} state was reduced to ${answerState} to match governed evidence.`,
+      });
+    }
+
+    if (ungrounded.length > 0) {
+      if (answerState === "Verified") answerState = "Qualified";
+      // Keep Unavailable explanatory copy (for example missing capabilities or
+      // blocked health) when the model did not propose structured numeric claims.
+      // Replacing it with a generic stub hides the unlock path the constitution
+      // asks Albert to name. Verified/Qualified narratives still fail closed.
+      if (answerState !== "Unavailable" || hasProposedClaims) {
+        answerText = answerState === "Unavailable"
+          ? "Albert could not produce a safely supported answer from the governed evidence available in this turn."
+          : "Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above.";
+        answerClaims=[];
+      }
+      await options.emit({
+        type: "validation",
+        status: "warning",
+        name: hasProposedClaims ? "structured_claim_grounding" : "numeric_grounding",
+        outcome: "qualified",
+        detail: "A model-authored claim was blocked before it reached the answer because its exact cell association was not proven.",
+      });
+    }
+
+    const unavailableRouteAnswer = serverOwnedUnavailableAnswer(promptRouteContract);
+    if (unavailableRouteAnswer) {
+      answerState = "Unavailable";
+      answerText = unavailableRouteAnswer;
+      answerClaims = [];
+    }
   }
 
   if (blockedFollowUpCount > 0) {
@@ -879,7 +934,9 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
               missingObservation: promptRouteContract.missingObservation,
               unlock: promptRouteContract.unlock,
             }
-          : { question: promptRouteContract.question, optionIds: promptRouteContract.optionIds }),
+          : promptRouteContract.route === "directory"
+            ? { field: promptRouteContract.field, valueCount: directoryValues.length }
+            : { question: promptRouteContract.question, optionIds: promptRouteContract.optionIds }),
       } : null,
     })),
   );
@@ -890,10 +947,46 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
       resultDigest: `sha256:${resultDigestHex}`,
       usage,
       queryAuditIds: Object.freeze([...queryAuditIds]),
+      ...(promptRouteContract?.route === "directory"
+        ? {
+            directoryEvidence: Object.freeze({
+              field: promptRouteContract.field,
+              valueCount: directoryValues.length,
+            }),
+          }
+        : {}),
     });
   } finally {
     await ownedProvider?.close();
   }
+}
+
+function safeDirectoryProvenance(response: SemanticToolResponse): TraceProvenance {
+  try {
+    if (response.provenance.timeRange) return adaptTraceProvenance(response);
+  } catch {
+    // Metadata tools may omit a resolved query time range; fall back below.
+  }
+  const withTimeRange: SemanticToolResponse = {
+    ...response,
+    provenance: {
+      ...response.provenance,
+      timeRange: {
+        label: "Connected POS worker directory",
+        start: "1970-01-01T00:00:00.000Z",
+        end: latestSourceWatermark(response) ?? new Date().toISOString(),
+        timezone: "Australia/Melbourne",
+      },
+    },
+  };
+  return adaptTraceProvenance(withTimeRange);
+}
+
+function latestSourceWatermark(response: SemanticToolResponse): string | undefined {
+  const watermarks = Object.values(response.provenance.sourceWatermarks ?? {})
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .sort();
+  return watermarks.at(-1);
 }
 
 function providerUsageSnapshot(primaryUsage: Usage, summaryUsage: Usage): ProviderRunUsage {
@@ -930,7 +1023,17 @@ export function createTraceEmitter(options: Readonly<{
       occurredAt: new Date().toISOString(),
     } as TraceEvent;
     assertOrderedSanitizedTrace([...events, event]);
-    await options.persist(event);
+    try {
+      await options.persist(event);
+    } catch {
+      // Still stream the public event so the browser is never left with an
+      // empty trace when persistence is temporarily unavailable mid-stream.
+      // Continue the turn so Albert can still return Unavailable instead of
+      // aborting before any terminal answer is produced.
+      events.push(event);
+      options.deliver(event);
+      return event;
+    }
     events.push(event);
     options.deliver(event);
     return event;

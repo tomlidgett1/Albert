@@ -32,6 +32,27 @@
   color-scheme: dark;
 }
 
+.loginPage[data-theme="green"] {
+  color-scheme: dark;
+  --login-canvas: #12201c;
+  --login-surface: #152621;
+  --login-text: #e5ebe8;
+  --login-heading: #f5f8f6;
+  --login-muted: #a3b4ad;
+  --login-placeholder: #7f9088;
+  --login-border: #243f37;
+  --login-input-border: #2f4d43;
+  --login-input-surface: #172e23;
+  --login-border-focus: #5f7f72;
+  --login-focus: #e6eee9;
+  --login-focus-ring: rgba(210, 255, 101, 0.22);
+  --login-contrast: #eef4f0;
+  --login-contrast-hover: #ffffff;
+  --login-on-contrast: #12201c;
+  --login-error: #ffb4ab;
+  --login-shadow: rgba(0, 0, 0, 0.36);
+}
+
 .loginPage[data-theme="system"] {
   color-scheme: light dark;
 }

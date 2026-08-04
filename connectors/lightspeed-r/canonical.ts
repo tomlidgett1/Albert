@@ -194,7 +194,6 @@ type SaleLine = Readonly<{
   index: number;
   quantity: Decimal4;
   unitPrice: Decimal4;
-  normalUnitPrice: Decimal4;
   discount: Decimal4;
   netIncTax: Decimal4;
   unitCost: Decimal4 | null;
@@ -216,15 +215,25 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     const nativeId = optionalIdentifier(raw.saleLineID);
     const quantity = decimalOrZeroValue(raw.unitQuantity, `sales.sale_lines[${index}].unitQuantity`);
     const unitPrice = decimalOrZeroValue(raw.unitPrice, `sales.sale_lines[${index}].unitPrice`);
-    const normalUnitPrice = optionalDecimalValue(
-      raw.normalUnitPrice,
-      `sales.sale_lines[${index}].normalUnitPrice`,
-    ) ?? unitPrice;
     const rawDiscount = optionalDecimalValue(
       raw.discountAmount,
       `sales.sale_lines[${index}].discountAmount`,
     ) ?? ZERO;
-    const discount = quantity.scaled < 0n ? negate(rawDiscount.abs()) : rawDiscount.abs();
+    const lineDiscount = optionalDecimalValue(
+      raw.calcLineDiscount,
+      `sales.sale_lines[${index}].calcLineDiscount`,
+    );
+    const transactionDiscount = optionalDecimalValue(
+      raw.calcTransactionDiscount,
+      `sales.sale_lines[${index}].calcTransactionDiscount`,
+    );
+    // discountAmount is the configured dollar-discount input. The two calc*
+    // fields are the applied line and transaction allocations and therefore
+    // include percentage discounts. Older recordings may omit the calculated
+    // fields, so retain the signed input as a compatibility fallback.
+    const discount = lineDiscount || transactionDiscount
+      ? (lineDiscount ?? ZERO).add(transactionDiscount ?? ZERO)
+      : quantity.scaled < 0n ? negate(rawDiscount.abs()) : rawDiscount.abs();
     const calculated = optionalDecimalValue(raw.calcTotal, `sales.sale_lines[${index}].calcTotal`);
     return {
       raw,
@@ -233,9 +242,8 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
       index,
       quantity,
       unitPrice,
-      normalUnitPrice,
       discount,
-      netIncTax: calculated ?? normalUnitPrice.multiply(quantity).subtract(discount),
+      netIncTax: calculated ?? unitPrice.multiply(quantity).subtract(discount),
       unitCost: optionalDecimalValue(raw.avgCost, `sales.sale_lines[${index}].avgCost`),
     };
   });
@@ -265,28 +273,18 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     }, row));
   }
 
-  const hasRefundLines = refundLines.length > 0;
-  const positiveGross = sum(positiveLines.map((line) => line.normalUnitPrice.multiply(line.quantity)));
-  const positiveDiscount = sum(positiveLines.map((line) => line.discount));
-  const positiveNet = sum(positiveLines.map((line) => line.netIncTax));
-  const positiveTax = sum(positiveLines.map((line) => taxAllocations[line.index] ?? ZERO));
+  const mappedDiscount = sum(lines.map((line) => line.discount));
+  const mappedNet = sum(lines.map((line) => line.netIncTax));
+  const mappedTax = sum(lines.map((line) => taxAllocations[line.index] ?? ZERO));
   const sourceNet = optionalDecimalValue(row.total, "sales.total")
     ?? optionalDecimalValue(row.calc_total, "sales.calc_total")
-    ?? positiveNet;
-  const sourceDiscount = optionalDecimalValue(row.calc_discount, "sales.calc_discount") ?? positiveDiscount;
-  const sourceTax = optionalDecimalValue(row.tax_total, "sales.tax_total") ?? positiveTax;
-  const orderNet = hasRefundLines ? positiveNet : sourceNet;
-  const orderDiscount = hasRefundLines ? positiveDiscount : sourceDiscount;
-  const orderTax = hasRefundLines ? positiveTax : sourceTax;
-  const orderGross = hasRefundLines
-    ? positiveGross
-    : sourceNet.add(sourceDiscount);
-  const orderExTax = hasRefundLines
-    ? orderNet.subtract(orderTax)
-    : optionalDecimalValue(row.calc_subtotal, "sales.calc_subtotal") ?? orderNet.subtract(orderTax);
-  const orderCost = hasRefundLines
-    ? sumNullable(positiveLines.map((line) => line.unitCost?.multiply(line.quantity) ?? null))
-    : optionalDecimal(row.calc_avg_cost, "sales.calc_avg_cost");
+    ?? mappedNet;
+  const sourceDiscount = optionalDecimalValue(row.calc_discount, "sales.calc_discount") ?? mappedDiscount;
+  const sourceTax = optionalDecimalValue(row.tax_total, "sales.tax_total") ?? mappedTax;
+  const orderGross = sourceNet.add(sourceDiscount);
+  const orderExTax = sourceNet.subtract(sourceTax);
+  const orderCost = optionalDecimal(row.calc_avg_cost, "sales.calc_avg_cost")
+    ?? sumNullable(lines.map((line) => line.unitCost?.multiply(line.quantity) ?? null));
   commands.push(fact("commerce_order", row.source_object_type, saleId, {
     location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
     register_id: registerId ? sourceRef("register", "Register", registerId, row) : null,
@@ -301,15 +299,15 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     voided,
     internal_transaction: false,
     gross_amount: orderGross.toString(),
-    discount_amount: orderDiscount.toString(),
-    net_amount_inc_tax: orderNet.toString(),
-    tax_amount: orderTax.toString(),
+    discount_amount: sourceDiscount.toString(),
+    net_amount_inc_tax: sourceNet.toString(),
+    tax_amount: sourceTax.toString(),
     net_amount_ex_tax: orderExTax.toString(),
     total_cost: orderCost,
     currency: context.baseCurrency,
   }, "operational_sales", row.tombstone));
 
-  for (const line of positiveLines) {
+  for (const line of lines) {
     const tax = taxAllocations[line.index] ?? ZERO;
     const itemId = optionalIdentifier(line.raw.itemID);
     const workerId = optionalIdentifier(line.raw.employeeID) ?? optionalIdentifier(row.employee_id);
@@ -335,13 +333,17 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
       completed_at: completedAt,
       fulfilled_at: completedAt,
       business_date: businessDate,
-      order_status: orderStatus,
+      // Refund lines remain on their source sale so the signed line set
+      // reconciles the source header. The governed sales event excludes this
+      // refunded order-line projection and uses commerce_refund_line instead,
+      // avoiding double-counting while preserving the original-line link.
+      order_status: line.quantity.scaled < 0n ? "refunded" : orderStatus,
       voided,
       internal_transaction: false,
       quantity: line.quantity.toString(),
       unit_price: line.unitPrice.toString(),
       unit_cost: line.unitCost?.toString() ?? null,
-      gross_amount: line.normalUnitPrice.multiply(line.quantity).toString(),
+      gross_amount: line.netIncTax.add(line.discount).toString(),
       discount_amount: line.discount.toString(),
       net_amount_inc_tax: line.netIncTax.toString(),
       tax_amount: tax.toString(),
@@ -390,6 +392,7 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     const paymentId = optionalIdentifier(payment.salePaymentID) ?? `${saleId}#sale-payment:${index + 1}`;
     const amount = decimalOrZeroValue(payment.amount, `sales.sale_payments[${index}].amount`);
     const paidAt = optionalInstant(payment.createTime) ?? completedAt ?? orderedAt;
+    const archived = truthy(payment.archived);
     commands.push(fact("commerce_payment", "SalePayment", paymentId, {
       order_id: sourceRef("commerce_order", row.source_object_type, saleId, row),
       location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
@@ -397,10 +400,10 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
       paid_at: paidAt,
       business_date: tradingBusinessDate(paidAt, context),
       tender_type: optionalIdentifier(payment.paymentTypeID) ?? "unknown",
-      status: voided ? "voided" : amount.scaled < 0n ? "refunded" : "captured",
+      status: voided || archived ? "voided" : amount.scaled < 0n ? "refunded" : "captured",
       amount: amount.toString(),
       currency: context.baseCurrency,
-    }, "operational_sales", row.tombstone));
+    }, "operational_sales", row.tombstone || archived));
   }
   return commands;
 }

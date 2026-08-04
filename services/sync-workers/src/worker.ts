@@ -1,3 +1,4 @@
+import { ulid } from "ulid";
 import {
   ConnectorError,
   ConnectorHttpError,
@@ -9,6 +10,7 @@ import {
   type ConnectorStream,
   type RawSourceRecord,
   type SyncCursor as ConnectorCursor,
+  type SyncPage,
 } from "../../../packages/connector-sdk/src/index.js";
 import {
   asSyncFailureCode,
@@ -39,6 +41,8 @@ import type { SyncRawWriter } from "./raw-storage.js";
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 12 * 60_000;
 const MAX_QUEUE_RETRY_DELAY_SECONDS = 7 * 24 * 60 * 60;
+/** Insights New-style in-claim page walk. One queue claim drains many vendor pages. */
+const BACKFILL_PAGES_PER_CLAIM = 50;
 
 export type SyncFailureEvidence = Readonly<{
   code: SyncFailureCode;
@@ -59,11 +63,14 @@ const DATABASE_FAILURE_CODES: Readonly<
 > = Object.freeze({
   "40001": Object.freeze({ code: "database_serialization_conflict", retryable: true }),
   "40P01": Object.freeze({ code: "database_deadlock", retryable: true }),
+  "55P03": Object.freeze({ code: "database_lock_timeout", retryable: true }),
   "42501": Object.freeze({ code: "database_permission_denied", retryable: false }),
   "57P01": Object.freeze({ code: "database_unavailable", retryable: true }),
   "08000": Object.freeze({ code: "database_unavailable", retryable: true }),
   "08003": Object.freeze({ code: "database_unavailable", retryable: true }),
   "08006": Object.freeze({ code: "database_unavailable", retryable: true }),
+  // Supabase/pgbouncer saturation on dogfood must defer, not dead-letter.
+  "53300": Object.freeze({ code: "database_unavailable", retryable: true }),
   "23503": Object.freeze({ code: "database_integrity_violation", retryable: false }),
   "23505": Object.freeze({ code: "database_integrity_violation", retryable: false }),
 });
@@ -184,6 +191,7 @@ export function syncFailure(error: unknown): SyncFailureEvidence {
     if (typeof candidate.code === "string") {
       const databaseFailure = DATABASE_FAILURE_CODES[candidate.code];
       if (databaseFailure) {
+        logMappedDatabaseFailure(error, databaseFailure.code);
         return Object.freeze({
           ...databaseFailure,
           retryDelaySeconds: databaseFailure.retryable ? 30 : 1,
@@ -223,10 +231,38 @@ export function syncFailure(error: unknown): SyncFailureEvidence {
       retryDelaySeconds: internal.retryDelaySeconds ?? (internal.retryable ? 30 : 1),
     });
   }
+  logUnexpectedSyncFailure(error);
   return Object.freeze({
     code: "unexpected_sync_failure",
     retryable: true,
     retryDelaySeconds: 30,
+  });
+}
+
+function logUnexpectedSyncFailure(error: unknown): void {
+  if (process.env.NODE_ENV === "production") return;
+  console.error("Albert sync job unexpected failure", {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+    code: error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code).slice(0, 120)
+      : undefined,
+  });
+}
+
+function logMappedDatabaseFailure(error: unknown, code: string): void {
+  if (process.env.NODE_ENV === "production") return;
+  const pg = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  console.error("Albert sync job database failure", {
+    mappedCode: code,
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+    pgCode: pg && "code" in pg ? String(pg.code).slice(0, 120) : undefined,
+    pgSchema: pg && "schema" in pg ? String(pg.schema).slice(0, 120) : undefined,
+    pgTable: pg && "table" in pg ? String(pg.table).slice(0, 120) : undefined,
+    pgDetail: pg && "detail" in pg ? String(pg.detail).slice(0, 300) : undefined,
+    pgWhere: pg && "where" in pg ? String(pg.where).slice(0, 500) : undefined,
+    stack: error instanceof Error ? error.stack?.split("\n").slice(0, 8).join(" | ").slice(0, 800) : undefined,
   });
 }
 
@@ -293,16 +329,55 @@ export class SyncJobProcessor {
     let activeStream: ConnectorStream | null = null;
     let activeBackfillPhase: Awaited<ReturnType<ControlPlaneStore["backfillPhase"]>> | null = null;
     let writePermitId: string | null = null;
+    // Prefetch runs concurrent with raw upload. Any exit path that does not
+    // await it must swallow rejection or Node exits the Fly machine.
+    let prefetchPromise: Promise<SyncPage> | null = null;
+    const abandonPrefetch = (): void => {
+      if (!prefetchPromise) return;
+      void prefetchPromise.catch(() => undefined);
+      prefetchPromise = null;
+    };
     const withWriteFence = async <T>(operation: (capability: string) => Promise<T>): Promise<T> => {
       if (!writePermitId) throw new Error("sync_write_permit_missing");
       return this.control.withSyncWritePermit(claim, writePermitId, operation);
     };
     try {
+      // Critical-path scheduling: `recent` phases are what make domains
+      // queryable for transforms and answers; deeper history only extends
+      // coverage backwards. While any recent phase on this connection is
+      // still open, yield deep-history claims back to the queue so worker
+      // lanes stay on the critical path. Deferral is lease-preserving and
+      // consumes no failure budget, so this cannot dead-letter the job.
+      if (
+        job.type === "InitialBackfill" && job.stream &&
+        job.planMode === "progressive" && job.phase !== "recent"
+      ) {
+        const openRecentPhases = await this.control.openRecentBackfillPhases(
+          job.tenantId,
+          job.connectionId,
+          job.connectionGeneration,
+        );
+        if (openRecentPhases > 0) {
+          const deferSeconds = 90;
+          await this.queue.defer(claim, { code: "connection_not_ready" }, deferSeconds);
+          return Object.freeze({
+            status: "retry_scheduled",
+            failure: Object.freeze({
+              code: "connection_not_ready" as const,
+              retryable: true,
+            }),
+            retryDelaySeconds: deferSeconds,
+          });
+        }
+      }
       const run = await this.control.beginRun(job, claim.readCount);
       if (run === "already_succeeded") {
         await this.queue.complete(claim, { idempotentReplay: true });
         return Object.freeze({ status: "completed" });
       }
+      const runResumeCursor = job.type === "InitialBackfill" && claim.readCount > 1
+        ? await this.control.resumeInitialBackfillCursor(job)
+        : null;
       writePermitId = await this.control.acquireSyncWritePermit(claim);
       const connection = await this.control.loadConnection(job);
       const connector = this.registry.get(job.connectorId);
@@ -325,7 +400,20 @@ export class SyncJobProcessor {
         () => connector.check_connection(context),
       );
       connectionCheckInFlight = false;
-      await this.control.recordConnectionAuthHealth(claim, persistedAuthHealth(connectionHealth));
+      const persistedHealth = persistedAuthHealth(connectionHealth);
+      try {
+        await this.control.recordConnectionAuthHealth(claim, persistedHealth);
+      } catch (error) {
+        // Transform capability issuance holds FOR SHARE on connections for the
+        // whole analytical transaction. A healthy probe must not abort the
+        // backfill when that ShareLock briefly blocks an auth-health write.
+        const pgCode = error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code)
+          : "";
+        if (persistedHealth !== "healthy" || (pgCode !== "55P03" && pgCode !== "40P01")) {
+          throw error;
+        }
+      }
       if (connectionHealth === "expired" || connectionHealth === "revoked") {
         throw new ConnectorError(
           "AUTHENTICATION_REQUIRED",
@@ -380,7 +468,7 @@ export class SyncJobProcessor {
       let page;
       if (job.type === "InitialBackfill") {
         if (job.planMode === "resume_verified") {
-          const reconnectCursor = job.cursor ?? (
+          const reconnectCursor = runResumeCursor ?? job.cursor ?? (
             persisted.connectionGeneration === job.connectionGeneration - 1
               ? persisted.cursor
               : null
@@ -401,7 +489,9 @@ export class SyncJobProcessor {
         } else {
           page = await this.connectorOperation(
             operationSignal,
-            () => connector.initial_sync(context, stream, job.range, job.cursor),
+            () => connector.initial_sync(
+              context,stream,job.range,runResumeCursor ?? job.cursor,
+            ),
           );
         }
       } else if (job.type === "IncrementalSync") {
@@ -489,43 +579,102 @@ export class SyncJobProcessor {
       // Reusing its request timestamp keeps the immutable raw object key stable
       // when a leased job is killed and replayed on a later UTC date.
       const extractedAt = job.requestedAt;
-      operationSignal.throwIfAborted();
-      {
+      // InitialBackfill walks many vendor pages inside one claim (Insights New
+      // style). Incremental/reconciliation stay single-page for webhook/lease
+      // semantics. Raw upload stays outside withWriteFence to avoid Storage
+      // lock_timeout; subsequent pages mint a fresh batchId for immutability.
+      const maxPagesPerClaim = job.type === "InitialBackfill" ? BACKFILL_PAGES_PER_CLAIM : 1;
+      let pagesLanded = 0;
+      let cumulativeStaged = 0;
+      let cumulativeQuarantine = 0;
+      let currentPage: SyncPage = page;
+      let pageStartCursor: ConnectorCursor | undefined = job.type === "InitialBackfill"
+        ? runResumeCursor ?? job.cursor
+        : "cursor" in job ? job.cursor : undefined;
+      let pageJob: SyncJob = job.type === "InitialBackfill" && runResumeCursor
+        ? Object.freeze({ ...job,batchId:ulid(),cursor:runResumeCursor })
+        : job;
+      // Capability support derives from granted scopes, which cannot change
+      // within one leased claim: resolve once instead of a credential-vault
+      // read on every walked page.
+      let capabilityObservationsForClaim:
+        | Awaited<ReturnType<typeof connector.describe_capabilities>>
+        | null = null;
+
+      while (true) {
+        pagesLanded += 1;
+        if (pagesLanded > 1) {
+          pageJob = Object.freeze({
+            ...job,
+            batchId:ulid(),
+            ...(pageStartCursor ? { cursor:pageStartCursor } : {}),
+          });
+        }
+
+        const canPrefetch = job.type === "InitialBackfill"
+          && Boolean(currentPage.hasMore && currentPage.nextCursor)
+          && pagesLanded < maxPagesPerClaim
+          && !operationSignal.aborted;
+        if (canPrefetch && currentPage.nextCursor && job.type === "InitialBackfill") {
+          const nextCursor = currentPage.nextCursor;
+          const backfillJob = job;
+          prefetchPromise = this.connectorOperation(
+            operationSignal,
+            () => backfillJob.planMode === "resume_verified"
+              ? connector.incremental_sync(context, stream, nextCursor)
+              : connector.initial_sync(context, stream, backfillJob.range, nextCursor),
+          );
+        } else {
+          prefetchPromise = null;
+        }
+
         operationSignal.throwIfAborted();
-        const manifest = await withWriteFence(() => this.rawWriter.write(
-            {
-              tenantId: job.tenantId,
-              connectionId: job.connectionId,
-              syncRunId: job.syncRunId,
-              batchId: job.batchId,
-              connectorKey: job.connectorId,
-              connectorVersion: connector.version,
-              apiVersion: connector.apiVersion,
-              externalAccountReference: job.externalAccountReference,
-              stream: stream.id,
-              extractedAt,
-              cursorStart: ("cursor" in job ? job.cursor : null) as JsonValue | null,
-              cursorEnd: page.nextCursor as JsonValue | null,
-            },
-            page.records.map(rawRecord),
-            { permitId: writePermitId!, workerId: claim.workerId },
-          ));
-        await this.control.markLandingStarted(job.tenantId, job.batchId);
+        // Kick raw upload, then await it before staging (upload overlaps the
+        // prefetch started above on multipage backfills).
+        const rawUpload = this.rawWriter.write(
+          {
+            tenantId: pageJob.tenantId,
+            connectionId: pageJob.connectionId,
+            syncRunId: pageJob.syncRunId,
+            batchId: pageJob.batchId,
+            connectorKey: pageJob.connectorId,
+            connectorVersion: connector.version,
+            apiVersion: connector.apiVersion,
+            externalAccountReference: pageJob.externalAccountReference,
+            stream: stream.id,
+            extractedAt,
+            cursorStart: ("cursor" in pageJob ? pageJob.cursor : null) as JsonValue | null,
+            cursorEnd: currentPage.nextCursor as JsonValue | null,
+          },
+          currentPage.records.map(rawRecord),
+          { permitId: writePermitId!, workerId: claim.workerId },
+        );
+        const manifest = await rawUpload;
+        if (manifest.syncRunId !== pageJob.syncRunId) {
+          throw new Error("raw_batch_sync_run_lineage_mismatch");
+        }
+        if (manifest.batchId !== pageJob.batchId) {
+          // A crash-replayed page in this exact sync run resolved to its
+          // originally registered immutable batch. Rebind only the batch ID;
+          // cross-run reuse is forbidden by the manifest repository.
+          pageJob = Object.freeze({ ...pageJob, batchId: manifest.batchId });
+        }
+        await this.control.markLandingStarted(pageJob.tenantId, pageJob.batchId);
         operationSignal.throwIfAborted();
         const landing = await withWriteFence((capability) =>
-          this.analytical.land(job, manifest, page.records, capability));
+          this.analytical.land(pageJob, manifest, currentPage.records, capability));
         if (landing.resolved.length > 0) {
           await this.control.resolveQuarantineIndex({
             claim,
-            permitId:writePermitId,
-            stream:stream.id,
-            records:landing.resolved,
+            permitId: writePermitId,
+            stream: stream.id,
+            records: landing.resolved,
           });
         }
-        const completion = job.type === "InitialBackfill" && !page.hasMore
-          ? phaseCompletesBackfill(job, page.coverage, activeBackfillPhase?.inheritedCoverage)
+        const completion = job.type === "InitialBackfill" && !currentPage.hasMore
+          ? phaseCompletesBackfill(job, currentPage.coverage, activeBackfillPhase?.inheritedCoverage)
           : { complete: false, coverage: null };
-        const expectsCompletionEvidence = job.type === "InitialBackfill" && !page.hasMore &&
+        const expectsCompletionEvidence = job.type === "InitialBackfill" && !currentPage.hasMore &&
           (job.planMode !== "progressive" || job.phase === "full_history");
         if (expectsCompletionEvidence && !completion.complete) {
           throw new Error("backfill_completion_evidence_missing");
@@ -539,113 +688,111 @@ export class SyncJobProcessor {
         ) {
           reconciliationSnapshot = await withWriteFence((capability) =>
             this.analytical.recordReconciliationSnapshotPage({
-              job,stream,records:page.records,landing,hasMore:page.hasMore,
-              ...(page.sourceTotal === undefined ? {} : { sourceTotal: page.sourceTotal }),
+              job, stream, records: currentPage.records, landing, hasMore: currentPage.hasMore,
+              ...(currentPage.sourceTotal === undefined ? {} : { sourceTotal: currentPage.sourceTotal }),
             }, capability));
-          if (!page.hasMore && reconciliationSnapshot.status !== "complete") {
+          if (!currentPage.hasMore && reconciliationSnapshot.status !== "complete") {
             throw new Error(`reconciliation_snapshot_${reconciliationSnapshot.status}`);
           }
         }
         if (job.type === "ReconciliationSweep" && job.phase === "apply_tombstones") {
           applicationsInBatch = await withWriteFence((capability) =>
             this.analytical.recordReconciliationTombstoneApplications({
-              job,candidates:reconciliationCandidates,
+              job, candidates: reconciliationCandidates,
             }, capability));
         }
         await withWriteFence((capability) => this.analytical.recordConnectorStreamPage({
-            job,stream:stream.id,records:page.records,landing,hasMore:page.hasMore,
-            nextCursorPresent:page.nextCursor !== null,backfillComplete,
-            coverage:completion.coverage,
-            ...(page.sourceTotal === undefined ? {} : { sourceTotal:page.sourceTotal }),
-          }, capability));
-        const capabilityObservations = (await this.connectorOperation(
-          operationSignal,
-          () => connector.describe_capabilities(context),
-        )).filter((observation) =>
-          connector.manifest.capabilities[observation.id]?.streams.includes(stream.id),
-        );
-        if (!page.paginationBlock) await withWriteFence((capability) => this.analytical.publishCapabilityObservations({
-            job,
+          job: pageJob, stream: stream.id, records: currentPage.records, landing,
+          hasMore: currentPage.hasMore,
+          nextCursorPresent: currentPage.nextCursor !== null, backfillComplete,
+          coverage: completion.coverage,
+          ...(currentPage.sourceTotal === undefined ? {} : { sourceTotal: currentPage.sourceTotal }),
+        }, capability));
+        if (capabilityObservationsForClaim === null) {
+          capabilityObservationsForClaim = (await this.connectorOperation(
+            operationSignal,
+            () => connector.describe_capabilities(context),
+          )).filter((observation) =>
+            connector.manifest.capabilities[observation.id]?.streams.includes(stream.id),
+          );
+        }
+        const capabilityObservations = capabilityObservationsForClaim;
+        if (!currentPage.paginationBlock) {
+          await withWriteFence((capability) => this.analytical.publishCapabilityObservations({
+            job: pageJob,
             packVersion: connector.version,
             stream: stream.id,
-            sourceWatermark: latestSourceWatermark(page.records, extractedAt),
+            sourceWatermark: latestSourceWatermark(currentPage.records, extractedAt),
             recordCount: landing.stagedRecordCount,
             observations: capabilityObservations,
           }, capability));
+        }
         await withWriteFence((capability) => this.analytical.publishConnectorQualityResults({
-            job,
-            stream:stream.id,
-            results:buildConnectorQualityResults({
-              job,records:page.records,stagedRecordCount:landing.stagedRecordCount,
-              quarantineCount:landing.quarantined.length,hasMore:page.hasMore,
-              nextCursor:page.nextCursor,capabilities:capabilityObservations,
-            }),
-          }, capability));
+          job: pageJob,
+          stream: stream.id,
+          results: buildConnectorQualityResults({
+            job: pageJob, records: currentPage.records, stagedRecordCount: landing.stagedRecordCount,
+            quarantineCount: landing.quarantined.length, hasMore: currentPage.hasMore,
+            nextCursor: currentPage.nextCursor, capabilities: capabilityObservations,
+          }),
+        }, capability));
         if (landing.quarantined.length > 0) {
           await this.control.recordQuarantineIndex({
-            job,
+            job: pageJob,
             stream: stream.id,
             batchObjectKey: manifest.objectKeys[0],
             records: landing.quarantined,
           });
         }
-        // Fence the control-plane commit against a lease that expired while the
-        // vendor call or analytical landing was in flight. Raw/staging writes are
-        // immutable and idempotent; cursors and readiness must never be advanced
-        // by a superseded worker.
         operationSignal.throwIfAborted();
         await this.queue.extendVisibility(claim, 900);
-        const finalCursor: ConnectorCursor = page.nextCursor ??
-          ("cursor" in job && job.cursor ? job.cursor : persisted.cursor ?? { value: extractedAt });
-        // Publish successor work before marking this run successful. Publication
-        // is idempotent, so a retry is harmless; committing first would leave a
-        // crash window in which a completed page has no durable continuation.
-        if (page.hasMore && page.nextCursor) await this.enqueueContinuation(job, page.nextCursor);
-        if (!page.hasMore && job.type === "InitialBackfill") {
-          await this.enqueueNextBackfillPhase(job);
-        }
+        const finalCursor: ConnectorCursor = currentPage.nextCursor ??
+          ("cursor" in pageJob && pageJob.cursor ? pageJob.cursor : persisted.cursor ?? { value: extractedAt });
+        cumulativeStaged += landing.stagedRecordCount;
+        cumulativeQuarantine += landing.quarantined.length;
+
         let totalApplied = applicationsInBatch;
         let reconciliationPhaseEvidence: Readonly<Record<string, unknown>> | null = null;
-        if (!page.hasMore && job.type === "ReconciliationSweep") {
+        const finalizeClaim = !currentPage.hasMore || prefetchPromise === null;
+        if (finalizeClaim && !currentPage.hasMore && job.type === "ReconciliationSweep") {
           if (job.phase === "apply_tombstones") {
             totalApplied = await withWriteFence((capability) =>
               this.analytical.completeConnectorReconciliation(job, capability));
           }
           await this.enqueueNextReconciliationPhase(job);
           reconciliationPhaseEvidence = {
-            batchId:job.batchId,
-            recordCount:landing.stagedRecordCount,
-            quarantineCount:landing.quarantined.length,
+            batchId: pageJob.batchId,
+            recordCount: landing.stagedRecordCount,
+            quarantineCount: landing.quarantined.length,
             ...(reconciliationSnapshot ? {
-              snapshotStatus:reconciliationSnapshot.status,
-              uniqueCount:reconciliationSnapshot.uniqueCount,
-              sourceTotal:reconciliationSnapshot.sourceTotal ?? null,
-              membershipDeltaCount:reconciliationSnapshot.membershipDeltaCount ?? 0,
+              snapshotStatus: reconciliationSnapshot.status,
+              uniqueCount: reconciliationSnapshot.uniqueCount,
+              sourceTotal: reconciliationSnapshot.sourceTotal ?? null,
+              membershipDeltaCount: reconciliationSnapshot.membershipDeltaCount ?? 0,
             } : {}),
             ...(job.phase === "apply_tombstones" ? {
-              applicationsInBatch,totalApplied,
+              applicationsInBatch, totalApplied,
             } : {}),
           };
         }
-        // Page-local "not observed" warnings can never overwrite the durable
-        // worst-state roll-up for all current-generation required streams.
         await withWriteFence((capability) =>
-          this.analytical.refreshConnectorQualityRollup(job, capability));
-        if (page.paginationBlock) {
+          this.analytical.refreshConnectorQualityRollup(pageJob, capability));
+        if (currentPage.paginationBlock) {
           throw new ConnectorError(
             "REMOTE_RESPONSE_INVALID",
-            page.paginationBlock.detail,
+            currentPage.paginationBlock.detail,
             {
               retryable: false,
-              details: { stream: stream.id, reason: page.paginationBlock.code },
+              details: { stream: stream.id, reason: currentPage.paginationBlock.code },
             },
           );
         }
         await this.control.commitPage({
-          job,
+          job: pageJob,
           cursor: finalCursor,
           sourceWatermark: finalCursor.sourceUpdatedAt,
-          hasMore: page.hasMore,
+          hasMore: currentPage.hasMore,
+          keepRunOpen: true,
           recordCount: landing.stagedRecordCount,
           quarantineCount: landing.quarantined.length,
           domains: stream.domains,
@@ -661,11 +808,43 @@ export class SyncJobProcessor {
             },
           } : {}),
         });
+
+        if (!finalizeClaim && prefetchPromise) {
+          const nextPage = await prefetchPromise;
+          if (nextPage.hasMore && !nextPage.nextCursor && !nextPage.paginationBlock) {
+            throw new Error("connector_page_missing_continuation_cursor");
+          }
+          if (nextPage.paginationBlock && (!nextPage.hasMore || nextPage.nextCursor)) {
+            throw new Error("connector_page_invalid_pagination_block");
+          }
+          if (
+            nextPage.hasMore &&
+            nextPage.nextCursor &&
+            currentPage.nextCursor?.value === nextPage.nextCursor.value
+          ) {
+            throw new Error("connector_page_non_advancing_cursor");
+          }
+          pageStartCursor = currentPage.nextCursor ?? undefined;
+          currentPage = nextPage;
+          continue;
+        }
+
+        // Publish successor work only when leaving the claim. Publication is
+        // idempotent; committing first would leave a crash window with no
+        // durable continuation.
+        if (currentPage.hasMore && currentPage.nextCursor) {
+          await this.enqueueContinuation(job, currentPage.nextCursor);
+        }
+        if (!currentPage.hasMore && job.type === "InitialBackfill") {
+          await this.enqueueNextBackfillPhase(job);
+        }
+        await this.control.completePageRun(job);
         await this.queue.complete(claim, {
-          batchId: job.batchId,
-          stagedRecordCount: landing.stagedRecordCount,
-          quarantineCount: landing.quarantined.length,
-          continuationEnqueued: page.hasMore,
+          batchId: pageJob.batchId,
+          stagedRecordCount: cumulativeStaged,
+          quarantineCount: cumulativeQuarantine,
+          continuationEnqueued: currentPage.hasMore,
+          pagesLanded,
         });
         return Object.freeze({ status: "completed" });
       }
@@ -751,6 +930,7 @@ export class SyncJobProcessor {
         });
       }
     } finally {
+      abandonPrefetch();
       if (writePermitId) {
         await this.control.releaseSyncWritePermit(
           job.tenantId,writePermitId,this.workerId,
@@ -876,6 +1056,8 @@ export class SyncJobProcessor {
         reason: "continuation",
       });
     } else {
+      // Use the hashed default idempotency key. Embedding cursor.value inline
+      // overflows the 240-char enqueue limit once Lightspeed opaque cursors grow.
       await this.orchestrator.enqueueReconciliationSweep({
         tenantId: job.tenantId,
         connectionId: job.connectionId,
@@ -888,8 +1070,6 @@ export class SyncJobProcessor {
         cursor,
         lookbackFrom: job.lookbackFrom,
         lookbackTo: job.lookbackTo,
-      }, {
-        idempotencyKey:`reconciliation-continuation:${job.connectionId}:g${job.connectionGeneration}:${job.reconciliationSweepId}:${job.stream}:${job.phase}:${cursor.value}`,
       });
     }
   }

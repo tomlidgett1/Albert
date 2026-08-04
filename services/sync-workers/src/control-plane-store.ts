@@ -1,5 +1,9 @@
 import { ulid } from "ulid";
-import type { RawBatchManifest, RawManifestRepository } from "../../../packages/storage/src/index.js";
+import type {
+  RawBatchContentIdentity,
+  RawBatchManifest,
+  RawManifestRepository,
+} from "../../../packages/storage/src/index.js";
 import {
   asSyncFailureCode,
   type ClaimedSyncJob,
@@ -8,6 +12,7 @@ import {
 import type {
   ConnectorManifest,
   ConnectorStream,
+  SyncCursor,
   SyncPage,
 } from "../../../packages/connector-sdk/src/index.js";
 import type { ConnectionRuntimeRecord, TransactionalPostgres } from "./database.js";
@@ -384,6 +389,39 @@ export class ControlPlaneStore implements RawManifestRepository {
     });
   }
 
+  async resumeInitialBackfillCursor(
+    job: Extract<SyncJob, { type: "InitialBackfill" }>,
+  ): Promise<SyncCursor | null> {
+    const result = await this.db.query<{ cursor_end: unknown }>(
+      `select cursor_end
+         from control_plane.sync_runs
+        where tenant_id=$1 and sync_run_id=$2 and connection_id=$3
+          and connection_generation=$4 and job_type='InitialBackfill'
+          and stream=$5 and backfill_phase=$6 and replay_version=$7
+          and status='running'`,
+      [job.tenantId,job.syncRunId,job.connectionId,job.connectionGeneration,
+        job.stream,job.phase,job.replayVersion],
+    );
+    const value = result.rows[0]?.cursor_end;
+    if (value === null || value === undefined) return null;
+    if (
+      typeof value !== "object" || Array.isArray(value) ||
+      typeof (value as { value?: unknown }).value !== "string" ||
+      !(value as { value: string }).value.trim() ||
+      (
+        (value as { sourceUpdatedAt?: unknown }).sourceUpdatedAt !== undefined &&
+        typeof (value as { sourceUpdatedAt?: unknown }).sourceUpdatedAt !== "string"
+      )
+    ) {
+      throw new Error("sync_run_resume_cursor_invalid");
+    }
+    const cursor = value as { value: string; sourceUpdatedAt?: string };
+    return Object.freeze({
+      value:cursor.value,
+      ...(cursor.sourceUpdatedAt ? { sourceUpdatedAt:cursor.sourceUpdatedAt } : {}),
+    });
+  }
+
   async getCursor(tenantId: string, connectionId: string, stream: string) {
     const result = await this.db.query<{
       cursor_value: { value?: unknown; sourceUpdatedAt?: unknown } | null;
@@ -502,6 +540,27 @@ export class ControlPlaneStore implements RawManifestRepository {
         input.jobRequestId,
       ],
     );
+  }
+
+  /**
+   * Deep-history phases only extend coverage backwards; `recent` phases gate
+   * domain queryability for every dependent transform. Counting open recent
+   * phases lets the worker yield deep-history claims until the critical path
+   * for this connection generation has cleared.
+   */
+  async openRecentBackfillPhases(
+    tenantId: string,
+    connectionId: string,
+    connectionGeneration: number,
+  ): Promise<number> {
+    const result = await this.db.query<{ open: number }>(
+      `select count(*)::int as open
+         from control_plane.sync_stream_phases
+        where tenant_id=$1 and connection_id=$2 and connection_generation=$3
+          and phase='recent' and status in ('planned','queued','running','failed')`,
+      [tenantId, connectionId, connectionGeneration],
+    );
+    return result.rows[0]?.open ?? 0;
   }
 
   async backfillPhase(
@@ -688,6 +747,32 @@ export class ControlPlaneStore implements RawManifestRepository {
     };
   }
 
+  async findByContentIdentity(
+    identity: RawBatchContentIdentity,
+  ): Promise<RawBatchManifest | null> {
+    const result = await this.db.query<{ batch_id: string }>(
+      `select batch_id
+         from control_plane.raw_batch_manifests
+        where tenant_id=$1 and sync_run_id=$2 and connection_id=$3
+          and stream=$4 and content_hash=$5
+          and cursor_start is not distinct from $6::jsonb
+          and cursor_end is not distinct from $7::jsonb
+        order by created_at, batch_id
+        limit 1`,
+      [
+        identity.tenantId,
+        identity.syncRunId,
+        identity.connectionId,
+        identity.stream,
+        identity.contentHash,
+        json(identity.cursorStart),
+        json(identity.cursorEnd),
+      ],
+    );
+    const batchId = result.rows[0]?.batch_id;
+    return batchId ? this.find(identity.tenantId, batchId) : null;
+  }
+
   async registerUploaded(manifest: RawBatchManifest): Promise<void> {
     await this.db.transaction(async (client) => {
       await client.query(
@@ -742,6 +827,7 @@ export class ControlPlaneStore implements RawManifestRepository {
     cursor: unknown;
     sourceWatermark?: string;
     hasMore: boolean;
+    keepRunOpen: boolean;
     recordCount: number;
     quarantineCount: number;
     domains: readonly string[];
@@ -756,16 +842,16 @@ export class ControlPlaneStore implements RawManifestRepository {
     }>;
   }>): Promise<void> {
     await this.db.transaction(async (client) => {
-      const generationFence = await client.query<{ connection_generation: string | number }>(
-        `select connection_generation
-           from control_plane.connections
-          where tenant_id=$1 and connection_id=$2
-            and connection_generation=$3
-            and status in ('connected','degraded')
-          for update`,
+      // Generation fence is a SECURITY DEFINER routine: sync no longer has
+      // UPDATE on connections (0040), and row locks via plain SELECT FOR UPDATE
+      // / FOR SHARE fail under that grant set.
+      const generationFence = await client.query<{ ok: boolean }>(
+        `select control_plane.assert_sync_connection_generation_fence(
+           $1::text, $2::text, $3::bigint
+         ) as ok`,
         [input.job.tenantId,input.job.connectionId,input.job.connectionGeneration],
       );
-      if (!generationFence.rows[0]) throw new Error("connection_generation_stale");
+      if (generationFence.rows[0]?.ok !== true) throw new Error("connection_generation_stale");
       await client.query(
         `update control_plane.raw_batch_landings
             set status = $3,
@@ -949,7 +1035,48 @@ export class ControlPlaneStore implements RawManifestRepository {
           );
         }
       }
+      // Extraction owns 0..0.9 of the readiness bar; transform completion
+      // claims the rest. Progress is measured against the sealed phase plan:
+      // completed phases count fully, and the phase this claim is walking adds
+      // its watermark position inside the phase range (the Lightspeed walk is
+      // timestamp-ascending, so the fraction is monotonic and truthful).
+      let runningPhaseFraction = 0;
+      if (input.job.type === "InitialBackfill" && input.hasMore) {
+        const from = Date.parse(input.job.range.from);
+        const to = Date.parse(input.job.range.to);
+        const watermark = input.sourceWatermark ? Date.parse(input.sourceWatermark) : Number.NaN;
+        if (Number.isFinite(from) && Number.isFinite(to) && to > from && Number.isFinite(watermark)) {
+          runningPhaseFraction = Math.min(1, Math.max(0, (watermark - from) / (to - from)));
+        }
+      }
       for (const domain of input.domains) {
+        let progress = input.backfillComplete ? 0.9 : input.hasMore ? 0.45 : 0.7;
+        if (input.job.type === "InitialBackfill") {
+          const plan = await client.query<{ total: number; done: number }>(
+            `select count(*)::int as total,
+                    count(*) filter (where status = 'succeeded')::int as done
+               from control_plane.sync_stream_phases
+              where tenant_id = $1 and connection_id = $2
+                and connection_generation = $3
+                and $4::text = any(domains)`,
+            [
+              input.job.tenantId,
+              input.job.connectionId,
+              input.job.connectionGeneration,
+              domain,
+            ],
+          );
+          // The committing stream's own completion is already reflected in
+          // `done` (its phase row flips to succeeded earlier in this
+          // transaction), so the plan fraction is authoritative even when
+          // input.backfillComplete is true: sibling streams in the same
+          // domain may still be walking.
+          const total = Number(plan.rows[0]?.total ?? 0);
+          const done = Number(plan.rows[0]?.done ?? 0);
+          if (total > 0) {
+            progress = Math.min(0.9, 0.9 * ((done + runningPhaseFraction) / total));
+          }
+        }
         await client.query(
           `insert into control_plane.readiness (
              tenant_id, connection_id, domain, state, progress, data_ready_through,
@@ -970,7 +1097,7 @@ export class ControlPlaneStore implements RawManifestRepository {
             input.job.connectionId,
             domain,
             "transforming",
-            input.backfillComplete ? 0.9 : input.hasMore ? 0.45 : 0.7,
+            progress,
             null,
             false,
           ],
@@ -1003,10 +1130,16 @@ export class ControlPlaneStore implements RawManifestRepository {
             transition.claim.messageId,transition.claim.workerId,transition.claim.readCount],
         );
       }
+      // A successful page is not the queue claim's terminal point. Keep the
+      // run open until successor publication succeeds; completePageRun closes
+      // it immediately before the queue request itself is acknowledged.
       await client.query(
         `update control_plane.sync_runs
-            set status = 'succeeded', cursor_end = $3::jsonb,
-                record_count = $4, quarantine_count = $5, finished_at = now()
+            set status = case when $6 then 'running' else 'succeeded' end,
+                cursor_end = $3::jsonb,
+                record_count = coalesce(record_count, 0) + $4,
+                quarantine_count = coalesce(quarantine_count, 0) + $5,
+                finished_at = case when $6 then null else now() end
           where tenant_id = $1 and sync_run_id = $2`,
         [
           input.job.tenantId,
@@ -1014,9 +1147,36 @@ export class ControlPlaneStore implements RawManifestRepository {
           json(input.cursor),
           input.recordCount,
           input.quarantineCount,
+          input.keepRunOpen,
         ],
       );
     });
+  }
+
+  async completePageRun(job: SyncJob): Promise<void> {
+    const result = await this.db.query<{ sync_run_id: string }>(
+      `update control_plane.sync_runs run
+          set status='succeeded',finished_at=now(),error_code=null,error_summary=null
+        where run.tenant_id=$1 and run.sync_run_id=$2 and run.connection_id=$3
+          and run.connection_generation=$4 and run.status='running'
+          and exists (
+            select 1 from control_plane.sync_job_requests request
+             where request.tenant_id=run.tenant_id
+               and request.job_request_id=run.queue_job_reference
+               and request.status='running'
+          )
+      returning run.sync_run_id`,
+      [job.tenantId,job.syncRunId,job.connectionId,job.connectionGeneration],
+    );
+    if (result.rows[0]?.sync_run_id === job.syncRunId) return;
+    const existing = await this.db.query<{ status: string }>(
+      `select status from control_plane.sync_runs
+        where tenant_id=$1 and sync_run_id=$2`,
+      [job.tenantId,job.syncRunId],
+    );
+    if (existing.rows[0]?.status !== "succeeded") {
+      throw new Error("sync_run_completion_fence_stale");
+    }
   }
 
   async markRunFailed(

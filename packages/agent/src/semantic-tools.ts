@@ -1,8 +1,11 @@
 import { z } from "zod";
 import {
-  compositeSemanticQuerySchema,
+  parseSemanticQuery,
   queryFilterSchema,
   singleSemanticQuerySchema,
+  compositeSemanticQuerySchema,
+  sortSchema,
+  timeSelectionSchema,
   type SemanticQuery,
 } from "../../compiler/src/index.js";
 import type {
@@ -153,27 +156,75 @@ export const sourceQuerySpecSchema = z.object({
 }).strict();
 export type SourceQuerySpec = z.infer<typeof sourceQuerySpecSchema>;
 
-/** A union (rather than a discriminated union) permits the single-query kind default. */
+/**
+ * Agent-facing subquery shape for OpenAI strict function tools.
+ * Free-form `z.record` parameter maps are rejected by the Responses API
+ * ("Extra required key 'parameters'"), so trusted code injects `{}` instead.
+ */
+const toolFacingSubquerySchema = z.object({
+  topic: z.string().min(1),
+  metrics: z.array(z.string().min(1)).min(1).max(20),
+  dimensions: z.array(z.string().min(1)).max(8).optional(),
+  filters: z.array(queryFilterSchema).max(20).optional(),
+  time: timeSelectionSchema,
+}).strict();
+
+/** Flattened tool input; converted to the compiler IR before execution. */
+export const semanticQueryToolInputSchema = z.object({
+  kind: z.enum(["single", "composite"]).default("single"),
+  topic: z.string().min(1),
+  metrics: z.array(z.string().min(1)).min(1).max(20),
+  dimensions: z.array(z.string().min(1)).max(8).optional(),
+  filters: z.array(queryFilterSchema).max(20).optional(),
+  time: timeSelectionSchema.optional(),
+  queries: z.array(toolFacingSubquerySchema).min(2).max(4).optional(),
+  alignOn: z.array(z.string().min(1)).min(1).max(4).optional(),
+  sort: z.array(sortSchema).max(5).optional(),
+  limit: z.number().int().min(1).max(1000).optional(),
+}).strict();
+export type SemanticQueryToolInput = z.infer<typeof semanticQueryToolInputSchema>;
+
+/** Compiler IR accepted by the signed semantic service. */
 export const semanticQueryIrSchema = z.union([
   singleSemanticQuerySchema,
   compositeSemanticQuerySchema,
 ]);
-export const semanticQueryToolInputSchema = z.object({
-  kind: z.enum(["single", "composite"]).default("single"),
-  topic: singleSemanticQuerySchema.shape.topic,
-  metrics: singleSemanticQuerySchema.shape.metrics,
-  dimensions: z.array(z.string().min(1)).max(8).optional(),
-  filters: z.array(queryFilterSchema).max(20).optional(),
-  time: singleSemanticQuerySchema.shape.time.optional(),
-  queries: compositeSemanticQuerySchema.shape.queries.optional(),
-  alignOn: compositeSemanticQuerySchema.shape.alignOn.optional(),
-  sort: singleSemanticQuerySchema.shape.sort.optional(),
-  limit: singleSemanticQuerySchema.shape.limit.optional(),
-  parameters: singleSemanticQuerySchema.shape.parameters.optional(),
-}).strict();
 export type SemanticQueryIr = SemanticQuery;
 /** Acronym-preserving alias for consumers that mirror the specification. */
 export type SemanticQueryIR = SemanticQueryIr;
+
+/** Converts OpenAI tool arguments into the compiler-owned semantic IR. */
+export function toolInputToSemanticQueryIr(input: SemanticQueryToolInput): SemanticQueryIr {
+  const kind = input.kind ?? "single";
+  if (kind === "composite") {
+    return parseSemanticQuery({
+      kind: "composite",
+      topic: input.topic,
+      metrics: input.metrics,
+      queries: (input.queries ?? []).map((query) => ({
+        ...query,
+        dimensions: query.dimensions ?? [],
+        filters: query.filters ?? [],
+        parameters: {},
+      })),
+      alignOn: input.alignOn ?? [],
+      sort: input.sort ?? [],
+      limit: input.limit ?? 100,
+      parameters: {},
+    });
+  }
+  return parseSemanticQuery({
+    kind: "single",
+    topic: input.topic,
+    metrics: input.metrics,
+    dimensions: input.dimensions ?? [],
+    filters: input.filters ?? [],
+    time: input.time,
+    sort: input.sort ?? [],
+    limit: input.limit ?? 100,
+    parameters: {},
+  });
+}
 
 export const semanticToolInputSchemas = Object.freeze({
   search_catalogue: z.object({ question: z.string().trim().min(1).max(2_000) }).strict(),

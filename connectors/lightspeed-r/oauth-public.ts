@@ -9,7 +9,14 @@ export type LightspeedRAuthorizationUrlInput = Readonly<{
   scopes?: readonly string[];
 }>;
 
-/** Browser-safe: contains no client secret, token-vault or Node-only import. */
+/**
+ * Browser-safe: contains no client secret, token-vault or Node-only import.
+ *
+ * Authorize params follow the R-Series Authorization Code Grant docs plus the
+ * registered redirect URI (required when a client has more than one callback)
+ * and S256 PKCE.
+ * @see https://developers.lightspeedhq.com/retail/authentication/authorization-code-grant/
+ */
 export function buildLightspeedRAuthorizationUrl(
   input: LightspeedRAuthorizationUrlInput,
 ): string {
@@ -30,6 +37,8 @@ export function buildLightspeedRAuthorizationUrl(
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", input.clientId);
   url.searchParams.set("redirect_uri", input.redirectUri);
+  // Lightspeed documents scopes as a space-separated list; URLSearchParams
+  // encodes spaces as `+`, matching their `employee:a+employee:b` examples.
   url.searchParams.set("scope", scopes.join(" "));
   url.searchParams.set("state", input.state);
   url.searchParams.set("code_challenge", input.codeChallenge);

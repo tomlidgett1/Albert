@@ -31,7 +31,10 @@ export class PostgresSemanticAnalyticalCapabilityIssuer implements SemanticAnaly
   }>): Promise<string> {
     const client = await this.controlPlanePool.connect();
     try {
-      await client.query("BEGIN TRANSACTION READ ONLY");
+      // Must be read/write: issue_semantic_analytical_capability locks the
+      // active turn lease with SELECT FOR SHARE, which Postgres rejects in a
+      // read-only transaction.
+      await client.query("BEGIN");
       await client.query("SET LOCAL ROLE albert_semantic_control");
       const result = await client.query(
         `SELECT control_plane.issue_semantic_analytical_capability(

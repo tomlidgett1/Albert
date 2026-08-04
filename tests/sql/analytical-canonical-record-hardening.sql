@@ -29,6 +29,82 @@ INSERT INTO ingestion.source_records (
   '{"schemaVersion":"1.0.0","fields":{"InvoiceID":"invoice-901"}}'::jsonb,
   false,'01H00000000000000000000902','01H00000000000000000000904'
 );
+INSERT INTO ingestion.landing_commits (
+  tenant_id,landing_commit_id,batch_id,sync_run_id,status,
+  staged_record_count,quarantine_count,mapping_version
+) VALUES (
+  '01H00000000000000000000901','01H00000000000000000000907',
+  '01H00000000000000000000902','01H00000000000000000000904',
+  'committed',1,0,'canonical-v1'
+);
+INSERT INTO ingestion.canonical_staging_batch_records (
+  tenant_id,batch_id,mapping_version,namespaced_source_key,connection_id,
+  sync_run_id,connector_id,stream,source_object_type,source_record_id,
+  payload_hash,staging_row
+) VALUES (
+  '01H00000000000000000000901','01H00000000000000000000902','canonical-v1',
+  'xero:xero-tenant-901:Invoices:invoice-901','01H00000000000000000000903',
+  '01H00000000000000000000904','xero','invoices','Invoices','invoice-901',
+  repeat('c',64),jsonb_build_object(
+    'tenant_id','01H00000000000000000000901',
+    'payload_batch_id','01H00000000000000000000902',
+    'mapping_version','canonical-v1',
+    'namespaced_source_key','xero:xero-tenant-901:Invoices:invoice-901',
+    'connection_id','01H00000000000000000000903',
+    'sync_run_id','01H00000000000000000000904',
+    'source_object_type','Invoices','source_record_id','invoice-901',
+    'payload_hash',repeat('c',64)
+  )
+);
+
+-- A later snapshot replaces the current landing seam before the old transform
+-- page is claimed. Historical quarantine must remain anchored to the old
+-- append-only manifest/commit rather than this newer mutable source row.
+INSERT INTO ingestion.batch_manifests (
+  tenant_id,batch_id,connection_id,sync_run_id,connector_key,
+  connector_version,api_version,stream,external_account_reference,
+  extracted_at,content_hash,schema_fingerprint,record_count,
+  compressed_bytes,object_keys
+) VALUES (
+  '01H00000000000000000000901','01H00000000000000000000905',
+  '01H00000000000000000000903','01H00000000000000000000906',
+  'xero','1.0.0','2.0','invoices','xero-tenant-901',now(),
+  repeat('d',64),repeat('e',64),1,128,
+  ARRAY['tenant/901/connection/903/stream/invoices/batch-905.jsonl.gz']
+);
+UPDATE ingestion.source_records
+   SET source_version='v2',payload_hash=repeat('d',64),
+       payload_batch_id='01H00000000000000000000905',
+       sync_run_id='01H00000000000000000000906',ingested_at=now()
+ WHERE tenant_id='01H00000000000000000000901'
+   AND namespaced_source_key='xero:xero-tenant-901:Invoices:invoice-901';
+INSERT INTO ingestion.landing_commits (
+  tenant_id,landing_commit_id,batch_id,sync_run_id,status,
+  staged_record_count,quarantine_count,mapping_version
+) VALUES (
+  '01H00000000000000000000901','01H00000000000000000000908',
+  '01H00000000000000000000905','01H00000000000000000000906',
+  'committed',1,0,'canonical-v1'
+);
+INSERT INTO ingestion.canonical_staging_batch_records (
+  tenant_id,batch_id,mapping_version,namespaced_source_key,connection_id,
+  sync_run_id,connector_id,stream,source_object_type,source_record_id,
+  payload_hash,staging_row
+) VALUES (
+  '01H00000000000000000000901','01H00000000000000000000905','canonical-v1',
+  'xero:xero-tenant-901:Invoices:invoice-901','01H00000000000000000000903',
+  '01H00000000000000000000906','xero','invoices','Invoices','invoice-901',
+  repeat('d',64),jsonb_build_object(
+    'tenant_id','01H00000000000000000000901',
+    'payload_batch_id','01H00000000000000000000905',
+    'mapping_version','canonical-v1',
+    'namespaced_source_key','xero:xero-tenant-901:Invoices:invoice-901',
+    'connection_id','01H00000000000000000000903',
+    'sync_run_id','01H00000000000000000000906',
+    'source_object_type','Invoices','source_record_id','invoice-901',
+    'payload_hash',repeat('d',64)
+  )
+);
 
 RESET ROLE;
 SET ROLE transform_rw;
@@ -70,8 +146,8 @@ DECLARE resolved bigint;
 BEGIN
   SELECT semantic_internal.resolve_canonical_mapping_quarantine(
     '01H00000000000000000000901','01H00000000000000000000903',
-    '01H00000000000000000000904','01H00000000000000000000902',
-    'invoices','Invoices','invoice-901',repeat('c',64)
+    '01H00000000000000000000906','01H00000000000000000000905',
+    'invoices','Invoices','invoice-901',repeat('d',64)
   ) INTO resolved;
   IF resolved<>1 THEN
     RAISE EXCEPTION 'expected one healed canonical quarantine, found %',resolved;
@@ -90,7 +166,7 @@ BEGIN
      AND source_record_id='invoice-901'
      AND status='resolved'
      AND resolution_reason='canonical_projection_recovered'
-     AND replayed_in_sync_run_id='01H00000000000000000000904';
+     AND replayed_in_sync_run_id='01H00000000000000000000906';
   SELECT status INTO mapping_status
     FROM quality.check_result
    WHERE tenant_id='01H00000000000000000000901'

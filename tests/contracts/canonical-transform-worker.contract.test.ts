@@ -153,3 +153,65 @@ test("canonical execution retains immutable lineage and refreshes governed quali
   assert.match(executable,/staging_acceptance[\s\S]*ON CONFLICT \(tenant_id,run_id,check_id\) DO UPDATE SET/);
   assert.match(executable,/md5\('identity-review-a\|'[\s\S]*md5\('identity-review-b\|'/);
 });
+
+test("canonical pages batch independent writes instead of paying one network round trip per row",async()=>{
+  const [pipeline,landing]=await Promise.all([
+    readFile(new URL("../../services/sync-workers/src/canonical-pipeline.ts",import.meta.url),"utf8"),
+    readFile(new URL("../../services/sync-workers/src/analytical-store.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(pipeline,/executeDimensionBatch\([\s\S]*jsonb_to_recordset\(\$1::jsonb\)/u);
+  assert.match(pipeline,/executeFactBatch\([\s\S]*assertFactAuthorityBatch\([\s\S]*jsonb_populate_record\(/u);
+  assert.match(pipeline,/upsertFactObservationsBatch\(/u);
+  assert.match(pipeline,/primeCanonicalReferenceCache\([\s\S]*id=any\(\$2::text\[\]\)/u);
+  assert.match(pipeline,/executeCategoryAssignmentBatch\(/u);
+  assert.match(pipeline,/persistIdentityHints\([\s\S]*jsonb_to_recordset\(\$1::jsonb\)/u);
+  assert.match(pipeline,/recordCanonicalMappingQuarantines\([\s\S]*jsonb_to_recordset\(\$6::jsonb\)/u);
+  assert.match(pipeline,/resolveCanonicalMappingQuarantines\(/u);
+  assert.match(pipeline,/upsertDirectEntityLinksBatch\(/u);
+  assert.match(pipeline,/requiresTenantDayMartRefresh\(appliedCommands\)/u);
+  assert.match(pipeline,/requiresSettlementLinkRefresh\(appliedCommands\)/u);
+  assert.match(landing,/persistCanonicalStagingBatchRecords\([\s\S]*jsonb_to_recordset\(\$1::jsonb\)/u);
+  assert.match(pipeline,/ingestion\.canonical_staging_batch_records/u);
+  assert.match(
+    pipeline,
+    /streamPageComplete=await connectorStreamPageIsComplete[\s\S]*if\(streamPageComplete\)\{[\s\S]*snapshot_all_pipeline_stats/u,
+  );
+  assert.match(
+    pipeline,
+    /if\(streamPageComplete\)\{[\s\S]*run_all_invariants[\s\S]*qualityStatuses = streamPageComplete/u,
+  );
+  assert.match(
+    pipeline,
+    /if\(streamPageComplete\)\{[\s\S]*enqueueReadinessProjection/u,
+  );
+  assert.match(
+    pipeline,
+    /publishPendingControlProjections[\s\S]*if\(streamPageComplete\)\{[\s\S]*refreshDossier/u,
+  );
+  const dayMartGate=pipeline.slice(
+    pipeline.indexOf("function requiresTenantDayMartRefresh"),
+    pipeline.indexOf("function requiresSettlementLinkRefresh"),
+  );
+  assert.doesNotMatch(dayMartGate,/inventory_(?:movement|balance_snapshot)/u);
+});
+
+test("terminal quality uses bounded payment lookups and the governed sales day mart",async()=>{
+  const migration=await readFile(
+    new URL(
+      "../../infra/migrations/analytical/0107_m5_bounded_terminal_quality_gate.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /commerce_payment_tenant_order_status_idx[\s\S]*tenant_id,order_id,status[\s\S]*INCLUDE \(amount\)/u,
+  );
+  const reconciliationView=migration.slice(
+    migration.indexOf("CREATE OR REPLACE VIEW mart.reconciliation_aligned"),
+    migration.indexOf("COMMENT ON VIEW mart.reconciliation_aligned"),
+  );
+  assert.match(reconciliationView,/FROM mart\.sales_day_location AS sales/u);
+  assert.doesNotMatch(reconciliationView,/commerce_sales_event/u);
+  assert.match(reconciliationView,/security_barrier=true,security_invoker=true/u);
+});

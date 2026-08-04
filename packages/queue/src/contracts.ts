@@ -34,6 +34,7 @@ export const SYNC_FAILURE_CODES = [
   "cursor_invalid",
   "database_deadlock",
   "database_integrity_violation",
+  "database_lock_timeout",
   "database_permission_denied",
   "database_serialization_conflict",
   "database_unavailable",

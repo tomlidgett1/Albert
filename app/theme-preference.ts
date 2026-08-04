@@ -1,10 +1,10 @@
-export type ThemePreference = "system" | "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark" | "green";
 
 const storageKey = "albert-theme";
 let snapshot: ThemePreference = "system";
 
 function isThemePreference(value: string | null): value is ThemePreference {
-  return value === "system" || value === "light" || value === "dark";
+  return value === "system" || value === "light" || value === "dark" || value === "green";
 }
 
 export function getThemePreference(): ThemePreference {

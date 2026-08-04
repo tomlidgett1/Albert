@@ -203,7 +203,10 @@ test("OAuth callbacks cancel a hung vendor exchange before the web callback dead
     body,
   }));
   assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { error: "oauth_worker_timeout" });
+  // Outside production the handler appends a sanitised `detail` string for
+  // operator debugging; only the stable error code is contractual.
+  const payload = await response.json() as { error: string };
+  assert.equal(payload.error, "oauth_worker_timeout");
   assert.ok(Date.now() - startedAt < 1_000, "OAuth callback outlived its operation deadline");
   assert.equal(exchangeSignal?.aborted, true);
 });

@@ -84,6 +84,27 @@ function asRetryAfter(value: string | number | null | undefined): number {
   return Math.min(7 * 24 * 60 * 60_000, Math.ceil(milliseconds));
 }
 
+/** Wait inline for short budget delays so multipage claims do not thrash. */
+const INLINE_BUDGET_WAIT_MS = 30_000;
+
+function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason instanceof Error ? signal.reason : new Error("aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** PostgreSQL-backed GCRA budget shared by every sync-worker replica. */
 export class PostgresVendorRateBudget implements VendorRateBudget {
   private readonly policies: readonly RatePolicy[];
@@ -101,32 +122,38 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
   async beforeRequest(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     for (const policy of this.policies) {
-      const result = await this.db.query<{
-        allowed: boolean;
-        retry_after_ms: string | number;
-      }>(
-        `select allowed, retry_after_ms
-           from control_plane.reserve_vendor_api_request($1, $2, $3, $4, $5)`,
-        [
-          this.tenantId,
-          this.connectionId,
-          policy.key,
-          policy.emissionIntervalMs,
-          policy.burstCapacity,
-        ],
-      );
-      signal?.throwIfAborted();
-      const reservation = result.rows[0];
-      if (!reservation?.allowed) {
-        throw new ConnectorError(
-          "RATE_LIMITED",
-          "The shared vendor request budget is temporarily exhausted.",
-          {
-            retryable: true,
-            retryAfterMs: asRetryAfter(reservation?.retry_after_ms),
-            details: { budgetKey: policy.key },
-          },
+      const deadline = Date.now() + INLINE_BUDGET_WAIT_MS;
+      while (true) {
+        const result = await this.db.query<{
+          allowed: boolean;
+          retry_after_ms: string | number;
+        }>(
+          `select allowed, retry_after_ms
+             from control_plane.reserve_vendor_api_request($1, $2, $3, $4, $5)`,
+          [
+            this.tenantId,
+            this.connectionId,
+            policy.key,
+            policy.emissionIntervalMs,
+            policy.burstCapacity,
+          ],
         );
+        signal?.throwIfAborted();
+        const reservation = result.rows[0];
+        if (reservation?.allowed) break;
+        const retryAfterMs = asRetryAfter(reservation?.retry_after_ms);
+        if (Date.now() + retryAfterMs > deadline) {
+          throw new ConnectorError(
+            "RATE_LIMITED",
+            "The shared vendor request budget is temporarily exhausted.",
+            {
+              retryable: true,
+              retryAfterMs,
+              details: { budgetKey: policy.key },
+            },
+          );
+        }
+        await sleep(retryAfterMs, signal);
       }
     }
   }
