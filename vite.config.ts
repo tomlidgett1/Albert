@@ -13,7 +13,8 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  // Workers enables nodejs_compat by default from 2026-08-04; declaring it is rejected.
+  // Sites still injects nodejs_compat, so pin the last date where that flag is explicit.
+  compatibility_date: "2026-07-31",
   d1_databases: d1
     ? [
         {
