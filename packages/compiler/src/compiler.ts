@@ -210,7 +210,7 @@ export function compileSemanticQuery(
     );
     const alignment = query.dimensions.length
       ? query.dimensions.map((dimension) =>
-        `current_period.${quoteIdentifier(`__key_${dimension}`)} IS NOT DISTINCT FROM comparison_period.${quoteIdentifier(`__key_${dimension}`)}`,
+        nullSafeKeyAlignment("current_period", "comparison_period", dimension),
       ).join(" AND ")
       : "TRUE";
     const limitParameter = params.add(query.limit);
@@ -550,7 +550,7 @@ function compileComposite(
       ["current_composite", "comparison_composite"],
     );
     const alignment = query.alignOn.map((dimension) =>
-      `current_composite.${quoteIdentifier(`__key_${dimension}`)} IS NOT DISTINCT FROM comparison_composite.${quoteIdentifier(`__key_${dimension}`)}`,
+      nullSafeKeyAlignment("current_composite", "comparison_composite", dimension),
     ).join(" AND ");
     const limitParameter = params.add(query.limit);
     const sql = `WITH current_composite AS (\n${indent(currentPlan.sql)}\n),\ncomparison_composite AS (\n${indent(priorPlan.sql)}\n)\nSELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects].join(",\n  ")}\nFROM current_composite\nFULL OUTER JOIN comparison_composite ON ${alignment}\n${renderSort(query.sort, currentPlan.metricAliases)}LIMIT ${limitParameter}`;
@@ -657,7 +657,14 @@ function renderCompositePlan(
       const previous = Array.from({ length: index }, (_, prior) =>
         `${prefix}${prior}.${quoteIdentifier(`__key_${dimension}`)}`,
       );
-      return `${prefix}${index}.${quoteIdentifier(`__key_${dimension}`)} IS NOT DISTINCT FROM COALESCE(${previous.join(", ")})`;
+      // Same FULL JOIN restriction as the period comparison: PostgreSQL rejects
+      // IS NOT DISTINCT FROM here with 0A000. This is the aggregate-then-align
+      // path, so without it every composite Topic fails the moment a second
+      // connector makes one answerable.
+      return nullSafeExpressionAlignment(
+        `${prefix}${index}.${quoteIdentifier(`__key_${dimension}`)}`,
+        `COALESCE(${previous.join(", ")})`,
+      );
     });
     from += `\nFULL OUTER JOIN ${prefix}${index} ON ${joins.join(" AND ")}`;
   }
@@ -736,6 +743,21 @@ function renderSingle(
   const joins = query.dimensions
     .filter((dimension) => dimension !== "business_date" && dimension !== "calendar_week")
     .map((dimension, index) => resolveJoin(dimension, fact, index));
+  // A filtered dimension needs its join even when it is not grouped by, so the
+  // filter can match the display label the caller was shown. These join only —
+  // they are never selected or grouped, so the result grain is unchanged.
+  const filterOnlyDimensions = [...new Set(query.filters.map((filter) => filter.field))]
+    .filter((dimension) => dimension !== "business_date" && dimension !== "calendar_week")
+    .filter((dimension) => !joins.some((item) => item.dimension === dimension))
+    .filter((dimension) => fact.joins.some((candidate) =>
+      (candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension))
+      && candidate.cardinality === "many_to_one"));
+  const filterJoins = filterOnlyDimensions.map((dimension, index) =>
+    resolveJoin(dimension, fact, joins.length + index));
+  const labelExpressions = new Map<string, string>(
+    [...joins, ...filterJoins].map((item) =>
+      [item.dimension, `${item.alias}.${quoteIdentifier(item.displayField)}`]),
+  );
   const dimensionSelects: string[] = [];
   const groupBy: string[] = [];
   const hiddenKeys: string[] = [];
@@ -761,6 +783,20 @@ function renderSingle(
     hiddenKeys.push("__key_calendar_week");
   }
 
+  // A trusted metric predicate (the customer activity windows) binds a
+  // parameter when rendered. Both the metric calculation and the slice
+  // validation selects need the same predicate, so render it once per metric:
+  // calling twice bound the window boundary a second time, and the duplicate
+  // was left unreferenced whenever slice validation emitted nothing.
+  const trustedPredicateCache = new Map<string, readonly string[]>();
+  const trustedPredicatesFor = (metric: MetricContract): readonly string[] => {
+    const cached = trustedPredicateCache.get(metric.id);
+    if (cached) return cached;
+    const rendered = trustedMetricPredicates(metric, context, range, calendar, params);
+    trustedPredicateCache.set(metric.id, rendered);
+    return rendered;
+  };
+
   const metricAliases = new Map<string, string>();
   const metricSelects = metrics.map((metric) => {
     const alias = shortMetricName(metric.id);
@@ -772,7 +808,7 @@ function renderSingle(
       ]
       : [];
     const trustedPredicates = [
-      ...trustedMetricPredicates(metric, context, range, calendar, params),
+      ...trustedPredicatesFor(metric),
       ...metricTimePredicates,
     ];
     return `${renderMetricCalculation(
@@ -791,7 +827,7 @@ function renderSingle(
     fact,
     registry,
     params,
-    trustedMetricPredicates(metric, context, range, calendar, params),
+    trustedPredicatesFor(metric),
     identityJoins,
   ));
   const where = [
@@ -801,12 +837,20 @@ function renderSingle(
     // impossible. Other selected metrics retain that lower bound locally.
     ...(hasLapsedAsOfMetric ? [] : [`f.${quoteIdentifier(query.time.field)} >= ${fromParameter}`]),
     `f.${quoteIdentifier(query.time.field)} < ${toParameter}`,
-    ...query.filters.map((filter) => renderUserFilter(filter, topic, fact, params, identityJoins)),
+    ...query.filters.map((filter) => renderUserFilter(filter, topic, metrics, fact, params, identityJoins, labelExpressions)),
   ];
   const identityJoinSql = renderIdentityResolutionJoins(identityJoins, "f");
-  const dimensionJoinSql = joins.map((item) => `LEFT JOIN ${quoteQualified(item.join.table)} ${item.alias} ON ${item.alias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${item.alias}.${quoteIdentifier(item.join.dimensionKey)} = ${resolvedFactField(item.join.factKey, identityJoins, "f")}`).join("\n");
+  const dimensionJoinSql = [...joins, ...filterJoins].map((item) => `LEFT JOIN ${quoteQualified(item.join.table)} ${item.alias} ON ${item.alias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${item.alias}.${quoteIdentifier(item.join.dimensionKey)} = ${resolvedFactField(item.join.factKey, identityJoins, "f")}`).join("\n");
   const joinSql = [identityJoinSql, dimensionJoinSql].filter(Boolean).join("\n");
-  const sql = `SELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects.map((item) => item.sql)].join(",\n  ")}\nFROM ${quoteQualified(fact.table)} f${joinSql ? `\n${joinSql}` : ""}\nWHERE ${where.join("\n  AND ")}\n${groupBy.length ? `GROUP BY ${groupBy.join(", ")}\n` : ""}${includeSort ? "" : ""}`;
+  // A semi-additive measure reads only its latest snapshot per entity. Deriving
+  // that with a correlated subquery re-executes the whole relation once per
+  // row, which is unusable when the relation is a view: mart.inventory_health_day
+  // takes seconds per evaluation, so every inventory question timed out.
+  // Precompute the same value with one window pass over the same scan instead.
+  const factSource = renderSnapshotLatestSource(
+    fact, metrics, registry, identityJoins, fromParameter, toParameter,
+  ) ?? `${quoteQualified(fact.table)} f`;
+  const sql = `SELECT\n  ${[...dimensionSelects, ...metricSelects, ...validationSelects.map((item) => item.sql)].join(",\n  ")}\nFROM ${factSource}${joinSql ? `\n${joinSql}` : ""}\nWHERE ${where.join("\n  AND ")}\n${groupBy.length ? `GROUP BY ${groupBy.join(", ")}\n` : ""}${includeSort ? "" : ""}`;
   return {
     sql,
     metricIds: metrics.map((metric) => metric.id),
@@ -821,6 +865,90 @@ function renderSingle(
 }
 
 type SliceValidationSelect = Readonly<{ alias: string; sql: string }>;
+
+/**
+ * Wrap the fact relation so each row carries the latest snapshot time for its
+ * entity, or return undefined when no selected metric is semi-additive.
+ *
+ * The window is computed over exactly the rows the correlated form considered:
+ * the tenant, and the metric's own time range. User filters stay outside, so
+ * they narrow the rows summed without moving which snapshot counts as latest —
+ * the same behaviour the correlated subquery had.
+ */
+function renderSnapshotLatestSource(
+  fact: FactModel,
+  metrics: readonly MetricContract[],
+  registry: SemanticRegistry,
+  identityJoins: readonly IdentityResolutionJoin[],
+  fromParameter: string,
+  toParameter: string,
+): string | undefined {
+  if (fact.snapshotEntityKeys.length === 0) return undefined;
+  const windows = metrics.flatMap((metric) => collectSnapshotWindows(metric, registry));
+  if (windows.length === 0) return undefined;
+  const timeFields = new Set(windows.map((window) => window.timeField));
+  // One shared bound keeps the window input identical to the correlated form.
+  // Mixed time roles would need a bound per field; fall back rather than guess.
+  if (timeFields.size !== 1) return undefined;
+  const timeField = [...timeFields][0] as string;
+
+  const baseIdentityJoins = resolveIdentityResolutionJoins(fact, "snapshot_identity");
+  const baseJoinSql = renderIdentityResolutionJoins(baseIdentityJoins, "base");
+  const partition = fact.snapshotEntityKeys
+    .map((key) => resolvedFactField(key, baseIdentityJoins, "base"))
+    .join(", ");
+  const selects = [...new Map(windows.map((window) => [window.field, window])).values()].map((window) =>
+    `MAX(base.${quoteIdentifier(timeField)}) FILTER (WHERE base.${quoteIdentifier(window.field)} IS NOT NULL)`
+    + ` OVER (PARTITION BY ${partition}) AS ${quoteIdentifier(snapshotLatestColumn(window.field))}`,
+  );
+  const predicates = [
+    `base.${quoteIdentifier("tenant_id")} = $1`,
+    `base.${quoteIdentifier(timeField)} >= ${fromParameter}`,
+    `base.${quoteIdentifier(timeField)} < ${toParameter}`,
+  ];
+  void identityJoins;
+  return `(SELECT base.*, ${selects.join(", ")}\n   FROM ${quoteQualified(fact.table)} base${baseJoinSql ? `\n   ${baseJoinSql}` : ""}\n  WHERE ${predicates.join(" AND ")}) f`;
+}
+
+/** Column carrying the precomputed latest snapshot time for one measured field. */
+function snapshotLatestColumn(field: string): string {
+  return `__snapshot_latest__${field}`;
+}
+
+type SnapshotWindow = Readonly<{ field: string; timeField: string }>;
+
+/** Collect every last_value measure a metric reads, including nested ones. */
+function collectSnapshotWindows(metric: MetricContract, registry: SemanticRegistry): readonly SnapshotWindow[] {
+  const found = new Map<string, SnapshotWindow>();
+  const walk = (calculation: Calculation, stack: Set<string>): void => {
+    switch (calculation.op) {
+      case "last_value":
+        if (calculation.field) {
+          found.set(calculation.field, { field: calculation.field, timeField: metric.defaultTime });
+        }
+        return;
+      case "metric": {
+        if (stack.has(calculation.metric)) return;
+        const referenced = registry.metrics.get(calculation.metric);
+        if (!referenced) return;
+        walk(referenced.calculation, new Set([...stack, calculation.metric]));
+        return;
+      }
+      case "add": case "subtract": case "multiply": case "divide":
+        walk(calculation.left, stack);
+        walk(calculation.right, stack);
+        return;
+      case "conditional":
+        walk(calculation.value, stack);
+        walk(calculation.otherwise, stack);
+        return;
+      default:
+        return;
+    }
+  };
+  walk(metric.calculation, new Set([metric.id]));
+  return [...found.values()];
+}
 
 function renderMetricCalculation(
   metric: MetricContract,
@@ -883,10 +1011,17 @@ function renderSliceValidationSelects(
   identityJoins: readonly IdentityResolutionJoin[],
 ): readonly SliceValidationSelect[] {
   const alias = shortMetricName(metric.id);
-  const basePredicates = [
+  // Rendering a contract filter allocates a bound parameter, and every consumer
+  // below is conditional. Building this eagerly reserved a slot that no
+  // placeholder referenced whenever a metric needed none of the slice-validation
+  // selects, leaving a hole in the parameter sequence -- PostgreSQL then
+  // rejected the whole statement with "could not determine data type of
+  // parameter $n". Allocate on first use, once.
+  let renderedBasePredicates: readonly string[] | undefined;
+  const basePredicates = (): readonly string[] => (renderedBasePredicates ??= [
     ...metric.filters.map((filter) => renderContractFilter(filter, params, identityJoins)),
     ...trustedPredicates,
-  ];
+  ]);
   const fields = calculationFields(metric.calculation, registry, new Set([metric.id]))
     .filter((field) => fact.fields.includes(field));
   const selects: SliceValidationSelect[] = [];
@@ -898,7 +1033,7 @@ function renderSliceValidationSelects(
         .map((field) => costEligibilityPredicate(field, fact))
         .filter((predicate): predicate is string => Boolean(predicate));
       const eligiblePredicates = [
-        ...basePredicates,
+        ...basePredicates(),
         eligibility.length > 0 ? `(${eligibility.join(" OR ")})` : "TRUE",
       ];
       const observedPredicates = [
@@ -924,7 +1059,7 @@ function renderSliceValidationSelects(
     const contributors = fields.length > 0
       ? `(${fields.map((field) => `${resolvedFactField(field, identityJoins, "f")} IS NOT NULL`).join(" OR ")})`
       : "TRUE";
-    const predicates = [...basePredicates, contributors];
+    const predicates = [...basePredicates(), contributors];
     const currencyAlias = `__currency_codes__${alias}`;
     const currency = resolvedFactField("currency", identityJoins, "f");
     selects.push({
@@ -938,7 +1073,8 @@ function renderSliceValidationSelects(
   ) {
     const eligibleAlias = `__settlement_eligible__${alias}`;
     const linkedAlias = `__settlement_linked__${alias}`;
-    const eligiblePredicates = basePredicates.length > 0 ? basePredicates : ["TRUE"];
+    const resolvedBase = basePredicates();
+    const eligiblePredicates = resolvedBase.length > 0 ? resolvedBase : ["TRUE"];
     const linkedPredicates = [
       ...eligiblePredicates,
       `EXISTS (
@@ -1058,6 +1194,30 @@ function costEligibilityPredicate(field: string, fact: FactModel): string | unde
   return "TRUE";
 }
 
+/**
+ * Align two period CTEs on a grouping key across a FULL OUTER JOIN.
+ *
+ * `IS NOT DISTINCT FROM` expresses the intent (a missing key on one side aligns
+ * with a missing key on the other) but PostgreSQL only accepts merge- or
+ * hash-joinable conditions for a FULL JOIN, and rejects the whole statement
+ * with 0A000. Every comparison carrying a dimension therefore failed outright.
+ *
+ * Compare the keys as text so the operator is plain equality, and carry an
+ * explicit null-flag equality alongside it so an absent key can never collide
+ * with a present empty one. Both operands are the same column of the same type
+ * produced by the same expression in each CTE, so the rendering is consistent.
+ */
+function nullSafeKeyAlignment(left: string, right: string, dimension: string): string {
+  const key = quoteIdentifier(`__key_${dimension}`);
+  return nullSafeExpressionAlignment(`${left}.${key}`, `${right}.${key}`);
+}
+
+/** NULL-safe, hash-joinable equality between two alignment key expressions. */
+function nullSafeExpressionAlignment(leftKey: string, rightKey: string): string {
+  return `COALESCE(CAST(${leftKey} AS text), '') = COALESCE(CAST(${rightKey} AS text), '')`
+    + ` AND (${leftKey} IS NULL) = (${rightKey} IS NULL)`;
+}
+
 function renderCombinedValidationSelects(
   aliases: readonly string[],
   sources: readonly string[],
@@ -1130,16 +1290,12 @@ function renderCalculation(
         if (!calculation.field || fact.snapshotEntityKeys.length === 0) {
           throw new SemanticCompilerError("SNAPSHOT_SUM_FORBIDDEN", `last_value on ${fact.id} requires declared snapshot entity keys.`);
         }
-        const latestAlias = "snapshot_latest";
         const timeFieldMatch = /^f\."([a-z_][a-z0-9_]*)"$/.exec(orderByField);
         if (!timeFieldMatch) throw new SemanticCompilerError("INVALID_TIME_FIELD", `Invalid snapshot time field ${orderByField}.`);
-        const timeField = timeFieldMatch[1] as string;
-        const latestIdentityJoins = resolveIdentityResolutionJoins(fact, "snapshot_identity");
-        const correlations = fact.snapshotEntityKeys.map((key) =>
-          `${resolvedFactField(key, latestIdentityJoins, latestAlias)} IS NOT DISTINCT FROM ${resolvedFactField(key, identityJoins, "f")}`,
-        );
-        const latestJoinSql = renderIdentityResolutionJoins(latestIdentityJoins, latestAlias);
-        const latest = `(SELECT MAX(${latestAlias}.${quoteIdentifier(timeField)}) FROM ${quoteQualified(fact.table)} ${latestAlias}${latestJoinSql ? ` ${latestJoinSql}` : ""} WHERE ${latestAlias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${correlations.join(" AND ")} AND ${latestAlias}.${quoteIdentifier(calculation.field)} IS NOT NULL AND ${latestAlias}.${quoteIdentifier(timeField)} >= ${snapshotRange.fromParameter} AND ${latestAlias}.${quoteIdentifier(timeField)} < ${snapshotRange.toParameter})`;
+        // renderSingle wraps the fact relation so this column already holds the
+        // latest snapshot time per entity, computed over the same tenant and
+        // range the correlated subquery used to rescan for every row.
+        const latest = `f.${quoteIdentifier(snapshotLatestColumn(calculation.field))}`;
         const latestPredicates = [...predicates, `${field} IS NOT NULL`, `${orderByField} = ${latest}`];
         return `SUM(${field}) FILTER (WHERE ${latestPredicates.join(" AND ")})`;
       }
@@ -1202,16 +1358,59 @@ function renderContractFilter(
 function renderUserFilter(
   filter: SingleSemanticQuery["filters"][number],
   topic: TopicContract,
+  metrics: readonly MetricContract[],
   fact: FactModel,
   params: ParameterBuilder,
   identityJoins: readonly IdentityResolutionJoin[],
+  labelExpressions: ReadonlyMap<string, string>,
 ): string {
   if (!topic.approvedDimensions.includes(filter.field)) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `Filter field ${filter.field} is not approved for ${topic.id}.`);
+  // A derived time restriction cannot change a metric's grain, and most metric
+  // contracts omit calendar_week while the Topic approves it, so these are
+  // settled before the per-metric check below.
   if (filter.field === "business_date") return renderFilterExpression(`f.${quoteIdentifier("business_date")}`, filter.op, filter.values, params);
   if (filter.field === "calendar_week") return renderFilterExpression(calendarWeekExpression("f"), filter.op, filter.values, params);
+  // metric.allowedDimensions governs grouping (validateDimensions) and composite
+  // alignment, but not filters — so a metric could be refused a breakdown by a
+  // dimension and still be sliced by it, returning a Verified number computed
+  // the same way. Apply one rule to both paths.
+  for (const metric of metrics) {
+    if (!metric.allowedDimensions.includes(filter.field)) {
+      throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${filter.field} is not allowed for ${metric.id}.`);
+    }
+  }
   const join = fact.joins.find((candidate) => candidate.dimension === filter.field || Object.hasOwn(candidate.fields, filter.field));
   if (!join || join.cardinality !== "many_to_one") throw new SemanticCompilerError("ILLEGAL_JOIN", `No many-to-one filter path for ${filter.field}.`);
-  return renderFilterExpression(resolvedFactField(join.factKey, identityJoins, "f"), filter.op, filter.values, params);
+  const keyExpression = resolvedFactField(join.factKey, identityJoins, "f");
+
+  // A dimension filter must accept the value the caller can actually see.
+  // list_field_values returns the display label, result rows show the label,
+  // and a person names the label — but the fact only carries the key, so
+  // matching on the key alone answered "no sales in Drivetrain" for a category
+  // that sells. Match either, and for a negative operator exclude on either.
+  //
+  // Every branch below renders each operand exactly once: rendering a predicate
+  // binds parameters, so a discarded predicate would leave a hole in the
+  // parameter sequence and PostgreSQL would reject the statement outright.
+  const labelExpression = labelExpressions.get(filter.field);
+  const labelUsable = Boolean(labelExpression)
+    && ["eq", "neq", "in", "not_in"].includes(filter.op);
+  if (!labelUsable) return renderFilterExpression(keyExpression, filter.op, filter.values, params);
+  const negated = filter.op === "neq" || filter.op === "not_in";
+  if (!negated) {
+    const keyPredicate = renderFilterExpression(keyExpression, filter.op, filter.values, params);
+    const labelPredicate = renderFilterExpression(labelExpression as string, filter.op, filter.values, params);
+    return `(${keyPredicate} OR ${labelPredicate})`;
+  }
+  // Negation must be the exact complement of the positive match, or filtered
+  // and antifiltered stop summing to the unfiltered total: SQL drops a NULL key
+  // from <> / NOT IN, so "everyone except Leigh" also lost every unattributed
+  // sale. Negating the positive predicate and coercing UNKNOWN keeps every row
+  // that does not positively match either identifier.
+  const positiveOp = filter.op === "neq" ? "eq" : "in";
+  const positiveKey = renderFilterExpression(keyExpression, positiveOp, filter.values, params);
+  const positiveLabel = renderFilterExpression(labelExpression as string, positiveOp, filter.values, params);
+  return `((${positiveKey} OR ${positiveLabel}) IS NOT TRUE)`;
 }
 
 function renderFilterExpression(expression: string, op: string, values: readonly unknown[], params: ParameterBuilder): string {

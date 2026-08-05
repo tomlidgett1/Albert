@@ -1,6 +1,8 @@
 -- Allow claim-free Qualified directory answers to finalize without query audits
 -- when the turn already persisted a matching answer event from list_field_values.
 
+BEGIN;
+
 CREATE OR REPLACE FUNCTION control_plane.finalize_answer_artifact(p_tenant_id text, p_actor_user_id uuid, p_conversation_id text, p_turn_id text, p_provider_response_id text, p_provider_usage jsonb, p_answer_state text, p_turn_result_digest text, p_metering jsonb, p_query_executions jsonb)
  RETURNS TABLE(answer_artifact_id text, artifact_digest text, idempotent_replay boolean)
  LANGUAGE plpgsql
@@ -369,7 +371,7 @@ BEGIN
   idempotent_replay:=false;
   RETURN NEXT;
 END;
-$function$
+$function$;
 
 REVOKE ALL ON FUNCTION control_plane.finalize_answer_artifact(
   text,uuid,text,text,text,jsonb,text,text,jsonb,jsonb
@@ -377,3 +379,5 @@ REVOKE ALL ON FUNCTION control_plane.finalize_answer_artifact(
 GRANT EXECUTE ON FUNCTION control_plane.finalize_answer_artifact(
   text,uuid,text,text,text,jsonb,text,text,jsonb,jsonb
 ) TO albert_semantic_control;
+
+COMMIT;

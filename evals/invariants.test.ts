@@ -90,7 +90,10 @@ test("permanent invariant 1/5: tenant isolation survives compiler, database and 
     clock: () => new Date(FIXTURE_NOW),
   };
   const service = new DefaultSemanticToolExecutor(dependencies);
-  const ir = legacySalesIr();
+  // The agent-facing tool schema omits `parameters`; trusted code injects it.
+  // Send what a model can actually send.
+  const { parameters: _trusted, ...ir } = legacySalesIr();
+  void _trusted;
   const contextA = trustedContext(FIXTURE_TENANT_ID, "11");
   const contextB = trustedContext(secondTenantId, "12");
 

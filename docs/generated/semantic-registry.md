@@ -1,4 +1,4 @@
-# Semantic registry 1.4.0
+# Semantic registry 1.6.0
 
 Generated from the registry. Do not hand-edit counts.
 

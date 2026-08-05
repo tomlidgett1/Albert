@@ -1,5 +1,6 @@
 import { Decimal4, sumDecimal4 } from "../../packages/canonical-schema/src/index.js";
 import { stagingColumnName } from "../../packages/connector-sdk/src/index.js";
+import { CanonicalRowNotApplicable } from "../../services/sync-workers/src/canonical-contract.js";
 import type {
   CanonicalCategoryAssignmentCommand,
   CanonicalEntityType,
@@ -162,6 +163,7 @@ function mapItem(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[
 function mapItemShop(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
   const id = requiredIdentifier(row.item_shop_id, "item_shops.item_shop_id");
   const itemId = requiredIdentifier(row.item_id, "item_shops.item_id");
+  assertNotAggregateShopScope(row.shop_id, "item_shops");
   const shopId = requiredIdentifier(row.shop_id, "item_shops.shop_id");
   // ItemShop is a mutable current-balance resource. Its vendor timeStamp is a
   // change timestamp, not the time Albert observed the balance. Reconciliation
@@ -172,8 +174,8 @@ function mapItemShop(row: CanonicalStagingRow, context: CanonicalMappingContext)
   );
   const snapshotDate = localCalendarDate(snapshotAt, context.timezone);
   const quantity = decimalOrZero(row.qoh, "item_shops.qoh");
-  const unitCost = optionalDecimal(row.average_cost, "item_shops.average_cost");
-  const stockValue = optionalDecimal(row.total_value_avg_cost, "item_shops.total_value_avg_cost")
+  const unitCost = optionalCostDecimal(row.average_cost, "item_shops.average_cost");
+  const stockValue = optionalCostDecimal(row.total_value_avg_cost, "item_shops.total_value_avg_cost")
     ?? (unitCost ? Decimal4.from(quantity).multiply(unitCost).toString() : null);
   return [fact("inventory_balance_snapshot", "ItemShopDailySnapshot", `${id}#snapshot:${snapshotDate}`, {
     product_variant_id: sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant" }),
@@ -244,7 +246,7 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
       unitPrice,
       discount,
       netIncTax: calculated ?? unitPrice.multiply(quantity).subtract(discount),
-      unitCost: optionalDecimalValue(raw.avgCost, `sales.sale_lines[${index}].avgCost`),
+      unitCost: optionalCostDecimalValue(raw.avgCost, `sales.sale_lines[${index}].avgCost`),
     };
   });
   const taxAllocations = saleLineTaxes(lines, decimalOrZeroValue(row.tax_total, "sales.tax_total"));
@@ -560,13 +562,14 @@ function mapTaxCategory(row: CanonicalStagingRow): readonly CanonicalProjectionC
 function mapInventoryLog(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
   const id = requiredIdentifier(row.inventory_log_id, "inventory_logs.inventory_log_id");
   const itemId = requiredIdentifier(row.item_id, "inventory_logs.item_id");
+  assertNotAggregateShopScope(row.shop_id, "inventory_logs");
   const shopId = requiredIdentifier(row.shop_id, "inventory_logs.shop_id");
   const occurredAt = requiredInstant(
     row.create_time ?? row.source_updated_at,
     "inventory_logs.create_time",
   );
   const quantity = decimalOrZero(row.qoh_change, "inventory_logs.qoh_change");
-  const unitCost = optionalDecimal(row.cost_change, "inventory_logs.cost_change");
+  const unitCost = optionalCostDecimal(row.cost_change, "inventory_logs.cost_change");
   return [fact("inventory_movement", row.source_object_type, id, {
     product_variant_id: sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant" }),
     stock_location_id: sourceRef("stock_location", "Shop", shopId, row),
@@ -741,6 +744,31 @@ function optionalDecimal(value: unknown, path: string): string | null {
   return optionalDecimalValue(value, path)?.toString() ?? null;
 }
 
+/**
+ * Cost-only decimal reader.
+ *
+ * R-Series derives averageCost, cost_change and the FIFO costs by division and
+ * reports them at nine decimal places. Money and quantity stay on the exact
+ * parser, where an unrepresentable value is a mapping error; a derived cost
+ * that the canonical scale cannot hold exactly is rounded here instead, so a
+ * whole sale is not quarantined over a sub-cent cost tail.
+ */
+function optionalCostDecimal(value: unknown, path: string): string | null {
+  return optionalCostDecimalValue(value, path)?.toString() ?? null;
+}
+
+function optionalCostDecimalValue(value: unknown, path: string): Decimal4 | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    throw new Error(`lightspeed_canonical_decimal_invalid:${path}`);
+  }
+  try {
+    return Decimal4.fromRounded(typeof value === "bigint" ? value : String(value));
+  } catch {
+    throw new Error(`lightspeed_canonical_decimal_invalid:${path}`);
+  }
+}
+
 function optionalDecimalValue(value: unknown, path: string): Decimal4 | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
@@ -769,6 +797,21 @@ function requiredIdentifier(value: unknown, path: string): string {
   const id = optionalIdentifier(value);
   if (!id) throw new Error(`lightspeed_canonical_id_missing:${path}`);
   return id;
+}
+
+/**
+ * R-Series emits a parallel row under the sentinel shop `0` for every real
+ * per-shop row: the all-shops roll-up it derives from those same rows. It has
+ * no Shop record, so projecting it would dangle a stock_location reference and
+ * double count every balance. Observe it and project nothing.
+ *
+ * A genuinely absent shop id is left to `requiredIdentifier` — only the exact
+ * sentinel is treated as the roll-up scope.
+ */
+function assertNotAggregateShopScope(value: unknown, stream: string): void {
+  if (optionalText(value) === "0") {
+    throw new CanonicalRowNotApplicable(`lightspeed_${stream}_aggregate_shop_scope`);
+  }
 }
 
 function optionalIdentifier(value: unknown): string | null {

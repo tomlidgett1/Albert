@@ -6,6 +6,33 @@ import {
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 
+const CONNECTOR_PROVIDERS = ["lightspeed-r", "xero", "deputy"] as const;
+export type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
+
+/**
+ * Connectors that authorise and store credentials but never enqueue the
+ * initial backfill. Unknown ids throw rather than resolving to "suppress
+ * nothing", so a typo cannot silently leave a pack ingesting. The web slug
+ * `lightspeed` is deliberately not accepted; the connector id is `lightspeed-r`.
+ */
+export function parseSuppressedInitialBackfillConnectors(
+  value: string | undefined,
+): ReadonlySet<ConnectorProvider> {
+  const requested = (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const unknown = requested.filter(
+    (entry) => !(CONNECTOR_PROVIDERS as readonly string[]).includes(entry),
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL lists unknown connectors: ${unknown.join(", ")}.`,
+    );
+  }
+  return new Set(requested as readonly ConnectorProvider[]);
+}
+
 export type SyncWorkerConfig = Readonly<{
   controlPlaneDatabaseUrl: string;
   analyticalDatabaseUrl: string;
@@ -16,6 +43,7 @@ export type SyncWorkerConfig = Readonly<{
   tokenKeyVersion: string;
   oauthWorkerSigningSecret: string;
   oauthRedirectUris: ReadonlySet<string>;
+  oauthSuppressInitialBackfill: ReadonlySet<ConnectorProvider>;
   lightspeedClientId: string;
   lightspeedClientSecret: string;
   xeroClientId: string;
@@ -142,6 +170,9 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   if (xeroDailyRequestLimit !== 1000 && xeroDailyRequestLimit !== 5000) {
     throw new Error("XERO_DAILY_REQUEST_LIMIT must match the Xero tier limit: 1000 or 5000.");
   }
+  const suppressInitialBackfill = parseSuppressedInitialBackfillConnectors(
+    source.ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL,
+  );
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
     analyticalDatabaseUrl: analytical,
@@ -155,6 +186,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     tokenKeyVersion,
     oauthWorkerSigningSecret,
     oauthRedirectUris: new Set(redirectValues),
+    oauthSuppressInitialBackfill: suppressInitialBackfill,
     lightspeedClientId: required(source, "LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required(source, "LIGHTSPEED_CLIENT_SECRET"),
     xeroClientId: required(source, "XERO_CLIENT_ID"),

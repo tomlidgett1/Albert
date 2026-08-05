@@ -150,6 +150,25 @@ export type CanonicalMetadataCommand = Readonly<{
   classification: "lookup_only" | "identity_evidence";
 }>;
 
+/**
+ * A row the connector observed and deliberately does not project.
+ *
+ * A mapper returning no commands stays a defect (`canonical_mapper_empty`):
+ * silently dropping a record must never look like success. This is the
+ * explicit, named alternative for a vendor row that carries no economic event
+ * of its own — a roll-up the vendor derives from rows Albert already holds.
+ * The row is consumed, heals any prior quarantine, and projects nothing.
+ */
+export class CanonicalRowNotApplicable extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`canonical_row_not_applicable:${reason}`);
+    this.name = "CanonicalRowNotApplicable";
+    this.reason = reason;
+  }
+}
+
 export type CanonicalProjectionCommand =
   | CanonicalUpsertCommand
   | CanonicalCategoryAssignmentCommand

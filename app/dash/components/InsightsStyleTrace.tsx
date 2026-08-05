@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type {
   AnswerState,
   TraceEvent,
+  TraceProgressStage,
   TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
@@ -26,6 +27,8 @@ type TrailStepStatus = "running" | "done" | "error";
 type TrailStep = Readonly<{
   id: string;
   kind: "sql" | "tool";
+  /** Governed work this step represents; lets a result event settle its own step. */
+  stage?: TraceProgressStage;
   title: string;
   detail?: string;
   status: TrailStepStatus;
@@ -50,6 +53,8 @@ type TrailModel = Readonly<{
   steps: readonly TrailStep[];
   reasoning: string;
   status: string;
+  /** The substance behind `status` — what the current step is actually reading. */
+  statusDetail: string;
   answer?: Readonly<{ state: AnswerState; text: string; followUps: readonly string[] }>;
   clarification?: Readonly<{ question: string; options: readonly Readonly<{ id: string; label: string }>[] }>;
   error?: Readonly<{ message: string; recoverable: boolean }>;
@@ -118,12 +123,22 @@ export function buildTrailModel(
   let error: TrailModel["error"];
   let stopped = false;
   let status = streaming ? "Thinking" : "How this was worked out";
+  let statusDetail = "";
   let startedAt: number | undefined;
   let endedAt: number | undefined;
 
   const pushStep = (step: TrailStep) => {
     steps.push(step);
     trace.push({ id: `step_${step.id}`, type: "step", stepId: step.id });
+  };
+
+  /** Finds the step a later event should settle, newest first. */
+  const lastStepIndex = (match: (step: TrailStep) => boolean): number => {
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index];
+      if (step && match(step)) return index;
+    }
+    return -1;
   };
 
   for (const event of ordered) {
@@ -135,44 +150,89 @@ export function buildTrailModel(
 
     if (event.type === "progress") {
       status = event.label;
+      statusDetail = event.detail ?? "";
       const running = streaming && event.status !== "complete";
+      const nextStatus: TrailStepStatus = event.status === "error" ? "error" : running ? "running" : "done";
+      // A settling step reports the outcome of work already on screen, so it
+      // replaces its own opening step instead of listing a second row.
+      const settles = event.status === "complete" || event.status === "error";
+      const openIndex = settles && event.stage
+        ? lastStepIndex((step) => step.stage === event.stage)
+        : -1;
+      const open = openIndex >= 0 ? steps[openIndex] : undefined;
+      if (open) {
+        steps[openIndex] = {
+          ...open,
+          title: event.label,
+          detail: event.detail ?? open.detail,
+          status: nextStatus,
+        };
+        continue;
+      }
       pushStep({
         id: event.id,
         kind: "tool",
+        stage: event.stage,
         title: event.label,
-        status: event.status === "error" ? "error" : running ? "running" : "done",
+        ...(event.detail ? { detail: event.detail } : {}),
+        status: nextStatus,
       });
       continue;
     }
 
     if (event.type === "narrative") {
       commentary.push(event.text);
-      status = conciseReasoningSummary(event.text) || status;
+      const summary = conciseReasoningSummary(event.text);
+      if (summary) {
+        status = summary;
+        statusDetail = "";
+      }
       trace.push({ id: `commentary_${event.id}`, type: "commentary", content: event.text });
       continue;
     }
 
     if (event.type === "query") {
+      const governed = {
+        topic: event.topic,
+        metrics: event.metrics,
+        dimensions: event.dimensions,
+        lens: event.lens,
+        timeRangeLabel: event.timeRange.label,
+      };
+      const queryStatus: TrailStepStatus = streaming && event.status !== "complete" ? "running" : "done";
+      const fallbackDetail = [event.lens, event.timeRange.label].filter(Boolean).join(" · ");
+      // The step that announced this query already carries its metrics,
+      // dimensions, and period; upgrade it in place rather than duplicating it.
+      const openIndex = lastStepIndex((step) =>
+        (step.stage === "query" || step.stage === "source_query") && !step.governed);
+      const open = openIndex >= 0 ? steps[openIndex] : undefined;
       status = `Analysing ${humanize(event.topic)}`;
+      statusDetail = open?.detail ?? fallbackDetail;
+      if (open) {
+        steps[openIndex] = {
+          ...open,
+          kind: "sql",
+          title: humanize(event.topic),
+          detail: open.detail ?? fallbackDetail,
+          status: queryStatus,
+          governed,
+        };
+        continue;
+      }
       pushStep({
         id: event.id,
         kind: "sql",
         title: humanize(event.topic),
-        detail: [event.lens, event.timeRange.label].filter(Boolean).join(" · "),
-        status: streaming && event.status !== "complete" ? "running" : "done",
-        governed: {
-          topic: event.topic,
-          metrics: event.metrics,
-          dimensions: event.dimensions,
-          lens: event.lens,
-          timeRangeLabel: event.timeRange.label,
-        },
+        detail: fallbackDetail,
+        status: queryStatus,
+        governed,
       });
       continue;
     }
 
     if (event.type === "table") {
       status = event.caption;
+      statusDetail = `${event.rows.length.toLocaleString()} governed row${event.rows.length === 1 ? "" : "s"} · ${event.columns.length} column${event.columns.length === 1 ? "" : "s"}`;
       const previous = [...steps].reverse().find((step) => step.kind === "sql" && !step.table);
       if (previous) {
         const index = steps.findIndex((step) => step.id === previous.id);
@@ -228,12 +288,14 @@ export function buildTrailModel(
         followUps: event.followUps,
       };
       status = "Answer ready";
+      statusDetail = "";
       continue;
     }
 
     if (event.type === "clarification") {
       clarification = { question: event.question, options: event.options };
       status = "Waiting for one detail";
+      statusDetail = event.question;
       continue;
     }
 
@@ -241,6 +303,7 @@ export function buildTrailModel(
       if (isStopMessage(event.message)) {
         stopped = true;
         status = "Stopped";
+        statusDetail = "";
         const target = steps.at(-1);
         if (target && target.status === "running") {
           const index = steps.findIndex((step) => step.id === target.id);
@@ -250,6 +313,7 @@ export function buildTrailModel(
       }
       error = { message: event.message, recoverable: event.recoverable };
       status = event.recoverable ? "Albert can retry this step" : "Analysis stopped";
+      statusDetail = event.message;
       const target = steps.at(-1);
       if (target && target.status === "running") {
         const index = steps.findIndex((step) => step.id === target.id);
@@ -282,6 +346,7 @@ export function buildTrailModel(
     steps: normalised,
     reasoning: commentary.join("\n\n"),
     status,
+    statusDetail,
     answer,
     clarification,
     error,
@@ -480,9 +545,11 @@ function GovernedQuerySummary({
 function StreamingTrace({
   steps,
   headline,
+  detail,
 }: {
   steps: readonly TrailStep[];
   headline: string;
+  detail: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -494,20 +561,39 @@ function StreamingTrace({
         onClick={() => setExpanded((current) => !current)}
         className={styles.streamingToggle}
       >
-        <span className={styles.streamingHeadline}>
-          <span aria-hidden className={styles.streamingMeasure}>{headline}</span>
-          <AnimatePresence initial={false}>
-            <motion.span
-              key={headline}
-              initial={{ y: "110%", opacity: 0 }}
-              animate={{ y: "0%", opacity: 1 }}
-              exit={{ y: "-110%", opacity: 0 }}
-              transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-              className={styles.streamingLive}
-            >
-              {headline}
-            </motion.span>
-          </AnimatePresence>
+        <span className={styles.streamingHeadlineGroup}>
+          <span className={styles.streamingHeadline}>
+            <span aria-hidden className={styles.streamingMeasure}>{headline}</span>
+            <AnimatePresence initial={false}>
+              <motion.span
+                key={headline}
+                initial={{ y: "110%", opacity: 0 }}
+                animate={{ y: "0%", opacity: 1 }}
+                exit={{ y: "-110%", opacity: 0 }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                className={styles.streamingLive}
+              >
+                {headline}
+              </motion.span>
+            </AnimatePresence>
+          </span>
+          {detail ? (
+            <span className={styles.streamingSubline}>
+              <span aria-hidden className={styles.streamingSublineMeasure}>{detail}</span>
+              <AnimatePresence initial={false}>
+                <motion.span
+                  key={detail}
+                  initial={{ y: "110%", opacity: 0 }}
+                  animate={{ y: "0%", opacity: 1 }}
+                  exit={{ y: "-110%", opacity: 0 }}
+                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  className={styles.streamingSublineLive}
+                >
+                  {detail}
+                </motion.span>
+              </AnimatePresence>
+            </span>
+          ) : null}
         </span>
         {steps.length > 0 ? (
           <span className={styles.streamingChevron}>
@@ -539,12 +625,19 @@ function StreamingTrace({
                 ) : (
                   <span className={styles.streamingStepIcon}><CheckIcon size={14} /></span>
                 )}
-                <span className={styles.streamingStepTitle}>{step.title}</span>
-                {typeof step.rowCount === "number" ? (
-                  <span className={styles.stepMeta}>
-                    {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
+                <span className={styles.streamingStepBody}>
+                  <span className={styles.streamingStepTitleLine}>
+                    <span className={styles.streamingStepTitle}>{step.title}</span>
+                    {typeof step.rowCount === "number" ? (
+                      <span className={styles.stepMeta}>
+                        {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
                   </span>
-                ) : null}
+                  {step.detail ? (
+                    <span className={styles.streamingStepDetail}>{step.detail}</span>
+                  ) : null}
+                </span>
               </div>
             ))}
           </div>
@@ -566,7 +659,13 @@ function ThinkingTrail({
   if (!hasTrail) return null;
 
   if (streaming) {
-    return <StreamingTrace steps={model.steps} headline={model.status || "Thinking"} />;
+    return (
+      <StreamingTrace
+        steps={model.steps}
+        headline={model.status || "Thinking"}
+        detail={model.statusDetail}
+      />
+    );
   }
 
   const failed = Boolean(model.error);
@@ -873,7 +972,7 @@ export default function InsightsStyleTrace({
   if (!events.length && streaming) {
     return (
       <div className={styles.root}>
-        <StreamingTrace steps={[]} headline="Thinking" />
+        <StreamingTrace steps={[]} headline="Thinking" detail="" />
       </div>
     );
   }
@@ -918,7 +1017,16 @@ export default function InsightsStyleTrace({
                   disabled={!onFollowUp}
                   onClick={() => onFollowUp?.(followUp)}
                 >
-                  {followUp}
+                  <svg className={styles.followUpIcon} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M5.5 3.5h7v7M12.5 3.5 3.5 12.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>{followUp}</span>
                 </button>
               ))}
             </div>

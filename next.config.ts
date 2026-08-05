@@ -57,6 +57,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Instant Navigations: Cache Components + Partial Prefetching (Next.js 16.3).
+  // Static shells and Suspense fallbacks render immediately; dynamic regions stream.
+  cacheComponents: true,
+  partialPrefetching: true,
   // Vinext skips the Next typecheck gate; keep Vercel builds unblocked while
   // local `npm run typecheck` remains the authority for TypeScript health.
   typescript: {

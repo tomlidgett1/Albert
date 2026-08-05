@@ -104,6 +104,26 @@
   margin-top: 26px;
 }
 
+.shellFields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 26px;
+}
+
+.shellField {
+  height: var(--login-control-height);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--login-input-surface) 72%, var(--login-border));
+}
+
+.shellButton {
+  height: var(--login-control-height);
+  border-radius: 999px;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--login-contrast) 18%, var(--login-surface));
+}
+
 .field {
   display: flex;
   flex-direction: column;

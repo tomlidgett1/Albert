@@ -90,7 +90,16 @@ export function resolveComparisonTimeRange(
     : compare === "same_period_prior_month"
       ? (value: DateParts) => addMonths(value, -1)
       : (value: DateParts) => addYears(value, -1);
-  return rangeFromBusinessDates(shift(currentStart), shift(currentEnd), calendar);
+  // "Same period" has to mean the same number of days. Shifting both endpoints
+  // independently does not: months are unequal and addMonths clamps a month
+  // end, so 29 Jul - 5 Aug (7 days) became 29 Jun - 5 Jul (6 days) and
+  // 1 - 31 Mar became 1 - 28 Feb. The change percentage was then computed
+  // against a shorter window and reported as a like-for-like comparison.
+  // Anchor the shifted start and carry the original length.
+  const lengthMs = compareDates(currentEnd, currentStart);
+  const shiftedStart = shift(currentStart);
+  const shiftedEnd = addDays(shiftedStart, Math.round(lengthMs / 86_400_000));
+  return rangeFromBusinessDates(shiftedStart, shiftedEnd, calendar);
 }
 
 export function shiftRangeStartByDays(

@@ -175,7 +175,10 @@ export async function runSyncWorker(): Promise<void> {
     analytical,
     rawWriter,
     config.workerId,
-    { vendorRateBudgetOptions: { dailyRequestLimit: config.xeroDailyRequestLimit } },
+    {
+      vendorRateBudgetOptions: { dailyRequestLimit: config.xeroDailyRequestLimit },
+      suppressInitialBackfillFor: config.oauthSuppressInitialBackfill,
+    },
   );
   const service = new SyncWorkerService(config.workerId, queue, processor, {
     visibilityTimeoutSeconds: 900,
@@ -185,7 +188,9 @@ export async function runSyncWorker(): Promise<void> {
   const oauth = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: config.oauthWorkerSigningSecret,
     allowedRedirectUris: config.oauthRedirectUris,
-    sessions: new OAuthSessionStore(controlDb, cryptography),
+    sessions: new OAuthSessionStore(controlDb, cryptography, {
+      suppressInitialBackfillFor: config.oauthSuppressInitialBackfill,
+    }),
     connectors: connectorFactory,
   });
 

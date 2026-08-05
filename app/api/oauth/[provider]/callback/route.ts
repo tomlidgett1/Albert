@@ -69,7 +69,12 @@ export async function GET(
       tenantId: tenant.tenant_id,
       userId: user.id,
     });
-    return resultRedirect(request, provider, result.status);
+    // A connected result with no enqueued job means the connector's initial
+    // backfill is suppressed; report that rather than promising a sync.
+    const status = result.status === "connected" && !result.jobRequestId
+      ? "connected_without_sync"
+      : result.status;
+    return resultRedirect(request, provider, status);
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
     const detail = error instanceof OAuthFlowError && error.detail

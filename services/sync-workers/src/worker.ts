@@ -306,6 +306,12 @@ export class SyncJobProcessor {
     options: Readonly<{
       operationTimeoutMs?: number;
       vendorRateBudgetOptions?: Readonly<Record<string, number | undefined>>;
+      /**
+       * Connectors whose ingestion is not yet cleared. OAuth already skips
+       * their initial backfill; this stops a webhook or due-tick incremental
+       * from becoming that same backfill by the missing-cursor path below.
+       */
+      suppressInitialBackfillFor?: ReadonlySet<SyncJob["connectorId"]>;
     }> = {},
   ) {
     this.operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
@@ -313,7 +319,10 @@ export class SyncJobProcessor {
       throw new Error("Sync operation timeout must be a positive duration.");
     }
     this.vendorRateBudgetOptions = Object.freeze({ ...(options.vendorRateBudgetOptions ?? {}) });
+    this.suppressInitialBackfillFor = options.suppressInitialBackfillFor ?? new Set();
   }
+
+  private readonly suppressInitialBackfillFor: ReadonlySet<SyncJob["connectorId"]>;
 
   async process(
     claim: ClaimedSyncJob,
@@ -499,6 +508,14 @@ export class SyncJobProcessor {
           persisted.connectionGeneration === job.connectionGeneration ? persisted.cursor : null
         );
         if (!cursor) {
+          // A suppressed connector has no cursor by construction. Promoting
+          // that to a backfill would reintroduce exactly the ingestion the
+          // suppression exists to prevent, so retire the job instead.
+          if (this.suppressInitialBackfillFor.has(job.connectorId)) {
+            await this.control.completeCoordinatorRun(job, 0);
+            await this.queue.complete(claim, { suppressedInitialBackfill: true });
+            return Object.freeze({ status: "completed" });
+          }
           await this.orchestrator.enqueueInitialBackfill({
             tenantId: job.tenantId,
             connectionId: job.connectionId,

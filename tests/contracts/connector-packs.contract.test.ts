@@ -487,6 +487,35 @@ test("opaque cursors are provider and stream scoped", () => {
   );
 });
 
+test("a watermarkless cursor omits sourceUpdatedAt instead of carrying undefined", () => {
+  // The cursor is written verbatim as the raw batch manifest's cursorEnd, whose
+  // JSON validation rejects a present key holding `undefined`. Lookup streams
+  // such as categories never observe a source modification timestamp, so this
+  // is their normal cursor shape, not an edge case.
+  const cursor = encodeCursor({
+    v: 1,
+    connector: "lightspeed-r",
+    stream: "categories",
+    mode: "reconciliation",
+  });
+  assert.deepEqual(Object.keys(cursor), ["value"]);
+  assert.equal("sourceUpdatedAt" in cursor, false);
+  assert.equal(
+    decodeCursor(cursor, { connector: "lightspeed-r", stream: "categories" }).watermark,
+    undefined,
+  );
+  assert.equal(
+    encodeCursor({
+      v: 1,
+      connector: "lightspeed-r",
+      stream: "sales",
+      mode: "reconciliation",
+      watermark: "2026-07-31T00:00:00.000Z",
+    }).sourceUpdatedAt,
+    "2026-07-31T00:00:00.000Z",
+  );
+});
+
 test("normalization preserves raw money and timestamps while emitting deterministic values", () => {
   assert.deepEqual(normalizeDecimal("1.2345e3", "aud"), {
     raw: "1.2345e3",

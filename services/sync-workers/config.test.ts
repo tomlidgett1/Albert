@@ -48,6 +48,26 @@ test("sync worker neither requires nor loads the Xero webhook signing key", () =
   assert.equal(Object.hasOwn(config, "xeroWebhookSigningKey"), false);
 });
 
+test("initial-backfill suppression is opt-in, per connector, and fails closed on typos", () => {
+  assert.deepEqual([...loadSyncWorkerConfig(valid).oauthSuppressInitialBackfill], []);
+  assert.deepEqual(
+    [...loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL: " xero , deputy ",
+    }).oauthSuppressInitialBackfill],
+    ["xero", "deputy"],
+  );
+  // A typo must not be read as "nothing suppressed" and quietly start a sync.
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...valid, ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL: "xerro" }),
+    /ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL lists unknown connectors: xerro/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...valid, ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL: "xero,lightspeed" }),
+    /unknown connectors: lightspeed/u,
+  );
+});
+
 test("sync worker config accepts only exact HTTPS OAuth callbacks in production", () => {
   const config = loadSyncWorkerConfig(valid);
   assert.ok(config.oauthRedirectUris.has("https://albert.example/api/oauth/xero/callback"));

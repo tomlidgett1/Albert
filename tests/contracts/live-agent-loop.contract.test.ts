@@ -218,7 +218,6 @@ class ScriptedAnalyticsModel implements Model {
       },
       sort: [{ metric: "net_sales_ex_gst", dir: "desc" }],
       limit: 10,
-      parameters: {},
     }),
     toolStep(5, "publish_observation", {
       claim: {
@@ -248,7 +247,6 @@ class ScriptedAnalyticsModel implements Model {
       },
       sort: [{ metric: "net_sales_ex_gst", dir: "desc" }],
       limit: 10,
-      parameters: {},
     }),
     toolStep(7, "publish_observation", {
       claim: {
@@ -375,10 +373,16 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
   assert.equal(model.requests[0]?.modelSettings.reasoning?.effort, "high");
   assert.equal(model.requests[0]?.modelSettings.store, false);
   assert.deepEqual(events.map(({ sequence }) => sequence), events.map((_, index) => index + 1));
+  // Every governed tool opens and settles its own progress step so the browser
+  // can show the exact work in flight instead of a generic placeholder.
   assert.deepEqual(events.map(({ type }) => type), [
     "progress",
-    "narrative",
-    "narrative",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
     "progress",
     "query",
     "table",
@@ -394,6 +398,31 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
     "chart",
     "answer",
   ]);
+  const progressSteps = events
+    .filter((event): event is Extract<TraceEvent, { type: "progress" }> => event.type === "progress")
+    .map(({ stage, label, detail }) => ({ stage, label, detail }));
+  assert.deepEqual(progressSteps.map(({ stage }) => stage), [
+    "planning",
+    "catalogue",
+    "catalogue",
+    "capabilities",
+    "capabilities",
+    "data_health",
+    "data_health",
+    "query",
+    "query",
+  ]);
+  const queryStep = progressSteps.find(({ stage }) => stage === "query");
+  assert.equal(queryStep?.label, "Querying sales performance");
+  assert.equal(
+    queryStep?.detail,
+    "net sales ex GST · by product category · 27 July 2026 – 3 Aug 2026",
+  );
+  assert.equal(
+    progressSteps.find(({ stage }) => stage === "capabilities")?.label,
+    "Checking source support for sales performance",
+  );
+  assert.ok(progressSteps.every(({ label }) => label.length > 0 && label !== "Understanding the question"));
   const tables = events.filter((event): event is Extract<TraceEvent, { type: "table" }> => event.type === "table");
   assert.equal(tables.length, 2);
   assert.equal(tables[0]?.resultId, resultId);

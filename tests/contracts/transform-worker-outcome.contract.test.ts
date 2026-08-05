@@ -124,6 +124,23 @@ test("permanent transform failures return failed with no message detail",async()
   assert.doesNotMatch(JSON.stringify(harness.persistedFailure()),/sk-never-persist|Bearer/u);
 });
 
+test("immutable canonical lineage violations are classified as permanent code-only failures",async()=>{
+  const harness=processorHarness({
+    failure:Object.assign(new Error("canonical row lineage is immutable"),{code:"22000"}),
+    queueOutcome:"failed",
+  });
+
+  assert.deepEqual(await harness.processor.process(claim),{
+    status:"failed",
+    failure:{code:"canonical_lineage_immutable",retryable:false},
+    retryDelaySeconds:0,
+  });
+  assert.deepEqual(harness.persistedFailure(),{
+    code:"canonical_lineage_immutable",
+    retryable:false,
+  });
+});
+
 test("canonical queue preserves terminal transitions with a database-valid delay and exact evidence",async()=>{
   const calls:Array<Readonly<{sql:string;values:readonly unknown[]}>>=[];
   const queue=new PostgresCanonicalTransformQueue({

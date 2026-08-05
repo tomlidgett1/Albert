@@ -458,8 +458,11 @@ function renderTable(contract: StagingStreamContract): string {
     `ALTER TABLE ${qualified} FORCE ROW LEVEL SECURITY;`,
     `DROP POLICY IF EXISTS tenant_scope ON ${qualified};`,
     `CREATE POLICY tenant_scope ON ${qualified}`,
-    "  USING (tenant_id = ingestion.current_tenant_id())",
-    "  WITH CHECK (tenant_id = ingestion.current_tenant_id());",
+    // The scalar subquery keeps the capability verifier an uncorrelated
+    // InitPlan evaluated once per query, not once per row. See
+    // 0118_m0_initplan_tenant_capability_predicate.sql.
+    "  USING (tenant_id = (SELECT ingestion.current_tenant_id()))",
+    "  WITH CHECK (tenant_id = (SELECT ingestion.current_tenant_id()));",
   ].join("\n");
 }
 

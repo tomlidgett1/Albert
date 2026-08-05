@@ -212,6 +212,11 @@ export type OAuthCallbackResult = Readonly<{
   status: "connected" | "selection_required";
   oauthSessionId: string;
   connectionId?: string;
+  /**
+   * Null when the connector's initial backfill is suppressed, so the browser
+   * never claims a sync started that was deliberately not enqueued.
+   */
+  jobRequestId?: string | null;
 }>;
 
 export async function finishOAuthFlow(input: Readonly<{

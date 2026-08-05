@@ -140,9 +140,30 @@ export interface TraceEventBase {
   occurredAt: string;
 }
 
+/**
+ * Identifies the governed work a progress step represents so the browser can
+ * merge a step with the result event it produced instead of listing both.
+ */
+export type TraceProgressStage =
+  | "planning"
+  | "catalogue"
+  | "definition"
+  | "capabilities"
+  | "field_values"
+  | "data_health"
+  | "query"
+  | "source_query"
+  | "directory";
+
 export interface TraceProgressEvent extends TraceEventBase {
   type: "progress";
   label: string;
+  /**
+   * The concrete substance behind the label — the governed metrics, dimensions,
+   * field, domain, or period actually being worked on. Never model prose.
+   */
+  detail?: string;
+  stage?: TraceProgressStage;
   /** A bounded, user-facing completion estimate from 0 to 1. */
   progress?: number;
 }

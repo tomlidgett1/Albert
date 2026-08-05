@@ -28,6 +28,7 @@ import type { PostgresQueryClient } from "../../../packages/queue/src/index.js";
 import type { TransactionalPostgres } from "./database.js";
 import {
   isCanonicalSourceReference,
+  CanonicalRowNotApplicable,
   type CanonicalEntityType,
   type CanonicalCategoryAssignmentCommand,
   type CanonicalDossierFactContribution,
@@ -206,6 +207,12 @@ export function isolateCanonicalMappings(
       }
       accepted.push({ row, commands });
     } catch (error) {
+      // An explicitly not-applicable row is consumed, not rejected: it must
+      // heal any prior quarantine rather than accrue another one.
+      if (error instanceof CanonicalRowNotApplicable) {
+        accepted.push({ row, commands: [] });
+        continue;
+      }
       const failure = canonicalMappingFailure(error);
       rejected.push({ row, ...failure });
     }
@@ -3044,8 +3051,7 @@ async function upsertDirectEntityLinksBatch(
        canonical_entity_id=excluded.canonical_entity_id,
        match_method='external_id',match_status=excluded.match_status,
        confidence_band='high',evidence=excluded.evidence,
-       valid_to=excluded.valid_to,confirmed_by=null,superseded_by=null,
-       sync_run_id=excluded.sync_run_id`,
+       valid_to=excluded.valid_to,confirmed_by=null,superseded_by=null`,
     [JSON.stringify(records),job.tenantId,job.connectionId],
   );
 }
@@ -3079,7 +3085,7 @@ async function upsertDirectEntityLink(client:PostgresQueryClient,job:CanonicalTr
        canonical_entity_id=excluded.canonical_entity_id,
        match_method='external_id',match_status=excluded.match_status,confidence_band='high',
        evidence=excluded.evidence,valid_to=excluded.valid_to,
-       confirmed_by=null,superseded_by=null,sync_run_id=excluded.sync_run_id`,
+       confirmed_by=null,superseded_by=null`,
     [job.tenantId,linkId,entityType,canonicalEntityId,job.connectionId,command.sourceObjectType,command.sourceRecordId,JSON.stringify({payload_hash:row.payload_hash,mapping_version:row.mapping_version}),tombstonedAt,row.sync_run_id],
   );
 }

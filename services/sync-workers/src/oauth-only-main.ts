@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
+import { parseSuppressedInitialBackfillConnectors } from "./config.js";
 import { ProductionConnectorFactory } from "./connector-factory.js";
 import { AesKeyringWrapper, EnvelopeCryptography } from "./credential-vault.js";
 import { OAuthWorkerHttpHandler } from "./oauth-http.js";
@@ -121,7 +122,11 @@ export async function runOAuthOnlyWorker(): Promise<void> {
     allowedRedirectUris: new Set(["lightspeed", "xero", "deputy"].map((provider) =>
       new URL(`/api/oauth/${provider}/callback`, origin).toString()
     )),
-    sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper)),
+    sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper), {
+      suppressInitialBackfillFor: parseSuppressedInitialBackfillConnectors(
+        process.env.ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL,
+      ),
+    }),
     connectors: connectorFactory,
   });
   await database.ping();

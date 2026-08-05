@@ -554,6 +554,56 @@ test("Lightspeed current balances become date-grained observations even when unc
   assert.equal(first.values.quantity_on_hand, unchangedNextDay.values.quantity_on_hand);
 });
 
+test("Lightspeed all-shops roll-up rows are observed without being projected or quarantined", () => {
+  const row = fixtureRow("lightspeed-r", "item_shops");
+  const rollUp = { ...row, shop_id: "0" };
+  const job: CanonicalTransformBatch = {
+    tenantId: row.tenant_id,
+    batchId: row.payload_batch_id,
+    syncRunId: row.sync_run_id,
+    connectionId: row.connection_id,
+    connectionGeneration: 1,
+    connectorId: "lightspeed-r",
+    mappingVersion: row.mapping_version,
+  };
+  const isolated = isolateCanonicalMappings(
+    [rollUp, row], job, "item_shops", row.mapping_version, mapLightspeedCanonical, context,
+  );
+
+  // Consumed, not rejected: a re-run must heal the record's prior quarantine.
+  assert.equal(isolated.rejected.length, 0);
+  assert.equal(isolated.accepted.length, 2);
+  const projectedRollUp = isolated.accepted.find(({ row: candidate }) => candidate.shop_id === "0");
+  assert.ok(projectedRollUp);
+  assert.equal(projectedRollUp.commands.length, 0);
+  // The real per-shop row still projects its balance.
+  assert.ok((isolated.accepted.find(({ row: candidate }) => candidate.shop_id !== "0")?.commands.length ?? 0) > 0);
+
+  // A genuinely absent shop stays a mapping defect rather than a silent skip.
+  const missingShop = isolateCanonicalMappings(
+    [{ ...row, shop_id: null }], job, "item_shops", row.mapping_version, mapLightspeedCanonical, context,
+  );
+  assert.equal(missingShop.accepted.length, 0);
+  assert.equal(missingShop.rejected[0]?.errorCode, "canonical.lightspeed_canonical_id_missing");
+});
+
+test("Lightspeed derived costs round to the canonical scale instead of rejecting the record", () => {
+  const row = fixtureRow("lightspeed-r", "item_shops");
+  const snapshot = upsert(mapLightspeedCanonical("item_shops", {
+    ...row,
+    average_cost: "6.263636364",
+    total_value_avg_cost: null,
+  }, context), "inventory_balance_snapshot");
+  assert.equal(snapshot.values.unit_cost, "6.2636");
+
+  // Money and quantity keep the exact parser: an unrepresentable value there
+  // is a mapping error, not something to round away.
+  assert.throws(
+    () => mapLightspeedCanonical("item_shops", { ...row, qoh: "1.00005" }, context),
+    /lightspeed_canonical_decimal_invalid/u,
+  );
+});
+
 test("Lightspeed purchase orders have one complete arrival-order-independent projection", () => {
   const vendor=mapLightspeedCanonical("vendors",fixtureRow("lightspeed-r","vendors"),context);
   const embedded=mapLightspeedCanonical("orders",fixtureRow("lightspeed-r","orders"),context);

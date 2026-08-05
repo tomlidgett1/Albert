@@ -1,4 +1,9 @@
 const decimalPattern = /^(-?)(\d+)(?:\.(\d{1,4}))?$/;
+// Vendors report derived costs at their own working precision (Lightspeed's
+// averageCost carries nine places). Only `fromRounded` accepts those, and the
+// fraction is bounded so a hostile payload cannot force unbounded bigint work.
+const roundedDecimalPattern = /^(-?)(\d+)(?:\.(\d{1,40}))?$/;
+const TEN = BigInt(10);
 const SCALE = BigInt(10_000);
 const ZERO = BigInt(0);
 const TWO = BigInt(2);
@@ -32,6 +37,35 @@ export class Decimal4 {
 
   static fromScaled(scaled: bigint): Decimal4 {
     return new Decimal4(scaled);
+  }
+
+  /**
+   * Parse a value carrying more than four decimal places, rounding half away
+   * from zero to the canonical scale.
+   *
+   * `from` stays exact and is the default everywhere: a money or quantity
+   * field that does not fit the canonical scale is a mapping error and must
+   * fail closed. This is the named opt-in for vendor-derived cost fields,
+   * which are quotients the vendor rounds for display anyway, so rejecting
+   * them would quarantine the record rather than record the truth.
+   */
+  static fromRounded(value: string | bigint | Decimal4): Decimal4 {
+    if (value instanceof Decimal4) return value;
+    if (typeof value === "bigint") return new Decimal4(value * SCALE);
+
+    const normalized = value.trim();
+    const match = roundedDecimalPattern.exec(normalized);
+    if (!match) {
+      throw new Error(`Invalid exact decimal: ${value}`);
+    }
+
+    const [, sign, whole, fraction = ""] = match;
+    if (fraction.length <= 4) return Decimal4.from(normalized);
+
+    const divisor = TEN ** BigInt(fraction.length);
+    const exact = BigInt(whole) * divisor + BigInt(fraction);
+    const scaled = divideRoundedHalfAwayFromZero(exact * SCALE, divisor);
+    return new Decimal4(sign === "-" ? -scaled : scaled);
   }
 
   add(other: string | bigint | Decimal4): Decimal4 {

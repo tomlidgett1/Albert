@@ -703,7 +703,18 @@ export default function AnalyticalTrace({
                   {event.followUps.length ? (
                     <div className={styles.traceFollowUps} aria-label="Suggested follow-up questions">
                       {event.followUps.map((followUp) => (
-                        <button key={followUp} type="button" disabled={!onFollowUp} onClick={() => onFollowUp?.(followUp)}>{followUp}</button>
+                        <button key={followUp} type="button" disabled={!onFollowUp} onClick={() => onFollowUp?.(followUp)}>
+                          <svg className={styles.traceFollowUpIcon} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                            <path
+                              d="M5.5 3.5h7v7M12.5 3.5 3.5 12.5"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                          <span>{followUp}</span>
+                        </button>
                       ))}
                     </div>
                   ) : null}

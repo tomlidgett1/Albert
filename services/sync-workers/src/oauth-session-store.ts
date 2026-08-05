@@ -148,20 +148,64 @@ export type OAuthCallbackReplay = Readonly<{
   | Readonly<{
       status: "connected";
       connectionId: string;
-      jobRequestId: string;
+      jobRequestId: string | null;
   }>
 );
 
 export type OAuthSelectionReplay = Readonly<{
   connectionId: string;
-  jobRequestId: string;
+  jobRequestId: string | null;
+}>;
+
+const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/**
+ * Replays must reconstruct the original completion exactly. A null
+ * jobRequestId is only trustworthy when the row itself records that the
+ * initial backfill was suppressed; otherwise it is an incomplete write and
+ * the caller must not be told the connection finished.
+ */
+function completionIdentifiers(
+  completionResult: Record<string, unknown> | null,
+): { connectionId: string; jobRequestId: string | null } {
+  const connectionId = completionResult?.connectionId;
+  const jobRequestId = completionResult?.jobRequestId;
+  const suppressed = completionResult?.initialBackfillSuppressed === true;
+  if (typeof connectionId !== "string" || !ULID.test(connectionId)) {
+    throw new Error("oauth_callback_result_unavailable");
+  }
+  if (suppressed) {
+    if (jobRequestId !== null && jobRequestId !== undefined) {
+      throw new Error("oauth_callback_result_unavailable");
+    }
+    return { connectionId, jobRequestId: null };
+  }
+  if (typeof jobRequestId !== "string" || !ULID.test(jobRequestId)) {
+    throw new Error("oauth_callback_result_unavailable");
+  }
+  return { connectionId, jobRequestId };
+}
+
+export type OAuthSessionStoreOptions = Readonly<{
+  /**
+   * Connector packs whose OAuth finalisation must not enqueue the initial
+   * backfill. Credentials are still stored and the connection still becomes
+   * active; ingestion is simply never started. Used to onboard a connector
+   * before its backfill is cleared for production.
+   */
+  suppressInitialBackfillFor?: ReadonlySet<OAuthSessionContext["provider"]>;
 }>;
 
 export class OAuthSessionStore {
+  private readonly suppressInitialBackfillFor: ReadonlySet<OAuthSessionContext["provider"]>;
+
   constructor(
     private readonly db: TransactionalPostgres,
     private readonly cryptography: EnvelopeCryptography,
-  ) {}
+    options: OAuthSessionStoreOptions = {},
+  ) {
+    this.suppressInitialBackfillFor = options.suppressInitialBackfillFor ?? new Set();
+  }
 
   async create(input: Readonly<{
     tenantId: string;
@@ -293,14 +337,7 @@ export class OAuthSessionStore {
       });
     }
     if (row.status === "consumed") {
-      const connectionId = row.completion_result?.connectionId;
-      const jobRequestId = row.completion_result?.jobRequestId;
-      if (
-        typeof connectionId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(connectionId) ||
-        typeof jobRequestId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(jobRequestId)
-      ) {
-        throw new Error("oauth_callback_result_unavailable");
-      }
+      const { connectionId, jobRequestId } = completionIdentifiers(row.completion_result);
       return Object.freeze({
         provider: row.provider,
         redirectUri: row.redirect_uri,
@@ -353,15 +390,7 @@ export class OAuthSessionStore {
     if (row.selected_account_reference !== input.selectedAccountReference) {
       throw new Error("oauth_selected_account_mismatch");
     }
-    const connectionId = row.completion_result?.connectionId;
-    const jobRequestId = row.completion_result?.jobRequestId;
-    if (
-      typeof connectionId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(connectionId) ||
-      typeof jobRequestId !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(jobRequestId)
-    ) {
-      throw new Error("oauth_callback_result_unavailable");
-    }
-    return Object.freeze({ connectionId, jobRequestId });
+    return Object.freeze(completionIdentifiers(row.completion_result));
   }
 
   private async loadWithPkce(
@@ -488,7 +517,11 @@ export class OAuthSessionStore {
     context: OAuthSessionContext;
     discovery: ConnectionDiscovery;
     provisionalCredentialRef: string;
-  }>): Promise<Readonly<{ connectionId: string; jobRequestId: string; credentialRef: string }>> {
+  }>): Promise<Readonly<{
+    connectionId: string;
+    jobRequestId: string | null;
+    credentialRef: string;
+  }>> {
     const provisional = await this.credentialVault(input.context).read(input.provisionalCredentialRef);
     const generatedConnectionId = ulid();
     const tokenRefId = ulid();
@@ -640,13 +673,20 @@ export class OAuthSessionStore {
         replayVersion: 1,
         planMode: "progressive",
       };
-      const enqueued = await client.query<{ job_request_id: string }>(
-        `select job_request_id
-           from control_plane.enqueue_sync_job($1::jsonb, 'backfill', $2, 0)`,
-        [JSON.stringify(jobPayload), `oauth-initial:${input.context.oauthSessionId}`],
-      );
-      const jobRequestId = enqueued.rows[0]?.job_request_id;
-      if (!jobRequestId) throw new Error("oauth_initial_backfill_enqueue_failed");
+      // A suppressed connector authorises and stores credentials but never
+      // starts ingestion. The enqueue is skipped entirely rather than queued
+      // and paused, so nothing can drain it before backfill is cleared.
+      const suppressInitialBackfill = this.suppressInitialBackfillFor.has(input.context.provider);
+      let jobRequestId: string | null = null;
+      if (!suppressInitialBackfill) {
+        const enqueued = await client.query<{ job_request_id: string }>(
+          `select job_request_id
+             from control_plane.enqueue_sync_job($1::jsonb, 'backfill', $2, 0)`,
+          [JSON.stringify(jobPayload), `oauth-initial:${input.context.oauthSessionId}`],
+        );
+        jobRequestId = enqueued.rows[0]?.job_request_id ?? null;
+        if (!jobRequestId) throw new Error("oauth_initial_backfill_enqueue_failed");
+      }
       // Match expire_oauth_sessions: mark terminal + clear PKCE in one update, then
       // delete envelopes. Clearing PKCE while status is exchanging fails
       // oauth_sessions_pkce_required_check; deleting envelopes first fails
@@ -657,12 +697,17 @@ export class OAuthSessionStore {
                 consumed_at = clock_timestamp(),
                 selected_account_reference = $6::text,
                 pkce_verifier_secret_reference = null,
+                -- The suppression marker is added only when it is true, so an
+                -- ordinary completion keeps the exact four-key shape that
+                -- protected_dogfood_m7_journey_evidence compares against.
                 completion_result = jsonb_build_object(
               'connectionId',$3::text,
               'jobRequestId',$4::text,
               'oauthSessionId',$2::text,
               'connectionGeneration',$5::bigint
-            )
+            ) || case when $7::boolean
+              then jsonb_build_object('initialBackfillSuppressed',true)
+              else '{}'::jsonb end
           where tenant_id = $1 and oauth_session_id = $2
             and status = 'exchanging'
         returning oauth_session_id`,
@@ -673,6 +718,7 @@ export class OAuthSessionStore {
           jobRequestId,
           connectionGeneration,
           account.externalAccountId,
+          suppressInitialBackfill,
         ],
       );
       if (!completedSession.rows[0]) throw new Error("oauth_session_finalize_conflict");

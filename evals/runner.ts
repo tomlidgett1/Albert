@@ -185,7 +185,10 @@ async function runSemanticQuestion(
     identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
     packVersions: bundleSources.packVersions,
     sourceWatermarks: bundleSources.sourceWatermarks,
-    ir,
+    // The bundle identifies what the service actually compiled. Trusted keys
+    // the agent cannot send are injected server-side, so hashing the raw seed
+    // would pin a query no model can express.
+    ir: parseSemanticQuery(asToolInput(question.ir)),
   });
   if (response.provenance.bundleHash !== expectedHash) {
     throw new Error(`${question.id} semantic bundle hash is not reproducible.`);
@@ -291,6 +294,17 @@ async function runSourceQuestion(
   };
 }
 
+/** Drop the trusted-only keys the agent-facing tool schema does not accept. */
+function asToolInput(ir: unknown): unknown {
+  if (!ir || typeof ir !== "object" || Array.isArray(ir)) return ir;
+  const { parameters: _trusted, queries, ...rest } = ir as Record<string, unknown>;
+  void _trusted;
+  return {
+    ...rest,
+    ...(Array.isArray(queries) ? { queries: queries.map((subquery) => asToolInput(subquery)) } : {}),
+  };
+}
+
 async function executeSemanticService(
   ir: unknown,
   rows: readonly DatabaseRow[],
@@ -299,8 +313,13 @@ async function executeSemanticService(
 ): Promise<SemanticToolResponse> {
   const health = expectedState === "qualified" ? "warning" : "passed";
   const service = createService(registry, rows, health);
-  const first = await service.execute("run_semantic_query", ir, trustedContext);
-  const second = await service.execute("run_semantic_query", ir, trustedContext);
+  // The agent-facing tool schema deliberately omits `parameters`: OpenAI strict
+  // function tools reject an extra required key, so trusted code injects it.
+  // Send what the model would actually send, or the seed never reaches the
+  // compiler and the suite fails on schema shape instead of behaviour.
+  const toolInput = asToolInput(ir);
+  const first = await service.execute("run_semantic_query", toolInput, trustedContext);
+  const second = await service.execute("run_semantic_query", toolInput, trustedContext);
   if (first.performance.cacheHit || !second.performance.cacheHit) {
     throw new Error("Semantic fixture service did not exercise deterministic bundle caching.");
   }

@@ -133,6 +133,15 @@
   outline-offset: 2px;
 }
 
+.streamingHeadlineGroup {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .streamingHeadline {
   position: relative;
   display: block;
@@ -142,6 +151,39 @@
   height: 20px;
   overflow: hidden;
   text-align: left;
+}
+
+/* Names the governed fields, period, or values behind the headline. */
+.streamingSubline {
+  position: relative;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  height: 16px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.streamingSublineMeasure {
+  display: block;
+  overflow: hidden;
+  visibility: hidden;
+  font-size: 11.5px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.streamingSublineLive {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  color: light-dark(#737373, #a8abb4);
+  font-size: 11.5px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .streamingMeasure {
@@ -196,28 +238,59 @@
   display: flex;
   width: 100%;
   min-height: 28px;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   border-radius: 6px;
-  padding: 2px 0;
+  padding: 4px 0;
   animation: insightsRowIn 320ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 .streamingStepIcon {
   display: grid;
+  height: 17px;
   flex: 0 0 auto;
   place-items: center;
   color: light-dark(#a3a3a3, #8a8d96);
 }
 
-.streamingStepTitle {
+/* Keep the 12px spinner optically centred on the 17px title line. */
+.streamingStep > .spinner {
+  margin-top: 3px;
+}
+
+.streamingStepBody {
+  display: flex;
   min-width: 0;
   flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.streamingStepTitleLine {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.streamingStepTitle {
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   color: light-dark(#171717, #f5f6f8);
   font-size: 12.5px;
   font-weight: 500;
   line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.streamingStepDetail {
+  min-width: 0;
+  overflow: hidden;
+  color: light-dark(#737373, #a8abb4);
+  font-size: 11.5px;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -924,17 +997,36 @@
 }
 
 .followUps button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 1px solid light-dark(#e5e5e5, #2d3036);
   border-radius: 999px;
   background: light-dark(#ffffff, #1b1d20);
   color: light-dark(#404040, #d1d5db);
   cursor: pointer;
   font-size: 12px;
-  padding: 6px 12px;
+  line-height: 1.3;
+  padding: 7px 12px 7px 10px;
+  text-align: left;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.followUpIcon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: light-dark(#8a8b8f, #8a8d96);
 }
 
 .followUps button:hover:not(:disabled) {
+  border-color: light-dark(#d5d5d5, #3a3d44);
   background: light-dark(#fafafa, #24262a);
+  color: light-dark(#202124, #f1f2f4);
+}
+
+.followUps button:hover:not(:disabled) .followUpIcon {
+  color: light-dark(#646568, #c4c7d0);
 }
 
 .followUps button:disabled {

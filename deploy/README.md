@@ -158,7 +158,37 @@ configuration and never accepts a Xero client secret. Xero's public-client token
 exchange and refresh still require HTTP Basic syntax: Albert sends
 `Authorization: Basic base64(client_id + ":")` with an empty password, alongside
 the public `client_id` and PKCE/form fields. Do not mistake that header for a
-confidential client secret or add `XERO_CLIENT_SECRET`.
+confidential client secret or add `XERO_CLIENT_SECRET`. A Xero app registered
+with the plain **Auth Code** grant type is the wrong app type here: it issues a
+client secret, and this build has no confidential-client path for it.
+
+To authorise a connector before its ingestion is cleared for production, list it
+in `ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL` (comma-separated connector ids:
+`lightspeed-r`, `xero`, `deputy`) on the sync worker. A suppressed connector
+completes consent, stores its rotating credential and creates an active
+connection, but no ingestion is started: OAuth finalisation skips the initial
+backfill, and a webhook- or schedule-triggered incremental that finds no cursor
+retires instead of promoting itself to one. The dash reports "connected. No data
+has been synced yet." Unknown connector ids fail worker startup rather than
+silently leaving a pack syncing.
+
+Consent itself still contacts the vendor — Albert lists the authorised
+organisations and stores the selected account's non-secret metadata. Suppression
+stops ingestion, not the OAuth handshake.
+
+Clearing the variable makes the *next* connect sync. It does not retroactively
+backfill a connection authorised while suppressed: that connection has no
+cursor, and the only supported way to start it is to disconnect and reconnect
+once the flag is cleared. Two further consequences while a connector is
+suppressed:
+
+- `control_plane.protected_dogfood_m7_journey_evidence` requires a matching
+  `sync_job_requests` row, so a tenant onboarded under suppression cannot be
+  recorded for M7 dogfood acceptance until it is reconnected.
+- The stored credential is never exercised, so its refresh token is not
+  rotated and `auth_health` stays `healthy` without re-verification. Xero
+  refresh tokens expire after 60 days of disuse; reconnect rather than assuming
+  a long-suppressed connection is still live.
 
 ## 5. Create service applications
 

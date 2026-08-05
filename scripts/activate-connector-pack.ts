@@ -27,7 +27,10 @@ function migrationDatabaseUrl(source:NodeJS.ProcessEnv):string{
   if(parsed.protocol!=="postgres:"&&parsed.protocol!=="postgresql:"){
     throw new Error("ANALYTICAL_MIGRATION_URL must be a PostgreSQL URL.");
   }
-  if(parsed.username!=="albert_analytical_deployer"){
+  // Supabase's pooler addresses a login as `<role>.<project-ref>`; the plain
+  // role is used on a direct connection. The authoritative check is the
+  // session_user assertion made after connecting, which no URL shape can spoof.
+  if(decodeURIComponent(parsed.username).split(".",1)[0]!=="albert_analytical_deployer"){
     throw new Error("Connector-pack activation requires the dedicated albert_analytical_deployer login.");
   }
   const local=["127.0.0.1","localhost","::1","[::1]"].includes(parsed.hostname);

@@ -112,7 +112,9 @@ async function loadMigrations(directory: string): Promise<readonly Migration[]> 
     }
     versions.add(version);
     const sql = await readFile(resolve(absolute, id), "utf8");
-    const transaction = /^\s*BEGIN;\s*([\s\S]*?)\s*COMMIT;\s*$/iu.exec(sql);
+    // A migration may open with `--` rationale lines before its transaction;
+    // that prologue carries no statements, so it is stripped rather than run.
+    const transaction = /^(?:\s*--[^\n]*\n)*\s*BEGIN;\s*([\s\S]*?)\s*COMMIT;\s*$/iu.exec(sql);
     if (!transaction) {
       throw new Error(`${id} must contain one explicit outer BEGIN/COMMIT transaction.`);
     }

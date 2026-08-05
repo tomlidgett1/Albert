@@ -85,8 +85,16 @@ test("composite prior-period comparison independently aggregates, aligns and com
 
 test("snapshot SQL selects latest row per entity before summing",()=>{
   const compiled=compileSemanticQuery({topic:"inventory_health",metrics:["stock_on_hand_units"],dimensions:["product.category"],filters:[],time:{field:"snapshot_date",range:{type:"last_n_days",days:30},compare:"none"},sort:[],limit:20,parameters:{}},registry,baseContext);
-  assert.match(compiled.sql,/SUM\(f\."quantity_on_hand"\) FILTER/);assert.match(compiled.sql,/COALESCE\(snapshot_identity0\."resolved_entity_id", snapshot_latest\."product_variant_id"\) IS NOT DISTINCT FROM COALESCE\(identity0\."resolved_entity_id", f\."product_variant_id"\)/);
-  assert.match(compiled.sql,/snapshot_latest\."stock_location_id" IS NOT DISTINCT FROM f\."stock_location_id"/);assert.doesNotMatch(compiled.sql,/ARRAY_AGG/);
+  assert.match(compiled.sql,/SUM\(f\."quantity_on_hand"\) FILTER/);
+  // The latest snapshot per entity is resolved in one window pass. It used to
+  // be a correlated subquery, which re-executed the whole relation once per row
+  // and made every inventory question time out against a mart view.
+  assert.match(compiled.sql,/MAX\(base\."snapshot_date"\) FILTER \(WHERE base\."quantity_on_hand" IS NOT NULL\) OVER \(PARTITION BY /);
+  // Entities are still compared on their identity-resolved keys, so merged
+  // variants share one latest snapshot.
+  assert.match(compiled.sql,/PARTITION BY COALESCE\(snapshot_identity0\."resolved_entity_id", base\."product_variant_id"\), base\."stock_location_id"\)/);
+  assert.match(compiled.sql,/f\."snapshot_date" = f\."__snapshot_latest__quantity_on_hand"/);
+  assert.doesNotMatch(compiled.sql,/ARRAY_AGG/);
 });
 
 test("trusted overlay windows drive customer and stock scans and reject model overrides",()=>{

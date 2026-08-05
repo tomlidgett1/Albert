@@ -38,6 +38,12 @@ const databaseFailureCodes:Readonly<Record<string,Readonly<{
 });
 
 const trustedTransformCode=/^(?:canonical|transform|readiness|identity|source_authority|dossier|projection|reconciliation|capability|analytical|database|unsafe)_[a-z0-9_.-]{1,100}$/u;
+const exactTransformMessages:Readonly<Record<string,string>>=Object.freeze({
+  // Raised by core.protect_canonical_sync_run. Keep the durable queue record
+  // code-only while distinguishing an immutable-lineage programming error
+  // from a transient database failure.
+  "canonical row lineage is immutable":"canonical_lineage_immutable",
+});
 
 /** Convert arbitrary exceptions to a bounded code-only operational record. */
 export function transformFailure(error:unknown):TransformFailureEvidence{
@@ -60,10 +66,12 @@ export function transformFailure(error:unknown):TransformFailureEvidence{
   }
   const message=error instanceof Error?error.message:"";
   const candidate=message.split(":",1)[0]!.trim().toLowerCase();
-  const code=trustedTransformCode.test(candidate)
-    ? candidate
-    : "unexpected_transform_failure";
-  const permanent=/(_invalid|_unsupported|_mismatch|_non_authoritative|mapper_empty|mapper_missing|manifest_missing|staging_contract_missing|scope_not_established)$/.test(code);
+  const code=exactTransformMessages[candidate]??(
+    trustedTransformCode.test(candidate)
+      ? candidate
+      : "unexpected_transform_failure"
+  );
+  const permanent=/(_invalid|_unsupported|_mismatch|_immutable|_non_authoritative|mapper_empty|mapper_missing|manifest_missing|staging_contract_missing|scope_not_established)$/.test(code);
   return Object.freeze({
     code,
     retryable:!permanent,

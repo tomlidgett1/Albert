@@ -168,8 +168,8 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
   const expectedEventOrder = [
     "progress",
     "progress",
-    "query",
     "progress",
+    "query",
     "table",
     "chart",
     "validation",

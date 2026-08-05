@@ -63,7 +63,10 @@ test("compiler calculates stock cover at the requested aggregate grain and ignor
   });
 
   assert.match(compiled.sql, /SUM\(f\."units_sold"\)[\s\S]*\/ CAST\(\$\d+ AS numeric\)/u);
-  assert.match(compiled.sql, /snapshot_latest\."quantity_on_hand" IS NOT NULL/u);
+  // Rows with no observed balance never define the latest snapshot. This was a
+  // correlated subquery per row until it made every inventory question time
+  // out; the guarantee now rides on the window's FILTER.
+  assert.match(compiled.sql, /FILTER \(WHERE base\."quantity_on_hand" IS NOT NULL\) OVER \(PARTITION BY /u);
   assert.ok(compiled.parameters.includes(14));
   assert.throws(() => compileSemanticQuery({
     kind: "single",

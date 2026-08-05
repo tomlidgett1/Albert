@@ -2,10 +2,12 @@ import {
   EMBEDDED_WEB_BUILD_SHA,
   inspectWebDependencies,
 } from "@/packages/config/src/health";
+import { connection } from "next/server";
 
-export const dynamic = "force-dynamic";
-
+// Cache Components makes routes dynamic by default. Await connection() so this
+// probe always reflects the live environment and is never prerendered.
 export async function GET(): Promise<Response> {
+  await connection();
   const readiness = await inspectWebDependencies(
     process.env,
     fetch,

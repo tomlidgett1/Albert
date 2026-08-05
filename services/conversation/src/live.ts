@@ -18,6 +18,7 @@ import {
   resolveAlbertPreferenceOption,
   semanticToolInputSchemas,
   toolInputToSemanticQueryIr,
+  type SemanticQueryIr,
   type AlbertPreferenceOptionId,
   type AgentToolContext,
   type GovernedResult,
@@ -71,6 +72,8 @@ const summaryOutputSchema = z.object({
   claims: z.array(evidenceClaimSchema).min(1).max(4),
 });
 type SummaryOutput = z.infer<typeof summaryOutputSchema>;
+
+type SemanticQueryTimeRange = Extract<SemanticQueryIr, { kind: "single" }>["time"]["range"];
 
 const LARGE_RESULT_ROW_THRESHOLD = 100;
 const MAX_PUBLISHED_OBSERVATIONS = 6;
@@ -180,6 +183,133 @@ export function createObservationGate(): ObservationGate {
   return { pendingResultId: null, publishedKeys: new Set<string>(), publishedCount: 0 };
 }
 
+/**
+ * Governed identifiers are namespaced snake_case (`commerce.net_sales_ex_gst`).
+ * Trace copy names the real field the analysis is using, so the browser can show
+ * what Albert is doing rather than a generic "working on it" placeholder.
+ */
+const governedTermAcronyms = new Map([
+  ["gst", "GST"],
+  ["pos", "POS"],
+  ["sku", "SKU"],
+  ["abn", "ABN"],
+  ["aud", "AUD"],
+  ["id", "ID"],
+  ["pct", "%"],
+]);
+
+export function governedTerm(value: string): string {
+  return value
+    .slice(value.lastIndexOf(".") + 1)
+    .split("_")
+    .filter(Boolean)
+    .map((word) => governedTermAcronyms.get(word.toLowerCase()) ?? word)
+    .join(" ")
+    .trim();
+}
+
+/** Joins already-human trace fragments, keeping the line short and bounded. */
+export function traceList(values: readonly string[], max = 3): string {
+  const items = [...new Set(values.filter(Boolean))];
+  if (items.length <= max) return items.join(", ");
+  return `${items.slice(0, max).join(", ")} +${items.length - max} more`;
+}
+
+export function governedTermList(values: readonly string[], max = 3): string {
+  return traceList(values.map(governedTerm), max);
+}
+
+/** Governed identifiers are lowercase; step labels that open with one are not. */
+function sentenceCase(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function shortDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+export function describeTimeRange(range: SemanticQueryTimeRange): string {
+  switch (range.type) {
+    case "absolute": {
+      const from = shortDate(range.from);
+      const to = shortDate(range.to);
+      return from && to ? `${from} – ${to}` : "";
+    }
+    case "last_n_days":
+      return `last ${range.days} day${range.days === 1 ? "" : "s"}`;
+    case "today":
+      return "today";
+    case "month_to_date":
+      return "month to date";
+    case "quarter_to_date":
+      return "quarter to date";
+    case "year_to_date":
+      return "year to date";
+    default:
+      return "";
+  }
+}
+
+/** Names the exact governed work a query performs, before it is executed. */
+export function describeSemanticQuery(ir: SemanticQueryIr): string {
+  const dimensions = ir.kind === "composite" ? ir.alignOn : ir.dimensions;
+  const time = ir.kind === "composite" ? ir.queries[0]?.time : ir.time;
+  const filters = ir.kind === "composite" ? ir.queries.flatMap(({ filters: subFilters }) => subFilters) : ir.filters;
+  return [
+    governedTermList(ir.metrics),
+    dimensions.length > 0 ? `by ${governedTermList(dimensions)}` : "",
+    time ? describeTimeRange(time.range) : "",
+    filters.length > 0 ? `filtered on ${governedTermList(filters.map(({ field }) => field), 2)}` : "",
+    ir.kind === "composite" ? `${ir.queries.length} aligned sub-queries` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * The opening step names the route trusted software already resolved, so the
+ * first thing a user sees is the concrete plan rather than "understanding".
+ */
+export function planningStepLabel(contract: PromptRouteContract | undefined): string {
+  switch (contract?.route) {
+    case "directory":
+      return `Planning the ${governedTerm(contract.field)} directory lookup`;
+    case "clarification":
+      return "Checking which lens this question needs";
+    case "unavailable":
+      return `Checking whether ${contract.missingObservation} is observed`;
+    default:
+      return "Planning the governed analysis";
+  }
+}
+
+export function planningStepDetail(contract: PromptRouteContract | undefined): string {
+  switch (contract?.route) {
+    case "directory":
+      return "Reading allowlisted directory values only — no analytical query is needed";
+    case "clarification":
+      return sanitizeTraceText(contract.question, 200);
+    case "unavailable":
+      return `Unlocked by a ${sanitizeTraceText(contract.unlock, 160)}`;
+    default:
+      return "Matching the question to governed Topics, then checking source capabilities and data health before querying";
+  }
+}
+
+/** Names the exact documented source fields a single-source exploration reads. */
+export function describeSourceQuery(input: Readonly<{
+  fields: readonly string[];
+  aggregates: readonly Readonly<{ as: string }>[];
+  groupBy: readonly string[];
+  filters: readonly Readonly<{ field: string }>[];
+}>): string {
+  return [
+    governedTermList([...input.fields, ...input.aggregates.map(({ as }) => as)]),
+    input.groupBy.length > 0 ? `by ${governedTermList(input.groupBy)}` : "",
+    input.filters.length > 0 ? `filtered on ${governedTermList(input.filters.map(({ field }) => field), 2)}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
 export function assertObservationGateClear(gate: ObservationGate): void {
   if (gate.pendingResultId) {
     throw new Error("Publish a governed observation for the previous table before creating another analytical artifact.");
@@ -223,8 +353,29 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 12_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
-      await context.emit({ type: "narrative", status: "running", text: "I’m matching the question to Albert’s governed business definitions." });
-      return requireCatalogue(await context.semantic.execute("search_catalogue", input, context));
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "catalogue",
+        label: "Searching the governed catalogue",
+        detail: "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults",
+      });
+      const catalogue = requireCatalogue(await context.semantic.execute("search_catalogue", input, context));
+      const answerable = catalogue.topics.filter(({ answerable: ready }) => ready);
+      const named = (answerable.length > 0 ? answerable : catalogue.topics)
+        .map(({ label, id }) => sanitizeTraceText(label || id, 60));
+      await context.emit({
+        type: "progress",
+        status: "complete",
+        stage: "catalogue",
+        label: named.length > 0
+          ? `Matched ${named.length} governed Topic${named.length === 1 ? "" : "s"}`
+          : "No governed Topic matched this question",
+        ...(named.length > 0
+          ? { detail: `${traceList(named, 4)}${answerable.length === 0 ? " · none answerable yet" : ""}` }
+          : {}),
+      });
+      return catalogue;
     },
   });
 
@@ -236,6 +387,13 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 8_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "definition",
+        label: `Reading the governed definition of ${governedTerm(input.name)}`,
+        detail: sanitizeTraceText(input.name, 200),
+      });
       return requireDefinition(await context.semantic.execute("get_definition", input, context));
     },
   });
@@ -248,8 +406,25 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 8_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "capabilities",
+        label: `Checking source support for ${governedTerm(input.topic)}`,
+        detail: "Confirming the connected sources carry every field this Topic needs",
+      });
       const result = requireCapabilities(await context.semantic.execute("get_capabilities", input, context));
-      await context.emit({ type: "narrative", status: "complete", text: "I checked that the connected sources can support this analysis before querying." });
+      await context.emit({
+        type: "progress",
+        status: "complete",
+        stage: "capabilities",
+        label: result.answerable
+          ? `Connected sources support ${governedTerm(result.topic)}`
+          : `${result.missing.length} capabilit${result.missing.length === 1 ? "y is" : "ies are"} missing for ${governedTerm(result.topic)}`,
+        detail: result.answerable
+          ? `${result.available.length} of ${result.required.length} required capabilities present`
+          : `Missing ${governedTermList(result.missing, 3)}`,
+      });
       return result;
     },
   });
@@ -262,7 +437,26 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 8_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
-      return requireFieldValues(await context.semantic.execute("list_field_values", input, context));
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "field_values",
+        label: `Resolving allowlisted ${governedTerm(input.field)} values`,
+        detail: input.query
+          ? `Matching “${sanitizeTraceText(input.query, 60)}” against ${sanitizeTraceText(input.field, 120)}`
+          : sanitizeTraceText(input.field, 120),
+      });
+      const values = requireFieldValues(await context.semantic.execute("list_field_values", input, context));
+      await context.emit({
+        type: "progress",
+        status: "complete",
+        stage: "field_values",
+        label: `Found ${values.length} allowlisted ${governedTerm(input.field)} value${values.length === 1 ? "" : "s"}`,
+        ...(values.length > 0
+          ? { detail: traceList(values.slice(0, 4).map(({ value }) => sanitizeTraceText(value, 40)), 4) }
+          : {}),
+      });
+      return values;
     },
   });
 
@@ -274,7 +468,29 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     timeoutMs: 8_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
-      return requireDataHealth(await context.semantic.execute("get_data_health", input, context));
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "data_health",
+        label: `Checking ${governedTerm(input.domain)} data health`,
+        detail: "Readiness, freshness, and named quality warnings for this domain",
+      });
+      const health = requireDataHealth(await context.semantic.execute("get_data_health", input, context));
+      const dataThrough = health.dataThrough ? shortDate(health.dataThrough) : "";
+      await context.emit({
+        type: "progress",
+        status: health.status === "failed" || health.status === "blocked" ? "error" : "complete",
+        stage: "data_health",
+        label: `${sentenceCase(governedTerm(health.domain))} data health: ${health.status}`,
+        detail: [
+          dataThrough ? `data through ${dataThrough}` : "",
+          `${health.checks.length} check${health.checks.length === 1 ? "" : "s"} run`,
+          health.warnings.length > 0
+            ? `${health.warnings.length} warning${health.warnings.length === 1 ? "" : "s"}`
+            : "",
+        ].filter(Boolean).join(" · "),
+      });
+      return health;
     },
   });
 
@@ -288,8 +504,16 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
       const context = contextOf(runContext);
       assertPromptRouteDataToolAllowed(context.promptRouteContract, "run_semantic_query");
       assertObservationGateClear(context.observationGate);
-      await context.emit({ type: "progress", status: "running", label: "Running the governed analysis" });
       const ir = toolInputToSemanticQueryIr(semanticToolInputSchemas.run_semantic_query.parse(input));
+      // Emitted after the IR is parsed so the step names the exact metrics,
+      // dimensions, and period being queried rather than a generic placeholder.
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "query",
+        label: `Querying ${governedTerm(ir.topic)}`,
+        detail: describeSemanticQuery(ir),
+      });
       const response = await context.semantic.execute("run_semantic_query", ir, context);
       if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
         context.evidence.push(response);
@@ -378,7 +602,13 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
       const context = contextOf(runContext);
       assertPromptRouteDataToolAllowed(context.promptRouteContract, "run_source_query");
       assertObservationGateClear(context.observationGate);
-      await context.emit({ type: "progress", status: "running", label: "Exploring an allowlisted source field" });
+      await context.emit({
+        type: "progress",
+        status: "running",
+        stage: "source_query",
+        label: `Exploring ${governedTerm(input.sourceTable)} source fields`,
+        detail: describeSourceQuery(input),
+      });
       const response = await context.semantic.execute("run_source_query", input, context);
       if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
         context.evidence.push(response);
@@ -727,7 +957,9 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     await options.emit({
       type: "progress",
       status: "running",
-      label: "Loading the governed worker directory",
+      stage: "directory",
+      label: `Loading allowlisted ${governedTerm(promptRouteContract.field)} values`,
+      detail: `Reading the connected POS worker directory · up to 50 values`,
       progress: 0.2,
     });
     const directoryResponse = await semantic.execute("list_field_values", {
@@ -784,7 +1016,14 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     },
   });
 
-  await options.emit({ type: "progress", status: "running", label: "Understanding the question", progress: 0.05 });
+  await options.emit({
+    type: "progress",
+    status: "running",
+    stage: "planning",
+    label: planningStepLabel(promptRouteContract),
+    detail: planningStepDetail(promptRouteContract),
+    progress: 0.05,
+  });
   const modelInput=buildBoundedModelInput(options.modelContext,options.message);
   const streamed = await runner.run(agent, modelInput, {
     context,

@@ -112,6 +112,113 @@ test("committed OAuth callback outcomes replay without credential envelopes", as
   });
 });
 
+test("a suppressed connector replays as connected without an initial backfill", async () => {
+  const completion = {
+    provider: "xero" as const,
+    redirect_uri: "https://albert.example/api/oauth/xero/callback",
+    state_nonce_hash: "a".repeat(64),
+    status: "consumed",
+    expires_at: new Date(Date.now() - 60_000),
+    discovered_account_choices: null,
+    selected_account_reference: "tenant-a",
+    completion_result: {
+      connectionId: "01K1ZZZZZZ0000000000000003",
+      jobRequestId: null,
+      initialBackfillSuppressed: true,
+    },
+  };
+  const store = new OAuthSessionStore(
+    { async query() { return { rows: [completion] }; } } as unknown as TransactionalPostgres,
+    {} as EnvelopeCryptography,
+  );
+  const identity = {
+    tenantId: "01K1ZZZZZZ0000000000000001",
+    oauthSessionId: "01K1ZZZZZZ0000000000000002",
+    initiatedBy: "10000000-0000-4000-8000-000000000001",
+  };
+
+  assert.deepEqual(await store.loadCallbackReplay({ ...identity, stateNonceHash: "a".repeat(64) }), {
+    provider: "xero",
+    redirectUri: completion.redirect_uri,
+    status: "connected",
+    connectionId: completion.completion_result.connectionId,
+    jobRequestId: null,
+  });
+  assert.deepEqual(
+    await store.loadSelectionReplay({ ...identity, selectedAccountReference: "tenant-a" }),
+    { connectionId: completion.completion_result.connectionId, jobRequestId: null },
+  );
+});
+
+test("a missing job request is only tolerated when suppression was recorded", async () => {
+  const replayFor = (completionResult: Record<string, unknown>) => new OAuthSessionStore(
+    {
+      async query() {
+        return {
+          rows: [{
+            provider: "xero" as const,
+            redirect_uri: "https://albert.example/api/oauth/xero/callback",
+            state_nonce_hash: "a".repeat(64),
+            status: "consumed",
+            expires_at: new Date(Date.now() - 60_000),
+            discovered_account_choices: null,
+            selected_account_reference: "tenant-a",
+            completion_result: completionResult,
+          }],
+        };
+      },
+    } as unknown as TransactionalPostgres,
+    {} as EnvelopeCryptography,
+  ).loadCallbackReplay({
+    tenantId: "01K1ZZZZZZ0000000000000001",
+    oauthSessionId: "01K1ZZZZZZ0000000000000002",
+    initiatedBy: "10000000-0000-4000-8000-000000000001",
+    stateNonceHash: "a".repeat(64),
+  });
+
+  // An incomplete write is indistinguishable from suppression unless the row
+  // says so; it must stay an error rather than reporting a finished connect.
+  await assert.rejects(
+    replayFor({ connectionId: "01K1ZZZZZZ0000000000000003", jobRequestId: null }),
+    /oauth_callback_result_unavailable/u,
+  );
+  // Suppression must not be usable to smuggle a bogus job request through.
+  await assert.rejects(
+    replayFor({
+      connectionId: "01K1ZZZZZZ0000000000000003",
+      jobRequestId: "not-a-ulid",
+      initialBackfillSuppressed: true,
+    }),
+    /oauth_callback_result_unavailable/u,
+  );
+});
+
+test("suppression skips the enqueue entirely rather than queueing paused work", () => {
+  const source = readFileSync("services/sync-workers/src/oauth-session-store.ts", "utf8");
+  const enqueue = source.indexOf("control_plane.enqueue_sync_job");
+  assert.ok(enqueue > 0, "the initial backfill enqueue must still exist for unsuppressed connectors");
+  assert.match(
+    source.slice(0, enqueue),
+    /if \(!suppressInitialBackfill\) \{[\s\S]*$/u,
+  );
+  // An unsuppressed completion must keep the exact four-key shape that
+  // control_plane.protected_dogfood_m7_journey_evidence compares against.
+  assert.match(
+    source,
+    /\|\| case when \$7::boolean\s*\n\s*then jsonb_build_object\('initialBackfillSuppressed',true\)\s*\n\s*else '\{\}'::jsonb end/u,
+  );
+  const migration = readFileSync(
+    "infra/migrations/control-plane/0081_m2_optional_initial_backfill_on_oauth_completion.sql",
+    "utf8",
+  );
+  // Both completion-result constraints must tolerate the null job identity
+  // only when suppression was recorded.
+  const suppressedBranch =
+    /WHEN coalesce\(\(completion_result->>'initialBackfillSuppressed'\)::boolean,false\)\s*\n\s*THEN jsonb_typeof\(completion_result->'jobRequestId'\)='null'\s*\n\s*ELSE coalesce\(control_plane\.is_ulid\(completion_result->>'jobRequestId'\),false\)/gu;
+  assert.equal(migration.match(suppressedBranch)?.length, 2);
+  assert.match(migration, /oauth_sessions_completion_generation_binding_check[\s\S]*NOT VALID/u);
+});
+
 test("reconnect cancellation is an exact fixed-function capability", () => {
   const source = readFileSync("services/sync-workers/src/oauth-session-store.ts", "utf8");
   const migration = readFileSync(

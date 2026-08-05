@@ -148,6 +148,16 @@ test("canonical execution retains immutable lineage and refreshes governed quali
   assert.match(executable,/protect_canonical_sync_run/);
   assert.match(executable,/canonical_record_state[\s\S]*connection_id text NOT NULL[\s\S]*source_object_type text NOT NULL[\s\S]*mapping_version text NOT NULL/);
   assert.match(pipeline,/tenant_id:job\.tenantId,id,\.\.\.resolved,sync_run_id:row\.sync_run_id/);
+  const entityLinkUpserts=pipeline.slice(
+    pipeline.indexOf("async function upsertDirectEntityLinksBatch"),
+    pipeline.indexOf("async function upsertFactObservationsBatch"),
+  );
+  assert.match(entityLinkUpserts,/insert into core\.entity_source_link[\s\S]*sync_run_id/u);
+  assert.doesNotMatch(
+    entityLinkUpserts,
+    /sync_run_id\s*=\s*excluded\.sync_run_id/u,
+    "incremental entity-link updates must preserve the originating sync run",
+  );
   assert.match(executable,/finance_status_lookup[\s\S]*workforce_leave_status_lookup[\s\S]*inventory_movement_type_lookup/);
   assert.match(quality,/line_maths[\s\S]*ON CONFLICT \(tenant_id,run_id,check_id\) DO UPDATE SET/);
   assert.match(executable,/staging_acceptance[\s\S]*ON CONFLICT \(tenant_id,run_id,check_id\) DO UPDATE SET/);

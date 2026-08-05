@@ -28,7 +28,11 @@ export type OpaqueCursorState = Readonly<{
 export function encodeCursor(state: OpaqueCursorState): SyncCursor {
   return {
     value: Buffer.from(JSON.stringify(state), "utf8").toString("base64url"),
-    sourceUpdatedAt: state.watermark,
+    // An absent watermark must stay an absent key. A present key holding
+    // `undefined` survives into the raw batch manifest, whose JSON validation
+    // rejects it and permanently blocks streams that carry no source
+    // modification timestamp at all (lookups such as categories).
+    ...(state.watermark === undefined ? {} : { sourceUpdatedAt: state.watermark }),
   };
 }
 

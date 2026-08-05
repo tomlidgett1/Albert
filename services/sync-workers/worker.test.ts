@@ -874,3 +874,115 @@ test("a verified reconnect uses inclusive modified-since sync instead of an even
     sourceUpdatedAt: priorWatermark,
   });
 });
+
+test("a suppressed connector retires a cursorless incremental instead of backfilling it", async () => {
+  // A webhook or due-tick incremental reaches the worker with no cursor for a
+  // connector whose OAuth deliberately skipped the initial backfill. Promoting
+  // it would run exactly the 31-day ingestion suppression exists to prevent.
+  const evidence: Record<string, unknown>[] = [];
+  let backfillsEnqueued = 0;
+  let coordinatorChildren: number | undefined;
+  const queue = {
+    async complete(_claim: ClaimedSyncJob, value: Record<string, unknown>) { evidence.push(value); },
+    async extendVisibility() { return new Date().toISOString(); },
+  } as unknown as DurableSyncQueue;
+  const orchestrator = {
+    async enqueueInitialBackfill() {
+      backfillsEnqueued += 1;
+      return "01J0000000000000000000000B";
+    },
+  } as unknown as SyncOrchestrator;
+  const control = {
+    async beginRun() { return "run" as const; },
+    async acquireSyncWritePermit() { return "01ARZ3NDEKTSV4RRFFQ69G5FAY"; },
+    async releaseSyncWritePermit() {},
+    async loadConnection() {
+      return {
+        tenantId: "tenant",
+        connectionId: "connection",
+        connectorKey: "xero" as const,
+        externalAccountReference: "xero-tenant",
+        credentialRef: "credential:test",
+        connectionGeneration: 1,
+      };
+    },
+    // The defining state of a suppressed connection: authorised, never synced.
+    async getCursor() {
+      return {
+        cursor: null,
+        backfillComplete: false,
+        sourceWatermark: null,
+        connectionGeneration: 0,
+        coverage: null,
+      };
+    },
+    async recordConnectionAuthHealth() {},
+    async completeCoordinatorRun(_job: unknown, children: number) { coordinatorChildren = children; },
+    vendorRateBudget() {
+      return { async beforeRequest() {}, async observeResponse() {} };
+    },
+  } as unknown as ControlPlaneStore;
+  const connector = {
+    id: "xero",
+    version: "test",
+    apiVersion: "test",
+    async check_connection() { return "healthy" as const; },
+    async list_streams() {
+      return [{
+        id: "invoices",
+        label: "Invoices",
+        domains: ["finance"],
+        cursorKind: "high_water_mark",
+        backfillStrategy: "exhaustive_offset",
+        availability: "required",
+      }];
+    },
+    async incremental_sync() {
+      throw new Error("a suppressed connector must not read from the vendor");
+    },
+  } as unknown as ConnectorPack;
+  const claim = {
+    queueName: "albert_sync_standard",
+    workerId: "worker-test",
+    messageId: "77",
+    readCount: 1,
+    enqueuedAt: "2026-08-05T00:00:00.000Z",
+    visibilityDeadline: "2026-08-05T00:15:00.000Z",
+    job: {
+      schemaVersion: 1,
+      type: "IncrementalSync",
+      tenantId: "01J00000000000000000000001",
+      connectionId: "01J00000000000000000000002",
+      connectionGeneration: 1,
+      connectorId: "xero",
+      externalAccountReference: "xero-tenant",
+      syncRunId: "01J00000000000000000000003",
+      batchId: "01J00000000000000000000004",
+      requestedAt: "2026-08-05T00:00:00.000Z",
+      jobRequestId: "01J00000000000000000000005",
+      stream: "invoices",
+      reason: "webhook",
+    },
+  } as const satisfies ClaimedSyncJob;
+
+  const suppressed = new SyncJobProcessor(
+    queue, orchestrator, { get: () => connector }, control,
+    {} as AnalyticalLandingStore, {} as RawBatchWriter, "worker-test",
+    { suppressInitialBackfillFor: new Set(["xero"]) },
+  );
+  const outcome = await suppressed.process(claim);
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(backfillsEnqueued, 0);
+  assert.equal(coordinatorChildren, 0);
+  assert.deepEqual(evidence, [{ suppressedInitialBackfill: true }]);
+
+  // An unsuppressed connector must still self-heal the missing cursor.
+  const unsuppressed = new SyncJobProcessor(
+    queue, orchestrator, { get: () => connector }, control,
+    {} as AnalyticalLandingStore, {} as RawBatchWriter, "worker-test",
+  );
+  await unsuppressed.process(claim);
+  assert.equal(backfillsEnqueued, 1);
+  assert.deepEqual(evidence[1], { replacedByInitialBackfill: true });
+});

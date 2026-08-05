@@ -138,7 +138,6 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
       time: { field: "business_date", range: { type: "absolute", from: "2026-03-01T00:00:00.000Z", to: "2026-03-16T00:00:00.000Z" }, compare: "none" },
       sort: [],
       limit: 20,
-      parameters: {},
     }, trusted);
     const semanticTrace = adaptGovernedResult(semantic);
     assert.equal(semanticTrace.rows[0]?.net_sales_ex_gst, "210.0000");

@@ -1154,18 +1154,10 @@ export class ControlPlaneStore implements RawManifestRepository {
   }
 
   async completePageRun(job: SyncJob): Promise<void> {
-    const result = await this.db.query<{ sync_run_id: string }>(
-      `update control_plane.sync_runs run
-          set status='succeeded',finished_at=now(),error_code=null,error_summary=null
-        where run.tenant_id=$1 and run.sync_run_id=$2 and run.connection_id=$3
-          and run.connection_generation=$4 and run.status='running'
-          and exists (
-            select 1 from control_plane.sync_job_requests request
-             where request.tenant_id=run.tenant_id
-               and request.job_request_id=run.queue_job_reference
-               and request.status='running'
-          )
-      returning run.sync_run_id`,
+    // The request-ledger fence lives behind a definer function: sync_job_requests
+    // is never readable by a runtime role.
+    const result = await this.db.query<{ sync_run_id: string | null }>(
+      `select control_plane.complete_sync_page_run($1,$2,$3,$4::bigint) as sync_run_id`,
       [job.tenantId,job.syncRunId,job.connectionId,job.connectionGeneration],
     );
     if (result.rows[0]?.sync_run_id === job.syncRunId) return;

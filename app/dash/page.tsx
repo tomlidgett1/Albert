@@ -27,11 +27,18 @@ import ConnectionsWorkspace, {
 } from "./components/ConnectionsWorkspace";
 import { ModelRunControls } from "./components/ModelRunControls";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
+import RawDebugger from "./components/RawDebugger";
+import {
+  createRawDebugRecorder,
+  mergeRawDebugTurn,
+  type RawDebugTurn,
+} from "./lib/raw-debug";
 import TenantDeletionWorkspace, {
   parseTenantDeletionReceipt,
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
 import styles from "./dash.module.css";
+import traceStyles from "./components/insights-trace.module.css";
 
 type IconName =
   | "search"
@@ -250,6 +257,28 @@ type ChatClarification = {
   options: [string, string];
 };
 
+/** Strip to AU mobile national digits (9 digits after country / leading 0), starting with 4. */
+function normalizeAuMobileDigits(raw: string): string {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("61")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  return digits.slice(0, 9);
+}
+
+/** Format national AU mobile digits with +61 prefix UI: 4XX XXX XXX. */
+function formatAuMobileDisplay(raw: string): string {
+  const digits = normalizeAuMobileDigits(raw);
+  if (!digits) return "";
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+  return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+}
+
+function isValidAuMobile(raw: string): boolean {
+  const digits = normalizeAuMobileDigits(raw);
+  return digits.length === 9 && digits.startsWith("4");
+}
+
 type ConversationSummary = Readonly<{
   conversationId: string;
   title: string;
@@ -283,6 +312,8 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
   switch (status) {
     case "connected":
       return { kind: "success", message: `${provider} is connected. The recent-first sync has started.` };
+    case "connected_without_sync":
+      return { kind: "success", message: `${provider} is connected. No data has been synced yet.` };
     case "selection_required":
       return { kind: "info", message: `Choose the ${provider} account below to finish connecting it.` };
     case "cancelled":
@@ -316,6 +347,8 @@ const traceEventTypes = new Set([
   "error",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
+/** Opt-in switch for the raw debugger outside development. */
+const rawDebugStorageKey = "albert:chat:raw-debugger";
 
 function parseTraceEvent(value: unknown): TraceEvent | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -524,6 +557,28 @@ export default function DashPage() {
     }
   });
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
+  // Development inspector. Available automatically outside production, and in a
+  // deployed environment only when a developer opts in explicitly.
+  const [rawDebugAvailable, setRawDebugAvailable] = useState(
+    () => process.env.NODE_ENV !== "production",
+  );
+  const [rawDebugOpen, setRawDebugOpen] = useState(false);
+  const [rawDebugTurns, setRawDebugTurns] = useState<readonly RawDebugTurn[]>([]);
+  // Record whenever the inspector is available, not only while it is open, so
+  // opening it after a surprising turn still shows that turn.
+  const rawDebugOnRef = useRef(false);
+  rawDebugOnRef.current = rawDebugAvailable;
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return;
+    try {
+      const optedIn = window.localStorage.getItem(rawDebugStorageKey) === "true"
+        || new URLSearchParams(window.location.search).get("debug") === "1";
+      if (optedIn) setRawDebugAvailable(true);
+    } catch {
+      // Ignore private-mode storage failures.
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -553,12 +608,19 @@ export default function DashPage() {
   const [clarifyDraft, setClarifyDraft] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [editPanelOpen, setEditPanelOpen] = useState(false);
+  const editCloseTimerRef = useRef<number | undefined>(undefined);
   const [collapsedConversationGroups, setCollapsedConversationGroups] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerMultiline, setComposerMultiline] = useState(false);
+  const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
+  const [mobileConnectClosing, setMobileConnectClosing] = useState(false);
+  const [mobileNumber, setMobileNumber] = useState("");
   const reduceMotion = useReducedMotion();
+  const mobileConnectCloseTimerRef = useRef<number | undefined>(undefined);
+  const mobileNumberInputRef = useRef<HTMLInputElement>(null);
   const accountAreaRef = useRef<HTMLDivElement>(null);
   const accountPopoverRef = useRef<HTMLDivElement>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
@@ -599,12 +661,30 @@ export default function DashPage() {
     viewingKeyRef.current = activeConversationId ?? viewingKeyRef.current;
   }, [activeConversationId]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
+  const [conversationSkelPhase, setConversationSkelPhase] = useState<"idle" | "loading" | "revealing">("idle");
+  const [conversationSkelRevealed, setConversationSkelRevealed] = useState(false);
+  const [conversationSkelResetting, setConversationSkelResetting] = useState(false);
+  const conversationSkelPhaseRef = useRef<"idle" | "loading" | "revealing">("idle");
+  const openingConversationIdRef = useRef<string | null>(null);
+  const conversationSkelHostRef = useRef<HTMLDivElement>(null);
   const chatMessageSequenceRef = useRef(0);
-  const chatComposerHero = activeItem === "Chat" && chatMessages.length === 0 && !openingConversationId;
-  const chatComposerCompact = activeItem === "Chat" && !composerExpanded;
-  // Keep hero chrome while empty (even after focus expands), and briefly after the
-  // first send so the compact→docked transition can animate.
-  const showHeroComposer = chatComposerHero || chatComposerCompact;
+  conversationSkelPhaseRef.current = conversationSkelPhase;
+  openingConversationIdRef.current = openingConversationId;
+  // Keep the composer docked while history loads or reveals. Hero/compact chrome
+  // would lift the input into the middle of the page behind the skeleton.
+  const conversationSkelActive = conversationSkelPhase !== "idle";
+  const chatComposerHero = activeItem === "Chat"
+    && chatMessages.length === 0
+    && !openingConversationId
+    && !conversationSkelActive;
+  // Empty "New Analysis" keeps the Ask-me-anything title, but uses the same
+  // compact input height as an active conversation. Tall hero sizing only runs
+  // briefly after the first send while the docked transition finishes.
+  const showHeroComposer = activeItem === "Chat"
+    && chatMessages.length > 0
+    && !composerExpanded
+    && !openingConversationId
+    && !conversationSkelActive;
   const resizeComposerTextarea = useCallback(() => {
     const textarea = chatTextareaRef.current;
     if (!textarea) return;
@@ -620,6 +700,52 @@ export default function DashPage() {
   useLayoutEffect(() => {
     resizeComposerTextarea();
   }, [chatDraft, showHeroComposer, composerMultiline, resizeComposerTextarea]);
+
+  const closeMobileConnect = useCallback(() => {
+    if (!mobileConnectOpen || mobileConnectClosing) return;
+    if (reduceMotion) {
+      setMobileConnectOpen(false);
+      setMobileConnectClosing(false);
+      return;
+    }
+    setMobileConnectClosing(true);
+    window.clearTimeout(mobileConnectCloseTimerRef.current);
+    mobileConnectCloseTimerRef.current = window.setTimeout(() => {
+      setMobileConnectOpen(false);
+      setMobileConnectClosing(false);
+    }, 180);
+  }, [mobileConnectClosing, mobileConnectOpen, reduceMotion]);
+
+  const openMobileConnect = useCallback(() => {
+    window.clearTimeout(mobileConnectCloseTimerRef.current);
+    setMobileConnectClosing(false);
+    setMobileConnectOpen(true);
+  }, []);
+
+  useEffect(() => () => {
+    window.clearTimeout(mobileConnectCloseTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileConnectOpen || mobileConnectClosing) return;
+    const frame = window.requestAnimationFrame(() => {
+      mobileNumberInputRef.current?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMobileConnect();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeMobileConnect, mobileConnectClosing, mobileConnectOpen]);
 
   const canManageConnections = accountOrganisation.role === "owner" || accountOrganisation.role === "manager";
   const accountInitial = accountEmail.trim().charAt(0).toUpperCase() || "P";
@@ -1048,6 +1174,23 @@ export default function DashPage() {
     }
   }, [activeItem, activeConversationId, clearConversationUnread]);
 
+  useLayoutEffect(() => {
+    if (!conversationSkelResetting) return;
+    // Force a reflow so dropping is-resetting re-enables transitions for the next reveal.
+    void conversationSkelHostRef.current?.offsetHeight;
+    setConversationSkelResetting(false);
+  }, [conversationSkelResetting]);
+
+  useEffect(() => {
+    if (conversationSkelPhase !== "revealing") return;
+    const revealFrame = window.requestAnimationFrame(() => {
+      setConversationSkelRevealed(true);
+    });
+    return () => {
+      window.cancelAnimationFrame(revealFrame);
+    };
+  }, [conversationSkelPhase]);
+
   const applyCachedConversation = useCallback((
     conversationId: string,
     cached: {
@@ -1087,7 +1230,17 @@ export default function DashPage() {
     setIsChatResponding(live);
     setComposerExpanded(true);
     setActiveItem("Chat");
+    const fromLoading = openingConversationIdRef.current !== null
+      || conversationSkelPhaseRef.current === "loading";
     setOpeningConversationId(null);
+    if (fromLoading) {
+      setConversationSkelPhase("revealing");
+      setConversationSkelRevealed(false);
+    } else {
+      setConversationSkelPhase("idle");
+      setConversationSkelRevealed(false);
+      setConversationSkelResetting(false);
+    }
     setConversationHistoryStatus({ kind: "ready" });
     if (!live) {
       // Drop orphaned sidebar spinners for turns we are not actively owning.
@@ -1169,9 +1322,15 @@ export default function DashPage() {
     if (cached) {
       applyCachedConversation(conversationId, cached);
     } else {
+      if (conversationSkelPhaseRef.current === "revealing") {
+        setConversationSkelResetting(true);
+        setConversationSkelRevealed(false);
+      }
       setChatMessages([]);
       setIsChatResponding(liveTurnsRef.current.has(conversationId));
       setOpeningConversationId(conversationId);
+      setConversationSkelPhase("loading");
+      setConversationSkelRevealed(false);
     }
 
     // A live background turn already owns the freshest transcript.
@@ -1217,6 +1376,9 @@ export default function DashPage() {
     } catch (error) {
       if (controller.signal.aborted || requestId !== openConversationRequestIdRef.current) return;
       setOpeningConversationId(null);
+      setConversationSkelPhase("idle");
+      setConversationSkelRevealed(false);
+      setConversationSkelResetting(false);
       setChatMessages([]);
       setConversationHistoryStatus({
         kind: "error",
@@ -1250,7 +1412,10 @@ export default function DashPage() {
       return;
     }
 
-    const topGap = 8;
+    // Must match .chatMessages padding-top. A smaller value made the first-flight
+    // pin land above the in-flow rest position, so the bubble dropped a few px
+    // when flying styles cleared.
+    const topGap = Number.parseFloat(getComputedStyle(container).paddingTop) || 12;
     const gap = 10;
 
     const clearPinAnimations = () => {
@@ -1380,6 +1545,9 @@ export default function DashPage() {
     const pinFirstMessage = (userEl: HTMLElement, messageId: number, originTop: number) => {
       const assistantEl = userEl.nextElementSibling as HTMLElement | null;
       const startRect = userEl.getBoundingClientRect();
+      // Capture the in-flow rest top before taking the bubble out of flow. Animating
+      // to container.top + a guessed gap left a few px of settle after reset.
+      const destinationTop = startRect.top;
 
       userEl.style.position = "fixed";
       userEl.style.top = `${originTop}px`;
@@ -1399,8 +1567,6 @@ export default function DashPage() {
       spacer.style.minHeight = `${computeSpacerHeight(userEl)}px`;
       container.scrollTop = 0;
       lastPinnedUserMessageIdRef.current = messageId;
-
-      const destinationTop = container.getBoundingClientRect().top + topGap;
 
       const fadeAnimation = animate(0, 1, {
         duration: 0.22,
@@ -1437,17 +1603,22 @@ export default function DashPage() {
     const userEl = container.querySelector<HTMLElement>(`[data-message-id="${lastUserMessage.id}"]`);
     if (!userEl) return;
 
+    const deferredAssistant = [...chatMessages].reverse().find(
+      (message) => message.role === "assistant" && message.trailVisible === false,
+    );
+    const revealDeferredTrail = () => {
+      if (!deferredAssistant) return;
+      revealAssistantTrail(
+        container.querySelector<HTMLElement>(`[data-message-id="${deferredAssistant.id}"]`),
+      );
+    };
+
     const alreadyPinned = lastPinnedUserMessageIdRef.current === lastUserMessage.id;
     if (alreadyPinned) {
       updateSpacerOnly();
-      const deferredAssistant = [...chatMessages].reverse().find(
-        (message) => message.role === "assistant" && message.trailVisible === false,
-      );
-      if (deferredAssistant) {
-        revealAssistantTrail(
-          container.querySelector<HTMLElement>(`[data-message-id="${deferredAssistant.id}"]`),
-        );
-      }
+      // Only reveal when a trail is still deferred. Restored chats already have
+      // visible trails; forcing an opacity fade makes the step bar flash.
+      revealDeferredTrail();
     } else {
       clearPinAnimations();
       const originTop = composerOriginTopRef.current;
@@ -1460,7 +1631,7 @@ export default function DashPage() {
         container.scrollTop = 0;
         lastPinnedUserMessageIdRef.current = lastUserMessage.id;
         composerOriginTopRef.current = null;
-        revealAssistantTrail(userEl.nextElementSibling as HTMLElement | null);
+        revealDeferredTrail();
       } else if (shouldAnimate) {
         pinWithFlip(userEl, lastUserMessage.id);
       } else {
@@ -1469,7 +1640,8 @@ export default function DashPage() {
         container.scrollTop = Math.max(0, userTop - topGap);
         lastPinnedUserMessageIdRef.current = lastUserMessage.id;
         composerOriginTopRef.current = null;
-        revealAssistantTrail(userEl.nextElementSibling as HTMLElement | null);
+        // Instant switch: keep trails painted. Do not opacity-flash the step bar.
+        revealDeferredTrail();
       }
     }
 
@@ -1673,6 +1845,12 @@ export default function DashPage() {
       preferences: runPreferences,
     });
     const receivedEvents: TraceEvent[] = [];
+    const debug = createRawDebugRecorder({
+      enabled: rawDebugOnRef.current,
+      id: `turn_${assistantId}`,
+      prompt: text,
+      onUpdate: (record) => setRawDebugTurns((current) => mergeRawDebugTurn(current, record)),
+    });
 
     const isViewingThisTurn = () => viewingKeyRef.current === turnKey
       || (
@@ -1722,15 +1900,17 @@ export default function DashPage() {
     };
 
     try {
+      const requestBody = {
+        message: text,
+        preferences: runPreferences,
+        ...(requestConversationId ? { conversationId: requestConversationId } : {}),
+        confirmedOption,
+      };
+      debug.request("/api/conversation", requestBody);
       const response = await fetch("/api/conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          preferences: runPreferences,
-          ...(requestConversationId ? { conversationId: requestConversationId } : {}),
-          confirmedOption,
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 
@@ -1738,12 +1918,19 @@ export default function DashPage() {
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
+        debug.response(response, { runtime: "n/a", conversationId: null, turnId: null });
+        debug.note("Request rejected before streaming", payload);
         throw new Error(payload?.error || "Albert could not start this analysis.");
       }
 
       const runtime = response.headers.get("X-Albert-Runtime") === "fixture" ? "fixture" : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+      debug.response(response, {
+        runtime,
+        conversationId: responseConversationId,
+        turnId: responseTurnId,
+      });
       if (runtime === "openai" && (
         !responseConversationId || !ulidPattern.test(responseConversationId)
         || !responseTurnId || !ulidPattern.test(responseTurnId)
@@ -1818,15 +2005,27 @@ export default function DashPage() {
 
       const acceptBlock = (block: string) => {
         if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
+        debug.frame(block);
         const data = block
           .split("\n")
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart())
           .join("\n");
-        if (!data) return;
+        if (!data) {
+          debug.dropped("no data lines", block);
+          return;
+        }
 
         const event = parseTraceEvent(JSON.parse(data));
-        if (!event || receivedEvents.some((item) => item.id === event.id)) return;
+        if (!event) {
+          debug.dropped("rejected by client trace schema", data);
+          return;
+        }
+        if (receivedEvents.some((item) => item.id === event.id)) {
+          debug.dropped(`duplicate event id ${event.id}`, data);
+          return;
+        }
+        debug.event(event);
         receivedEvents.push(event);
         receivedEvents.sort((first, second) => first.sequence - second.sequence);
         updateAssistant({ events: [...receivedEvents] });
@@ -1849,6 +2048,7 @@ export default function DashPage() {
         if (done) break;
       }
       if (controller.signal.aborted) {
+        debug.finish("stopped");
         const stoppedEvent = buildStoppedTraceEvent(
           assistantId,
           "Stopped.",
@@ -1872,6 +2072,7 @@ export default function DashPage() {
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
       if (buffer.trim()) acceptBlock(buffer);
       if (receivedEvents.length === 0) throw new Error("Albert returned an empty analysis trace.");
+      debug.finish("complete");
 
       const cacheKey = trackedConversationId && ulidPattern.test(trackedConversationId)
         ? trackedConversationId
@@ -1884,6 +2085,8 @@ export default function DashPage() {
       )));
       void loadConversationSummaries();
     } catch (error) {
+      debug.failed(error);
+      debug.finish(controller.signal.aborted ? "stopped" : "error");
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller && !controller.signal.aborted) {
         return;
       }
@@ -2008,18 +2211,34 @@ export default function DashPage() {
   };
 
   const beginEditUserMessage = (messageId: number, text: string) => {
+    window.clearTimeout(editCloseTimerRef.current);
+    setEditPanelOpen(false);
     setEditingMessageId(messageId);
     setEditDraft(text);
   };
 
   const cancelEditUserMessage = () => {
-    setEditingMessageId(null);
-    setEditDraft("");
+    window.clearTimeout(editCloseTimerRef.current);
+    if (reduceMotion || !editPanelOpen) {
+      setEditPanelOpen(false);
+      setEditingMessageId(null);
+      setEditDraft("");
+      return;
+    }
+    setEditPanelOpen(false);
+    editCloseTimerRef.current = window.setTimeout(() => {
+      setEditingMessageId(null);
+      setEditDraft("");
+    }, 300);
   };
 
   const resendEditedMessage = (messageId: number) => {
     const text = editDraft.trim();
     if (!text) return;
+    window.clearTimeout(editCloseTimerRef.current);
+    setEditPanelOpen(false);
+    setEditingMessageId(null);
+    setEditDraft("");
     const messageIndex = chatMessages.findIndex(
       (message) => message.id === messageId && message.role === "user",
     );
@@ -2040,14 +2259,46 @@ export default function DashPage() {
     });
   };
 
+  const resizeEditTextarea = useCallback(() => {
+    const textarea = editTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 24), 120);
+    textarea.style.height = `${nextHeight}px`;
+  }, []);
+
+  useEffect(() => () => {
+    window.clearTimeout(editCloseTimerRef.current);
+  }, []);
+
+  // Same open pattern as ThinkingTrail: panel starts at 0fr, then opens to 1fr.
+  useLayoutEffect(() => {
+    if (editingMessageId === null) return;
+    if (reduceMotion) {
+      setEditPanelOpen(true);
+      return;
+    }
+    setEditPanelOpen(false);
+    const frame = window.requestAnimationFrame(() => {
+      setEditPanelOpen(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editingMessageId, reduceMotion]);
+
   useEffect(() => {
     if (editingMessageId === null) return;
     const textarea = editTextareaRef.current;
     if (!textarea) return;
+    resizeEditTextarea();
     textarea.focus();
     const length = textarea.value.length;
     textarea.setSelectionRange(length, length);
-  }, [editingMessageId]);
+  }, [editingMessageId, resizeEditTextarea]);
+
+  useLayoutEffect(() => {
+    if (editingMessageId === null) return;
+    resizeEditTextarea();
+  }, [editDraft, editingMessageId, resizeEditTextarea]);
 
   useEffect(() => {
     if (editingMessageId === null) return;
@@ -2059,7 +2310,7 @@ export default function DashPage() {
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [editingMessageId]);
+  }, [editingMessageId, editPanelOpen, reduceMotion]);
 
   const startNewChat = () => {
     snapshotViewedConversation();
@@ -2073,6 +2324,9 @@ export default function DashPage() {
     composerOriginTopRef.current = null;
     shouldAnimatePinRef.current = false;
     setOpeningConversationId(null);
+    setConversationSkelPhase("idle");
+    setConversationSkelRevealed(false);
+    setConversationSkelResetting(false);
     if (composerExpandTimerRef.current !== undefined) {
       window.clearTimeout(composerExpandTimerRef.current);
       composerExpandTimerRef.current = undefined;
@@ -2153,6 +2407,174 @@ export default function DashPage() {
     router.refresh();
   };
 
+  const renderChatTurns = () => {
+    const turns: Array<{ user: ChatMessage | null; replies: ChatMessage[] }> = [];
+    for (const message of chatMessages) {
+      if (message.role === "user") {
+        turns.push({ user: message, replies: [] });
+        continue;
+      }
+      if (turns.length === 0) {
+        turns.push({ user: null, replies: [message] });
+        continue;
+      }
+      turns[turns.length - 1]!.replies.push(message);
+    }
+    return turns.map((turn) => {
+      const turnKey = `${activeConversationId ?? "draft"}:turn:${turn.user?.id ?? turn.replies[0]?.id ?? "empty"}`;
+      return (
+        <div className={styles.chatTurn} key={turnKey}>
+          {turn.user ? (() => {
+            const message = turn.user!;
+            const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
+            const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
+            const isEditing = editingMessageId === message.id;
+            const turnComputing = turn.replies.some((reply) => Boolean(reply.isStreaming));
+            const orbTheme = theme === "light"
+              ? "light" as const
+              : theme === "dark" || theme === "green"
+                ? "dark" as const
+                : "auto" as const;
+            return (
+              <motion.div
+                className={styles.chatUserBlock}
+                data-message-id={message.id}
+                key={messageKey}
+                initial={suppressEnter ? false : { opacity: 0 }}
+                animate={suppressEnter ? undefined : { opacity: 1 }}
+                transition={{
+                  duration: 0.34,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+              >
+                <div
+                  ref={isEditing ? editComposerRef : undefined}
+                  className={`${styles.chatMessage} ${styles.chatMessageUser} ${isEditing ? styles.chatMessageUserEditing : styles.chatMessageUserIdle}${!isEditing && turnComputing ? ` ${styles.chatMessageUserComputing}` : ""}`}
+                  data-edit-open={isEditing && editPanelOpen ? "true" : "false"}
+                  style={{ borderRadius: isEditing ? 12 : 14 }}
+                >
+                  {isEditing ? (
+                    <textarea
+                      ref={editTextareaRef}
+                      className={styles.chatMessageEditInput}
+                      aria-label="Edit message"
+                      rows={1}
+                      value={editDraft}
+                      onChange={(event) => {
+                        setEditDraft(event.target.value);
+                        window.requestAnimationFrame(() => resizeEditTextarea());
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelEditUserMessage();
+                          return;
+                        }
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          resendEditedMessage(message.id);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className={styles.chatMessageUserFace}
+                      type="button"
+                      aria-label="Edit message"
+                      onClick={() => beginEditUserMessage(message.id, message.text)}
+                    >
+                      {message.text ? <p>{message.text}</p> : null}
+                      {turnComputing ? (
+                        <span className={styles.chatMessageUserOrb} aria-hidden="true">
+                          <ThinkingOrb
+                            className={styles.conversationItemOrb}
+                            state="solving"
+                            size={20}
+                            speed={1.5}
+                            paused={Boolean(reduceMotion)}
+                            theme={orbTheme}
+                            aria-label="Computing"
+                          />
+                        </span>
+                      ) : null}
+                    </button>
+                  )}
+                  {/* Same expand method as ThinkingTrail ("Worked through X steps"). */}
+                  <div
+                    className={traceStyles.expandPanel}
+                    style={{
+                      gridTemplateRows: isEditing && editPanelOpen ? "1fr" : "0fr",
+                      opacity: isEditing && editPanelOpen ? 1 : 0,
+                    }}
+                    data-duration="300"
+                  >
+                    <div
+                      className={traceStyles.expandInner}
+                      style={isEditing && editPanelOpen ? { overflow: "visible" } : undefined}
+                    >
+                      {isEditing ? (
+                        <div className={styles.chatMessageEditTrailing}>
+                          <ModelRunControls
+                            value={agentPreferences}
+                            onChange={setAgentPreferences}
+                            popoverPlacement="below"
+                          />
+                          <button
+                            className={styles.chatMessageEditSend}
+                            type="button"
+                            aria-label="Resend message"
+                            disabled={!editDraft.trim()}
+                            onClick={() => resendEditedMessage(message.id)}
+                          >
+                            <Icon name="arrowUp" />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })() : null}
+          {turn.replies.map((message) => {
+            const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
+            const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
+            return (
+              <motion.article
+                className={`${styles.chatMessage} ${styles.chatMessageAssistant}`}
+                data-message-id={message.id}
+                key={messageKey}
+                initial={suppressEnter ? false : { opacity: 0 }}
+                animate={suppressEnter ? undefined : { opacity: 1 }}
+                transition={{
+                  duration: 0.34,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+              >
+                {message.events?.length || message.isStreaming ? (
+                  message.trailVisible === false ? (
+                    <div className={styles.chatTrailDeferred} aria-hidden="true" />
+                  ) : (
+                    <InsightsStyleTrace
+                      events={message.events ?? []}
+                      streaming={message.isStreaming}
+                      detailedMode={chatDetailedMode}
+                      runtime={message.runtime}
+                      onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                      onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
+                    />
+                  )
+                ) : (
+                  <span className={styles.chatMessageLabel}>Albert</span>
+                )}
+              </motion.article>
+            );
+          })}
+        </div>
+      );
+    });
+  };
+
   return (
     <main
       className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
@@ -2163,10 +2585,10 @@ export default function DashPage() {
           <div className={styles.projectBrand}>
             <img
               className={styles.projectLogo}
-              src="/logos/albert-box.png"
+              src="/logos/albert.png"
               alt=""
-              width={16}
-              height={16}
+              width={20}
+              height={20}
               decoding="async"
             />
             <span className={styles.projectName}>Albert</span>
@@ -2210,9 +2632,20 @@ export default function DashPage() {
 
         <nav className={styles.conversationNav} aria-label="Conversations">
           {conversationHistoryStatus.kind === "loading" && conversationSummaries.length === 0 ? (
-            <p className={styles.conversationNavState} role="status">
-              {conversationHistoryStatus.message || "Loading conversations…"}
-            </p>
+            <div
+              className={styles.conversationNavSkeleton}
+              role="status"
+              aria-label="Loading conversations"
+              data-state="loading"
+            >
+              <div className={`${styles.conversationNavSkeletonLayer} ${styles.isPulsing}`}>
+                <div className={styles.conversationNavSkeletonItem} />
+                <div className={styles.conversationNavSkeletonItem} data-width="mid" />
+                <div className={styles.conversationNavSkeletonItem} data-width="short" />
+                <div className={styles.conversationNavSkeletonItem} />
+                <div className={styles.conversationNavSkeletonItem} data-width="mid" />
+              </div>
+            </div>
           ) : conversationHistoryStatus.kind === "error" && conversationSummaries.length === 0 ? (
             <div className={styles.conversationNavState} role="alert">
               <p>{conversationHistoryStatus.message}</p>
@@ -2553,20 +2986,81 @@ export default function DashPage() {
                     Detailed mode
                   </button>
                 ) : null}
-                <button
-                  className={`${styles.chatTakeawaysToggle} ${takeawaysOpen ? styles.chatTakeawaysToggleActive : ""}`}
-                  type="button"
-                  aria-label={takeawaysOpen ? "Collapse key insights" : "Expand key insights"}
-                  aria-pressed={takeawaysOpen}
-                  aria-controls="analysis-takeaways"
-                  onClick={() => setTakeawaysOpen((current) => !current)}
-                >
-                  <Icon name="sidebarRight" />
-                </button>
+                {rawDebugAvailable ? (
+                  <button
+                    className={`${styles.chatDetailedMode} ${rawDebugOpen ? styles.chatDetailedModeActive : ""}`}
+                    type="button"
+                    aria-pressed={rawDebugOpen}
+                    title="Development inspector: request, response headers, SSE frames, and trace events"
+                    onClick={() => setRawDebugOpen((current) => !current)}
+                  >
+                    Raw debugger
+                  </button>
+                ) : null}
+                {!takeawaysOpen ? (
+                  <button
+                    className={styles.chatTakeawaysToggle}
+                    type="button"
+                    aria-label="Expand key insights"
+                    aria-pressed={false}
+                    aria-controls="analysis-takeaways"
+                    onClick={() => setTakeawaysOpen(true)}
+                  >
+                    <Icon name="sidebarRight" />
+                  </button>
+                ) : null}
               </div>
             </header>
-            {openingConversationId && chatMessages.length === 0 ? (
-              <div className={styles.chatOpeningState} role="status">Loading conversation…</div>
+            {conversationSkelActive ? (
+              <div
+                ref={conversationSkelHostRef}
+                className={[
+                  styles.tSkel,
+                  conversationSkelRevealed ? styles.isRevealed : "",
+                  conversationSkelResetting ? styles.isResetting : "",
+                ].filter(Boolean).join(" ")}
+                role={conversationSkelRevealed ? undefined : "status"}
+                aria-label={conversationSkelRevealed ? undefined : "Loading conversation"}
+                aria-busy={conversationSkelPhase === "loading"}
+                data-state={conversationSkelPhase}
+              >
+                <div
+                  className={[
+                    styles.tSkelSkeleton,
+                    conversationSkelPhase === "loading" ? styles.isPulsing : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  <div className={styles.tSkelTurn}>
+                    <div className={styles.tSkelUser} />
+                    <div className={styles.tSkelTrail} />
+                    <div className={styles.tSkelAnswer}>
+                      <span className={styles.tSkelAnswerLine} />
+                      <span className={styles.tSkelAnswerLine} />
+                      <span className={styles.tSkelAnswerLine} data-width="short" />
+                    </div>
+                  </div>
+                  <div className={styles.tSkelTurn}>
+                    <div className={styles.tSkelUser} data-width="mid" />
+                    <div className={styles.tSkelTrail} />
+                    <div className={styles.tSkelAnswer}>
+                      <span className={styles.tSkelAnswerLine} />
+                      <span className={styles.tSkelAnswerLine} data-width="short" />
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className={styles.tSkelContent}
+                  aria-live={conversationSkelPhase === "revealing" ? "polite" : undefined}
+                  ref={conversationSkelPhase === "revealing" ? chatMessagesRef : undefined}
+                >
+                  {conversationSkelPhase === "revealing" ? (
+                    <>
+                      {renderChatTurns()}
+                      <div className={styles.chatScrollSpacer} ref={chatSpacerRef} aria-hidden="true" />
+                    </>
+                  ) : null}
+                </div>
+              </div>
             ) : conversationHistoryStatus.kind === "error" && chatMessages.length === 0 && activeConversationId ? (
               <div className={styles.chatOpeningState} role="alert">
                 <p>{conversationHistoryStatus.message}</p>
@@ -2576,132 +3070,7 @@ export default function DashPage() {
               </div>
             ) : chatMessages.length > 0 ? (
               <div className={styles.chatMessages} aria-live="polite" ref={chatMessagesRef}>
-                {(() => {
-                  const turns: Array<{ user: ChatMessage | null; replies: ChatMessage[] }> = [];
-                  for (const message of chatMessages) {
-                    if (message.role === "user") {
-                      turns.push({ user: message, replies: [] });
-                      continue;
-                    }
-                    if (turns.length === 0) {
-                      turns.push({ user: null, replies: [message] });
-                      continue;
-                    }
-                    turns[turns.length - 1]!.replies.push(message);
-                  }
-                  return turns.map((turn) => {
-                    const turnKey = `${activeConversationId ?? "draft"}:turn:${turn.user?.id ?? turn.replies[0]?.id ?? "empty"}`;
-                    return (
-                      <div className={styles.chatTurn} key={turnKey}>
-                        {turn.user ? (() => {
-                          const message = turn.user!;
-                          const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
-                          const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
-                          const isEditing = editingMessageId === message.id;
-                          return (
-                            <motion.div
-                              className={styles.chatUserBlock}
-                              data-message-id={message.id}
-                              key={messageKey}
-                              initial={suppressEnter ? false : { opacity: 0 }}
-                              animate={suppressEnter ? undefined : { opacity: 1 }}
-                              transition={{
-                                duration: 0.34,
-                                ease: [0.22, 1, 0.36, 1],
-                              }}
-                            >
-                              {isEditing ? (
-                                <div
-                                  ref={editComposerRef}
-                                  className={`${styles.chatMessage} ${styles.chatMessageUser} ${styles.chatMessageUserEditing}`}
-                                >
-                                  <textarea
-                                    ref={editTextareaRef}
-                                    className={styles.chatMessageEditInput}
-                                    aria-label="Edit message"
-                                    rows={1}
-                                    value={editDraft}
-                                    onChange={(event) => setEditDraft(event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        cancelEditUserMessage();
-                                        return;
-                                      }
-                                      if (event.key === "Enter" && !event.shiftKey) {
-                                        event.preventDefault();
-                                        resendEditedMessage(message.id);
-                                      }
-                                    }}
-                                  />
-                                  <div className={styles.chatMessageEditTrailing}>
-                                    <ModelRunControls
-                                      value={agentPreferences}
-                                      onChange={setAgentPreferences}
-                                      popoverPlacement="below"
-                                    />
-                                    <button
-                                      className={styles.chatMessageEditSend}
-                                      type="button"
-                                      aria-label="Resend message"
-                                      disabled={!editDraft.trim()}
-                                      onClick={() => resendEditedMessage(message.id)}
-                                    >
-                                      <Icon name="arrowUp" />
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  className={`${styles.chatMessage} ${styles.chatMessageUser} ${styles.chatMessageUserButton}`}
-                                  type="button"
-                                  aria-label="Edit message"
-                                  onClick={() => beginEditUserMessage(message.id, message.text)}
-                                >
-                                  {message.text ? <p>{message.text}</p> : null}
-                                </button>
-                              )}
-                            </motion.div>
-                          );
-                        })() : null}
-                        {turn.replies.map((message) => {
-                          const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
-                          const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
-                          return (
-                            <motion.article
-                              className={`${styles.chatMessage} ${styles.chatMessageAssistant}`}
-                              data-message-id={message.id}
-                              key={messageKey}
-                              initial={suppressEnter ? false : { opacity: 0 }}
-                              animate={suppressEnter ? undefined : { opacity: 1 }}
-                              transition={{
-                                duration: 0.34,
-                                ease: [0.22, 1, 0.36, 1],
-                              }}
-                            >
-                              {message.events?.length || message.isStreaming ? (
-                                message.trailVisible === false ? (
-                                  <div className={styles.chatTrailDeferred} aria-hidden="true" />
-                                ) : (
-                                  <InsightsStyleTrace
-                                    events={message.events ?? []}
-                                    streaming={message.isStreaming}
-                                    detailedMode={chatDetailedMode}
-                                    runtime={message.runtime}
-                                    onFollowUp={(prompt) => void sendChatMessage(prompt)}
-                                    onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
-                                  />
-                                )
-                              ) : (
-                                <span className={styles.chatMessageLabel}>Albert</span>
-                              )}
-                            </motion.article>
-                          );
-                        })}
-                      </div>
-                    );
-                  });
-                })()}
+                {renderChatTurns()}
                 <div className={styles.chatScrollSpacer} ref={chatSpacerRef} aria-hidden="true" />
               </div>
             ) : (
@@ -2787,6 +3156,22 @@ export default function DashPage() {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
+
+              {!chatComposerHero ? (
+                <button
+                  className={`${styles.connectMobilePill} ${mobileConnectOpen ? styles.connectMobilePillOpen : ""}`}
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-expanded={mobileConnectOpen}
+                  onClick={() => {
+                    if (mobileConnectOpen) closeMobileConnect();
+                    else openMobileConnect();
+                  }}
+                >
+                  <span>Connect Mobile</span>
+                  <Icon name="chevronDown" />
+                </button>
+              ) : null}
 
             <motion.form
               ref={chatComposerRef}
@@ -2895,7 +3280,9 @@ export default function DashPage() {
               className={styles.chatEmptyGrow}
               aria-hidden="true"
               initial={false}
-              animate={{ flexGrow: chatMessages.length === 0 ? 1 : 0 }}
+              // Only for empty New Analysis (hero). Growing this during skeleton
+              // load put the composer mid-page, then lowered it when messages arrived.
+              animate={{ flexGrow: chatComposerHero ? 1 : 0 }}
               transition={{
                 duration: reduceMotion ? 0 : 0.5,
                 ease: [0.22, 1, 0.36, 1],
@@ -2955,6 +3342,95 @@ export default function DashPage() {
           </div>
         )}
       </section>
+
+      {mobileConnectOpen ? (
+        <div
+          className={`${styles.mobileConnectBackdrop} ${mobileConnectClosing ? styles.mobileConnectBackdropClosing : ""}`}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeMobileConnect();
+          }}
+        >
+          <div
+            className={`${styles.mobileConnectDialog} ${mobileConnectClosing ? styles.mobileConnectDialogClosing : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-connect-title"
+          >
+            <button
+              className={styles.mobileConnectClose}
+              type="button"
+              aria-label="Close connect mobile"
+              onClick={closeMobileConnect}
+            >
+              <Icon name="close" />
+            </button>
+
+            <div className={styles.mobileConnectHeader}>
+              <h2 id="mobile-connect-title">Natural language analytics</h2>
+              <p className={styles.mobileConnectLead}>
+                Get Albert on your phone. Enter your Australian mobile number.
+              </p>
+            </div>
+
+            <form
+              className={styles.mobileConnectForm}
+              onSubmit={(event) => {
+                event.preventDefault();
+                // UI only for now: no connect action yet.
+              }}
+            >
+              <div className={styles.mobileConnectGroup}>
+                <div className={styles.mobileConnectField}>
+                  <span className={styles.mobileConnectPrefix} aria-hidden="true">+61</span>
+                  <input
+                    ref={mobileNumberInputRef}
+                    id="mobile-connect-number"
+                    className={styles.mobileConnectInput}
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel-national"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    lang="en-AU"
+                    placeholder="412 345 678"
+                    value={mobileNumber}
+                    aria-label="Australian mobile number"
+                    onChange={(event) => {
+                      setMobileNumber(formatAuMobileDisplay(event.target.value));
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.mobileConnectActions}>
+                <button
+                  className={styles.mobileConnectSubmit}
+                  type="submit"
+                  disabled={!isValidAuMobile(mobileNumber)}
+                >
+                  Connect
+                </button>
+                <button
+                  className={styles.mobileConnectCancel}
+                  type="button"
+                  onClick={closeMobileConnect}
+                >
+                  Not now
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {rawDebugAvailable && rawDebugOpen ? (
+        <RawDebugger
+          turns={rawDebugTurns}
+          onClose={() => setRawDebugOpen(false)}
+          onClear={() => setRawDebugTurns([])}
+        />
+      ) : null}
 
     </main>
   );
