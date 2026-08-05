@@ -10,10 +10,14 @@ const tenantContextSchema = z.object({
   timezone: z.string().min(1).default("Australia/Melbourne"),
 });
 
+// The list/history RPCs project this with jsonb_build_object, which materialises
+// an absent key as JSON null rather than omitting it. Turns written before a
+// preference existed therefore arrive as null, so accept both null and absent —
+// one such turn would otherwise fail the whole array parse and blank the sidebar.
 const runtimeProfileSchema = z.object({
-  model: z.string().optional(),
-  reasoningEffort: z.string().optional(),
-  fastMode: z.boolean().optional(),
+  model: z.string().nullish(),
+  reasoningEffort: z.string().nullish(),
+  fastMode: z.boolean().nullish(),
 });
 
 const conversationSummarySchema = z.object({
