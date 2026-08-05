@@ -1089,6 +1089,21 @@ async function filterAnswerableOptions(
 }
 
 /**
+ * A ULID or UUID inside a composite check id names the connection the check ran
+ * against, not anything a business owner can act on. Leaving it in leaked
+ * "progressive coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item shops" into an answer.
+ */
+const opaqueCheckIdSegment =
+  /^(?:[0-9A-HJKMNP-TV-Z]{26}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,})$/iu;
+
+export function readableCheckName(checkId: string): string {
+  const parts = checkId.split(":")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !opaqueCheckIdSegment.test(part));
+  return parts.length > 0 ? governedTerm(parts.join("_")) : "";
+}
+
+/**
  * Explains an evidence-forced Unavailable using the reason the governed
  * evidence already carries: missing capabilities first, then the failing
  * validation, then the service's own warning.
@@ -1100,16 +1115,40 @@ export function unavailableEvidenceExplanation(
   if (missing.length > 0) {
     return `I can't answer this from the sources connected today. It needs ${governedTermList(missing, 4)}, which no connected source currently provides. Connecting a source that supplies it would unlock this answer.`;
   }
+  const warning = evidence.flatMap((item) => item.validation.warnings).find(Boolean);
   const blocking = evidence.flatMap((item) => item.validation.checks
     .filter((check) => check.status === "failed" || check.status === "blocked")
-    .map((check) => typeof check.checkId === "string" ? governedTerm(check.checkId) : null)
-    .filter((value): value is string => Boolean(value)));
+    .map((check) => typeof check.checkId === "string" ? readableCheckName(check.checkId) : "")
+    .filter(Boolean));
   if (blocking.length > 0) {
-    return `I can't state this safely yet: the governed ${governedTermList([...new Set(blocking)], 3)} check did not pass for this query, so the figures are not trustworthy enough to report. This clears once that check passes.`;
+    // The service's own warning says what a business owner can act on
+    // ("unavailable before 2026-07-04; deeper history is still backfilling").
+    // The check name alone says only that something failed.
+    const because = warning ? ` ${sanitizeTraceText(warning, 400)}` : "";
+    return `I can't state this safely yet: the governed ${governedTermList([...new Set(blocking)], 3)} check did not pass for this query, so the figures are not trustworthy enough to report.${because} This clears once that check passes.`;
   }
-  const warning = evidence.flatMap((item) => item.validation.warnings).find(Boolean);
   if (warning) return sanitizeTraceText(warning, 600);
   return "I couldn't produce a safely supported answer from the governed evidence available for this question.";
+}
+
+/**
+ * States the part of the analysis a blocked query could not cover, for an
+ * answer that carried on with the results it did get. Without this the reader
+ * sees only what succeeded and has no way to know something was skipped.
+ */
+export function supersededBlockDisclosure(
+  evidence: readonly SemanticToolResponse[],
+): string {
+  const blocked = evidence.filter(isBlockedEvidence);
+  if (blocked.length === 0) return "";
+  const reason = blocked.flatMap((item) => item.validation.warnings).find(Boolean);
+  const missing = [...new Set(blocked.flatMap((item) => item.capabilities?.missing ?? []))];
+  if (missing.length > 0) {
+    return `One part of this analysis could not run: it needs ${governedTermList(missing, 3)}, which no connected source provides yet. Everything above comes from the queries that did return governed results.`;
+  }
+  return reason
+    ? `One part of this analysis could not run: ${sanitizeTraceText(reason, 300)} Everything above comes from the queries that did return governed results.`
+    : "One part of this analysis could not run against the governed data, so everything above comes from the queries that did return governed results.";
 }
 
 /**
@@ -1128,6 +1167,13 @@ export function evidenceCarriesBlockingReason(
     || item.validation.warnings.length > 0);
 }
 
+/** Evidence from a query that came back with nothing usable behind it. */
+export function isBlockedEvidence(item: SemanticToolResponse): boolean {
+  return item.state === "unavailable"
+    || item.validation.status === "failed"
+    || item.validation.status === "blocked";
+}
+
 /** Fail-closed evidence lattice applied after the model proposes a state. */
 export function enforceEvidenceBoundAnswerState(
   requested: AnswerState,
@@ -1137,10 +1183,15 @@ export function enforceEvidenceBoundAnswerState(
 ): AnswerState {
   if (clarificationAsked) return "Clarification";
   if (requested === "Clarification") return "Unavailable";
-  if (evidence.some((item) => item.state === "unavailable" || item.validation.status === "failed" || item.validation.status === "blocked")) {
-    return "Unavailable";
-  }
-  const sourceEvidence = evidence.some((item) => item.state === "exploratory");
+  // A blocked attempt the turn then recovered from is superseded, not fatal.
+  // Narrowing a window that fell outside progressive coverage and re-running it
+  // is exactly the recovery this system asks for; sinking the whole turn for
+  // having tried discarded every governed table that did come back. Fail closed
+  // only when nothing usable survived.
+  const blocked = evidence.filter(isBlockedEvidence);
+  const usable = evidence.filter((item) => !isBlockedEvidence(item));
+  if (blocked.length > 0 && usable.length === 0) return "Unavailable";
+  const sourceEvidence = usable.some((item) => item.state === "exploratory");
   if (sourceEvidence) return requested === "Unavailable" ? "Unavailable" : "Exploratory";
   if (requested === "Exploratory") return "Unavailable";
   if (requested === "Unavailable") return "Unavailable";
@@ -1148,10 +1199,12 @@ export function enforceEvidenceBoundAnswerState(
   // connected, what a metric means, what cannot be answered yet — and carry no
   // rows, so the numeric grounding gate still governs every figure. Refusing
   // them here forced a stub onto every question that needs no analytical query.
-  if (evidence.length === 0) {
+  if (usable.length === 0) {
     return supportingEvidenceCount > 0 ? "Qualified" : "Unavailable";
   }
-  const fullyVerified = evidence.every((item) =>
+  // A superseded block is still a disclosed limitation, so no answer carrying
+  // one may claim Verified.
+  const fullyVerified = blocked.length === 0 && usable.every((item) =>
     item.state === "verified"
     && item.validation.status === "passed"
     && item.validation.warnings.length === 0
@@ -1585,9 +1638,17 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
   // Appended after grounding: the disclosure is built from compiler-resolved
   // provenance, so its figures are governed by construction.
   const disclosure = results.size > 0 && !directoryRouteAnswer ? periodDisclosure(provenance) : "";
-  const disclosedAnswerText = disclosure && !answerText.includes(provenance.timeRange.label)
+  const withPeriod = disclosure && !answerText.includes(provenance.timeRange.label)
     ? `${answerText}\n\n${disclosure}`
     : answerText;
+  // Promoting past a superseded block is only honest if the block is stated.
+  // Qualified means "a disclosed limitation applies"; this is the disclosure.
+  const supersededDisclosure = answerState !== "Unavailable" && !directoryRouteAnswer
+    ? supersededBlockDisclosure(evidence)
+    : "";
+  const disclosedAnswerText = supersededDisclosure
+    ? `${withPeriod}\n\n${supersededDisclosure}`
+    : withPeriod;
 
   const hasClarification = answerState === "Clarification";
   if (!hasClarification) {
