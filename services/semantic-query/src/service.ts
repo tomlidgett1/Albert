@@ -18,6 +18,13 @@ import type {
 } from "../../../packages/semantic-registry/src/index.js";
 import { contentDigest, semanticBundleHash } from "./bundle.js";
 import { compileSourceQuery } from "./source-query.js";
+import {
+  compileExploratorySql,
+  EXPLORATORY_SQL_TIMEOUT_MS,
+} from "./exploratory-sql.js";
+
+/** Exploratory SQL declares its own window, so provenance opens unbounded. */
+const OPEN_EXPLORATORY_START = "0001-01-01T00:00:00.000Z";
 import type {
   AnswerState,
   DataHealthSnapshot,
@@ -64,6 +71,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       case "list_field_values": return this.listFieldValues(input, context);
       case "run_semantic_query": return this.runSemanticQuery(input, context);
       case "run_source_query": return this.runSourceQuery(input, context);
+      case "run_exploratory_sql": return this.runExploratorySql(input, context);
       case "get_data_health": return this.getDataHealth(input, context);
       case "remember": return this.remember(input, context);
       default: return assertNever(name);
@@ -447,6 +455,110 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     });
     return {
       ...response,
+      queryAudit: {
+        queryAuditId: queryId,
+        route: "source_exploration",
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        resultDigest,
+        compilerOutputHash,
+      },
+    };
+  }
+
+  /**
+   * Model-authored read-only SQL over the tenant's own analytical data, for the
+   * questions no governed metric expresses. It is attested on the
+   * source_exploration route deliberately: that route already forces the answer
+   * to Exploratory and forbids Verified, which is exactly the standing this
+   * result deserves — the figures are real cells, but the definition behind
+   * them was written by the model rather than certified by the registry.
+   *
+   * The isolation guarantees are structural rather than textual; see
+   * exploratory-sql.ts for why reading the SQL is not the security boundary.
+   */
+  private async runExploratorySql(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
+    const parsed = semanticToolInputSchemas.run_exploratory_sql.parse(input);
+    const tenant = await this.dependencies.contextProvider.load(context);
+    const compiled = compileExploratorySql(parsed.sql, parsed.limit);
+    const bundleHash = semanticBundleHash({
+      registryVersion: this.dependencies.registry.version,
+      overlayVersion: tenant.overlayVersion,
+      identityGraph: identityGraphForTenant(tenant),
+      packVersions: {},
+      sourceWatermarks: {},
+      ir: { route: "source_exploration", kind: "exploratory_sql", sql: compiled.sql, purpose: parsed.purpose },
+    });
+    const result = await this.dependencies.database.queryAsSemanticRole({
+      tenantId: context.tenantId,
+      sql: compiled.sql,
+      parameters: [context.tenantId],
+      statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
+      expectedIdentityGraph: identityGraphForTenant(tenant),
+      capabilityEvidence: capabilityEvidence(context),
+    });
+    const rows = result.rows.map(stripInternalColumns);
+    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
+    const warnings = [
+      "This figure came from an exploratory query written for this question, not from a certified governed metric. Treat it as indicative and promote it to a governed metric before relying on it.",
+    ];
+    const validation = {
+      status: "warning" as const,
+      checks: [
+        { checkId: "read_only_transaction", status: "passed" },
+        { checkId: "tenant_row_level_security", status: "passed" },
+        { checkId: "governed_metric_definition", status: "warning" },
+      ],
+      warnings,
+    };
+    const queryId = ulid();
+    const resultDigest = contentDigest({ columns, rows });
+    const compilerOutputHash = contentDigest({ sql: compiled.sql });
+    await this.dependencies.audit.append({
+      queryId,
+      tenantId: context.tenantId,
+      conversationId: context.conversationId,
+      turnId: context.turnId,
+      role: context.role,
+      route: "source_exploration",
+      bundleHash,
+      registryVersion: this.dependencies.registry.version,
+      input: parsed,
+      compiledSql: compiled.sql,
+      parameterCount: compiled.parameterCount,
+      resultDigest,
+      rowCount: rows.length,
+      durationMs: result.durationMs,
+      cacheHit: false,
+      state: "exploratory",
+      validation,
+    });
+    return {
+      state: "exploratory",
+      resultId: `exploratory:${bundleHash}`,
+      data: { columns, rows },
+      provenance: {
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        identityGraph: identityGraphForTenant(tenant),
+        sources: ["exploratory_sql"],
+        sourceWatermarks: {},
+        sourceDetails: [],
+        definitionsApplied: [parsed.purpose],
+        definitionDetails: [{
+          id: "exploratory_sql",
+          label: "Exploratory query",
+          definition: `Model-authored read-only SQL for: ${parsed.purpose}. Not a certified governed metric.`,
+        }],
+        timeRange: {
+          label: "Defined by the exploratory query",
+          start: OPEN_EXPLORATORY_START,
+          end: new Date(this.clock()).toISOString(),
+          timezone: tenant.timezone,
+        },
+      },
+      validation,
+      performance: { cacheHit: false, durationMs: result.durationMs, rowCount: rows.length },
       queryAudit: {
         queryAuditId: queryId,
         route: "source_exploration",

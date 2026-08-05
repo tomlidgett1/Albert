@@ -158,6 +158,17 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
     assert.equal(sourceTrace.rows[0]?.distinct_reasons, "2");
     assert.equal(source.promotionCandidateId, "01J00000000000000000000021");
 
+    // The escape hatch travels the same signed path and lands on the
+    // source_exploration audit route, so it can never be reported as Verified.
+    const exploratory = await client.execute("run_exploratory_sql", {
+      sql: "SELECT count(*) AS orders FROM mart.commerce_sales_event",
+      purpose: "median order value for March 2024",
+      limit: 20,
+    }, trusted);
+    assert.equal(exploratory.state, "exploratory");
+    assert.equal(exploratory.queryAudit?.route, "source_exploration");
+    assert.ok(exploratory.validation.warnings.some((warning) => /not from a certified governed metric/u.test(warning)));
+
     const remembered = requireRememberedPreference(await client.execute("remember", {
       preference: "employee.performance_default",
       value: "commerce.net_sales_ex_gst",
@@ -168,7 +179,10 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
     await running.close();
   }
   assert.deepEqual([...called].sort(), [...REMOTE_SEMANTIC_AGENT_TOOL_NAMES].sort());
-  assert.deepEqual(audits.sort(), ["semantic", "source_exploration"]);
+  // Both exploratory paths — the documented single-source field and the
+  // model-authored SQL escape hatch — attest on source_exploration, which is
+  // what forbids either of them being reported as Verified.
+  assert.deepEqual(audits.sort(), ["semantic", "source_exploration", "source_exploration"]);
   assert.doesNotThrow(() => semanticToolInputSchemas.ask_user.parse({ question: "Which lens?", options: [{ id: "employee.net_sales" }, { id: "employee.gross_margin" }] }));
   assert.doesNotThrow(() => semanticToolInputSchemas.make_chart.parse({ dataRef: "semantic:result", chartType: "bar", xKey: "location", yKey: "net_sales_ex_gst" }));
 });
