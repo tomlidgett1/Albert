@@ -8,6 +8,9 @@ import {
   readableCheckName,
   supersededBlockDisclosure,
   unavailableEvidenceExplanation,
+  governedQuerySignature,
+  blockedQueryGuidance,
+  BLOCKED_QUERY_BUDGET,
 } from "../../services/conversation/src/live.js";
 import { searchTokens } from "../../services/semantic-query/src/service.js";
 
@@ -111,7 +114,13 @@ const blockedAttempt = {
   validation: {
     status: "blocked",
     warnings: ["inventory.balances is unavailable before 2026-07-04T04:32:57.328Z; deeper history is still backfilling."],
-    checks: [{ checkId: "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops", status: "blocked" }],
+    checks: [{
+      checkId: "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops",
+      status: "blocked",
+      capability: "inventory.balances",
+      coveredFrom: "2026-07-04T04:32:57.328Z",
+      coveredTo: "2026-08-04T04:32:57.328Z",
+    }],
   },
 } as unknown as Parameters<typeof supersededBlockDisclosure>[0][number];
 
@@ -155,4 +164,49 @@ test("an internal connection id never reaches the answer", () => {
 
 test("a blocked explanation says what the reader can act on", () => {
   assert.match(unavailableEvidenceExplanation([blockedAttempt]), /deeper history is still backfilling/u);
+});
+
+
+/**
+ * Third regression: "go deeper" ran three good sales queries, then hit the
+ * progressive-coverage block on merchandising and re-ran the identical query.
+ * Nothing refused the repeat, so the turn looped against a query that could
+ * never succeed and ended with no answer at all — three tables and silence.
+ */
+
+test("the same governed query is one signature however its lists are ordered", () => {
+  const a = { topic: "merchandising", metrics: ["composites.gmroi", "composites.stock_to_sales_ratio"], dimensions: ["product.category"] };
+  const b = { dimensions: ["product.category"], metrics: ["composites.stock_to_sales_ratio", "composites.gmroi"], topic: "merchandising" };
+  assert.equal(governedQuerySignature(a), governedQuerySignature(b));
+});
+
+test("a materially different query is a different signature", () => {
+  const a = { topic: "merchandising", metrics: ["composites.gmroi"], period: { from: "2026-02-01" } };
+  const b = { topic: "merchandising", metrics: ["composites.gmroi"], period: { from: "2026-07-08" } };
+  assert.notEqual(governedQuerySignature(a), governedQuerySignature(b));
+});
+
+test("a block names the window a retry could actually use", () => {
+  const guidance = blockedQueryGuidance(blockedAttempt);
+  assert.match(guidance, /only queryable from 2026-07-04 to 2026-08-04/u);
+  assert.match(guidance, /Re-run with a period inside that range/u);
+  assert.ok(!guidance.includes("01KZ54B1PCKM1MHSNHY4XT6DEX"));
+});
+
+test("a block with no coverage window still says what to change", () => {
+  const capabilityBlocked = {
+    state: "unavailable",
+    capabilities: { missing: ["finance.journals"] },
+    validation: { status: "blocked", warnings: [], checks: [] },
+  } as unknown as typeof blockedAttempt;
+  assert.match(blockedQueryGuidance(capabilityBlocked), /It needs journals, which no connected source provides/u);
+  const bare = {
+    state: "unavailable",
+    validation: { status: "blocked", warnings: [], checks: [] },
+  } as unknown as typeof blockedAttempt;
+  assert.match(blockedQueryGuidance(bare), /before trying again/u);
+});
+
+test("the blocked-query budget is small enough to end a turn", () => {
+  assert.ok(BLOCKED_QUERY_BUDGET >= 2 && BLOCKED_QUERY_BUDGET <= 6);
 });
