@@ -1,14 +1,12 @@
-// One-off repair: migrations 0072-0074 are committed but absent from
-// albert_migrations.applied_migration, while 0075-0079 are recorded.
-// `assertExactMigrationPrefix` correctly refuses to run against that hole, and
-// the runner cannot heal it because it applies by count, not by name.
+// Control-plane migration ledger repair.
 //
-// 0072 and 0073 were hand-applied outside the ledger (their objects are
-// installed; 0072's function is owned by `postgres`, so re-running its
-// CREATE OR REPLACE as the migration owner fails). Those are recorded only,
-// after asserting the object they install is actually present. 0074 is genuinely
-// missing and is executed. Every row carries the same checksum the runner
-// computes, so `npm run migrate` verifies them normally from here on.
+// `npm run migrate` refuses to start when an already-applied migration's
+// checksum no longer matches the file (historical rewrite) or when the
+// applied prefix has holes. This script repairs those cases deliberately.
+//
+// Current jobs:
+// 1. Resync 0007 after the quarantine_items SELECT grant rewrite.
+// 2. Apply any still-missing later migrations (0081 today).
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -17,12 +15,23 @@ import { controlPlaneMigrationBody } from "./control-plane-auth-compat.js";
 
 type Repair = Readonly<{
   id: string;
-  mode: "execute" | "record-only";
+  mode: "execute" | "record-only" | "resync-checksum";
+  // Optional SQL to apply before updating a drifted checksum.
+  patchSql?: string;
   // Proves a record-only migration's effect is already installed.
   assertion?: Readonly<{ sql: string; description: string }>;
 }>;
 
 const REPAIRS: readonly Repair[] = Object.freeze([
+  Object.freeze({
+    id: "0007_runtime_service_isolation.sql",
+    mode: "resync-checksum",
+    // Keep the live ACL aligned with the rewritten migration body.
+    patchSql: `
+      GRANT SELECT, INSERT ON TABLE control_plane.quarantine_items TO albert_sync_control;
+      GRANT INSERT ON TABLE control_plane.audit_log TO albert_sync_control;
+    `,
+  }),
   Object.freeze({
     id: "0072_m2_sync_connection_generation_fence.sql",
     mode: "record-only",
@@ -45,10 +54,8 @@ const REPAIRS: readonly Repair[] = Object.freeze([
     }),
   }),
   Object.freeze({ id: "0074_m6_directory_answer_finalization.sql", mode: "execute" }),
-  // 0080 restores sync page-run completion. It goes through this script rather
-  // than `npm run migrate` only because the runner still refuses to start on
-  // unrelated historical checksum drift at 0007_runtime_service_isolation.sql.
   Object.freeze({ id: "0080_m2_fenced_sync_page_run_completion.sql", mode: "execute" }),
+  Object.freeze({ id: "0081_m2_optional_initial_backfill_on_oauth_completion.sql", mode: "execute" }),
 ]);
 
 const databaseUrl = process.env.CONTROL_PLANE_DATABASE_URL?.trim();
@@ -74,17 +81,49 @@ try {
   }
 
   for (const repair of REPAIRS) {
-    const already = await client.query(
-      `SELECT 1 FROM albert_migrations.applied_migration
+    const sql = await readFile(resolve("infra/migrations/control-plane", repair.id), "utf8");
+    const checksum = createHash("sha256").update(sql).digest("hex");
+    const existing = await client.query<{ checksum_sha256: string }>(
+      `SELECT checksum_sha256 FROM albert_migrations.applied_migration
         WHERE stream='control-plane' AND migration_id=$1`,
       [repair.id],
     );
-    if (already.rowCount) { process.stdout.write(`skipped control-plane/${repair.id}\n`); continue; }
 
-    const sql = await readFile(resolve("infra/migrations/control-plane", repair.id), "utf8");
+    if (repair.mode === "resync-checksum") {
+      if (!existing.rowCount) {
+        throw new Error(`${repair.id} must already be applied before checksum resync.`);
+      }
+      if (existing.rows[0]?.checksum_sha256 === checksum) {
+        process.stdout.write(`skipped control-plane/${repair.id} (checksum current)\n`);
+        continue;
+      }
+      await client.query("BEGIN");
+      try {
+        await client.query("SET LOCAL lock_timeout = '10s'");
+        await client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
+        if (repair.patchSql) await client.query(repair.patchSql);
+        await client.query(
+          `UPDATE albert_migrations.applied_migration
+              SET checksum_sha256 = $2
+            WHERE stream = 'control-plane' AND migration_id = $1`,
+          [repair.id, checksum],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      }
+      process.stdout.write(`resynced control-plane/${repair.id}\n`);
+      continue;
+    }
+
+    if (existing.rowCount) {
+      process.stdout.write(`skipped control-plane/${repair.id}\n`);
+      continue;
+    }
+
     const transaction = /^(?:\s*--[^\n]*\n)*\s*BEGIN;\s*([\s\S]*?)\s*COMMIT;\s*$/iu.exec(sql);
     if (!transaction) throw new Error(`${repair.id} must contain one explicit outer BEGIN/COMMIT transaction.`);
-    const checksum = createHash("sha256").update(sql).digest("hex");
 
     await client.query("BEGIN");
     try {
