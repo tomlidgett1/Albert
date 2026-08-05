@@ -227,24 +227,14 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
   await expect(manageTrigger).toBeFocused();
 });
 
-test("Connections supports keyboard navigation, progressive readiness, onboarding review, and account selection", async ({ page }) => {
+test("Connections supports progressive readiness and account selection", async ({ page }) => {
   const capture = await openDashboard(page);
   await openConnections(page);
-  await expect(page.getByRole("heading", { name: "Your business data, coming together" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
   await expect(page.getByRole("progressbar", { name: /sync progress/u }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Xero" }).first()).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Review/u })).toHaveCount(0);
 
-  const appsTab = page.getByRole("tab", { name: "Apps" });
-  await appsTab.focus();
-  await page.keyboard.press("ArrowRight");
-  const reviewTab = page.getByRole("tab", { name: /Review/u });
-  await expect(reviewTab).toBeFocused();
-  await expect(reviewTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("Independent bicycle retail")).toBeVisible();
-  await expect(page.getByText("Should sales normally include or exclude GST?")).toBeVisible();
-  await expect(page.getByText("Is this the same employee?")).toBeVisible();
-
-  await appsTab.click();
   await page.getByRole("button", { name: /Albert Workshop Pty Ltd/u }).click();
   await expect.poll(() => capture.oauthSelectionPayloads.length).toBe(1);
   expect(capture.oauthSelectionPayloads[0]).toEqual({
@@ -314,7 +304,7 @@ test("mobile layout has no page overflow and reduced motion disables analytical 
   expect(Number.parseFloat(motion.animationDuration)).toBeLessThanOrEqual(0.001);
 
   await openConnections(page);
-  await expect(page.getByRole("heading", { name: "Your business data, coming together" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
   const layout = await page.evaluate(() => ({
     innerWidth,
     scrollWidth: document.documentElement.scrollWidth,

@@ -1,14 +1,14 @@
-# Semantic registry 1.6.0
+# Semantic registry 1.7.2
 
 Generated from the registry. Do not hand-edit counts.
 
 ## Counts
 
-- Metrics: 47
-- Topics: 7
+- Metrics: 51
+- Topics: 8
 - commerce: 14
-- composites: 5
-- customers: 6
+- composites: 8
+- customers: 7
 - finance: 9
 - inventory: 7
 - workforce: 6
@@ -34,6 +34,7 @@ Generated from the registry. Do not hand-edit counts.
 - `customers.returning_customer_rate` — Share of identified purchasing customers whose order was not their first.
 - `customers.repeat_purchase_rate` — Share of identified customers with at least two completed purchases in the selected period.
 - `customers.avg_customer_value` — Net sales excluding GST per identified purchasing customer.
+- `customers.purchasing_customers` — Distinct identified customers with at least one completed order inside the selected period.
 - `customers.lapsed_customers` — Identified customers whose last purchase precedes the tenant-defined lapse cutoff.
 - `inventory.stock_on_hand_units` — Latest quantity on hand in the selected period and grouping.
 - `inventory.stock_on_hand_value` — Latest cost value of stock on hand.
@@ -60,6 +61,9 @@ Generated from the registry. Do not hand-edit counts.
 - `composites.labour_cost_pct_of_sales` — Labour cost divided by net sales excluding GST after independent aggregation and alignment.
 - `composites.sales_per_labour_hour` — Net sales excluding GST divided by worked hours after independent aggregation and alignment.
 - `composites.gross_profit_per_labour_hour` — Operational gross profit from POS line cost divided by worked hours after each fact is aggregated independently and aligned on canonical worker.
+- `composites.gmroi` — Operational gross margin divided by the stock value held against it.
+- `composites.stock_to_sales_ratio` — Stock value held divided by net sales excluding GST over the selected period.
+- `composites.sell_through_on_hand_pct` — Units sold in the period as a percentage of units sold plus units still on hand.
 - `composites.pos_to_ledger_variance` — Operational net sales less accrued ledger revenue after daily location aggregation and alignment.
 - `composites.pos_to_bank_variance` — Captured POS tenders less authoritative bank receipts after independent daily location aggregation and identity alignment.
 
@@ -71,4 +75,5 @@ Generated from the registry. Do not hand-edit counts.
 - `workforce_labour` — Rostered and actual time, overtime, cost and adherence.
 - `profitability_cash` — Accounting revenue, profit, tax, cash and outstanding balances.
 - `workforce_sales` — Sales and labour sub-aggregates aligned on approved shared dimensions.
+- `merchandising` — Sales performance and stock position aligned by product, for buying and range decisions.
 - `reconciliation` — Orders, payments, journals and bank transactions independently aggregated and aligned.

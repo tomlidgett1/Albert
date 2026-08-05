@@ -34,6 +34,9 @@ import {
 } from "./postgres-adapters.js";
 import type { SemanticToolExecutor } from "./types.js";
 import { PostgresSemanticPromotionRelay } from "./promotion-relay.js";
+import { createServiceLogger } from "../../../packages/observability/src/index.js";
+
+const compositionLogger=createServiceLogger("semantic-query");
 
 export type ClosablePgPool=PgPoolLike&Readonly<{end?:()=>Promise<void>}>;
 export type SemanticServiceComposition=Readonly<{
@@ -117,7 +120,12 @@ export function createPostgresSemanticComposition(options:Readonly<{
   const pools=[options.controlPlanePool,options.analyticalReadPool,options.semanticMetadataPool];
   return{
     executor,
-    answerArtifactFinalizer:new PostgresAnswerArtifactFinalizer(options.controlPlanePool,options.semanticMetadataPool,capabilityIssuer),
+    answerArtifactFinalizer:new PostgresAnswerArtifactFinalizer(options.controlPlanePool,options.semanticMetadataPool,capabilityIssuer,(timing)=>{
+      // Finalization gates the answer that is already written, so its cost is
+      // user-visible wait. Logged at warn past a second to separate genuine
+      // pool contention from the query work itself.
+      compositionLogger[timing.totalMs>=1_000?"warn":"info"]("answer_artifact_finalization_timing",{...timing});
+    }),
     modelUsageRecorder:new PostgresModelUsageRecorder(options.controlPlanePool),
     async readiness(){
       const [controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady]=await Promise.all([

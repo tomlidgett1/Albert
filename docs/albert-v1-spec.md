@@ -225,18 +225,18 @@ tests:
   - reconciles_within: { metric: finance.accrued_revenue, tolerance: 0.05 }
 ```
 
-**V1 registry: 47 contracts** (amended by ADRs 0013 and 0033; the generated domains are commerce 14, customers 6, inventory 7, workforce 6, finance 9, composites 5). The settlement contracts distinguish captured tender from order value and make POS-to-bank variance deterministic; the flagship productivity contract keeps gross-profit-per-worked-hour arithmetic inside the governed aggregate-then-align compiler:
+**V1 registry: 51 contracts** (amended by ADRs 0013 and 0033; the generated domains are commerce 14, customers 7, inventory 7, workforce 6, finance 9, composites 8). The settlement contracts distinguish captured tender from order value and make POS-to-bank variance deterministic; the flagship productivity contract keeps gross-profit-per-worked-hour arithmetic inside the governed aggregate-then-align compiler:
 
 - Commerce: gross_takings_inc_gst, tender_amount, net_sales_ex_gst, units_sold, transactions, avg_order_value, items_per_transaction, discount_amount, discount_rate, refund_amount, refund_rate, gross_margin, gross_margin_pct, sell_price_realisation.
-- Customers: active_customers (windowed tenant parameter), new_customers, returning_customer_rate, repeat_purchase_rate, avg_customer_value, lapsed_customers (windowed).
+- Customers: active_customers (windowed tenant parameter), purchasing_customers (period-scoped), new_customers, returning_customer_rate, repeat_purchase_rate, avg_customer_value, lapsed_customers (windowed).
 - Inventory: stock_on_hand_units, stock_on_hand_value, stock_cover_days, sell_through_rate, inventory_turns, days_out_of_stock, stocktake_variance.
 - Workforce: rostered_hours, worked_hours, labour_cost, overtime_hours, average_hourly_cost, roster_adherence.
 - Finance: accrued_revenue, cash_receipts, operating_expenses, gross_profit_accounting, net_profit, gst_collected, gst_paid, receivables_outstanding, payables_outstanding.
-- Composites: labour_cost_pct_of_sales, sales_per_labour_hour, gross_profit_per_labour_hour, pos_to_ledger_variance, pos_to_bank_variance.
+- Composites: labour_cost_pct_of_sales, sales_per_labour_hour, gross_profit_per_labour_hour, pos_to_ledger_variance, pos_to_bank_variance, gmroi, stock_to_sales_ratio, sell_through_on_hand_pct.
 
 There is no context-free metric named revenue. "Sales" is a tenant-overlay pointer at one explicit lens.
 
-**Topics (7):** sales_performance, customers_retention, inventory_health, workforce_labour, profitability_cash, plus two composites: workforce_sales (order lines and time entries aggregated independently, aligned on worker, day, location) and reconciliation (orders, payments, journals and bank transactions aligned on day and location; variances surface as findings). Each Topic declares its base fact or aggregated fact set, approved dimensions and joins, metrics, default filters, required capabilities, freshness requirements, role security, and ai_context with sample questions. The agent never sees the schema, only Topics.
+**Topics (8):** sales_performance, customers_retention, inventory_health, workforce_labour, profitability_cash, plus three composites: merchandising (order lines and stock balances aggregated independently, aligned on the product grain), workforce_sales (order lines and time entries aggregated independently, aligned on worker, day, location) and reconciliation (orders, payments, journals and bank transactions aligned on day and location; variances surface as findings). Each Topic declares its base fact or aggregated fact set, approved dimensions and joins, metrics, default filters, required capabilities, freshness requirements, role security, and ai_context with sample questions. The agent never sees the schema, only Topics.
 
 **Catalogue:** every Topic, metric, field and synonym is embedded (pgvector, control plane) with keyword indexes; retrieval returns a small governed slice per question.
 

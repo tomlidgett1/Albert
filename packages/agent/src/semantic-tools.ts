@@ -57,6 +57,8 @@ export const ALBERT_PREFERENCE_OPTION_IDS = [
   "finance.operational_gross_margin",
   "finance.accounting_gross_profit",
   "finance.accounting_net_profit",
+  "calendar.financial_year",
+  "calendar.calendar_year",
 ] as const;
 export type AlbertPreferenceOptionId = (typeof ALBERT_PREFERENCE_OPTION_IDS)[number];
 
@@ -119,6 +121,12 @@ const preferenceOptionById: Readonly<Record<AlbertPreferenceOptionId, AlbertPref
   "finance.operational_gross_margin": Object.freeze({ id: "finance.operational_gross_margin", label: "Operational gross margin", preference: "finance.profit_default", value: "commerce.gross_margin" }),
   "finance.accounting_gross_profit": Object.freeze({ id: "finance.accounting_gross_profit", label: "Accounting gross profit", preference: "finance.profit_default", value: "finance.gross_profit_accounting" }),
   "finance.accounting_net_profit": Object.freeze({ id: "finance.accounting_net_profit", label: "Accounting net profit", preference: "finance.profit_default", value: "finance.net_profit" }),
+  // "This year" is materially ambiguous for an Australian business: the
+  // financial year opens 1 July, the calendar year 1 January. Answering on an
+  // unconfirmed default silently reports a different period than the one asked
+  // about, so the basis is a confirmed tenant preference.
+  "calendar.financial_year": Object.freeze({ id: "calendar.financial_year", label: "Financial year (from 1 July)", preference: "calendar.year_basis", value: "financial_year" }),
+  "calendar.calendar_year": Object.freeze({ id: "calendar.calendar_year", label: "Calendar year (from 1 January)", preference: "calendar.year_basis", value: "calendar_year" }),
 });
 
 export function resolveAlbertPreferenceOption(id: AlbertPreferenceOptionId): AlbertPreferenceOption {
@@ -239,15 +247,25 @@ export const semanticToolInputSchemas = Object.freeze({
   run_source_query: sourceQuerySpecSchema,
   get_data_health: z.object({ domain: z.string().trim().min(1).max(100) }).strict(),
   remember: z.object({
-    preference: z.enum(["sales.default_metric", "employee.performance_default", "reconciliation.pos_posting_topology", "finance.profit_default"]),
+    preference: z.enum(["sales.default_metric", "employee.performance_default", "reconciliation.pos_posting_topology", "finance.profit_default", "calendar.year_basis"]),
     value: z.string().trim().min(1).max(300),
     explicitlyConfirmed: z.literal(true),
   }).strict(),
+  /**
+   * Two kinds of clarification. `options` chooses between server-owned
+   * preference lenses. `field`/`values` disambiguates the user's own words
+   * against the tenant's real catalogue values ("does 'the workshop' mean
+   * Services or Workshop?"), which the model may not invent: trusted code
+   * checks every value against a governed list_field_values result from this
+   * turn before it is ever shown.
+   */
   ask_user: z.object({
     question: z.string().trim().min(1).max(300),
     options: z.array(z.object({
       id: z.enum(ALBERT_PREFERENCE_OPTION_IDS),
-    }).strict()).min(2).max(3),
+    }).strict()).max(3).default([]),
+    field: z.string().trim().max(120).optional(),
+    values: z.array(z.string().trim().min(1).max(200)).max(4).default([]),
   }).strict(),
   publish_observation: z.object({
     claim: evidenceClaimInputSchema,

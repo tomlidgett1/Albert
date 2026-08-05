@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type {
   AnswerState,
@@ -19,6 +20,7 @@ type InsightsStyleTraceProps = {
   detailedMode?: boolean;
   runtime?: "fixture" | "openai";
   onFollowUp?: (prompt: string) => void;
+  onAddToChat?: (text: string) => void;
   onClarification?: (label: string, optionId: string) => void;
 };
 
@@ -546,15 +548,32 @@ function StreamingTrace({
   steps,
   headline,
   detail,
+  reduceMotion = false,
 }: {
   steps: readonly TrailStep[];
   headline: string;
   detail: string;
+  reduceMotion?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const lineTransition = reduceMotion
+    ? { duration: 0 }
+    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const };
+  const sublineTransition = reduceMotion
+    ? { duration: 0 }
+    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const, delay: 0.08 };
 
   return (
-    <div className={styles.streamingTrace}>
+    <motion.div
+      className={styles.streamingTrace}
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={
+        reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }
+      }
+    >
       <button
         type="button"
         aria-expanded={expanded}
@@ -564,13 +583,13 @@ function StreamingTrace({
         <span className={styles.streamingHeadlineGroup}>
           <span className={styles.streamingHeadline}>
             <span aria-hidden className={styles.streamingMeasure}>{headline}</span>
-            <AnimatePresence initial={false}>
+            <AnimatePresence>
               <motion.span
                 key={headline}
-                initial={{ y: "110%", opacity: 0 }}
+                initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
                 animate={{ y: "0%", opacity: 1 }}
-                exit={{ y: "-110%", opacity: 0 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
+                transition={lineTransition}
                 className={styles.streamingLive}
               >
                 {headline}
@@ -580,13 +599,13 @@ function StreamingTrace({
           {detail ? (
             <span className={styles.streamingSubline}>
               <span aria-hidden className={styles.streamingSublineMeasure}>{detail}</span>
-              <AnimatePresence initial={false}>
+              <AnimatePresence>
                 <motion.span
                   key={detail}
-                  initial={{ y: "110%", opacity: 0 }}
+                  initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
                   animate={{ y: "0%", opacity: 1 }}
-                  exit={{ y: "-110%", opacity: 0 }}
-                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
+                  transition={sublineTransition}
                   className={styles.streamingSublineLive}
                 >
                   {detail}
@@ -643,16 +662,18 @@ function StreamingTrace({
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
 function ThinkingTrail({
   model,
   streaming,
+  reduceMotion = false,
 }: {
   model: TrailModel;
   streaming: boolean;
+  reduceMotion?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasTrail = model.steps.length > 0 || model.reasoning.trim().length > 0 || streaming;
@@ -664,6 +685,7 @@ function ThinkingTrail({
         steps={model.steps}
         headline={model.status || "Thinking"}
         detail={model.statusDetail}
+        reduceMotion={reduceMotion}
       />
     );
   }
@@ -940,13 +962,190 @@ function DetailedTrail({
   );
 }
 
-function AssistantMarkdown({ content }: { content: string }) {
-  const html = useMemo(() => renderAssistantMarkdown(content), [content]);
-  return (
+function selectionIsInside(root: HTMLElement, selection: Selection): boolean {
+  if (selection.rangeCount === 0) return false;
+  const node = selection.getRangeAt(0).commonAncestorContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE
+    ? node as Element
+    : node.parentElement;
+  return Boolean(element && root.contains(element));
+}
+
+function AnswerSelectionToolbar({
+  rootRef,
+  onAddToChat,
+  reduceMotion,
+}: {
+  rootRef: RefObject<HTMLElement | null>;
+  onAddToChat: (text: string) => void;
+  reduceMotion: boolean;
+}) {
+  const [menu, setMenu] = useState<{ text: string; top: number; left: number } | null>(null);
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    let clearTimer: number | undefined;
+    let selecting = false;
+
+    const clearMenu = () => {
+      setOpen(false);
+      setMenu(null);
+    };
+
+    const scheduleClear = () => {
+      if (clearTimer !== undefined) window.clearTimeout(clearTimer);
+      // Defer so the toolbar click can commit before selection collapses.
+      clearTimer = window.setTimeout(() => {
+        clearTimer = undefined;
+        if (menuRef.current?.matches(":hover")) return;
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selectionIsInside(root, selection)) return;
+        clearMenu();
+      }, 0);
+    };
+
+    const showFromSelection = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selectionIsInside(root, selection)) {
+        scheduleClear();
+        return;
+      }
+      const text = selection.toString().replace(/\s+/g, " ").trim();
+      if (!text) {
+        scheduleClear();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      if (rect.width < 2 && rect.height < 2) {
+        scheduleClear();
+        return;
+      }
+      if (clearTimer !== undefined) {
+        window.clearTimeout(clearTimer);
+        clearTimer = undefined;
+      }
+      setMenu({
+        text,
+        top: rect.top,
+        left: rect.left + rect.width / 2,
+      });
+      setOpen(true);
+    };
+
+    const onMouseDown = (event: MouseEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      selecting = true;
+      clearMenu();
+    };
+
+    const onMouseUp = (event: MouseEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      selecting = false;
+      // Only reveal after the gesture finishes.
+      window.requestAnimationFrame(showFromSelection);
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        clearMenu();
+        return;
+      }
+      // Shift+arrow / keyboard selection settles on keyup.
+      if (event.shiftKey || event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") {
+        window.requestAnimationFrame(showFromSelection);
+      }
+    };
+
+    const onSelectionChange = () => {
+      // Ignore live drag updates; only clear once a finished selection goes away.
+      if (selecting) return;
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selectionIsInside(root, selection)) {
+        scheduleClear();
+      }
+    };
+
+    const onScroll = () => clearMenu();
+
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("keyup", onKeyUp);
+    document.addEventListener("selectionchange", onSelectionChange);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      if (clearTimer !== undefined) window.clearTimeout(clearTimer);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [rootRef]);
+
+  if (!menu || typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className={styles.assistantProse}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      ref={menuRef}
+      className={`${styles.selectionToolbar} ${open ? styles.selectionToolbarOpen : ""}`}
+      style={{
+        top: menu.top,
+        left: menu.left,
+        ...(reduceMotion ? { transition: "none" } : null),
+      }}
+      role="tooltip"
+    >
+      <button
+        type="button"
+        className={styles.selectionToolbarAction}
+        onMouseDown={(event) => {
+          // Keep the selection until click commits the text.
+          event.preventDefault();
+        }}
+        onClick={() => {
+          onAddToChat(menu.text);
+          window.getSelection()?.removeAllRanges();
+          setOpen(false);
+          setMenu(null);
+        }}
+      >
+        Add to chat
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+function AssistantMarkdown({
+  content,
+  onAddToChat,
+  reduceMotion,
+}: {
+  content: string;
+  onAddToChat?: (text: string) => void;
+  reduceMotion: boolean;
+}) {
+  const html = useMemo(() => renderAssistantMarkdown(content), [content]);
+  const proseRef = useRef<HTMLDivElement>(null);
+  return (
+    <>
+      <div
+        ref={proseRef}
+        className={styles.assistantProse}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {onAddToChat ? (
+        <AnswerSelectionToolbar
+          rootRef={proseRef}
+          onAddToChat={onAddToChat}
+          reduceMotion={reduceMotion}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -956,6 +1155,7 @@ export default function InsightsStyleTrace({
   detailedMode = false,
   runtime = "openai",
   onFollowUp,
+  onAddToChat,
   onClarification,
 }: InsightsStyleTraceProps) {
   const reduceMotion = Boolean(useReducedMotion());
@@ -969,20 +1169,12 @@ export default function InsightsStyleTrace({
   if (streaming) participatedInStreamRef.current = true;
   const animateAnswerReveal = participatedInStreamRef.current && !reduceMotion;
 
-  if (!events.length && streaming) {
-    return (
-      <div className={styles.root}>
-        <StreamingTrace steps={[]} headline="Thinking" detail="" />
-      </div>
-    );
-  }
-
   return (
     <div className={styles.root}>
       {detailedMode ? (
         <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
       ) : (
-        <ThinkingTrail model={model} streaming={streaming} />
+        <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
       )}
 
       {!streaming && model.answer ? (
@@ -1007,7 +1199,11 @@ export default function InsightsStyleTrace({
               {model.answer.state}
             </div>
           ) : null}
-          <AssistantMarkdown content={model.answer.text} />
+          <AssistantMarkdown
+            content={model.answer.text}
+            onAddToChat={onAddToChat}
+            reduceMotion={reduceMotion}
+          />
           {model.answer.followUps.length ? (
             <div className={styles.followUps} aria-label="Suggested follow-up questions">
               {model.answer.followUps.map((followUp) => (

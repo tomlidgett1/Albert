@@ -95,6 +95,13 @@ export type CanonicalTransformResult = Readonly<{
   qualityStatus: "passed" | "warning" | "failed" | "blocked";
   partialQualityStatus: "passed" | "warning" | "failed" | "blocked";
   completeQualityStatus: "passed" | "warning" | "failed" | "blocked";
+  /**
+   * False when this page ran before its stream's extraction was durably
+   * complete, so the quality gates were never executed for it. The statuses
+   * above stay fail-closed for any consumer that ignores this flag, but a
+   * readiness decision must not read an unmeasured page as a quality verdict.
+   */
+  qualityEvaluated: boolean;
   dataReadyThrough: string | null;
   compatibilityReplayPending: boolean;
   compatibilityReplayCandidates: number;
@@ -394,7 +401,7 @@ export class CanonicalTransformPipeline {
       const existing = await client.query<TransformCommitRow>(
         `select staged_rows, quarantined_rows, command_count, canonical_rows,
                 metadata_rows, quality_status,partial_quality_status,
-                complete_quality_status,data_ready_through
+                complete_quality_status,quality_evaluated,data_ready_through
            from semantic_internal.canonical_transform_commits
           where tenant_id=$1 and batch_id=$2 and mapping_version=$3
           for update`,
@@ -616,6 +623,10 @@ export class CanonicalTransformPipeline {
           [job.tenantId, snapshotAt, [...new Set(domains)], JSON.stringify({ [job.connectionId]: readyThrough }),job.syncRunId],
         );
       }
+      // The gates run once per sync run, on the page that completes its stream.
+      // Every earlier page therefore has no measured quality at all; keep the
+      // fail-closed statuses and record that they are unmeasured, so readiness
+      // can tell "not gated yet" apart from "gate rejected this data".
       const qualityStatuses = streamPageComplete
         ?await readinessQualityStatuses(client,job.tenantId,job.syncRunId)
         :Object.freeze({
@@ -634,12 +645,12 @@ export class CanonicalTransformPipeline {
            tenant_id,batch_id,sync_run_id,connection_id,connector_id,stream,mapping_version,
            staged_rows,quarantined_rows,command_count,canonical_rows,metadata_rows,
            quality_status,partial_quality_status,complete_quality_status,
-           data_ready_through,completed_at
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())`,
+           quality_evaluated,data_ready_through,completed_at
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())`,
         [job.tenantId,job.batchId,job.syncRunId,job.connectionId,job.connectorId,stream,
           this.mappingVersion,rows.length,rejectedRows.length,commandCount,
           canonicalRows,metadataRows,qualityStatus,qualityStatuses.partial,
-          qualityStatuses.complete,readyThrough],
+          qualityStatuses.complete,streamPageComplete,readyThrough],
       );
       return {
         batchId:job.batchId,replayed:false,stagedRows:rows.length,
@@ -647,6 +658,7 @@ export class CanonicalTransformPipeline {
         canonicalRows,metadataRows,qualityStatus,
         partialQualityStatus:qualityStatuses.partial,
         completeQualityStatus:qualityStatuses.complete,
+        qualityEvaluated:streamPageComplete,
         dataReadyThrough:readyThrough,
         compatibilityReplayPending:false,
         compatibilityReplayCandidates:0,
@@ -1245,7 +1257,7 @@ export class CanonicalTransformPipeline {
 
 function config(rank:number,fact:boolean,columns:readonly string[]):TableConfig{return{rank,fact,columns:new Set(columns)};}
 
-type TransformCommitRow={staged_rows:string|number;quarantined_rows:string|number;command_count:string|number;canonical_rows:string|number;metadata_rows:string|number;quality_status:CanonicalTransformResult["qualityStatus"];partial_quality_status:CanonicalTransformResult["qualityStatus"];complete_quality_status:CanonicalTransformResult["qualityStatus"];data_ready_through:string|Date|null};
+type TransformCommitRow={staged_rows:string|number;quarantined_rows:string|number;command_count:string|number;canonical_rows:string|number;metadata_rows:string|number;quality_status:CanonicalTransformResult["qualityStatus"];partial_quality_status:CanonicalTransformResult["qualityStatus"];complete_quality_status:CanonicalTransformResult["qualityStatus"];quality_evaluated:boolean|null;data_ready_through:string|Date|null};
 type ReadinessProjectionRow={projection_id:string;tenant_id:string;batch_id:string;connection_id:string;domain:string;state:string;progress:string|number;data_ready_through:string|Date|null;backfill_complete:boolean;partial_quality_status:string;complete_quality_status:string;reason_code:string|null;reason_detail:string|null;evaluated_at:string|Date};
 type IdentityReviewProjectionRow={projection_id:string;tenant_id:string;task_id:string;entity_type:string;confidence_band:string;candidate_links:unknown;evidence:unknown};
 type IdentityDecisionProjectionRow={
@@ -1476,7 +1488,7 @@ function monthName(value:string|Date|null):string|null{
   return new Intl.DateTimeFormat("en-AU",{month:"long",timeZone:"UTC"}).format(new Date(iso));
 }
 
-function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),quarantinedRows:Number(row.quarantined_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,partialQualityStatus:row.partial_quality_status,completeQualityStatus:row.complete_quality_status,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null,compatibilityReplayPending:false,compatibilityReplayCandidates:0,compatibilityReplayCommands:0,compatibilityReplayProgressToken:null};}
+function transformResult(batchId:string,replayed:boolean,row:TransformCommitRow):CanonicalTransformResult{return{batchId,replayed,stagedRows:Number(row.staged_rows),quarantinedRows:Number(row.quarantined_rows),commandCount:Number(row.command_count),canonicalRows:Number(row.canonical_rows),metadataRows:Number(row.metadata_rows),qualityStatus:row.quality_status,partialQualityStatus:row.partial_quality_status,completeQualityStatus:row.complete_quality_status,qualityEvaluated:row.quality_evaluated!==false,dataReadyThrough:row.data_ready_through?new Date(row.data_ready_through).toISOString():null,compatibilityReplayPending:false,compatibilityReplayCandidates:0,compatibilityReplayCommands:0,compatibilityReplayProgressToken:null};}
 
 async function establishTransformScope(
   client:PostgresQueryClient,

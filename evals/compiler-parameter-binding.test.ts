@@ -384,3 +384,87 @@ test("every filter operator binds a fully referenced parameter list", () => {
   }
   assert.deepEqual(broken, [], `filters binding unreferenced parameters:\n${broken.join("\n")}`);
 });
+
+/**
+ * The conversation runtime and the semantic service exchange the AGENT-shaped
+ * tool input, not the normalised IR. Normalising before transport adds `kind`
+ * and the trusted `parameters` key, and the service re-parses with the strict
+ * agent-facing schema that forbids both — so every governed query was rejected
+ * with 400 INVALID_REQUEST before it ran, and the chat could not answer a
+ * single question while every layer beneath it worked.
+ */
+test("the agent-facing tool schema rejects a normalised IR, so the runtime must not send one", async () => {
+  const { semanticToolInputSchemas, toolInputToSemanticQueryIr } =
+    await import("../packages/agent/src/semantic-tools.js");
+
+  const agentShaped = {
+    topic: "sales_performance",
+    metrics: ["gross_takings_inc_gst"],
+    dimensions: ["location"],
+    time: { field: "business_date", range: { type: "year_to_date" }, compare: "none" },
+  };
+
+  // What the model sends round-trips.
+  const parsed = semanticToolInputSchemas.run_semantic_query.parse(agentShaped);
+  assert.ok(semanticToolInputSchemas.run_semantic_query.safeParse(parsed).success);
+
+  // The normalised IR does NOT — this is the asymmetry that broke the chat.
+  const normalised = toolInputToSemanticQueryIr(parsed);
+  assert.equal(semanticToolInputSchemas.run_semantic_query.safeParse(normalised).success, false);
+});
+
+test("live.ts sends the tool input over the semantic boundary, never the normalised IR", async () => {
+  const source = await import("node:fs/promises")
+    .then((fs) => fs.readFile("services/conversation/src/live.ts", "utf8"));
+  assert.match(source, /semantic\.execute\("run_semantic_query", toolInput, context\)/u);
+  assert.doesNotMatch(source, /semantic\.execute\("run_semantic_query", ir, context\)/u);
+});
+
+/**
+ * "This year" is materially ambiguous for an Australian business: the financial
+ * year opens 1 July, the calendar year 1 January. The compiler resolved it from
+ * a hardcoded fiscal default of month 7 that no tenant had confirmed, so
+ * "any sales this year?" reported five weeks of trade as the year to date.
+ * The basis is now a confirmed tenant preference the agent must ask for.
+ */
+test("a confirmed year basis decides what year_to_date means", async () => {
+  const { ALBERT_PREFERENCE_OPTION_IDS, resolveAlbertPreferenceOption, isAllowlistedRememberedPreference } =
+    await import("../packages/agent/src/semantic-tools.js");
+
+  // Both options exist and belong to one preference group, so ask_user can
+  // offer them together.
+  assert.ok(ALBERT_PREFERENCE_OPTION_IDS.includes("calendar.financial_year" as never));
+  assert.ok(ALBERT_PREFERENCE_OPTION_IDS.includes("calendar.calendar_year" as never));
+  const financial = resolveAlbertPreferenceOption("calendar.financial_year" as never);
+  const calendar = resolveAlbertPreferenceOption("calendar.calendar_year" as never);
+  assert.equal(financial.preference, "calendar.year_basis");
+  assert.equal(calendar.preference, "calendar.year_basis");
+  assert.ok(isAllowlistedRememberedPreference("calendar.year_basis", "financial_year"));
+  assert.ok(isAllowlistedRememberedPreference("calendar.year_basis", "calendar_year"));
+  assert.equal(isAllowlistedRememberedPreference("calendar.year_basis", "whenever"), false);
+
+  // The two bases resolve to genuinely different windows, which is why
+  // answering on an unconfirmed one misreports the period.
+  const windowFor = (fiscalYearStartMonth: number) => {
+    const compiled = compileSemanticQuery({
+      topic: "sales_performance",
+      metrics: ["commerce.gross_takings_inc_gst"],
+      dimensions: [],
+      filters: [],
+      time: { field: "business_date", range: { type: "year_to_date" }, compare: "none" },
+      sort: [],
+      limit: 20,
+      parameters: {},
+    } as never, registry, { ...context, now: "2026-08-05T00:00:00.000Z", fiscalYearStartMonth } as never);
+    return (compiled.resolvedTime as unknown as { fromBusinessDate: string }).fromBusinessDate;
+  };
+  assert.equal(windowFor(7), "2026-07-01");
+  assert.equal(windowFor(1), "2026-01-01");
+});
+
+test("the agent is told to ask before answering a year-scoped question", async () => {
+  const source = await import("node:fs/promises")
+    .then((fs) => fs.readFile("services/conversation/src/live.ts", "utf8"));
+  assert.match(source, /calendar\.financial_year \/ calendar\.calendar_year/u);
+  assert.match(source, /no confirmed calendar\.year_basis/u);
+});

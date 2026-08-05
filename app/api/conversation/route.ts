@@ -23,6 +23,7 @@ import {
   beginConversationTurn,
   failConversationTurn,
   loadConversationModelContext,
+  renewConversationTurnLease,
 } from "@/services/conversation/src/artifact-store";
 import { SemanticServiceError } from "@/services/conversation/src/semantic-client";
 import type { SemanticToolResponse } from "@/packages/agent/src/semantic-tools";
@@ -180,10 +181,22 @@ function unavailableSemanticToolResponse(toolName: string, input: unknown): Sema
   };
 }
 
-function turnTimeoutMilliseconds():number{
-  const parsed=Number(process.env.ALBERT_TURN_TIMEOUT_MS??180_000);
-  if(!Number.isInteger(parsed)||parsed<30_000||parsed>300_000){
-    throw new Error("ALBERT_TURN_TIMEOUT_MS must be between 30000 and 300000.");
+/**
+ * An analytical turn runs until it finishes or the client disconnects. A wall
+ * clock is the wrong instrument here: a thorough multi-query answer legitimately
+ * takes longer than a single lookup, and cutting one off mid-run destroyed the
+ * work rather than shortening it. Set ALBERT_TURN_TIMEOUT_MS only to impose a
+ * deliberate ceiling; leaving it unset means no deadline.
+ */
+/** Renew well inside the 6-minute durable lease so one slow call cannot lapse it. */
+const LEASE_RENEWAL_INTERVAL_MS=120_000;
+
+function turnTimeoutMilliseconds():number|undefined{
+  const configured=process.env.ALBERT_TURN_TIMEOUT_MS;
+  if(configured===undefined||configured.trim()==="")return undefined;
+  const parsed=Number(configured);
+  if(!Number.isInteger(parsed)||parsed<30_000){
+    throw new Error("ALBERT_TURN_TIMEOUT_MS must be an integer of at least 30000 milliseconds.");
   }
   return parsed;
 }
@@ -281,7 +294,7 @@ export async function POST(request: Request) {
     logger.error("conversation.configuration_missing", { missing }, correlationId);
     return jsonError("Live analytics is not fully configured.", 503, correlationId);
   }
-  let turnTimeoutMs:number;
+  let turnTimeoutMs:number|undefined;
   try{turnTimeoutMs=turnTimeoutMilliseconds();}
   catch(error){
     logger.error("conversation.configuration_invalid", safeErrorEvidence(error), correlationId);
@@ -347,8 +360,16 @@ export async function POST(request: Request) {
     turnId,
     signal: request.signal,
     run: async (deliver, streamSignal) => {
-      const timeoutSignal=AbortSignal.timeout(turnTimeoutMs);
-      const agentSignal=AbortSignal.any([streamSignal,timeoutSignal]);
+      const timeoutSignal=turnTimeoutMs===undefined?undefined:AbortSignal.timeout(turnTimeoutMs);
+      const agentSignal=timeoutSignal===undefined
+        ? streamSignal
+        : AbortSignal.any([streamSignal,timeoutSignal]);
+      // Hold the durable lease open for as long as this runner is alive. The
+      // reaper recovers turns whose process died; it must not reclaim one that
+      // is still working, which is what an unbounded turn would otherwise hit.
+      const leaseRenewal=setInterval(()=>{
+        void renewConversationTurnLease({supabase,turnId}).catch(()=>undefined);
+      },LEASE_RENEWAL_INTERVAL_MS);
       const semanticClient = new SemanticServiceClient(
         configuration.semanticServiceUrl!,
         configuration.semanticSigningSecret!,
@@ -400,6 +421,18 @@ export async function POST(request: Request) {
           event,
           supabase,
         }),
+        // The event has already reached the browser by the time a queued write
+        // fails, so this is the only place the loss becomes visible.
+        onPersistError: (error, event) => {
+          logger.warn("conversation.trace_event_persist_failed", {
+            tenantId: tenant.tenant_id,
+            conversationId: begun.conversationId,
+            turnId,
+            eventType: event.type,
+            eventSequence: event.sequence,
+            ...safeErrorEvidence(error),
+          }, correlationId);
+        },
         // Persist the terminal event so the semantic service can bind it into
         // the immutable artefact, but do not expose it until that transaction
         // has succeeded. Progress, tables, and validations remain live.
@@ -519,7 +552,7 @@ export async function POST(request: Request) {
         }
       } catch (error) {
         const disconnected = streamSignal.aborted;
-        const timedOut=timeoutSignal.aborted&&!disconnected;
+        const timedOut=Boolean(timeoutSignal?.aborted)&&!disconnected;
         const usageOutcome = disconnected
           ? "client_disconnected"
           : timedOut
@@ -568,6 +601,10 @@ export async function POST(request: Request) {
               });
             }
           }
+          // Flush the partial trace and the error event above before the turn
+          // is marked failed, so the recorded failure is backed by the steps
+          // that led to it rather than by whatever happened to be written.
+          await emit.drain?.();
           await failConversationTurn({
             conversationId: begun.conversationId,
             turnId,
@@ -583,6 +620,8 @@ export async function POST(request: Request) {
             errorMessage: finalizeError instanceof Error ? finalizeError.message.slice(0, 500) : "unknown",
           }, correlationId);
         }
+      } finally {
+        clearInterval(leaseRenewal);
       }
     },
   });

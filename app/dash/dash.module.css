@@ -279,7 +279,10 @@
   transition: background 160ms ease, color 160ms ease;
 }
 
-.collapseButton:hover {
+/* Hover fill only when "hot": expanded always, or collapsed after a clean
+   pointer leave (avoids sticky/flickering chrome on the collapse click). */
+.collapseButtonHot:hover,
+.collapseButtonHot:focus-visible {
   background: var(--dash-surface-hover);
   color: var(--dash-text-strong);
 }
@@ -287,6 +290,75 @@
 .collapseButton svg {
   width: 18px;
   height: 18px;
+}
+
+.collapseButtonLogo {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 4px;
+}
+
+/* Transitions.dev-style icon swap: logo (a) → panel (b) on hover */
+.collapseIconSwap {
+  --icon-swap-dur: 250ms;
+  --icon-swap-blur: 2px;
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: ease-in-out;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.collapseIconSwapFace {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  transition:
+    opacity var(--icon-swap-dur) var(--icon-swap-ease),
+    filter var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+  will-change: opacity, filter, transform;
+}
+
+.collapseIconSwap[data-state="a"] .collapseIconSwapFace[data-icon="a"],
+.collapseIconSwap[data-state="b"] .collapseIconSwapFace[data-icon="b"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.collapseIconSwap[data-state="a"] .collapseIconSwapFace[data-icon="b"],
+.collapseIconSwap[data-state="b"] .collapseIconSwapFace[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+/* Only swap after the pointer has left once post-collapse, so the
+   closing click (still hovering) does not flash the panel icon. */
+.collapseButton:hover .collapseIconSwapArmed[data-state="a"] .collapseIconSwapFace[data-icon="a"],
+.collapseButton:focus-visible .collapseIconSwapArmed[data-state="a"] .collapseIconSwapFace[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+.collapseButton:hover .collapseIconSwapArmed[data-state="a"] .collapseIconSwapFace[data-icon="b"],
+.collapseButton:focus-visible .collapseIconSwapArmed[data-state="a"] .collapseIconSwapFace[data-icon="b"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapseIconSwapFace {
+    transition: none !important;
+  }
 }
 
 .sidebarActions {
@@ -374,11 +446,19 @@
   flex: 1 1 auto;
   flex-direction: column;
   gap: 14px;
+  /* Expanded column width so text does not reflow while the rail opens */
+  min-width: calc(var(--sidebar-width) - 20px);
   margin: 0 -2px;
   overflow-x: hidden;
   overflow-y: auto;
+  opacity: 0;
   padding: 0 2px 8px;
   scrollbar-width: thin;
+  transition: opacity 180ms ease;
+}
+
+.conversationNavRevealed {
+  opacity: 1;
 }
 
 .conversationNavState {
@@ -1209,7 +1289,12 @@
   flex-direction: column;
   gap: 8px;
   margin-top: auto;
+  overflow: visible;
   padding-top: 12px;
+}
+
+.sidebarAccountMenuOpen .accountArea {
+  z-index: 40;
 }
 
 .accountBar {
@@ -1577,6 +1662,12 @@
   overflow-x: hidden;
 }
 
+/* Let the account menu escape the rail (especially when collapsed). */
+.sidebarAccountMenuOpen,
+.collapsed .sidebarAccountMenuOpen {
+  overflow: visible;
+}
+
 
 .collapsed .sidebarHeader {
   /* Pin toggle in the same 36px icon column (30px control → 3px inset) */
@@ -1602,6 +1693,14 @@
 
 .collapsed .conversationNav {
   display: none;
+  opacity: 0;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversationNav {
+    transition: none;
+  }
 }
 
 .collapsed .sidebarAction {
@@ -1633,7 +1732,10 @@
 }
 
 .collapsed .accountPopover {
-  left: 0;
+  /* Open into the main canvas beside the narrow rail */
+  left: calc(100% + 8px);
+  bottom: 0;
+  transform-origin: bottom left;
 }
 
 .content {
@@ -4145,16 +4247,24 @@
   border-radius: 14px;
 }
 
-.chatMessageUserIdle {
+/* Match ThinkingTrail .thinkingCard: one shell, radius eases with expand. */
+.chatMessageUserShell {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   border: 1px solid transparent;
-  transition: background 150ms ease, border-color 150ms ease;
+  overflow: hidden;
+  transition: border-radius 300ms ease, border-color 300ms ease;
 }
 
-.chatMessageUserIdle:hover {
+.chatMessageUserShell:hover {
   background: var(--dash-chat-surface);
+}
+
+.chatMessageUserShell[data-edit-open="true"] {
+  border-color: var(--dash-border-input);
+  /* Popover escape only after open; keep overflow hidden while radius eases. */
+  overflow: visible;
 }
 
 .chatMessageUserFace {
@@ -4169,12 +4279,6 @@
   font: inherit;
   text-align: left;
   padding: 0;
-}
-
-.chatMessageUserFace > p {
-  min-width: 0;
-  flex: 1 1 auto;
-  margin: 0;
 }
 
 .chatMessageUserFace:focus-visible {
@@ -4208,32 +4312,8 @@
   white-space: normal;
 }
 
-.chatMessageUserEditing {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  box-sizing: border-box;
-  border: 1px solid transparent;
-  background: var(--dash-chat-surface);
-  min-height: 0;
-  overflow: hidden;
-  transition: none;
-}
-
-.chatMessageUserEditing .modelControlsPopover {
+.chatMessageUserShell .modelControlsPopover {
   border-radius: 14px;
-}
-
-.chatMessageUserEditing[data-edit-open="true"] {
-  border-color: var(--dash-border-input);
-  overflow: visible;
-  transition: border-color 300ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.chatMessageUserEditing:hover,
-.chatMessageUserEditing:focus-within {
-  background: var(--dash-chat-surface);
 }
 
 .chatMessageEditInput {
@@ -4242,7 +4322,8 @@
   min-width: 0;
   flex: 0 0 auto;
   height: auto;
-  min-height: 24px;
+  /* Match .chatMessage p metrics so idle↔edit header height does not twitch. */
+  min-height: 21px;
   max-height: 120px;
   resize: none;
   border: 0;
@@ -4251,13 +4332,25 @@
   font: inherit;
   font-size: 14px;
   letter-spacing: -0.01em;
-  line-height: 1.45;
+  line-height: 1.5;
   outline: none;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.chatMessageUserFace > p {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .chatMessageEditTrailing {
@@ -4271,13 +4364,13 @@
   margin-top: 8px;
 }
 
-.chatMessageUserEditing .modelControlsTrigger {
+.chatMessageUserShell .modelControlsTrigger {
   height: 28px;
   min-width: 0;
   padding: 0 8px;
 }
 
-.chatMessageUserEditing .modelControlsModelName {
+.chatMessageUserShell .modelControlsModelName {
   font-size: 13px;
   font-weight: 550;
 }
@@ -4323,10 +4416,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chatMessageUserIdle,
-  .chatMessageEditSend,
-  .chatMessageUserEditing,
-  .chatMessageUserEditing[data-edit-open="true"] {
+  .chatMessageUserShell,
+  .chatMessageEditSend {
     transition: none !important;
   }
 
@@ -4705,6 +4796,11 @@
 }
 
 .connectMobilePill {
+  --learn-shift: 2px;
+  --learn-spread: 8deg;
+  --learn-in: 350ms;
+  --learn-out: 350ms;
+  --learn-ease: cubic-bezier(0.22, 1, 0.36, 1);
   display: inline-flex;
   z-index: 1;
   height: 30px;
@@ -4740,10 +4836,49 @@
   outline-offset: 2px;
 }
 
-.connectMobilePill svg {
+.connectMobileLearnChevron {
+  display: inline-flex;
   width: 14px;
   height: 14px;
-  transition: transform 200ms ease;
+  flex: 0 0 auto;
+  transform: translateX(0);
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+
+.connectMobileLearnChevron svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+}
+
+.connectMobileLearnArm {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  transform-box: view-box;
+  transform-origin: 10px 8px;
+  vector-effect: non-scaling-stroke;
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+
+.connectMobilePill:hover .connectMobileLearnChevron {
+  transform: translateX(var(--learn-shift));
+  transition-duration: var(--learn-in);
+}
+
+.connectMobilePill:hover .connectMobileLearnArm {
+  transition-duration: var(--learn-in);
+}
+
+.connectMobilePill:hover .connectMobileLearnArmTop {
+  transform: rotate(var(--learn-spread));
+}
+
+.connectMobilePill:hover .connectMobileLearnArmBot {
+  transform: rotate(calc(var(--learn-spread) * -1));
 }
 
 .connectMobilePillOpen {
@@ -4753,8 +4888,12 @@
   box-shadow: 0 2px 8px rgba(26, 27, 30, 0.06);
 }
 
-.connectMobilePillOpen svg {
+.connectMobilePillOpen .connectMobileLearnChevron {
   transform: rotate(180deg);
+}
+
+.connectMobilePillOpen:hover .connectMobileLearnChevron {
+  transform: rotate(180deg) translateX(var(--learn-shift));
 }
 
 .chatClarify {
@@ -6585,11 +6724,11 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: light-dark(rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.52));
+  background: light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.22));
   padding: 28px 20px;
   animation: mobileConnectBackdropIn 180ms ease-out both;
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(8px) saturate(1.05);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
 }
 
 .mobileConnectBackdropClosing {
@@ -7300,10 +7439,12 @@
 
   .connectMobilePill,
   .connectMobilePill svg,
+  .connectMobileLearnChevron,
+  .connectMobileLearnArm,
   .mobileConnectClose,
   .mobileConnectSubmit,
   .mobileConnectCancel {
-    transition: none;
+    transition: none !important;
   }
 
   .mobileConnectBackdrop {

@@ -108,11 +108,25 @@ export function criticalPromptRouteContract(message: string): PromptRouteContrac
     return workforceBestContract;
   }
 
-  const asksForWorkerDirectory = /\b(?:who are|list|what(?: are)?|show(?: me)?|names?(?: of)?|directory of)\b/u.test(prompt)
-    || /\bemployees we have\b/u.test(prompt)
-    || /\bstaff we have\b/u.test(prompt)
-    || /\bworkers we have\b/u.test(prompt);
-  if (mentionsWorker && asksForWorkerDirectory && !mentionsBest && !mentionsCurrentWork) {
+  // The directory route answers "who works here" from the allowlisted worker
+  // dimension and runs no query at all. It must therefore fire only on a pure
+  // roster lookup: any analytical predicate ("which staff member discounts
+  // most", "rank my staff by sales") is a real question that a list of names
+  // silently answers wrongly, which is worse than declining it.
+  const asksForWorkerDirectory =
+    /\b(?:who (?:are|works|work)|list|show(?: me)?|names? of|directory of|tell me who)\b/u.test(prompt)
+    || /\b(?:employees|staff|workers) (?:we have|do we have|are there)\b/u.test(prompt);
+  const mentionsAnalyticalPredicate =
+    /\b(?:sales|sold|selling|revenue|takings|margin|profit|discount|discounts|discounting|refund|refunds|transactions|units|average|aov|basket|target|performance|performing|productivity|hours|worked|roster|rostered|cost|wage|wages|per hour|compare|comparison|versus|vs|rank|ranked|ranking|most|least|highest|lowest|top|bottom|best|worst|trend|growth)\b/u.test(prompt)
+    || /\b(?:last|past|previous|this|next) (?:week|month|quarter|year|\d+ (?:days?|weeks?|months?))\b/u.test(prompt)
+    || /\b(?:how much|how many|why|quantify)\b/u.test(prompt);
+  if (
+    mentionsWorker
+    && asksForWorkerDirectory
+    && !mentionsAnalyticalPredicate
+    && !mentionsBest
+    && !mentionsCurrentWork
+  ) {
     return employeeDirectoryContract;
   }
 
@@ -175,13 +189,19 @@ export function assertPromptRouteClarification(
 
 export function assertPromptRouteCompletion(
   contract: PromptRouteContract | undefined,
-  input: Readonly<{ clarificationAsked: boolean; queryEvidenceCount: number }>,
+  input: Readonly<{
+    clarificationAsked: boolean;
+    queryEvidenceCount: number;
+    /** Set when every option in the contract proved unanswerable for this
+     * tenant, which makes the choice moot and the route Unavailable instead. */
+    clarificationWaived?: boolean;
+  }>,
 ): void {
   if (!contract) return;
   if (input.queryEvidenceCount !== 0) {
     throw new Error("A constrained clarification, directory, or unavailable route cannot contain query evidence.");
   }
-  if (contract.route === "clarification" && !input.clarificationAsked) {
+  if (contract.route === "clarification" && !input.clarificationAsked && !input.clarificationWaived) {
     throw new Error("The model ignored the server-owned clarification route contract.");
   }
   if ((contract.route === "unavailable" || contract.route === "directory") && input.clarificationAsked) {

@@ -75,9 +75,9 @@ export async function runSeedGoldenSuite(
   registryPath = resolve("packages/semantic-registry/registry/registry.yaml"),
 ): Promise<GoldenSuiteResult> {
   const registry = loadRegistryFile(registryPath);
-  if (registry.metrics.size !== 47 || registry.topics.size !== 7) {
+  if (registry.metrics.size !== 51 || registry.topics.size !== 8) {
     throw new Error(
-      `Golden runner requires the 47-contract/7-Topic registry; observed ${registry.metrics.size}/${registry.topics.size}.`,
+      `Golden runner requires the 51-contract/8-Topic registry; observed ${registry.metrics.size}/${registry.topics.size}.`,
     );
   }
 

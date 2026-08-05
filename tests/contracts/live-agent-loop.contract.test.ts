@@ -429,14 +429,20 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
   assert.equal(tables[0]?.rows[0]?.net_sales_ex_gst, "1200.0000");
   assert.equal(tables[1]?.resultId, locationResultId);
   assert.equal(tables[1]?.rows[0]?.net_sales_ex_gst, "800.0000");
-  const firstObservationIndex = events.findIndex((event) => event.type === "narrative" && event.text.includes("AUD 1200"));
+  const firstObservationIndex = events.findIndex((event) => event.type === "narrative" && event.text.includes("AUD 1,200"));
   const secondQueryIndex = events.findIndex((event, index) => index > firstObservationIndex && event.type === "query");
   const secondTableIndex = events.findIndex((event) => event.type === "table" && event.resultId === locationResultId);
   assert.ok(firstObservationIndex > 0 && secondQueryIndex > firstObservationIndex && secondTableIndex > secondQueryIndex);
   const answer = events.at(-1);
   assert.ok(answer && answer.type === "answer");
   assert.equal(answer.state, "Verified");
-  assert.equal(answer.text, "Location Melbourne had Net sales of AUD 800.");
+  // The narrative the model wrote is what the user reads, once every figure in
+  // it has been proved against a governed cell. The server-canonical rendering
+  // remains the fallback when that proof fails, and claims stay the lineage.
+  assert.equal(
+    answer.text,
+    "The governed result is ready.\n\nFigures cover Last week from Lightspeed Retail, current to 2026-08-02.",
+  );
   assert.equal(answer.claims?.[0]?.refs.length, 2);
   assert.equal(result.lastResponseId, "resp_9");
   assert.equal(result.answerState, "Verified");

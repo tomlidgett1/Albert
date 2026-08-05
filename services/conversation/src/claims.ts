@@ -8,7 +8,7 @@ import {
 import type { TraceCell } from "../../../packages/shared/src/index.js";
 import {
   findUngroundedNumbersForCells,
-  normalizedQuantitativeClaims,
+  mentionsCellValue,
 } from "./grounding.js";
 
 export { claimAssertionSchema, claimCellReferenceSchema };
@@ -18,7 +18,9 @@ export type EvidenceClaim = EvidenceClaimInput;
 export type ClaimCellReference = EvidenceClaim["refs"][number];
 
 export type ClaimValidation = Readonly<{
+  /** True only when every proposed claim proved out. */
   valid: boolean;
+  /** The claims that proved out, rewritten to server-canonical wording. */
   claims: readonly EvidenceClaim[];
   errors: readonly string[];
 }>;
@@ -149,12 +151,17 @@ function validateClaim(
     }
   }
 
+  // Naming a peer entity from the same column as a referenced label is where
+  // misattribution hides: "Services led Wheels & Tyres" must reference both or
+  // neither. Labels from other columns (a location name beside a category, say)
+  // carry no such ambiguity and must not invalidate an otherwise sound claim.
   const referencedLabels = new Set(labelRefs.map((ref) => referenceKey(ref.ref)));
+  const referencedLabelColumns = new Set(labelRefs.map((ref) => ref.ref.columnKey));
   const referencedResult = refs[0]?.result;
   if (referencedResult) {
     referencedResult.rows.forEach((row, rowIndex) => {
       referencedResult.columns.forEach((column) => {
-        if (isNumericColumn(column.type)) return;
+        if (isNumericColumn(column.type) || !referencedLabelColumns.has(column.key)) return;
         const value = row[column.key];
         if (value === null || !String(value).trim()) return;
         const key = referenceKey({ resultId: referencedResult.resultId, rowIndex, columnKey: column.key });
@@ -173,13 +180,18 @@ function validateClaim(
   if (findUngroundedNumbersForCells(maskedStatement, numericValues).length) {
     errors.push("unreferenced_number");
   }
-  const mentionedValues = new Set(normalizedQuantitativeClaims(maskedStatement));
   for (const ref of numericRefs) {
-    const normalized = normalizedDecimalToken(ref.value);
-    if (!normalized || !mentionedValues.has(normalized)) errors.push("cell_value_missing");
+    // The statement must state this cell, but at whatever precision reads
+    // naturally: "97.9%" and "97.92%" are both faithful renderings of
+    // 97.9227081238730692, and demanding the raw token would make every
+    // ratio metric unprovable.
+    if (!mentionsCellValue(maskedStatement, ref.value)) errors.push("cell_value_missing");
   }
 
   if (claim.assertion === "value") {
+    // A claim is one short evidence sentence, not free narrative, so the broad
+    // lexicon stays: any relational wording on a single-value claim must be
+    // re-expressed as a typed assertion the server can verify against cells.
     comparativeLexicon.lastIndex = 0;
     if (comparativeLexicon.test(claim.statement)) errors.push("comparison_requires_typed_assertion");
   } else {
@@ -221,11 +233,14 @@ function canonicalClaimStatement(
     const labels = labelRefs
       .filter((labelRef) => labelRef.ref.resultId === numericRef.ref.resultId
         && labelRef.ref.rowIndex === numericRef.ref.rowIndex)
-      .map((labelRef) => `${labelRef.column.label} ${String(labelRef.value)}`);
-    return labels.join(", ") || `Row ${numericRef.ref.rowIndex + 1}`;
+      .map((labelRef) => describeLabelValue(labelRef));
+    return labels.join(" · ");
   };
   const describeValue = (numericRef: ResolvedReference): string => {
-    const value = normalizedDecimalToken(numericRef.value) ?? String(numericRef.value);
+    const token = normalizedDecimalToken(numericRef.value) ?? String(numericRef.value);
+    const value = formatGovernedNumber(
+      numericRef.column.type === "currency" ? withMinimumDecimals(token, 2) : token,
+    );
     if (numericRef.column.type === "currency") {
       return numericRef.column.currency ? `${numericRef.column.currency} ${value}` : value;
     }
@@ -237,21 +252,26 @@ function canonicalClaimStatement(
   const leftSubject = describeRow(left);
   const metric = left.column.label;
   const leftValue = describeValue(left);
-  if (assertion === "value") return `${leftSubject} had ${metric} of ${leftValue}.`;
-  if (assertion === "highest") return `${leftSubject} had the highest ${metric} at ${leftValue}.`;
-  if (assertion === "lowest") return `${leftSubject} had the lowest ${metric} at ${leftValue}.`;
+  // A query with no grouping dimension has no row subject. "Row 1 had Net
+  // sales of …" exposes an internal index; the metric leads instead.
+  if (assertion === "value") {
+    return leftSubject ? `${leftSubject}: ${metric} ${leftValue}.` : `${metric}: ${leftValue}.`;
+  }
+  if (assertion === "highest") return `${leftSubject || metric} had the highest ${metric} at ${leftValue}.`;
+  if (assertion === "lowest") return `${leftSubject || metric} had the lowest ${metric} at ${leftValue}.`;
 
   const right = numericRefs[1];
   if (!right) return "Validated comparison evidence was unavailable.";
-  const rightSubject = describeRow(right);
+  const rightSubject = describeRow(right) || right.column.label;
   const rightValue = describeValue(right);
+  const subject = leftSubject || metric;
   if (assertion === "greater_than") {
-    return `${leftSubject} ${metric} of ${leftValue} was higher than ${rightSubject} ${metric} of ${rightValue}.`;
+    return `${subject} ${metric} of ${leftValue} was higher than ${rightSubject} at ${rightValue}.`;
   }
   if (assertion === "less_than") {
-    return `${leftSubject} ${metric} of ${leftValue} was lower than ${rightSubject} ${metric} of ${rightValue}.`;
+    return `${subject} ${metric} of ${leftValue} was lower than ${rightSubject} at ${rightValue}.`;
   }
-  return `${leftSubject} ${metric} of ${leftValue} equalled ${rightSubject} ${metric} of ${rightValue}.`;
+  return `${subject} ${metric} of ${leftValue} equalled ${rightSubject} at ${rightValue}.`;
 }
 
 function validRank(ref: ResolvedReference, assertion: "highest" | "lowest"): boolean {
@@ -317,6 +337,33 @@ function compareDecimal(left: Decimal, right: Decimal): number {
   const leftValue = left.coefficient * (10n ** BigInt(scale - left.scale));
   const rightValue = right.coefficient * (10n ** BigInt(scale - right.scale));
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+/**
+ * Groups thousands in a governed figure without altering it. Values arrive at
+ * the display precision the metric contract declares, so this only inserts
+ * separators — it never rounds, and the digits stay byte-identical to the cell.
+ */
+/** Renders a governed date cell as the business date it represents. */
+function describeLabelValue(ref: ResolvedReference): string {
+  const raw = String(ref.value);
+  if (ref.column.type !== "date" && ref.column.type !== "datetime") return raw;
+  const match = /^(\d{4}-\d{2}-\d{2})/u.exec(raw);
+  return match ? match[1]! : raw;
+}
+
+/** Restores trailing zeros a decimal normalisation dropped, without rounding. */
+function withMinimumDecimals(value: string, decimals: number): string {
+  const [whole, fraction = ""] = value.split(".");
+  if (fraction.length >= decimals) return value;
+  return `${whole}.${fraction.padEnd(decimals, "0")}`;
+}
+
+export function formatGovernedNumber(value: string): string {
+  const match = /^(-?)(\d+)(\.\d+)?$/u.exec(value);
+  if (!match) return value;
+  const [, sign, integerPart, fraction] = match;
+  return `${sign}${integerPart.replace(/\B(?=(\d{3})+(?!\d))/gu, ",")}${fraction ?? ""}`;
 }
 
 function normalizedDecimalToken(value: TraceCell): string | null {
