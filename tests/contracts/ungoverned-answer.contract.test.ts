@@ -5,6 +5,9 @@ import { redactUngroundedProse } from "../../services/conversation/src/grounding
 import {
   evidenceCarriesBlockingReason,
   enforceEvidenceBoundAnswerState,
+  readableCheckName,
+  supersededBlockDisclosure,
+  unavailableEvidenceExplanation,
 } from "../../services/conversation/src/live.js";
 import { searchTokens } from "../../services/semantic-query/src/service.js";
 
@@ -93,4 +96,63 @@ test("value search survives the wording differences that carry no meaning", () =
 test("value search stays bounded and drops noise tokens", () => {
   assert.equal(searchTokens("a b c d e f g h").length <= 4, true);
   assert.deepEqual(searchTokens("!!! ---"), []);
+});
+
+/**
+ * Second regression: "how can we improve the profitability of the business"
+ * ran three governed queries. The first merchandising attempt was blocked by
+ * progressive coverage, the model narrowed the window and re-ran it
+ * successfully, and the turn still answered Unavailable — discarding all three
+ * tables because the superseded attempt stayed on the evidence record.
+ */
+
+const blockedAttempt = {
+  state: "unavailable",
+  validation: {
+    status: "blocked",
+    warnings: ["inventory.balances is unavailable before 2026-07-04T04:32:57.328Z; deeper history is still backfilling."],
+    checks: [{ checkId: "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops", status: "blocked" }],
+  },
+} as unknown as Parameters<typeof supersededBlockDisclosure>[0][number];
+
+const goodResult = {
+  state: "verified",
+  validation: { status: "passed", warnings: [], checks: [{ checkId: "result_shape", status: "passed" }] },
+} as unknown as typeof blockedAttempt;
+
+test("a recovered retry does not sink the turn that recovered", () => {
+  assert.equal(
+    enforceEvidenceBoundAnswerState("Qualified", [goodResult, blockedAttempt, goodResult], false, 3),
+    "Qualified",
+  );
+});
+
+test("a block with nothing usable behind it still fails closed", () => {
+  assert.equal(enforceEvidenceBoundAnswerState("Qualified", [blockedAttempt], false, 3), "Unavailable");
+});
+
+test("a superseded block can never be reported as Verified", () => {
+  assert.equal(enforceEvidenceBoundAnswerState("Verified", [goodResult, blockedAttempt], false, 0), "Qualified");
+  assert.equal(enforceEvidenceBoundAnswerState("Verified", [goodResult], false, 0), "Verified");
+});
+
+test("carrying on past a block discloses what could not run", () => {
+  const disclosure = supersededBlockDisclosure([goodResult, blockedAttempt]);
+  assert.match(disclosure, /could not run/u);
+  assert.match(disclosure, /deeper history is still backfilling/u);
+  assert.equal(supersededBlockDisclosure([goodResult]), "");
+});
+
+test("an internal connection id never reaches the answer", () => {
+  assert.equal(
+    readableCheckName("progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops"),
+    "progressive coverage item shops",
+  );
+  assert.equal(readableCheckName("cost_coverage"), "cost coverage");
+  assert.equal(readableCheckName("01KZ54B1PCKM1MHSNHY4XT6DEX"), "");
+  assert.ok(!unavailableEvidenceExplanation([blockedAttempt]).includes("01KZ54B1PCKM1MHSNHY4XT6DEX"));
+});
+
+test("a blocked explanation says what the reader can act on", () => {
+  assert.match(unavailableEvidenceExplanation([blockedAttempt]), /deeper history is still backfilling/u);
 });
