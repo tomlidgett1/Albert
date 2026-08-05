@@ -138,6 +138,13 @@ type LiveAgentContext = AgentToolContext & Readonly<{
    * was narrowed to it; this is the evidence that it was.
    */
   appliedFilters: string[];
+  /**
+   * Governed queries that already came back blocked, by normalised signature.
+   * Re-running one returns the identical block, so the turn must not spend a
+   * step on it: without this the agent can retry the same blocked query until
+   * the run ceiling, and the user waits out a turn that never answers.
+   */
+  blockedQueries: Map<string, string>;
   /** Dimensions this turn actually grouped by, for the same scope evidence. */
   queriedDimensions: string[];
   /** Governed field values this turn actually retrieved, by field. */
@@ -598,13 +605,33 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
       // the strict agent-facing schema that forbids both — so every governed
       // query was rejected with 400 INVALID_REQUEST before it ever ran. The
       // service applies toolInputToSemanticQueryIr itself.
+      // Re-running a query that already came back blocked returns the identical
+      // block. Refuse it here, before the round trip, and say what would have to
+      // change — otherwise the turn burns its ceiling on a query that cannot
+      // succeed and never reaches an answer at all.
+      const signature = governedQuerySignature(toolInput);
+      const alreadyBlocked = context.blockedQueries.get(signature);
+      if (alreadyBlocked) throw new Error(alreadyBlocked);
+      if (context.blockedQueries.size >= BLOCKED_QUERY_BUDGET) {
+        throw new Error(`${BLOCKED_QUERY_BUDGET} governed queries have already been blocked this turn. Stop querying and answer from the governed results you already have, disclosing what could not be covered.`);
+      }
       const response = await context.semantic.execute("run_semantic_query", toolInput, context);
       if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
         context.evidence.push(response);
+        const guidance = blockedQueryGuidance(response);
+        context.blockedQueries.set(signature, `This exact governed query was already blocked. ${guidance} Do not run it again unchanged.`);
         for (const validation of adaptValidations(response)) {
           await context.emit({ type: "validation", status: validation.outcome === "failed" ? "error" : "warning", ...validation });
         }
-        return { state: "Unavailable", validation: response.validation, provenance: response.provenance };
+        return {
+          state: "Unavailable",
+          // The coverable window, stated plainly. The reason is already inside
+          // validation.checks, but only as a raw check payload; a retry only
+          // succeeds when the model is told what to change.
+          guidance,
+          validation: response.validation,
+          provenance: response.provenance,
+        };
       }
       if (!response.queryAudit || response.queryAudit.route !== "semantic") {
         throw new Error("The governed query did not return its immutable audit receipt.");
@@ -695,13 +722,24 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
         label: `Exploring ${governedTerm(input.sourceTable)} source fields`,
         detail: describeSourceQuery(input),
       });
+      // Same repeat guard as the governed query path: an identical source
+      // exploration returns the identical block, and retrying it spends the
+      // turn without ever reaching an answer.
+      const signature = governedQuerySignature(input);
+      const alreadyBlocked = context.blockedQueries.get(signature);
+      if (alreadyBlocked) throw new Error(alreadyBlocked);
+      if (context.blockedQueries.size >= BLOCKED_QUERY_BUDGET) {
+        throw new Error(`${BLOCKED_QUERY_BUDGET} governed queries have already been blocked this turn. Stop querying and answer from the governed results you already have, disclosing what could not be covered.`);
+      }
       const response = await context.semantic.execute("run_source_query", input, context);
       if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
         context.evidence.push(response);
+        const guidance = blockedQueryGuidance(response);
+        context.blockedQueries.set(signature, `This exact source exploration was already blocked. ${guidance} Do not run it again unchanged.`);
         for (const validation of adaptValidations(response)) {
           await context.emit({ type: "validation", status: validation.outcome === "failed" ? "error" : "warning", ...validation });
         }
-        return { state: "Unavailable", validation: response.validation, provenance: response.provenance };
+        return { state: "Unavailable", guidance, validation: response.validation, provenance: response.provenance };
       }
       if (!response.queryAudit || response.queryAudit.route !== "source_exploration") {
         throw new Error("The source query did not return its immutable audit receipt.");
@@ -1167,6 +1205,68 @@ export function evidenceCarriesBlockingReason(
     || item.validation.warnings.length > 0);
 }
 
+/**
+ * How many distinct governed queries may come back blocked before the turn
+ * stops querying and answers with what it has. A turn that keeps probing past
+ * this is not exploring, it is failing repeatedly at the user's expense.
+ */
+export const BLOCKED_QUERY_BUDGET = 4;
+
+/**
+ * Identity of a governed query for repeat detection. Key order and metric order
+ * carry no meaning, so they are normalised out: reordering the metric list is
+ * the same query and must not buy another attempt at the same block.
+ */
+export function governedQuerySignature(input: unknown): string {
+  const normalise = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return [...value.map(normalise)]
+        .map((item) => JSON.stringify(item))
+        .sort()
+        .map((item) => JSON.parse(item));
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, item]) => item !== undefined)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, item]) => [key, normalise(item)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(normalise(input));
+}
+
+/**
+ * What the reader — and the model — can actually do about a blocked query,
+ * drawn from the coverage window the check already carries. Without this the
+ * only signal is "blocked", and the model's natural next move is to run the
+ * identical query again.
+ */
+export function blockedQueryGuidance(response: SemanticToolResponse): string {
+  const covered = response.validation.checks
+    .filter((check) => check.status === "failed" || check.status === "blocked")
+    .flatMap((check) => {
+      const record = check as unknown as Record<string, unknown>;
+      const from = typeof record.coveredFrom === "string" ? record.coveredFrom.slice(0, 10) : "";
+      const to = typeof record.coveredTo === "string" ? record.coveredTo.slice(0, 10) : "";
+      const capability = typeof record.capability === "string" ? record.capability : "this data";
+      return from && to ? [`${capability} is only queryable from ${from} to ${to}`] : [];
+    });
+  if (covered.length > 0) {
+    return `${[...new Set(covered)].join("; ")}. Re-run with a period inside that range, or drop the metrics that need it and answer from the rest.`;
+  }
+  const missing = [...new Set(response.capabilities?.missing ?? [])];
+  if (missing.length > 0) {
+    return `It needs ${governedTermList(missing, 3)}, which no connected source provides. Answer from the Topics that are supported instead.`;
+  }
+  const warning = response.validation.warnings.find(Boolean);
+  return warning
+    ? `${sanitizeTraceText(warning, 300)} Change the period or the metrics before trying again.`
+    : "Change the period, the metrics or the Topic before trying again.";
+}
+
 /** Evidence from a query that came back with nothing usable behind it. */
 export function isBlockedEvidence(item: SemanticToolResponse): boolean {
   return item.state === "unavailable"
@@ -1387,6 +1487,7 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
   const appliedFilters: string[] = [];
   const queriedDimensions: string[] = [];
   const fetchedFieldValues = new Map<string, Set<string>>();
+  const blockedQueries = new Map<string, string>();
   const observationGate = createObservationGate();
   const semantic = options.semanticClient ?? new SemanticServiceClient(options.semanticServiceUrl, options.semanticSigningSecret);
   let directoryValues: readonly Readonly<{ value: string }>[] = [];
@@ -1443,6 +1544,7 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     appliedFilters,
     queriedDimensions,
     fetchedFieldValues,
+    blockedQueries,
     observationGate,
     promptRouteContract,
     confirmationReceipt: options.confirmedPreference,
