@@ -348,6 +348,83 @@ function numericTokens(narrative: string): readonly NumericToken[] {
     .filter((token): token is NumericToken => token !== null);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/** True when this fragment is where the narrative actually states the figure. */
+function fragmentStatesToken(fragment: string, rawToken: string): boolean {
+  const target = parseNumericToken(rawToken);
+  if (!target) {
+    // Word-form claims ("doubled", "thirty") are matched as whole words.
+    return new RegExp(`\\b${escapeRegExp(rawToken)}\\b`, "iu").test(fragment);
+  }
+  return numericTokens(fragment).some((token) =>
+    token.token === target.token
+    || (token.value === target.value
+      && token.scale === target.scale
+      && token.decimals === target.decimals));
+}
+
+/** A markdown table's `| --- |` rule, which carries no figure of its own. */
+const tableSeparatorPattern = /^\|?[\s:|-]*-[\s:|-]*\|?$/u;
+
+/**
+ * Sentence boundaries as a business narrative actually writes them. Splitting
+ * on a full stop followed by whitespace keeps "$37,558.70" and "97.9%" whole,
+ * because their stops are followed by a digit rather than a space.
+ */
+function splitSentences(line: string): readonly string[] {
+  return line.split(/(?<=[.!?])\s+/u).filter((part) => part.trim().length > 0);
+}
+
+/**
+ * A markdown table whose data rows were all removed states nothing, so its
+ * header and rule are dropped with them rather than left as a bare frame.
+ */
+function dropEmptyTables(lines: readonly string[]): readonly string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const isSeparator = tableSeparatorPattern.test(line.trim()) && line.includes("|");
+    if (!isSeparator) { kept.push(line); continue; }
+    const next = lines[index + 1]?.trim() ?? "";
+    if (next.startsWith("|")) { kept.push(line); continue; }
+    // Header immediately above a rule with no surviving rows below it.
+    if (kept.at(-1)?.trim().startsWith("|")) kept.pop();
+  }
+  return kept;
+}
+
+/**
+ * Removes only the parts of a narrative that state an unsupported figure, and
+ * keeps everything else the author wrote. One bad number invalidates its own
+ * sentence or its own table row — not the whole answer — so an answer that
+ * loses a clause is worth far more to the reader than a stub that says nothing.
+ * Returns "" only when no part of the narrative survived.
+ */
+export function redactUngroundedProse(
+  narrative: string,
+  ungrounded: readonly string[],
+): string {
+  if (ungrounded.length === 0) return narrative;
+  const carries = (fragment: string): boolean =>
+    ungrounded.some((token) => fragmentStatesToken(fragment, token));
+  const kept: string[] = [];
+  for (const line of narrative.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("|")) {
+      // Table rows are whole records: drop the offending row, keep the table.
+      if (tableSeparatorPattern.test(trimmed) || !carries(line)) kept.push(line);
+      continue;
+    }
+    if (!carries(line)) { kept.push(line); continue; }
+    const survivors = splitSentences(line).filter((sentence) => !carries(sentence));
+    if (survivors.length > 0) kept.push(survivors.join(" ").trim());
+  }
+  return dropEmptyTables(kept).join("\n").replace(/\n{3,}/gu, "\n\n").trim();
+}
+
 function findUngroundedNumbersWithEvidence(
   narrative: string,
   cellValues: readonly number[],
