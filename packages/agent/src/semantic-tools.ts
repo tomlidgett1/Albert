@@ -22,6 +22,7 @@ export const REMOTE_SEMANTIC_AGENT_TOOL_NAMES = [
   "list_field_values",
   "run_semantic_query",
   "run_source_query",
+  "run_exploratory_sql",
   "get_data_health",
   "remember",
 ] as const;
@@ -245,6 +246,17 @@ export const semanticToolInputSchemas = Object.freeze({
   }).strict(),
   run_semantic_query: semanticQueryToolInputSchema,
   run_source_query: sourceQuerySpecSchema,
+  /**
+   * Model-authored read-only SQL, for questions no governed metric expresses.
+   * Safety does not rest on this schema: the statement runs READ ONLY as
+   * semantic_ro under row level security, so it can neither write nor see
+   * another tenant. See services/semantic-query/src/exploratory-sql.ts.
+   */
+  run_exploratory_sql: z.object({
+    sql: z.string().trim().min(1).max(8_000),
+    purpose: z.string().trim().min(1).max(300),
+    limit: z.number().int().min(1).max(500).default(100),
+  }).strict(),
   get_data_health: z.object({ domain: z.string().trim().min(1).max(100) }).strict(),
   remember: z.object({
     preference: z.enum(["sales.default_metric", "employee.performance_default", "reconciliation.pos_posting_topology", "finance.profit_default", "calendar.year_basis"]),
@@ -461,6 +473,11 @@ export type SemanticToolOutputMap = {
     state: "Exploratory";
     authorityWarning?: string;
     promotionCandidateId: string;
+  }>;
+  run_exploratory_sql: GovernedResult & Readonly<{
+    state: "Exploratory";
+    /** Always set: an exploratory figure is never a certified metric. */
+    ungovernedWarning: string;
   }>;
   get_data_health: NonNullable<SemanticToolResponse["dataHealth"]>;
   ask_user: Readonly<{ status: "awaiting_user" }>;

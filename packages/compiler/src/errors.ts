@@ -6,6 +6,7 @@ export type CompilerErrorCode =
   | "FORBIDDEN_ROLE"
   | "MISSING_CAPABILITY"
   | "ILLEGAL_DIMENSION"
+  | "ILLEGAL_SQL"
   | "ILLEGAL_JOIN"
   | "CROSS_FACT_QUERY"
   | "COMPOSITE_REQUIRED"
