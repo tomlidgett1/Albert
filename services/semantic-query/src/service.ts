@@ -643,33 +643,70 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const dimension = resolveCanonicalDimension(parsed.field, this.dependencies.registry, context.role);
     let fieldValues: readonly Readonly<{ value: string; count?: number }>[];
     if (dimension) {
-      const parameters: unknown[] = [context.tenantId];
-      let queryPredicate = "";
-      if (parsed.query) {
-        parameters.push(`%${escapeLike(parsed.query)}%`);
-        queryPredicate = ` AND ${quoteIdentifier(dimension.displayField)} ILIKE $2 ESCAPE '\\'`;
+      fieldValues = await this.queryDimensionValues(dimension, parsed, context, tenant);
+      // A literal substring search misses the tenant's own wording by a single
+      // character — "Full Services" never matches the catalogue's "Full
+      // Service". Retry on the query's words so an ordinary plural, an extra
+      // word, or a different word order still resolves. Without this the model
+      // is told the term does not exist, and the documented recovery — listing
+      // the field unfiltered — is impossible against tens of thousands of
+      // values.
+      if (fieldValues.length === 0 && parsed.query) {
+        const tokens = searchTokens(parsed.query);
+        if (tokens.length > 0) {
+          fieldValues = await this.queryDimensionValues(dimension, parsed, context, tenant, tokens);
+        }
       }
-      parameters.push(parsed.limit);
-      const limitParameter = `$${parameters.length}`;
-      const result = await this.dependencies.database.queryAsSemanticRole({
-        tenantId: context.tenantId,
-        statementTimeoutMs: Math.min(this.statementTimeoutMs, 5_000),
-        parameters,
-        expectedIdentityGraph: identityGraphForTenant(tenant),
-        capabilityEvidence: capabilityEvidence(context),
-        sql: `SELECT ${quoteIdentifier(dimension.displayField)}::text AS value\nFROM ${quoteQualified(dimension.table)}\nWHERE tenant_id=$1${queryPredicate}\nORDER BY ${quoteIdentifier(dimension.displayField)}\nLIMIT ${limitParameter}`,
-      });
-      fieldValues = result.rows.flatMap((row) => typeof row.value === "string" ? [{ value: row.value }] : []);
     } else if (this.dependencies.sourceCatalogue.listFieldValues) {
       fieldValues = await this.dependencies.sourceCatalogue.listFieldValues(context, parsed.field, parsed.query, parsed.limit);
     } else {
-      throw new SemanticCompilerError("ILLEGAL_DIMENSION", `Field ${parsed.field} is not an allowlisted governed dimension or source field.`);
+      throw new SemanticCompilerError(
+        "ILLEGAL_DIMENSION",
+        `Field ${parsed.field} is not an allowlisted governed dimension or source field.${legalDimensionHint(parsed.field, this.dependencies.registry, context.role)}`,
+      );
     }
     return metadataResponse(tenant, this.dependencies.registry.version, { route: "list_field_values", ...parsed }, {
       fieldValues: [...fieldValues],
       definitionsApplied: [parsed.field],
       definitionDetails: [{ id: parsed.field, label: humanize(parsed.field), definition: `Allowlisted values for ${parsed.field}.` }],
     });
+  }
+
+  /**
+   * One allowlisted dimension-value lookup. With no tokens this is the literal
+   * substring search; with tokens every word must appear somewhere in the
+   * value. A search is ordered tightest-match-first, because a bounded limit
+   * over an alphabetical list returns whichever values happen to sort early —
+   * "Gen" returned a page of "Bosch Chainring Gen4" components and buried the
+   * "Gen Serv" the question was about. An unfiltered browse stays alphabetical.
+   */
+  private async queryDimensionValues(
+    dimension: Readonly<{ table: string; displayField: string }>,
+    parsed: Readonly<{ query?: string; limit: number }>,
+    context: TrustedToolContext,
+    tenant: Parameters<typeof identityGraphForTenant>[0],
+    tokens: readonly string[] = [],
+  ): Promise<readonly Readonly<{ value: string }>[]> {
+    const field = quoteIdentifier(dimension.displayField);
+    const parameters: unknown[] = [context.tenantId];
+    const predicates: string[] = [];
+    for (const pattern of tokens.length > 0
+      ? tokens.map((token) => `%${escapeLike(token)}%`)
+      : (parsed.query ? [`%${escapeLike(parsed.query)}%`] : [])) {
+      parameters.push(pattern);
+      predicates.push(` AND ${field} ILIKE $${parameters.length} ESCAPE '\\'`);
+    }
+    parameters.push(parsed.limit);
+    const ordering = predicates.length > 0 ? `char_length(${field}), ${field}` : field;
+    const result = await this.dependencies.database.queryAsSemanticRole({
+      tenantId: context.tenantId,
+      statementTimeoutMs: Math.min(this.statementTimeoutMs, 5_000),
+      parameters,
+      expectedIdentityGraph: identityGraphForTenant(tenant),
+      capabilityEvidence: capabilityEvidence(context),
+      sql: `SELECT ${field}::text AS value\nFROM ${quoteQualified(dimension.table)}\nWHERE tenant_id=$1${predicates.join("")}\nORDER BY ${ordering}\nLIMIT $${parameters.length}`,
+    });
+    return result.rows.flatMap((row) => typeof row.value === "string" ? [{ value: row.value }] : []);
   }
 
   private async getDataHealth(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
@@ -1321,6 +1358,44 @@ function resolveDimensionDefinition(name: string, registry: SemanticRegistry, ro
   const topics = [...registry.topics.values()].filter((topic) => topic.roles.includes(role) && topic.approvedDimensions.includes(name));
   if (!topics.length) return undefined;
   return { id: name, kind: "dimension", label: humanize(name), topics: topics.map((topic) => topic.id) };
+}
+
+/**
+ * The searchable words in a user's phrase, normalised just enough to survive
+ * the differences that carry no meaning in a product name: case, punctuation
+ * and a trailing plural. Bounded so one phrase cannot fan out into an
+ * unbounded predicate list.
+ */
+export function searchTokens(query: string): readonly string[] {
+  const tokens = query
+    .toLocaleLowerCase("en-AU")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length >= 2)
+    .map((token) => token.length >= 4 && token.endsWith("s") ? token.slice(0, -1) : token);
+  return Object.freeze([...new Set(tokens)].slice(0, 4));
+}
+
+/**
+ * Names the fields the model may actually ask for. An error that only says
+ * "not allowlisted" costs a whole turn: the model retries the same illegal
+ * field with a different query, burns the turn ceiling, and dead-ends. The
+ * preference note is here because the server-owned lenses read like field
+ * names and are the mistake this error is most often raised for.
+ */
+export function legalDimensionHint(
+  field: string,
+  registry: SemanticRegistry,
+  role: TrustedToolContext["role"],
+): string {
+  const allowed = [...new Set([...registry.topics.values()]
+    .filter((topic) => topic.roles.includes(role))
+    .flatMap((topic) => topic.approvedDimensions))]
+    .filter((name) => resolveCanonicalDimension(name, registry, role))
+    .sort();
+  const preference = /^(sales|employee|reconciliation|finance|calendar)\./u.test(field)
+    ? ` ${field} looks like a server-owned preference lens, not a field: offer it through ask_user's options argument instead, never list_field_values.`
+    : "";
+  return `${preference}${allowed.length > 0 ? ` Allowlisted fields for this role: ${allowed.join(", ")}.` : ""}`;
 }
 
 function resolveCanonicalDimension(
