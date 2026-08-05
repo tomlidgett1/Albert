@@ -15,6 +15,13 @@ kill_timeout = 30
   ALBERT_SEMANTIC_RELAY_TENANT_BATCH_SIZE = "10"
   ALBERT_SEMANTIC_RELAY_CANDIDATE_BATCH_SIZE = "20"
   ALBERT_SEMANTIC_RELAY_LEASE_SECONDS = "90"
+  # The dogfood Postgres allows 60 connections in total, shared with Supavisor,
+  # PostgREST, Storage and the sync/transform runtimes. The default pools claim
+  # 18 of those for one machine, which pushed the instance past its ceiling and
+  # made new checkouts fail with too_many_connections mid-turn.
+  ALBERT_CONTROL_PLANE_POOL_SIZE = "2"
+  ALBERT_ANALYTICAL_READ_POOL_SIZE = "4"
+  ALBERT_SEMANTIC_METADATA_POOL_SIZE = "2"
   NODE_ENV = "development"
 
 [processes]
