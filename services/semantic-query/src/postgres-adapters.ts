@@ -117,12 +117,12 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
       if(packVersions[connector]&&packVersions[connector]!==pack)throw new Error(`Conflicting active pack versions for ${connector}.`);
       packVersions[connector]=pack;
       if(typeof row.connection_id==="string")connectorByConnection.set(row.connection_id,connector);
-      if(typeof row.connection_id==="string"&&row.source_watermark instanceof Date)sourceWatermarks[row.connection_id]=row.source_watermark.toISOString();
-      if(typeof row.connection_id==="string"&&typeof row.source_watermark==="string")sourceWatermarks[row.connection_id]=row.source_watermark;
+      if(typeof row.connection_id==="string"&&row.source_watermark instanceof Date)recordSourceWatermark(sourceWatermarks,row.connection_id,row.source_watermark.toISOString());
+      if(typeof row.connection_id==="string"&&typeof row.source_watermark==="string")recordSourceWatermark(sourceWatermarks,row.connection_id,row.source_watermark);
     }
     for(const row of statsResult.rows){
       const values=asRecord(row.source_watermarks,"source_watermarks");
-      for(const [key,value] of Object.entries(values))if(typeof value==="string")sourceWatermarks[key]=value;
+      for(const [key,value] of Object.entries(values))if(typeof value==="string")recordSourceWatermark(sourceWatermarks,key,value);
     }
     const authoritySelections:NonNullable<TenantSemanticContext["authoritySelections"]>[number][]=[];
     const authorityByConcept:Record<string,string>={};
@@ -596,6 +596,22 @@ function requiredSemanticCapabilityEvidence(
 
 function parseCacheKey(key:string):{tenantId:string;bundleHash:string}{const separator=key.indexOf(":");if(separator<1)throw new Error("Semantic cache key is malformed.");const tenantId=key.slice(0,separator),bundleHash=key.slice(separator+1);if(!/^[a-f0-9]{64}$/.test(bundleHash))throw new Error("Semantic cache bundle hash is malformed.");return{tenantId,bundleHash};}
 function parseSemanticResponse(value:unknown):SemanticToolResponse{const record=typeof value==="string"?JSON.parse(value) as unknown:value;if(!record||typeof record!=="object"||typeof (record as Row).state!=="string"||!("provenance" in record))throw new Error("Cached semantic response failed validation.");return record as SemanticToolResponse;}
+/**
+ * quality.pipeline_stats carries one watermark row per domain, and every domain
+ * of a connector repeats the same connection id. Assigning each row in turn let
+ * whichever domain sorted last overwrite the rest, so a connector whose product
+ * catalogue had not resynced since 2021 reported the whole connection as five
+ * years stale and the runtime refused current sales as unsafe. Watermarks are
+ * only ever consumed as "how recent is this connection", so keep the latest.
+ */
+function recordSourceWatermark(watermarks:Record<string,string>,connectionId:string,candidate:string):void{
+  const parsed=Date.parse(candidate);
+  if(!Number.isFinite(parsed))return;
+  const existing=watermarks[connectionId];
+  if(existing!==undefined&&Date.parse(existing)>=parsed)return;
+  watermarks[connectionId]=candidate;
+}
+
 function asRecord(value:unknown,label:string):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw new Error(`${label} must be an object.`);return value as Record<string,unknown>;}
 function optionalRecord(value:unknown):Record<string,unknown>{return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}
 function requiredString(value:unknown,label:string):string{if(typeof value!=="string"||!value.trim())throw new Error(`${label} is missing.`);return value;}

@@ -45,6 +45,21 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
 
   async finalize(rawInput: AnswerArtifactFinalizationInput): Promise<AnswerArtifactFinalizationResult> {
     const input = answerArtifactFinalizationInputSchema.parse(rawInput);
+    // The pooler recycles connections underneath us. Finalization is the last
+    // step of an otherwise complete turn, and every attempt either commits or
+    // rolls back whole, so a dropped connection is retried rather than losing
+    // the answer. A committed attempt replays idempotently inside the control
+    // plane, which keeps a retry safe even if the drop hid a successful commit.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.attemptFinalize(input);
+      } catch (error) {
+        if (attempt >= 2 || !isRecoverableConnectionFailure(error)) throw error;
+      }
+    }
+  }
+
+  private async attemptFinalize(input: AnswerArtifactFinalizationInput): Promise<AnswerArtifactFinalizationResult> {
     const queryExecutions = await this.loadQueryExecutions(input);
     assertEvidenceMatchesAnswerState(input, queryExecutions);
 
@@ -147,6 +162,21 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
       client.release();
     }
   }
+}
+
+/**
+ * Connection-level failures only. A SQLSTATE raised by the finalization
+ * function itself is a real rejection and must surface unchanged.
+ */
+const RECOVERABLE_CONNECTION_CODES = new Set([
+  "08000", "08001", "08003", "08004", "08006", "08007", "57P01", "57P02", "57P03",
+]);
+
+function isRecoverableConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string") return RECOVERABLE_CONNECTION_CODES.has(code);
+  return /Connection terminated|connection terminated|ECONNRESET|EPIPE|socket hang up/u.test(error.message);
 }
 
 function assertEvidenceMatchesAnswerState(

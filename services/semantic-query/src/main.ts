@@ -42,9 +42,9 @@ export async function startSemanticServiceFromEnvironment(environment:NodeJS.Pro
 async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEnv):Promise<SemanticServiceComposition>{
   const pg=await loadPg();
   const analyticalDatabaseUrl=required(environment,"ANALYTICAL_DATABASE_URL");
-  const controlPlanePool=new pg.Pool({connectionString:required(environment,"CONTROL_PLANE_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_CONTROL_PLANE_POOL_SIZE,4),application_name:"albert-semantic-control"});
-  const analyticalReadPool=new pg.Pool({connectionString:analyticalDatabaseUrl,max:integerEnvironment(environment.ALBERT_ANALYTICAL_READ_POOL_SIZE,10),application_name:"albert-semantic-read"});
-  const semanticMetadataPool=new pg.Pool({connectionString:required(environment,"ALBERT_SEMANTIC_METADATA_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_SEMANTIC_METADATA_POOL_SIZE,4),application_name:"albert-semantic-metadata"});
+  const controlPlanePool=guardPool(new pg.Pool({connectionString:required(environment,"CONTROL_PLANE_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_CONTROL_PLANE_POOL_SIZE,4),application_name:"albert-semantic-control"}),"control_plane");
+  const analyticalReadPool=guardPool(new pg.Pool({connectionString:analyticalDatabaseUrl,max:integerEnvironment(environment.ALBERT_ANALYTICAL_READ_POOL_SIZE,10),application_name:"albert-semantic-read"}),"analytical_read");
+  const semanticMetadataPool=guardPool(new pg.Pool({connectionString:required(environment,"ALBERT_SEMANTIC_METADATA_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_SEMANTIC_METADATA_POOL_SIZE,4),application_name:"albert-semantic-metadata"}),"semantic_metadata");
   try{
     const embeddingProvider=new OpenAIEmbeddingProvider({apiKey:required(environment,"OPENAI_API_KEY"),baseURL:required(environment,"OPENAI_BASE_URL"),timeoutMs:integerEnvironment(environment.ALBERT_EMBEDDING_TIMEOUT_MS,20_000)});
     const relayEnvironment={...environment,ALBERT_SEMANTIC_RELAY_WORKER_ID:environment.ALBERT_SEMANTIC_RELAY_WORKER_ID??"semantic-promotion-relay"};
@@ -63,6 +63,20 @@ async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEn
       promotionRelayLeaseSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_LEASE_SECONDS,90),
     });
   }catch(error){await Promise.all([controlPlanePool.end?.(),analyticalReadPool.end?.(),semanticMetadataPool.end?.()]);throw error;}
+}
+
+/**
+ * Postgres closes idle pooled connections (proxy timeouts, failovers, restarts).
+ * pg surfaces that as an 'error' event on the pool, and an EventEmitter with no
+ * 'error' listener throws, which took the whole service down mid-turn: in-flight
+ * tool calls degraded to unavailable answers and finalization requests failed
+ * with artifact_finalization_failed. Logging the event lets pg discard the dead
+ * client and hand out a fresh one on the next checkout.
+ */
+function guardPool(pool:ClosablePgPool,name:string):ClosablePgPool{
+  (pool as {on?:(event:"error",listener:(error:Error)=>void)=>unknown})
+    .on?.("error",(error)=>{logger.error("database_pool_error",{pool:name,...safeErrorEvidence(error)});});
+  return pool;
 }
 
 async function loadExternalComposition(modulePath:string,signingSecret:string):Promise<SemanticServiceComposition>{
