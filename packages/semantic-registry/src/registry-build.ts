@@ -1,5 +1,9 @@
+import { DERIVED_DATE_DIMENSIONS } from "../../compiler/src/compiler.js";
 import { createHash } from "node:crypto";
 import { registryDocumentSchema, type RegistryDocument, type SemanticRegistry } from "./schema.js";
+
+// Consumers import the built registry's type alongside buildRegistry itself.
+export type { SemanticRegistry } from "./schema.js";
 
 export function parseRegistryDocument(text: string): RegistryDocument {
   let raw: unknown;
@@ -93,9 +97,9 @@ export function validateRegistry(document: RegistryDocument): void {
     if (!fact) throw new Error(`Metric ${metric.id} references unknown fact ${metric.baseFact}.`);
     for (const dimension of metric.allowedDimensions) {
       if (dimension === "business_date") continue;
-      if (dimension === "calendar_week") {
+      if (DERIVED_DATE_DIMENSIONS.includes(dimension)) {
         if (!fact.timeFields.includes("business_date")) {
-          throw new Error(`Metric ${metric.id} requires business_date for calendar_week.`);
+          throw new Error(`Metric ${metric.id} requires business_date for ${dimension}.`);
         }
         continue;
       }

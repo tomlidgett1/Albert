@@ -16,10 +16,10 @@ const capabilities=new Set([...registry.metrics.values()].flatMap((metric)=>metr
 const context={tenantId:FIXTURE_TENANT_ID,role:"owner" as const,capabilities,now:FIXTURE_NOW,timezone:"Australia/Melbourne",tradingDayCutoff:"00:00",fiscalYearStartMonth:7,fiscalYearStartDay:1,weekStartsOn:1,tenantParameters:{active_customer_days:90,lapsed_customer_days:180,stock_velocity_days:30}};
 const march={type:"absolute" as const,from:"2026-03-01T00:00:00.000Z",to:"2026-04-01T00:00:00.000Z"};
 
-test("registry publishes the generated 47-contract, 7-Topic model",()=>{
-  assert.equal(registry.metrics.size,47);assert.equal(registry.topics.size,7);
+test("registry publishes the generated 51-contract, 8-Topic model",()=>{
+  assert.equal(registry.metrics.size,51);assert.equal(registry.topics.size,8);
   const domains=[...registry.metrics].reduce<Record<string,number>>((counts,[id])=>{const domain=id.split(".")[0] as string;counts[domain]=(counts[domain]??0)+1;return counts;},{});
-  assert.deepEqual(domains,{commerce:14,customers:6,inventory:7,workforce:6,finance:9,composites:5});
+  assert.deepEqual(domains,{commerce:14,customers:7,inventory:7,workforce:6,finance:9,composites:8});
 });
 
 test("canonical executable declarations contain exactly sixteen dimensions and thirteen facts",()=>{

@@ -68,13 +68,47 @@ export function resolveTenantTimeRange(
   }
 
   const currentBusinessDate = businessDateForInstant(now, calendar);
-  let startDate = currentBusinessDate;
-  if (range.type === "last_n_days") startDate = addDays(currentBusinessDate, -(range.days - 1));
-  if (range.type === "month_to_date") startDate = { year: currentBusinessDate.year, month: currentBusinessDate.month, day: 1 };
-  if (range.type === "quarter_to_date") startDate = fiscalQuarterStart(currentBusinessDate, calendar);
-  if (range.type === "year_to_date") startDate = fiscalYearStart(currentBusinessDate, calendar);
-  const endDate = addDays(currentBusinessDate, 1);
-  return rangeFromBusinessDates(startDate, endDate, calendar);
+  // Ranges are half-open on the business date: `endDate` is the first day NOT
+  // included. Periods that run "to date" end tomorrow so today counts; whole
+  // elapsed periods end where the current one begins, so today's partial
+  // trading never dilutes a completed week, month, quarter or year.
+  const monthStart: DateParts = { year: currentBusinessDate.year, month: currentBusinessDate.month, day: 1 };
+  const weekStart = startOfWeek(currentBusinessDate, calendar);
+  const quarterStart = fiscalQuarterStart(currentBusinessDate, calendar);
+  const yearStart = fiscalYearStart(currentBusinessDate, calendar);
+  const bounds: Readonly<Record<typeof range.type, Readonly<{ start: DateParts; end: DateParts }> | undefined>> = {
+    today: { start: currentBusinessDate, end: addDays(currentBusinessDate, 1) },
+    yesterday: { start: addDays(currentBusinessDate, -1), end: currentBusinessDate },
+    last_n_days: range.type === "last_n_days"
+      ? { start: addDays(currentBusinessDate, -(range.days - 1)), end: addDays(currentBusinessDate, 1) }
+      : undefined,
+    last_n_complete_days: range.type === "last_n_complete_days"
+      ? { start: addDays(currentBusinessDate, -range.days), end: currentBusinessDate }
+      : undefined,
+    month_to_date: { start: monthStart, end: addDays(currentBusinessDate, 1) },
+    quarter_to_date: { start: quarterStart, end: addDays(currentBusinessDate, 1) },
+    year_to_date: { start: yearStart, end: addDays(currentBusinessDate, 1) },
+    last_complete_week: { start: addDays(weekStart, -7), end: weekStart },
+    last_complete_month: { start: addMonths(monthStart, -1), end: monthStart },
+    last_n_complete_weeks: range.type === "last_n_complete_weeks"
+      ? { start: addDays(weekStart, -7 * range.weeks), end: weekStart }
+      : undefined,
+    last_n_complete_months: range.type === "last_n_complete_months"
+      ? { start: addMonths(monthStart, -range.months), end: monthStart }
+      : undefined,
+    last_complete_quarter: { start: addMonths(quarterStart, -3), end: quarterStart },
+    last_complete_year: { start: addYears(yearStart, -1), end: yearStart },
+  };
+  const resolved = bounds[range.type];
+  if (!resolved) throw new SemanticCompilerError("INVALID_IR", `Unsupported time range ${range.type}.`);
+  return rangeFromBusinessDates(resolved.start, resolved.end, calendar);
+}
+
+/** First day of the business week containing `date`, per the tenant calendar. */
+function startOfWeek(date: DateParts, calendar: TenantCalendarConfig): DateParts {
+  const isoWeekday = ((new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay() + 6) % 7) + 1;
+  const offset = (isoWeekday - calendar.weekStartsOn + 7) % 7;
+  return addDays(date, -offset);
 }
 
 export function resolveComparisonTimeRange(

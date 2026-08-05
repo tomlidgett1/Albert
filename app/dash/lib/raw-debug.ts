@@ -48,6 +48,8 @@ export type RawDebugTurn = Readonly<{
   durationMs?: number;
   eventCounts: Readonly<Record<string, number>>;
   entries: readonly RawDebugEntry[];
+  /** Accepted trace events in arrival order; the Simple view is derived from these. */
+  events: readonly TraceEvent[];
 }>;
 
 export type RawDebugRecorder = Readonly<{
@@ -129,6 +131,7 @@ export function createRawDebugRecorder(
     status: "streaming",
     eventCounts: {},
     entries: [],
+    events: [],
   };
   let lastAtMs = 0;
 
@@ -188,6 +191,7 @@ export function createRawDebugRecorder(
         summarizeEvent(event),
         { data: event, serverAt: event.occurredAt },
         {
+          events: [...turn.events, event],
           eventCounts: {
             ...turn.eventCounts,
             [event.type]: (turn.eventCounts[event.type] ?? 0) + 1,

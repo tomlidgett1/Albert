@@ -161,7 +161,8 @@ test("the Connections component exposes per-account manage, sync progress, disco
   assert.match(connectionsComponent, /onClick=\{\(\) => onConnect\?\.\(provider\.id\)\}/u);
   assert.match(connectionsComponent, /data-connection-id=\{connection\.connectionId\}/u);
   assert.match(connectionsComponent, /ConnectionSyncProgress/u);
-  assert.match(connectionsComponent, /CONNECTION_VIEWS = \["apps", "review"\]/u);
+  assert.match(connectionsComponent, /CONNECTION_VIEWS = \["apps"\]/u);
+  assert.doesNotMatch(connectionsComponent, /activeView === "review"/u);
   assert.doesNotMatch(connectionsComponent, /activeView === "readiness"/u);
   assert.match(dashPage, /window\.location\.assign\(`\/api\/oauth\/\$\{providerId\}\/start`\)/u);
 });

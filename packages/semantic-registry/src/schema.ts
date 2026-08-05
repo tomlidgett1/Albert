@@ -63,7 +63,7 @@ export const metricContractSchema = z.object({
   filters: z.array(filterContractSchema),
   refundHandling: z.enum(["subtract", "exclude", "not_applicable"]),
   aggregation: z.enum(["sum", "count", "count_distinct", "average", "ratio", "last_value", "derived"]),
-  unit: z.enum(["currency", "units", "count", "percent", "hours", "days", "currency_per_unit"]),
+  unit: z.enum(["currency", "units", "count", "ratio", "percent", "hours", "days", "currency_per_unit"]),
   authority: z.string().min(1),
   allowedDimensions: z.array(z.string().min(1)).min(1),
   requiredCapabilities: z.array(z.enum(CAPABILITY_IDS)),
@@ -77,6 +77,13 @@ export const joinContractSchema = z.object({
   table: z.string().regex(/^core\.[a-z_]+$/),
   factKey: z.string().regex(/^[a-z_]+$/),
   dimensionKey: z.string().regex(/^[a-z_]+$/),
+  /**
+   * Self-referencing column followed once to report a row by its parent — the
+   * category rollup a retailer means by "bikes versus parts versus workshop".
+   * A row with no parent reports as itself, so a top-level group is its own
+   * rollup and nothing is silently dropped from a total.
+   */
+  rollupKey: z.string().regex(/^[a-z_]+$/).optional(),
   identityType: z.enum(["worker", "location", "product_variant", "customer_account", "supplier"]).optional(),
   cardinality: z.enum(["many_to_one", "one_to_one"]),
   fields: z.record(z.string(), z.string().regex(/^[a-z_]+$/)),

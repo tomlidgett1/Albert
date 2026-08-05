@@ -201,7 +201,7 @@ export function compileSemanticQuery(
         `${current} AS ${quoteIdentifier(alias)}`,
         `${comparison} AS ${quoteIdentifier(`${alias}__comparison`)}`,
         `(${current} - ${comparison}) AS ${quoteIdentifier(`${alias}__change`)}`,
-        `CASE WHEN ${comparison} = 0 THEN NULL ELSE ((${current} - ${comparison}) * 100 / ${comparison}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
+        `CASE WHEN ${comparison} = 0 THEN NULL ELSE ROUND(CAST((${current} - ${comparison}) * 100 / ${comparison} AS numeric), ${CHANGE_PERCENT_PRECISION}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
       ];
     });
     const validationSelects = renderCombinedValidationSelects(
@@ -241,7 +241,7 @@ export function compileSemanticQuery(
     }, context.maxEstimatedCost), query, registry);
   }
   const limitParameter = params.add(query.limit);
-  const sql = `${rendered.sql}\n${renderSort(query.sort, rendered.metricAliases)}LIMIT ${limitParameter}`;
+  const sql = `${rendered.sql}\n${renderSort(query.sort, rendered.metricAliases, chronologicalOrderColumn(query.dimensions))}LIMIT ${limitParameter}`;
   return attachValidationEvidence(enforceCostBudget({
     sql,
     parameters: params.values,
@@ -302,7 +302,7 @@ function attachValidationEvidence(
     factIds.add(fact.id);
 
     for (const dimension of subquery.dimensions) {
-      if (dimension === "business_date" || dimension === "calendar_week") continue;
+      if (isDerivedDateDimension(dimension)) continue;
       const join = fact.joins.find((candidate) =>
         candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension));
       if (!join) {
@@ -542,7 +542,7 @@ function compileComposite(
         `${current} AS ${quoteIdentifier(alias)}`,
         `${comparison} AS ${quoteIdentifier(`${alias}__comparison`)}`,
         `(${current} - ${comparison}) AS ${quoteIdentifier(`${alias}__change`)}`,
-        `CASE WHEN ${comparison} = 0 THEN NULL ELSE ((${current} - ${comparison}) * 100 / ${comparison}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
+        `CASE WHEN ${comparison} = 0 THEN NULL ELSE ROUND(CAST((${current} - ${comparison}) * 100 / ${comparison} AS numeric), ${CHANGE_PERCENT_PRECISION}) END AS ${quoteIdentifier(`${alias}__change_pct`)}`,
       ];
     });
     const validationSelects = renderCombinedValidationSelects(
@@ -582,7 +582,7 @@ function compileComposite(
   }
 
   const limitParameter = params.add(query.limit);
-  const sql = `${currentPlan.sql}\n${renderSort(query.sort, currentPlan.metricAliases)}LIMIT ${limitParameter}`;
+  const sql = `${currentPlan.sql}\n${renderSort(query.sort, currentPlan.metricAliases, chronologicalOrderColumn(query.alignOn))}LIMIT ${limitParameter}`;
   return {
     sql,
     parameters: params.values,
@@ -626,7 +626,10 @@ function renderCompositePlan(
     }
     metricAliases.set(metric.id, alias);
     usedAliases.add(alias);
-    return `${renderAlignedCalculation(metric.calculation, componentByField, registry, new Set([metric.id]))} AS ${quoteIdentifier(alias)}`;
+    return `${roundedToDisplayPrecision(
+      renderAlignedCalculation(metric.calculation, componentByField, registry, new Set([metric.id])),
+      metric,
+    )} AS ${quoteIdentifier(alias)}`;
   });
   const keySelects = alignOn.flatMap((dimension) => {
     const hidden = rendered.map((_, index) => `${prefix}${index}.${quoteIdentifier(`__key_${dimension}`)}`);
@@ -741,13 +744,13 @@ function renderSingle(
   const identityJoins = resolveIdentityResolutionJoins(fact, "identity");
 
   const joins = query.dimensions
-    .filter((dimension) => dimension !== "business_date" && dimension !== "calendar_week")
+    .filter((dimension) => !isDerivedDateDimension(dimension))
     .map((dimension, index) => resolveJoin(dimension, fact, index));
   // A filtered dimension needs its join even when it is not grouped by, so the
   // filter can match the display label the caller was shown. These join only —
   // they are never selected or grouped, so the result grain is unchanged.
   const filterOnlyDimensions = [...new Set(query.filters.map((filter) => filter.field))]
-    .filter((dimension) => dimension !== "business_date" && dimension !== "calendar_week")
+    .filter((dimension) => !isDerivedDateDimension(dimension))
     .filter((dimension) => !joins.some((item) => item.dimension === dimension))
     .filter((dimension) => fact.joins.some((candidate) =>
       (candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension))
@@ -755,32 +758,37 @@ function renderSingle(
   const filterJoins = filterOnlyDimensions.map((dimension, index) =>
     resolveJoin(dimension, fact, joins.length + index));
   const labelExpressions = new Map<string, string>(
-    [...joins, ...filterJoins].map((item) =>
-      [item.dimension, `${item.alias}.${quoteIdentifier(item.displayField)}`]),
+    [...joins, ...filterJoins].map((item) => [item.dimension, joinLabelExpression(item)]),
   );
   const dimensionSelects: string[] = [];
   const groupBy: string[] = [];
   const hiddenKeys: string[] = [];
   for (const item of joins) {
     const keyAlias = `__key_${item.dimension}`;
-    const keyExpression = resolvedFactField(item.join.factKey, identityJoins, "f");
+    const keyExpression = item.join.rollupKey
+      // Group on the rollup identity, not the leaf, or every leaf becomes its
+      // own group and the rollup reports nothing.
+      ? `COALESCE(${item.alias}.${quoteIdentifier(item.join.rollupKey)}, ${item.alias}.${quoteIdentifier(item.join.dimensionKey)})`
+      : resolvedFactField(item.join.factKey, identityJoins, "f");
+    const labelExpression = joinLabelExpression(item);
     dimensionSelects.push(`${keyExpression} AS ${quoteIdentifier(keyAlias)}`);
-    dimensionSelects.push(`${item.alias}.${quoteIdentifier(item.displayField)} AS ${quoteIdentifier(item.dimension)}`);
-    groupBy.push(keyExpression, `${item.alias}.${quoteIdentifier(item.displayField)}`);
+    dimensionSelects.push(`${labelExpression} AS ${quoteIdentifier(item.dimension)}`);
+    groupBy.push(keyExpression, labelExpression);
     hiddenKeys.push(keyAlias);
   }
-  if (query.dimensions.includes("business_date") && !joins.some((item) => item.dimension === "business_date")) {
-    dimensionSelects.push(`f.${quoteIdentifier("business_date")} AS ${quoteIdentifier("business_date")}`);
-    groupBy.push(`f.${quoteIdentifier("business_date")}`);
-    hiddenKeys.push("__key_business_date");
-    dimensionSelects.push(`f.${quoteIdentifier("business_date")} AS ${quoteIdentifier("__key_business_date")}`);
-  }
-  if (query.dimensions.includes("calendar_week")) {
-    const expression = calendarWeekExpression("f");
-    dimensionSelects.push(`${expression} AS ${quoteIdentifier("calendar_week")}`);
-    dimensionSelects.push(`${expression} AS ${quoteIdentifier("__key_calendar_week")}`);
+  for (const dimension of query.dimensions) {
+    if (!isDerivedDateDimension(dimension)) continue;
+    if (joins.some((item) => item.dimension === dimension)) continue;
+    const expression = derivedDateExpression(dimension, "f");
+    dimensionSelects.push(`${expression} AS ${quoteIdentifier(dimension)}`);
+    // The hidden key is what alignment and claim binding compare on, so it must
+    // order the group deterministically: weekday names sort alphabetically,
+    // which would report Friday before Monday.
+    const keyExpression = derivedDateDimensions[dimension]?.sortKey?.("f") ?? expression;
+    dimensionSelects.push(`${keyExpression} AS ${quoteIdentifier(`__key_${dimension}`)}`);
     groupBy.push(expression);
-    hiddenKeys.push("__key_calendar_week");
+    if (keyExpression !== expression) groupBy.push(keyExpression);
+    hiddenKeys.push(`__key_${dimension}`);
   }
 
   // A trusted metric predicate (the customer activity windows) binds a
@@ -811,7 +819,7 @@ function renderSingle(
       ...trustedPredicatesFor(metric),
       ...metricTimePredicates,
     ];
-    return `${renderMetricCalculation(
+    return `${roundedToDisplayPrecision(renderMetricCalculation(
       metric,
       fact,
       registry,
@@ -820,7 +828,7 @@ function renderSingle(
       trustedPredicates,
       { fromParameter, toParameter },
       identityJoins,
-    )} AS ${quoteIdentifier(alias)}`;
+    ), metric)} AS ${quoteIdentifier(alias)}`;
   });
   const validationSelects = metrics.flatMap((metric) => renderSliceValidationSelects(
     metric,
@@ -840,7 +848,14 @@ function renderSingle(
     ...query.filters.map((filter) => renderUserFilter(filter, topic, metrics, fact, params, identityJoins, labelExpressions)),
   ];
   const identityJoinSql = renderIdentityResolutionJoins(identityJoins, "f");
-  const dimensionJoinSql = [...joins, ...filterJoins].map((item) => `LEFT JOIN ${quoteQualified(item.join.table)} ${item.alias} ON ${item.alias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${item.alias}.${quoteIdentifier(item.join.dimensionKey)} = ${resolvedFactField(item.join.factKey, identityJoins, "f")}`).join("\n");
+  const dimensionJoinSql = [...joins, ...filterJoins].flatMap((item) => {
+    const base = `LEFT JOIN ${quoteQualified(item.join.table)} ${item.alias} ON ${item.alias}.${quoteIdentifier("tenant_id")} = f.${quoteIdentifier("tenant_id")} AND ${item.alias}.${quoteIdentifier(item.join.dimensionKey)} = ${resolvedFactField(item.join.factKey, identityJoins, "f")}`;
+    if (!item.join.rollupKey) return [base];
+    return [
+      base,
+      `LEFT JOIN ${quoteQualified(item.join.table)} ${rollupAlias(item.alias)} ON ${rollupAlias(item.alias)}.${quoteIdentifier("tenant_id")} = ${item.alias}.${quoteIdentifier("tenant_id")} AND ${rollupAlias(item.alias)}.${quoteIdentifier(item.join.dimensionKey)} = ${item.alias}.${quoteIdentifier(item.join.rollupKey)}`,
+    ];
+  }).join("\n");
   const joinSql = [identityJoinSql, dimensionJoinSql].filter(Boolean).join("\n");
   // A semi-additive measure reads only its latest snapshot per entity. Deriving
   // that with a correlated subquery re-executes the whole relation once per
@@ -948,6 +963,36 @@ function collectSnapshotWindows(metric: MetricContract, registry: SemanticRegist
   };
   walk(metric.calculation, new Set([metric.id]));
   return [...found.values()];
+}
+
+/**
+ * Decimal places a metric is reported to, by unit. A governed figure is only
+ * useful if a person can state it: an unrounded ratio carries seventeen
+ * significant digits, which no answer can quote and no reader can absorb, and
+ * every downstream consumer then invents its own rounding. Rounding once, here,
+ * makes the compiled value, the audited digest, the table cell and the sentence
+ * the same number.
+ */
+const CHANGE_PERCENT_PRECISION = 2;
+
+const displayPrecisionByUnit: Readonly<Record<MetricContract["unit"], number>> = Object.freeze({
+  currency: 2,
+  currency_per_unit: 2,
+  percent: 2,
+  units: 2,
+  count: 0,
+  // A dimensionless ratio is not a whole number: rounding GMROI of 0.9 to "1"
+  // (or to "0") destroys the only signal the metric carries.
+  ratio: 2,
+  hours: 2,
+  days: 1,
+});
+
+function roundedToDisplayPrecision(expression: string, metric: MetricContract): string {
+  const precision = displayPrecisionByUnit[metric.unit];
+  // ROUND(numeric, integer) has no double-precision overload in PostgreSQL, so
+  // the cast keeps ratio metrics (which divide into double precision) legal.
+  return `ROUND(CAST(${expression} AS numeric), ${precision})`;
 }
 
 function renderMetricCalculation(
@@ -1368,8 +1413,9 @@ function renderUserFilter(
   // A derived time restriction cannot change a metric's grain, and most metric
   // contracts omit calendar_week while the Topic approves it, so these are
   // settled before the per-metric check below.
-  if (filter.field === "business_date") return renderFilterExpression(`f.${quoteIdentifier("business_date")}`, filter.op, filter.values, params);
-  if (filter.field === "calendar_week") return renderFilterExpression(calendarWeekExpression("f"), filter.op, filter.values, params);
+  if (isDerivedDateDimension(filter.field)) {
+    return renderFilterExpression(derivedDateExpression(filter.field, "f"), filter.op, filter.values, params);
+  }
   // metric.allowedDimensions governs grouping (validateDimensions) and composite
   // alignment, but not filters — so a metric could be refused a breakdown by a
   // dimension and still be sliced by it, returning a Verified number computed
@@ -1447,8 +1493,8 @@ function validateDimensions(dimensions: readonly string[], topic: TopicContract,
     if (!topic.approvedDimensions.includes(dimension)) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${dimension} is not approved for ${topic.id}.`);
     for (const metric of metrics) if (!metric.allowedDimensions.includes(dimension)) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${dimension} is not allowed for ${metric.id}.`);
     if (dimension === "business_date") continue;
-    if (dimension === "calendar_week") {
-      if (!fact.fields.includes("business_date")) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${fact.id} cannot derive calendar_week without business_date.`);
+    if (isDerivedDateDimension(dimension)) {
+      if (!fact.fields.includes("business_date")) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${fact.id} cannot derive ${dimension} without business_date.`);
       continue;
     }
     const join = fact.joins.find((candidate) => candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension));
@@ -1457,12 +1503,24 @@ function validateDimensions(dimensions: readonly string[], topic: TopicContract,
 }
 
 function resolveJoin(dimension: string, fact: FactModel, index: number): Readonly<{ dimension: string; join: FactModel["joins"][number]; alias: string; displayField: string }> {
-  if (dimension === "business_date" || dimension === "calendar_week") throw new Error(`${dimension} is a source-neutral derived dimension, not a dimension join.`);
+  if (isDerivedDateDimension(dimension)) throw new Error(`${dimension} is a source-neutral derived dimension, not a dimension join.`);
   const join = fact.joins.find((candidate) => candidate.dimension === dimension || Object.hasOwn(candidate.fields, dimension));
   if (!join || join.cardinality !== "many_to_one") throw new SemanticCompilerError("ILLEGAL_JOIN", `No legal many-to-one join for ${dimension}.`);
   const displayField = join.fields[dimension];
   if (!displayField) throw new SemanticCompilerError("ILLEGAL_JOIN", `Join ${join.dimension} does not expose ${dimension}.`);
   return { dimension, join, alias: `d${index}`, displayField };
+}
+
+function rollupAlias(alias: string): string { return `${alias}_rollup`; }
+
+/** Display label for a join, following one rollup hop when the contract asks. */
+function joinLabelExpression(
+  item: Readonly<{ join: FactModel["joins"][number]; alias: string; displayField: string }>,
+): string {
+  const own = `${item.alias}.${quoteIdentifier(item.displayField)}`;
+  return item.join.rollupKey
+    ? `COALESCE(${rollupAlias(item.alias)}.${quoteIdentifier(item.displayField)}, ${own})`
+    : own;
 }
 
 function resolveIdentityResolutionJoins(
@@ -1602,12 +1660,31 @@ function timeParameterValues(field: string, range: ResolvedTimeRange): Readonly<
     : { from: range.from, to: range.to };
 }
 
-function renderSort(sort: readonly { metric: string; dir: "asc" | "desc" }[], aliases: ReadonlyMap<string, string>): string {
+function renderSort(
+  sort: readonly { metric: string; dir: "asc" | "desc" }[],
+  aliases: ReadonlyMap<string, string>,
+  /**
+   * Chronological fallback for a grouped time series. A trend read out of
+   * calendar order is not a trend, and the label itself cannot carry the order
+   * once months are named rather than dated. Deliberately absent from the
+   * result-window ordering proof: an unsorted query still proves no ranking.
+   */
+  defaultOrderColumn?: string,
+): string {
   const ordering = resolveResultOrdering(sort, aliases);
-  if (!ordering.length) return "";
+  if (!ordering.length) {
+    return defaultOrderColumn ? `ORDER BY ${quoteIdentifier(defaultOrderColumn)} ASC\n` : "";
+  }
   const clauses = ordering.map((item) =>
     `${quoteIdentifier(item.columnKey)} ${item.direction.toUpperCase()}`);
   return `ORDER BY ${clauses.join(", ")}\n`;
+}
+
+/** The hidden sort key of a grouped derived-date dimension, when one is used. */
+function chronologicalOrderColumn(dimensions: readonly string[]): string | undefined {
+  const dimension = dimensions.find((candidate) =>
+    isDerivedDateDimension(candidate) && candidate !== "day_of_week");
+  return dimension ? `__key_${dimension}` : undefined;
 }
 
 function compileResultWindow(
@@ -1654,6 +1731,51 @@ function quoteQualified(value: string): string {
 }
 
 function shortMetricName(id: string): string { return id.slice(id.indexOf(".") + 1); }
-function calendarWeekExpression(alias: string): string { return `date_trunc('week', ${alias}.${quoteIdentifier("business_date")})::date`; }
+/**
+ * Source-neutral dimensions derived from the business date rather than joined.
+ * A retailer reasons in months, quarters and weekdays; without them a trend
+ * question can only be answered as an unreadable list of individual days.
+ * `sortKey` keeps weekday grouping in calendar order rather than alphabetical.
+ */
+const derivedDateDimensions: Readonly<Record<string, Readonly<{
+  expression: (alias: string) => string;
+  sortKey?: (alias: string) => string;
+}>>> = Object.freeze({
+  business_date: {
+    expression: (alias) => `${alias}.${quoteIdentifier("business_date")}`,
+  },
+  calendar_week: {
+    expression: (alias) => `date_trunc('week', ${alias}.${quoteIdentifier("business_date")})::date`,
+  },
+  // Reported as people name them ("August 2025", "2025 Q3") rather than as a
+  // truncated timestamp, with the underlying date kept as the sort key so the
+  // series stays in calendar order.
+  calendar_month: {
+    expression: (alias) => `to_char(date_trunc('month', ${alias}.${quoteIdentifier("business_date")}), 'FMMonth YYYY')`,
+    sortKey: (alias) => `date_trunc('month', ${alias}.${quoteIdentifier("business_date")})::date`,
+  },
+  calendar_quarter: {
+    expression: (alias) => `to_char(date_trunc('quarter', ${alias}.${quoteIdentifier("business_date")}), 'YYYY "Q"Q')`,
+    sortKey: (alias) => `date_trunc('quarter', ${alias}.${quoteIdentifier("business_date")})::date`,
+  },
+  day_of_week: {
+    expression: (alias) => `trim(to_char(${alias}.${quoteIdentifier("business_date")}, 'Day'))`,
+    sortKey: (alias) => `EXTRACT(ISODOW FROM ${alias}.${quoteIdentifier("business_date")})`,
+  },
+});
+
+export const DERIVED_DATE_DIMENSIONS: readonly string[] = Object.freeze(Object.keys(derivedDateDimensions));
+
+export function isDerivedDateDimension(dimension: string): boolean {
+  return Object.hasOwn(derivedDateDimensions, dimension);
+}
+
+function derivedDateExpression(dimension: string, alias: string): string {
+  const derived = derivedDateDimensions[dimension];
+  if (!derived) throw new SemanticCompilerError("ILLEGAL_DIMENSION", `${dimension} is not a derived date dimension.`);
+  return derived.expression(alias);
+}
+
+function calendarWeekExpression(alias: string): string { return derivedDateExpression("calendar_week", alias); }
 function indent(value: string): string { return value.split("\n").map((line) => `  ${line}`).join("\n"); }
 function sameSet(left: readonly string[], right: readonly string[]): boolean { return left.length === right.length && left.every((item) => right.includes(item)); }

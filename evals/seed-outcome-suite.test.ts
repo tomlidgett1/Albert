@@ -85,7 +85,7 @@ test("the four prompt-sensitive manifest outcomes exactly match production route
         optionIds: contract.optionIds,
         dataQueriesPermitted: false,
       });
-    } else {
+    } else if (contract.route === "unavailable") {
       assert.deepEqual(item.requiredOutcome, {
         kind: "server_owned_unavailable",
         reasonCode: contract.reasonCode,
@@ -93,6 +93,8 @@ test("the four prompt-sensitive manifest outcomes exactly match production route
         unlock: contract.unlock,
         dataQueriesPermitted: false,
       });
+    } else {
+      assert.fail(`Prompt-sensitive case ${item.caseId} resolved to the unexpected ${contract.route} route.`);
     }
   }
 });

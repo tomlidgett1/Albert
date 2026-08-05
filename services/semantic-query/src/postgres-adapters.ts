@@ -171,11 +171,19 @@ export class PostgresTenantSemanticContextProvider implements TenantSemanticCont
     copyAllowlistedDefault(defaults,rememberedPreferences,"finance.profit_default",[
       "commerce.gross_margin","finance.gross_profit_accounting","finance.net_profit",
     ]);
+    copyAllowlistedDefault(defaults,rememberedPreferences,"calendar.year_basis",[
+      "financial_year","calendar_year",
+    ]);
     if(overlay.tax_display_default==="inclusive"||overlay.tax_display_default==="exclusive")defaults.tax_display_default=overlay.tax_display_default;
     return {
       timezone:requiredString(overlay.timezone,"overlay timezone"),
       tradingDayCutoff:optionalString(overlay.trading_day_cutoff)??"00:00",
-      fiscalYearStartMonth:boundedInteger(fiscal.start_month??overlay.fiscal_year_start_month,7,1,12,"fiscal year start month"),
+      // A confirmed year basis outranks the fiscal calendar default. Without
+      // one, "this year" resolved to 1 July from a code default nobody chose,
+      // and reported five weeks of trade as the year to date.
+      fiscalYearStartMonth:defaults["calendar.year_basis"]==="calendar_year"
+        ?1
+        :boundedInteger(fiscal.start_month??overlay.fiscal_year_start_month,7,1,12,"fiscal year start month"),
       fiscalYearStartDay:boundedInteger(fiscal.start_day??overlay.fiscal_year_start_day,1,1,31,"fiscal year start day"),
       weekStartsOn:boundedInteger(fiscal.week_starts_on??overlay.week_starts_on,1,1,7,"week start"),
       tenantParameters:Object.freeze({

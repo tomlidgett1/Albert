@@ -32,6 +32,46 @@ export interface AnswerArtifactFinalizer {
 }
 
 /**
+ * Per-step cost of one finalization, including any retried attempts.
+ * Finalization runs after the answer text exists but before it is released, so
+ * its cost is felt directly as time the user waits on a finished answer. The
+ * connect timings separate pool contention from actual query work.
+ */
+export type AnswerArtifactFinalizationTiming = Readonly<{
+  totalMs: number;
+  attempts: number;
+  /** Waiting for a semantic-metadata pool connection. */
+  metadataConnectMs: number;
+  /** Deletion advisory lock plus the query-audit read, once connected. */
+  metadataQueryMs: number;
+  /** Waiting for a control-plane pool connection. */
+  controlPlaneConnectMs: number;
+  /** The `finalize_answer_artifact` call itself. */
+  finalizeCallMs: number;
+  commitMs: number;
+}>;
+
+type TimingAccumulator = {
+  attempts: number;
+  metadataConnectMs: number;
+  metadataQueryMs: number;
+  controlPlaneConnectMs: number;
+  finalizeCallMs: number;
+  commitMs: number;
+};
+
+function newTimingAccumulator(): TimingAccumulator {
+  return {
+    attempts: 0,
+    metadataConnectMs: 0,
+    metadataQueryMs: 0,
+    controlPlaneConnectMs: 0,
+    finalizeCallMs: 0,
+    commitMs: 0,
+  };
+}
+
+/**
  * Resolves immutable analytical audit rows before asking the control plane to
  * atomically finalize the turn. Only audit identifiers cross the signed HTTP
  * boundary; SQL is hashed here and remains confined to the server trust zone.
@@ -41,33 +81,50 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
     private readonly controlPlanePool: PgPoolLike,
     private readonly semanticMetadataPool: PgPoolLike,
     private readonly capabilityIssuer?: SemanticAnalyticalCapabilityIssuer,
+    /** Receives the per-step cost of every finalization, successful or not. */
+    private readonly onTiming?: (timing: AnswerArtifactFinalizationTiming) => void,
   ) {}
 
   async finalize(rawInput: AnswerArtifactFinalizationInput): Promise<AnswerArtifactFinalizationResult> {
     const input = answerArtifactFinalizationInputSchema.parse(rawInput);
-    // The pooler recycles connections underneath us. Finalization is the last
-    // step of an otherwise complete turn, and every attempt either commits or
-    // rolls back whole, so a dropped connection is retried rather than losing
-    // the answer. A committed attempt replays idempotently inside the control
-    // plane, which keeps a retry safe even if the drop hid a successful commit.
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await this.attemptFinalize(input);
-      } catch (error) {
-        if (attempt >= 2 || !isRecoverableConnectionFailure(error)) throw error;
+    const startedAt = Date.now();
+    const timing = newTimingAccumulator();
+    try {
+      // The pooler recycles connections underneath us. Finalization is the last
+      // step of an otherwise complete turn, and every attempt either commits or
+      // rolls back whole, so a dropped connection is retried rather than losing
+      // the answer. A committed attempt replays idempotently inside the control
+      // plane, which keeps a retry safe even if the drop hid a successful commit.
+      for (let attempt = 0; ; attempt += 1) {
+        timing.attempts = attempt + 1;
+        try {
+          return await this.attemptFinalize(input, timing);
+        } catch (error) {
+          if (attempt >= 2 || !isRecoverableConnectionFailure(error)) throw error;
+        }
       }
+    } finally {
+      // Reported on the failure path too: a finalization that exhausted its
+      // retries is exactly the one whose cost needs explaining.
+      this.onTiming?.(Object.freeze({ totalMs: Date.now() - startedAt, ...timing }));
     }
   }
 
-  private async attemptFinalize(input: AnswerArtifactFinalizationInput): Promise<AnswerArtifactFinalizationResult> {
-    const queryExecutions = await this.loadQueryExecutions(input);
+  private async attemptFinalize(
+    input: AnswerArtifactFinalizationInput,
+    timing: TimingAccumulator,
+  ): Promise<AnswerArtifactFinalizationResult> {
+    const queryExecutions = await this.loadQueryExecutions(input, timing);
     assertEvidenceMatchesAnswerState(input, queryExecutions);
 
+    const connectStartedAt = Date.now();
     const client = await this.controlPlanePool.connect();
+    timing.controlPlaneConnectMs += Date.now() - connectStartedAt;
     try {
       await client.query("BEGIN");
       await client.query("SET LOCAL ROLE albert_semantic_control");
       await client.query("SELECT set_config('albert.tenant_id',$1,true)", [input.tenantId]);
+      const finalizeStartedAt = Date.now();
       const result = await client.query(
         `SELECT answer_artifact_id,artifact_digest,idempotent_replay
            FROM control_plane.finalize_answer_artifact(
@@ -86,8 +143,11 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
           JSON.stringify(queryExecutions),
         ],
       );
+      timing.finalizeCallMs += Date.now() - finalizeStartedAt;
       const row = finalizationRowSchema.parse(result.rows[0]);
+      const commitStartedAt = Date.now();
       await client.query("COMMIT");
+      timing.commitMs += Date.now() - commitStartedAt;
       return answerArtifactFinalizationResultSchema.parse({
         answerArtifactId: row.answer_artifact_id,
         artifactDigest: row.artifact_digest,
@@ -101,7 +161,10 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
     }
   }
 
-  private async loadQueryExecutions(input: AnswerArtifactFinalizationInput): Promise<readonly Record<string, unknown>[]> {
+  private async loadQueryExecutions(
+    input: AnswerArtifactFinalizationInput,
+    timing: TimingAccumulator,
+  ): Promise<readonly Record<string, unknown>[]> {
     if (input.queryAuditIds.length === 0) return Object.freeze([]);
     const capability = this.capabilityIssuer
       ? await this.capabilityIssuer.issue({
@@ -110,7 +173,10 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
         evidence: { conversationId: input.conversationId, turnId: input.turnId },
       })
       : undefined;
+    const connectStartedAt = Date.now();
     const client = await this.semanticMetadataPool.connect();
+    timing.metadataConnectMs += Date.now() - connectStartedAt;
+    const queryStartedAt = Date.now();
     try {
       await client.query("BEGIN TRANSACTION READ ONLY");
       await client.query("SET LOCAL ROLE semantic_meta_rw");
@@ -159,6 +225,7 @@ export class PostgresAnswerArtifactFinalizer implements AnswerArtifactFinalizer 
       try { await client.query("ROLLBACK"); } catch { /* preserve the original failure */ }
       throw error;
     } finally {
+      timing.metadataQueryMs += Date.now() - queryStartedAt;
       client.release();
     }
   }

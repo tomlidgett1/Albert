@@ -322,4 +322,177 @@ SELECT pg_temp.assert_true(
   'full-history completion must not bypass its complete-quality gate'
 );
 
+-- A transform that has not run yet carries no quality outcome. Scoring that
+-- absence as a critical blocker made every queued page drop the domain to
+-- blocked readiness until it drained; work in flight must read the same way as
+-- work never started, which the 'incomplete' branch already models.
+INSERT INTO control_plane.raw_batch_manifests(
+  tenant_id,batch_id,connection_id,sync_run_id,connector_key,connector_version,
+  api_version,stream,extracted_at,content_hash,schema_fingerprint,record_count,
+  compressed_bytes,object_keys
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000060',
+  '01K60000000000000000000001','01K60000000000000000000050',
+  'lightspeed-r','1.0.0','v3','sales',now(),repeat('1',64),repeat('2',64),1,100,
+  ARRAY['raw/sales-pending.gz']
+);
+INSERT INTO control_plane.raw_batch_landings(
+  tenant_id,batch_id,status,staged_record_count,quarantine_count,analytical_committed_at
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000060','landed',1,0,now()
+);
+INSERT INTO control_plane.canonical_transform_jobs(
+  tenant_id,transform_job_id,batch_id,sync_run_id,connection_id,connector_id,
+  stream,domains,mapping_version,backfill_complete,status,attempt_count,
+  connection_generation,created_at
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000061',
+  '01K60000000000000000000060','01K60000000000000000000050',
+  '01K60000000000000000000001','lightspeed-r','sales',ARRAY['sales'],
+  'progressive-v1',true,'queued',0,1,now()+interval '1 minute'
+);
+
+SELECT set_config('albert.tenant_id','01K60000000000000000000000',true);
+SELECT pg_temp.assert_true(
+  (
+    SELECT snapshot->>'worstState'='incomplete'
+       AND snapshot->'streams'->0->>'transformStatus'='queued'
+       AND snapshot->'streams'->0->>'partialQualityStatus' IS NULL
+      FROM (
+        SELECT control_plane.sync_readiness_inputs(
+          '01K60000000000000000000000','01K60000000000000000000001',
+          ARRAY['sales'],'01K60000000000000000000041','warning','warning'
+        ) AS snapshot
+      ) scoped
+  ),
+  'a queued transform must read as incomplete, not as a quality blocker'
+);
+
+UPDATE control_plane.canonical_transform_jobs
+   SET status='retry_wait'
+ WHERE tenant_id='01K60000000000000000000000'
+   AND transform_job_id='01K60000000000000000000061';
+SELECT pg_temp.assert_true(
+  (
+    SELECT snapshot->>'worstState'='incomplete'
+      FROM (
+        SELECT control_plane.sync_readiness_inputs(
+          '01K60000000000000000000000','01K60000000000000000000001',
+          ARRAY['sales'],'01K60000000000000000000041','warning','warning'
+        ) AS snapshot
+      ) scoped
+  ),
+  'a retryable transform serving its backoff is in flight, not terminal'
+);
+
+-- The fail-closed default still belongs to a job that claims to have finished:
+-- a succeeded transform without quality evidence is an invariant breach.
+UPDATE control_plane.canonical_transform_jobs
+   SET status='succeeded',result_metadata='{}'::jsonb,
+       started_at=now()+interval '1 minute',completed_at=now()+interval '2 minutes'
+ WHERE tenant_id='01K60000000000000000000000'
+   AND transform_job_id='01K60000000000000000000061';
+SELECT pg_temp.assert_true(
+  (
+    SELECT snapshot->>'worstState'='blocked'
+      FROM (
+        SELECT control_plane.sync_readiness_inputs(
+          '01K60000000000000000000000','01K60000000000000000000001',
+          ARRAY['sales'],'01K60000000000000000000041','warning','warning'
+        ) AS snapshot
+      ) scoped
+  ),
+  'a succeeded transform without quality evidence must still fail closed'
+);
+
+-- A permanently failed transform blocks on its own status and needs no
+-- synthesised quality opinion.
+UPDATE control_plane.canonical_transform_jobs
+   SET status='failed',result_metadata=NULL,completed_at=now()+interval '2 minutes'
+ WHERE tenant_id='01K60000000000000000000000'
+   AND transform_job_id='01K60000000000000000000061';
+SELECT pg_temp.assert_true(
+  (
+    SELECT snapshot->>'worstState'='blocked'
+      FROM (
+        SELECT control_plane.sync_readiness_inputs(
+          '01K60000000000000000000000','01K60000000000000000000001',
+          ARRAY['sales'],'01K60000000000000000000041','warning','warning'
+        ) AS snapshot
+      ) scoped
+  ),
+  'a failed transform must still block on its terminal status'
+);
+
+-- The quality gates run once per sync run, on the page that completes its
+-- stream. An earlier page carries fail-closed placeholders it never measured,
+-- so it must assert no verdict at all rather than a blocking one.
+UPDATE control_plane.canonical_transform_jobs
+   SET status='succeeded',
+       result_metadata='{"qualityEvaluated":false,"qualityStatus":"blocked",
+         "partialQualityStatus":"blocked","completeQualityStatus":"blocked"}'::jsonb,
+       started_at=now()+interval '1 minute',completed_at=now()+interval '2 minutes'
+ WHERE tenant_id='01K60000000000000000000000'
+   AND transform_job_id='01K60000000000000000000061';
+SELECT pg_temp.assert_true(
+  (
+    SELECT snapshot->>'worstState'='incomplete'
+       AND snapshot->'streams'->0->>'partialQualityStatus' IS NULL
+      FROM (
+        SELECT control_plane.sync_readiness_inputs(
+          '01K60000000000000000000000','01K60000000000000000000001',
+          ARRAY['sales'],'01K60000000000000000000041','warning','warning'
+        ) AS snapshot
+      ) scoped
+  ),
+  'an ungated page must assert no quality verdict'
+);
+
+-- ...and an ungated page must not drag a settled readiness back down.
+UPDATE control_plane.readiness
+   SET state='ready_complete',progress=1,reason_code=NULL,reason_detail=NULL
+ WHERE tenant_id='01K60000000000000000000000'
+   AND connection_id='01K60000000000000000000001' AND domain='sales';
+INSERT INTO control_plane.raw_batch_manifests(
+  tenant_id,batch_id,connection_id,sync_run_id,connector_key,connector_version,
+  api_version,stream,extracted_at,content_hash,schema_fingerprint,record_count,
+  compressed_bytes,object_keys
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000070',
+  '01K60000000000000000000001','01K60000000000000000000050',
+  'lightspeed-r','1.0.0','v3','sales',now(),repeat('3',64),repeat('4',64),1,100,
+  ARRAY['raw/sales-ungated.gz']
+);
+INSERT INTO control_plane.raw_batch_landings(
+  tenant_id,batch_id,status,staged_record_count,quarantine_count,analytical_committed_at
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000070','landed',1,0,now()
+);
+INSERT INTO control_plane.canonical_transform_jobs(
+  tenant_id,transform_job_id,batch_id,sync_run_id,connection_id,connector_id,
+  stream,domains,mapping_version,backfill_complete,status,attempt_count,
+  lease_owner,lease_token,lease_expires_at,started_at,connection_generation
+) VALUES (
+  '01K60000000000000000000000','01K60000000000000000000071',
+  '01K60000000000000000000070','01K60000000000000000000050',
+  '01K60000000000000000000001','lightspeed-r','sales',ARRAY['sales'],
+  'progressive-v1',true,'running',1,'progressive-worker',
+  '01K60000000000000000000072',now()+interval '5 minutes',now(),1
+);
+SELECT control_plane.complete_canonical_transform_job(
+  '01K60000000000000000000000','01K60000000000000000000071',
+  'progressive-worker','01K60000000000000000000072',
+  '{"qualityEvaluated":false,"qualityStatus":"blocked",
+    "partialQualityStatus":"blocked","completeQualityStatus":"blocked"}'::jsonb
+);
+SELECT pg_temp.assert_true(
+  (
+    SELECT state='ready_complete' AND progress=1 AND reason_code IS NULL
+      FROM control_plane.readiness
+     WHERE tenant_id='01K60000000000000000000000'
+       AND connection_id='01K60000000000000000000001' AND domain='sales'
+  ),
+  'an ungated page must not cap a settled readiness'
+);
+
 ROLLBACK;

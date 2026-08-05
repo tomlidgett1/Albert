@@ -87,6 +87,24 @@ export async function beginConversationTurn(input: Readonly<{
   });
 }
 
+/**
+ * Extends a running turn's durable lease. The reaper exists to recover turns
+ * whose runner died; a runner that is still streaming says so here, so an
+ * unbounded analytical turn is never mistaken for an abandoned one.
+ */
+export async function renewConversationTurnLease(input: Readonly<{
+  supabase: ConversationSupabase;
+  turnId: string;
+  leaseSeconds?: number;
+}>): Promise<boolean> {
+  const { data, error } = await input.supabase.rpc("renew_albert_turn_lease", {
+    p_turn_id: input.turnId,
+    p_lease_seconds: input.leaseSeconds ?? 360,
+  });
+  if (error) return false;
+  return singleton(data) !== null && singleton(data) !== undefined;
+}
+
 export async function loadConversationModelContext(
   conversationId: string,
   supabaseClient?: ConversationSupabase,

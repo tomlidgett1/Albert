@@ -23,7 +23,6 @@ import ConnectionsWorkspace, {
   workspaceSyncIsActive,
   type ConnectionsWorkspaceData,
   type ConnectionProviderId,
-  type MatchDecision,
 } from "./components/ConnectionsWorkspace";
 import { ModelRunControls } from "./components/ModelRunControls";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
@@ -541,6 +540,12 @@ export default function DashPage() {
   );
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  const [collapseIconSwapArmed, setCollapseIconSwapArmed] = useState(false);
+  const collapseButtonRef = useRef<HTMLButtonElement>(null);
+  const collapseSwapArmTimerRef = useRef<number | undefined>(undefined);
+  const collapseSwapArmPendingRef = useRef(false);
+  const [sidebarNavRevealed, setSidebarNavRevealed] = useState(true);
+  const sidebarWasCollapsedRef = useRef(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -588,6 +593,7 @@ export default function DashPage() {
     }
   }, [chatDetailedMode]);
   const [conversationSummaries, setConversationSummaries] = useState<readonly ConversationSummary[]>([]);
+  const seenSidebarConversationIdsRef = useRef<Set<string>>(new Set());
   const [computingConversationIds, setComputingConversationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -607,6 +613,7 @@ export default function DashPage() {
   const [chatClarification, setChatClarification] = useState<ChatClarification | null>(null);
   const [clarifyDraft, setClarifyDraft] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+  const [editClosingId, setEditClosingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [editPanelOpen, setEditPanelOpen] = useState(false);
   const editCloseTimerRef = useRef<number | undefined>(undefined);
@@ -872,6 +879,26 @@ export default function DashPage() {
     return () => document.removeEventListener("keydown", focusSearch);
   }, [collapsed]);
 
+  useEffect(() => {
+    if (collapsed) {
+      sidebarWasCollapsedRef.current = true;
+      setSidebarNavRevealed(false);
+      return;
+    }
+    if (!sidebarWasCollapsedRef.current) {
+      setSidebarNavRevealed(true);
+      return;
+    }
+    sidebarWasCollapsedRef.current = false;
+    if (reduceMotion) {
+      setSidebarNavRevealed(true);
+      return;
+    }
+    // Wait for sidebar width (200ms) so copy fades in at full width.
+    const timer = window.setTimeout(() => setSidebarNavRevealed(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [collapsed, reduceMotion]);
+
   const loadConnections = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) setConnectionsStatus({ kind: "loading" });
     try {
@@ -977,6 +1004,14 @@ export default function DashPage() {
     () => workspaceSyncIsActive(sidebarSyncDomains),
     [sidebarSyncDomains],
   );
+  const sidebarSyncFullyComplete = useMemo(() => {
+    if (sidebarSyncDomains.length === 0) return false;
+    return sidebarSyncDomains.every(
+      (domain) =>
+        domain.state === "ready_complete"
+        && (typeof domain.progress !== "number" || domain.progress >= 100),
+    );
+  }, [sidebarSyncDomains]);
   const sidebarSyncCommentary = useMemo(
     () => buildSidebarSyncCommentary(sidebarSyncDomains, connectionsData.syncSummary),
     [sidebarSyncDomains, connectionsData.syncSummary],
@@ -1006,39 +1041,6 @@ export default function DashPage() {
 
   const connectProvider = (providerId: ConnectionProviderId) => {
     window.location.assign(`/api/oauth/${providerId}/start`);
-  };
-
-  const answerConnectionQuestion = async (questionId: string, optionId: string) => {
-    const response = await fetch("/api/connections/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "answer_blocking_question", questionId, optionId }),
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { error?: string } | null;
-      setConnectionsStatus({ kind: "error", message: payload?.error || "The answer was not saved." });
-      return false;
-    }
-    await loadConnections();
-    return true;
-  };
-
-  const decideConnectionMatch = async (taskId: string, decision: MatchDecision) => {
-    const response = await fetch("/api/connections/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "identity_decision", taskId, decision }),
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { error?: string } | null;
-      setConnectionsStatus({ kind: "error", message: payload?.error || "The match decision was not saved." });
-      return false;
-    }
-    await loadConnections();
-    for (const delay of [1_500, 4_000, 10_000]) {
-      window.setTimeout(() => void loadConnections(), delay);
-    }
-    return true;
   };
 
   const selectOAuthAccount = async (oauthSessionId: string, externalAccountId: string) => {
@@ -1082,6 +1084,10 @@ export default function DashPage() {
       if (!response.ok) throw new Error(payload?.error || "Conversation history could not be loaded.");
       const parsed = parseConversationSummaries(payload?.conversations);
       if (!parsed) throw new Error("Conversation history returned an invalid response.");
+      // Seed seen ids so a history refresh does not replay enter animations.
+      for (const conversation of parsed) {
+        seenSidebarConversationIdsRef.current.add(conversation.conversationId);
+      }
       setConversationSummaries(parsed);
       setConversationHistoryStatus({ kind: "ready" });
     } catch (error) {
@@ -1096,6 +1102,12 @@ export default function DashPage() {
   useEffect(() => {
     void loadConversationSummaries();
   }, [loadConversationSummaries]);
+
+  useLayoutEffect(() => {
+    for (const conversation of conversationSummaries) {
+      seenSidebarConversationIdsRef.current.add(conversation.conversationId);
+    }
+  }, [conversationSummaries]);
 
   const restoreConversationMessages = useCallback((
     conversationId: string,
@@ -2212,6 +2224,7 @@ export default function DashPage() {
 
   const beginEditUserMessage = (messageId: number, text: string) => {
     window.clearTimeout(editCloseTimerRef.current);
+    setEditClosingId(null);
     setEditPanelOpen(false);
     setEditingMessageId(messageId);
     setEditDraft(text);
@@ -2219,16 +2232,19 @@ export default function DashPage() {
 
   const cancelEditUserMessage = () => {
     window.clearTimeout(editCloseTimerRef.current);
-    if (reduceMotion || !editPanelOpen) {
-      setEditPanelOpen(false);
-      setEditingMessageId(null);
-      setEditDraft("");
+    const closingId = editingMessageId;
+    // Restore the idle face immediately so collapse does not end with a
+    // textarea→button height twitch (ThinkingTrail never swaps its header).
+    setEditingMessageId(null);
+    setEditDraft("");
+    setEditPanelOpen(false);
+    if (reduceMotion || !closingId) {
+      setEditClosingId(null);
       return;
     }
-    setEditPanelOpen(false);
+    setEditClosingId(closingId);
     editCloseTimerRef.current = window.setTimeout(() => {
-      setEditingMessageId(null);
-      setEditDraft("");
+      setEditClosingId(null);
     }, 300);
   };
 
@@ -2237,6 +2253,7 @@ export default function DashPage() {
     if (!text) return;
     window.clearTimeout(editCloseTimerRef.current);
     setEditPanelOpen(false);
+    setEditClosingId(null);
     setEditingMessageId(null);
     setEditDraft("");
     const messageIndex = chatMessages.findIndex(
@@ -2263,7 +2280,7 @@ export default function DashPage() {
     const textarea = editTextareaRef.current;
     if (!textarea) return;
     textarea.style.height = "0px";
-    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 24), 120);
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 21), 120);
     textarea.style.height = `${nextHeight}px`;
   }, []);
 
@@ -2429,6 +2446,11 @@ export default function DashPage() {
             const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
             const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
             const isEditing = editingMessageId === message.id;
+            const isEditClosing = editClosingId === message.id;
+            // Keep trailing mounted while collapsing so 0fr has real height to animate.
+            const showEditChrome = isEditing || isEditClosing;
+            // Same single open flag as ThinkingTrail: drives radius + panel together.
+            const editOpen = isEditing && editPanelOpen;
             const turnComputing = turn.replies.some((reply) => Boolean(reply.isStreaming));
             const orbTheme = theme === "light"
               ? "light" as const
@@ -2448,10 +2470,10 @@ export default function DashPage() {
                 }}
               >
                 <div
-                  ref={isEditing ? editComposerRef : undefined}
-                  className={`${styles.chatMessage} ${styles.chatMessageUser} ${isEditing ? styles.chatMessageUserEditing : styles.chatMessageUserIdle}${!isEditing && turnComputing ? ` ${styles.chatMessageUserComputing}` : ""}`}
-                  data-edit-open={isEditing && editPanelOpen ? "true" : "false"}
-                  style={{ borderRadius: isEditing ? 12 : 14 }}
+                  ref={showEditChrome ? editComposerRef : undefined}
+                  className={`${styles.chatMessage} ${styles.chatMessageUser} ${styles.chatMessageUserShell}${!isEditing && turnComputing ? ` ${styles.chatMessageUserComputing}` : ""}`}
+                  data-edit-open={editOpen ? "true" : "false"}
+                  style={{ borderRadius: editOpen ? 12 : 14 }}
                 >
                   {isEditing ? (
                     <textarea
@@ -2499,20 +2521,17 @@ export default function DashPage() {
                       ) : null}
                     </button>
                   )}
-                  {/* Same expand method as ThinkingTrail ("Worked through X steps"). */}
+                  {/* Identical expand method to ThinkingTrail. */}
                   <div
                     className={traceStyles.expandPanel}
                     style={{
-                      gridTemplateRows: isEditing && editPanelOpen ? "1fr" : "0fr",
-                      opacity: isEditing && editPanelOpen ? 1 : 0,
+                      gridTemplateRows: editOpen ? "1fr" : "0fr",
+                      opacity: editOpen ? 1 : 0,
                     }}
                     data-duration="300"
                   >
-                    <div
-                      className={traceStyles.expandInner}
-                      style={isEditing && editPanelOpen ? { overflow: "visible" } : undefined}
-                    >
-                      {isEditing ? (
+                    <div className={traceStyles.expandInner}>
+                      {showEditChrome ? (
                         <div className={styles.chatMessageEditTrailing}>
                           <ModelRunControls
                             value={agentPreferences}
@@ -2523,7 +2542,7 @@ export default function DashPage() {
                             className={styles.chatMessageEditSend}
                             type="button"
                             aria-label="Resend message"
-                            disabled={!editDraft.trim()}
+                            disabled={!isEditing || !editDraft.trim()}
                             onClick={() => resendEditedMessage(message.id)}
                           >
                             <Icon name="arrowUp" />
@@ -2561,6 +2580,20 @@ export default function DashPage() {
                       detailedMode={chatDetailedMode}
                       runtime={message.runtime}
                       onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                      onAddToChat={(text) => {
+                        setChatDraft((current) => {
+                          const trimmed = current.trim();
+                          return trimmed ? `${trimmed}\n\n${text}` : text;
+                        });
+                        window.requestAnimationFrame(() => {
+                          const field = chatTextareaRef.current;
+                          if (!field) return;
+                          field.focus();
+                          const end = field.value.length;
+                          field.setSelectionRange(end, end);
+                          resizeComposerTextarea();
+                        });
+                      }}
                       onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
                     />
                   )
@@ -2580,7 +2613,7 @@ export default function DashPage() {
       className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
-      <aside className={styles.sidebar}>
+      <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
             <img
@@ -2594,12 +2627,73 @@ export default function DashPage() {
             <span className={styles.projectName}>Albert</span>
           </div>
           <button
-            className={styles.collapseButton}
+            ref={collapseButtonRef}
+            className={`${styles.collapseButton} ${!collapsed || collapseIconSwapArmed ? styles.collapseButtonHot : ""}`}
             type="button"
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() => {
+              setCollapseIconSwapArmed(false);
+              collapseSwapArmPendingRef.current = false;
+              if (collapseSwapArmTimerRef.current !== undefined) {
+                window.clearTimeout(collapseSwapArmTimerRef.current);
+                collapseSwapArmTimerRef.current = undefined;
+              }
+              setCollapsed((value) => {
+                const next = !value;
+                if (next) {
+                  // Match sidebar width transition (200ms) so layout hit-testing
+                  // flicker does not arm hover chrome mid-collapse.
+                  collapseSwapArmTimerRef.current = window.setTimeout(() => {
+                    collapseSwapArmTimerRef.current = undefined;
+                    if (!collapseSwapArmPendingRef.current) return;
+                    collapseSwapArmPendingRef.current = false;
+                    if (collapseButtonRef.current?.matches(":hover")) return;
+                    setCollapseIconSwapArmed(true);
+                  }, 220);
+                }
+                return next;
+              });
+            }}
+            onPointerLeave={() => {
+              if (!collapsed) return;
+              if (collapseSwapArmTimerRef.current !== undefined) {
+                collapseSwapArmPendingRef.current = true;
+                return;
+              }
+              setCollapseIconSwapArmed(true);
+            }}
+            onBlur={() => {
+              if (!collapsed) return;
+              if (collapseSwapArmTimerRef.current !== undefined) {
+                collapseSwapArmPendingRef.current = true;
+                return;
+              }
+              setCollapseIconSwapArmed(true);
+            }}
           >
-            <Icon name="panel" />
+            {collapsed ? (
+              <span
+                className={`${styles.collapseIconSwap} ${collapseIconSwapArmed ? styles.collapseIconSwapArmed : ""}`}
+                data-state="a"
+                aria-hidden="true"
+              >
+                <span className={styles.collapseIconSwapFace} data-icon="a">
+                  <img
+                    className={styles.collapseButtonLogo}
+                    src="/logos/albert.png"
+                    alt=""
+                    width={20}
+                    height={20}
+                    decoding="async"
+                  />
+                </span>
+                <span className={styles.collapseIconSwapFace} data-icon="b">
+                  <Icon name="panel" />
+                </span>
+              </span>
+            ) : (
+              <Icon name="panel" />
+            )}
           </button>
         </div>
 
@@ -2630,7 +2724,10 @@ export default function DashPage() {
           </label>
         </div>
 
-        <nav className={styles.conversationNav} aria-label="Conversations">
+        <nav
+          className={`${styles.conversationNav} ${sidebarNavRevealed ? styles.conversationNavRevealed : ""}`}
+          aria-label="Conversations"
+        >
           {conversationHistoryStatus.kind === "loading" && conversationSummaries.length === 0 ? (
             <div
               className={styles.conversationNavSkeleton}
@@ -2704,6 +2801,7 @@ export default function DashPage() {
                         }}
                         style={{ overflow: "hidden" }}
                       >
+                    <AnimatePresence initial={false}>
                     {group.items.map((conversation) => {
                       const isActive = conversation.conversationId === activeConversationId && activeItem === "Chat";
                       const isPinned = pinnedConversationIdSet.has(conversation.conversationId);
@@ -2711,10 +2809,37 @@ export default function DashPage() {
                       const isUnread = !isComputing
                         && !isActive
                         && unreadConversationIds.has(conversation.conversationId);
+                      const isNewSidebarItem = !seenSidebarConversationIdsRef.current.has(
+                        conversation.conversationId,
+                      );
                       return (
-                        <div
+                        <motion.div
                           className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ""} ${isPinned ? styles.conversationItemPinned : ""}`}
                           key={conversation.conversationId}
+                          initial={
+                            reduceMotion || !isNewSidebarItem
+                              ? false
+                              : { height: 0, opacity: 0, y: -10 }
+                          }
+                          animate={{ height: "auto", opacity: 1, y: 0 }}
+                          exit={
+                            reduceMotion
+                              ? undefined
+                              : {
+                                  height: 0,
+                                  opacity: 0,
+                                  y: -6,
+                                  transition: {
+                                    duration: 0.26,
+                                    ease: [0.04, 0.62, 0.23, 0.98],
+                                  },
+                                }
+                          }
+                          transition={{
+                            duration: reduceMotion ? 0 : 0.4,
+                            ease: [0.04, 0.62, 0.23, 0.98],
+                          }}
+                          style={{ overflow: "hidden" }}
                           onPointerEnter={() => void prefetchConversation(conversation.conversationId)}
                         >
                           <button
@@ -2790,9 +2915,10 @@ export default function DashPage() {
                               {relativeConversationTime(conversation.updatedAt)}
                             </time>
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
+                    </AnimatePresence>
                       </motion.div>
                     ) : null}
                   </AnimatePresence>
@@ -2804,7 +2930,7 @@ export default function DashPage() {
         </nav>
 
         <div className={styles.accountArea} ref={accountAreaRef}>
-          {sidebarSyncDomains.length > 0 ? (
+          {sidebarSyncDomains.length > 0 && !sidebarSyncFullyComplete ? (
             <div className={styles.sidebarSync}>
               <div className={styles.sidebarSyncTop}>
                 <span>
@@ -2868,24 +2994,6 @@ export default function DashPage() {
                 </button>
               ))}
             </div>
-
-            <div className={styles.accountDivider} />
-
-            <button
-              className={styles.accountWorkspace}
-              type="button"
-              onClick={() => {
-                setActiveItem("Organization");
-                setAccountOpen(false);
-              }}
-            >
-              <span className={styles.accountAvatar}>{accountInitial}</span>
-              <span className={styles.accountWorkspaceCopy}>
-                <strong>{accountOrganisation.name}</strong>
-                <small>{accountRoleLabel}</small>
-              </span>
-              <Icon name="chevron" />
-            </button>
 
             <div className={styles.accountDivider} />
 
@@ -3169,7 +3277,18 @@ export default function DashPage() {
                   }}
                 >
                   <span>Connect Mobile</span>
-                  <Icon name="chevronDown" />
+                  <span className={styles.connectMobileLearnChevron} aria-hidden="true">
+                    <svg viewBox="0 0 16 16" fill="none">
+                      <path
+                        className={`${styles.connectMobileLearnArm} ${styles.connectMobileLearnArmTop}`}
+                        d="M6 4L10 8"
+                      />
+                      <path
+                        className={`${styles.connectMobileLearnArm} ${styles.connectMobileLearnArmBot}`}
+                        d="M10 8L6 12"
+                      />
+                    </svg>
+                  </span>
                 </button>
               ) : null}
 
@@ -3321,8 +3440,6 @@ export default function DashPage() {
             notice={oauthNotice}
             canManage={canManageConnections}
             onConnect={connectProvider}
-            onAnswerBlockingQuestion={answerConnectionQuestion}
-            onMatchDecision={decideConnectionMatch}
             onSelectOAuthAccount={selectOAuthAccount}
             onDisconnect={disconnectConnection}
             onRetry={() => void loadConnections()}

@@ -8,8 +8,32 @@ export const queryFilterSchema = z.object({
 
 export const timeRangeSchema = z.union([
   z.object({ type: z.literal("absolute"), from: z.string().datetime(), to: z.string().datetime() }).strict(),
-  z.object({ type: z.enum(["today", "month_to_date", "quarter_to_date", "year_to_date"])}).strict(),
+  z.object({
+    type: z.enum([
+      "today",
+      "yesterday",
+      "month_to_date",
+      "quarter_to_date",
+      "year_to_date",
+      // Whole elapsed periods. "Last week" and "last month" are the units a
+      // business actually reports on, and approximating them with a trailing
+      // day count answers a different question than the one asked.
+      "last_complete_week",
+      "last_complete_month",
+      "last_complete_quarter",
+      "last_complete_year",
+    ]),
+  }).strict(),
   z.object({ type: z.literal("last_n_days"), days: z.number().int().min(1).max(366) }).strict(),
+  /** Trailing window ending last night, excluding today's partial trading. */
+  z.object({ type: z.literal("last_n_complete_days"), days: z.number().int().min(1).max(366) }).strict(),
+  /**
+   * Whole elapsed weeks and months. "The last 6 weeks" means six complete
+   * weeks, not the 42 trailing days that straddle seven of them and report two
+   * part-weeks as if they were whole.
+   */
+  z.object({ type: z.literal("last_n_complete_weeks"), weeks: z.number().int().min(1).max(53) }).strict(),
+  z.object({ type: z.literal("last_n_complete_months"), months: z.number().int().min(1).max(24) }).strict(),
 ]);
 
 export const timeSelectionSchema = z.object({

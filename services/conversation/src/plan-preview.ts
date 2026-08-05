@@ -259,9 +259,11 @@ function emptyProvenance() {
   };
 }
 
-function contextOf(runContext: { context?: PlanPreviewContext } | undefined): PlanPreviewContext {
+// Mirrors live.ts: the Agents SDK hands tools a RunContext<unknown>, so the
+// trusted context is narrowed here rather than asserted at every call site.
+function contextOf(runContext: { context?: unknown } | undefined): PlanPreviewContext {
   if (!runContext?.context) throw new Error("Plan preview context is missing.");
-  return runContext.context;
+  return runContext.context as PlanPreviewContext;
 }
 
 function applyLocalCatalogue(

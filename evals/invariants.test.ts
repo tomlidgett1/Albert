@@ -196,8 +196,8 @@ test("permanent invariant 4/5: semantic contracts are versioned when meaning cha
 
   assertVersionedContracts("metric", baseline.metrics, registryDocument.metrics);
   assertVersionedContracts("topic", baseline.topics, registryDocument.topics);
-  assert.equal(registry.metrics.size, 47);
-  assert.equal(registry.topics.size, 7);
+  assert.equal(registry.metrics.size, 51);
+  assert.equal(registry.topics.size, 8);
 });
 
 test("permanent invariant 5/5: prior IR and every governed seed remain backward-compatible", () => {

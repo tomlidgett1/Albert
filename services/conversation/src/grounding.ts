@@ -1,6 +1,7 @@
 import type { TraceCell } from "../../../packages/shared/src/index.js";
 
-const numericTokenPattern = /(?<![\p{L}\d])[-+]?\$?\d[\d,]*(?:\.\d+)?%?(?![\p{L}\d])/gu;
+const numericTokenPattern =
+  /(?<![\p{L}\d])[-+]?\$?\d[\d,]*(?:\.\d+)?\s?(?:%|k|m|bn|b)?(?![\p{L}\d])/giu;
 
 const numberWordValues = Object.freeze({
   zero: 0,
@@ -47,10 +48,103 @@ type QuantitativeWordClaim = Readonly<{
   allowRowCount: boolean;
 }>;
 
+/**
+ * One numeric figure as the author actually wrote it. `decimals` and `scale`
+ * record the precision the author committed to, which is what makes a tolerant
+ * comparison safe: "62%" claims one significant rounding of a cell, "62.05%"
+ * claims another, and neither may drift onto a different cell.
+ */
+type NumericToken = Readonly<{
+  token: string;
+  value: number;
+  decimals: number;
+  scale: number;
+  /** Whether the author wrote an explicit sign, rather than carrying direction
+   * in words ("down $2,219.31"). Unsigned figures may match a cell magnitude. */
+  signed: boolean;
+}>;
+
+/**
+ * Below this magnitude an integer-precision match is refused. Rounding 2.4 to
+ * "2" would let an arbitrary small integer borrow grounding from an unrelated
+ * cell, so short values must be quoted at the precision they carry.
+ */
+const MINIMUM_INTEGER_ROUNDING_MAGNITUDE = 10;
+/** Deepest decimal precision an author can meaningfully write for a figure. */
+const MAXIMUM_COMPARABLE_DECIMALS = 6;
+
+const magnitudeScales: Readonly<Record<string, number>> = Object.freeze({
+  k: 1_000,
+  m: 1_000_000,
+  b: 1_000_000_000,
+  bn: 1_000_000_000,
+});
+
 function normalizeNumericToken(value: string): string {
-  const stripped = value.replace(/[$,%+]/g, "");
+  const parsed = parseNumericToken(value);
+  if (parsed) return String(parsed.value * parsed.scale);
+  const stripped = value.replace(/[$,%+\s]/g, "");
   const numeric = Number(stripped);
   return Number.isFinite(numeric) ? String(numeric) : stripped;
+}
+
+/** Splits a written figure into its value, its precision, and its magnitude. */
+function parseNumericToken(token: string): NumericToken | null {
+  const trimmed = token.trim();
+  const match = /^([-+]?)\$?([\d,]*\d)(?:\.(\d+))?\s?(%|k|m|bn|b)?$/iu.exec(trimmed);
+  if (!match) return null;
+  const [, sign, integerPart, fractionPart, suffix] = match;
+  const digits = `${sign === "-" ? "-" : ""}${integerPart.replaceAll(",", "")}${fractionPart ? `.${fractionPart}` : ""}`;
+  const value = Number(digits);
+  if (!Number.isFinite(value)) return null;
+  const normalizedSuffix = suffix?.toLowerCase();
+  const scale = normalizedSuffix && normalizedSuffix !== "%"
+    ? magnitudeScales[normalizedSuffix] ?? 1
+    : 1;
+  return Object.freeze({
+    token: trimmed,
+    value,
+    decimals: fractionPart?.length ?? 0,
+    scale,
+    signed: sign === "-" || sign === "+",
+  });
+}
+
+function roundTo(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  // Scale-then-round keeps 1.005 -> 1.01 rather than inheriting the binary
+  // representation error that Number.prototype.toFixed exposes at this size.
+  return Math.round((value + Number.EPSILON * Math.sign(value) * Math.abs(value)) * factor) / factor;
+}
+
+/**
+ * A figure is grounded when some governed cell rounds to exactly what the
+ * author wrote, at the precision and magnitude they wrote it. This admits the
+ * natural "$37,558.70", "62%" and "$37.6k" renderings of a cell while still
+ * refusing any value no cell supports.
+ */
+function tokenMatchesCellValue(token: NumericToken, cell: number): boolean {
+  // An unsigned figure may state the magnitude of a negative cell, because
+  // business prose carries direction in words: "sales are down $2,219.31"
+  // reports the cell -2219.31 faithfully. Typed comparison claims, not the
+  // narrative, are what prove direction.
+  const candidates = token.signed ? [cell] : [cell, Math.abs(cell)];
+  return candidates.some((candidate) => {
+    const scaled = candidate / token.scale;
+    if (scaled === token.value) return true;
+    if (token.decimals > MAXIMUM_COMPARABLE_DECIMALS) return false;
+    if (token.decimals === 0 && Math.abs(scaled) < MINIMUM_INTEGER_ROUNDING_MAGNITUDE) return false;
+    return roundTo(scaled, token.decimals) === token.value;
+  });
+}
+
+function numericCellValue(value: TraceCell): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!/^[-+]?\$?\d[\d,]*(?:\.\d+)?%?$/u.test(trimmed)) return null;
+  const numeric = Number(trimmed.replace(/[$,%+]/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function parseNumberWords(value: string): number | null {
@@ -151,67 +245,126 @@ function quantitativeWordClaims(
   return Object.freeze(claims);
 }
 
+/** Numeric cell values and copyable text labels drawn from governed rows. */
+export type GroundingEvidence = Readonly<{
+  values: readonly number[];
+  labels: readonly string[];
+}>;
+
+/**
+ * The year, month and day of a governed date cell. A date is data: an answer
+ * that groups by week has to name the weeks it is reporting, and it will write
+ * "29 June" where the cell holds "2026-06-29". Without this every dated answer
+ * — the entire trend and by-period class — reads as unsupported arithmetic.
+ */
+function dateCellComponents(value: TraceCell): readonly number[] {
+  if (typeof value !== "string") return [];
+  const match = /^(\d{4})-(\d{2})-(\d{2})/u.exec(value.trim());
+  if (!match) return [];
+  const [, year, month, day] = match;
+  return [Number(year), Number(month), Number(day)];
+}
+
+export function groundingEvidenceFromRows(
+  rows: readonly Readonly<Record<string, TraceCell>>[],
+): GroundingEvidence {
+  const values: number[] = [];
+  const labels: string[] = [];
+  for (const row of rows) {
+    for (const value of Object.values(row)) {
+      const numeric = numericCellValue(value);
+      if (numeric !== null) {
+        values.push(numeric);
+        continue;
+      }
+      const dateParts = dateCellComponents(value);
+      if (dateParts.length) values.push(...dateParts);
+      if (typeof value === "string" && value.trim()) labels.push(value.trim());
+    }
+  }
+  return Object.freeze({ values: Object.freeze(values), labels: Object.freeze(labels) });
+}
+
 /**
  * Prevents model-authored figures from entering a governed narrative. Every
- * numeric token must occur in a result cell or be a server-derived row count.
+ * numeric token must be a faithful rendering of a governed cell, a
+ * server-derived row count, or a figure the caller supplied as additional
+ * governed evidence (a resolved period boundary, for example).
  */
 export function findUngroundedNumbers(
   narrative: string,
   rows: readonly Readonly<Record<string, TraceCell>>[],
+  additionalValues: readonly number[] = [],
+  additionalLabels: readonly string[] = [],
 ): readonly string[] {
-  const groundedCells = new Set<string>();
-  const copiedLabels: string[] = [];
-  for (const row of rows) {
-    for (const value of Object.values(row)) {
-      if (typeof value === "number") groundedCells.add(normalizeNumericToken(String(value)));
-      if (typeof value === "string" && /^[-+]?\d[\d,]*(?:\.\d+)?%?$/u.test(value.trim())) {
-        groundedCells.add(normalizeNumericToken(value));
-      } else if (typeof value === "string" && value.trim()) {
-        copiedLabels.push(value.trim());
-      }
-    }
-  }
-  return findUngroundedNumbersWithEvidence(narrative,groundedCells,copiedLabels,String(rows.length));
+  const evidence = groundingEvidenceFromRows(rows);
+  return findUngroundedNumbersWithEvidence(
+    narrative,
+    [...evidence.values, ...additionalValues],
+    [...evidence.labels, ...additionalLabels],
+    rows.length,
+  );
 }
 
 /** Structured claims deliberately do not inherit the global row-count escape
  * hatch. Only their explicitly referenced numeric cells may ground figures. */
 export function findUngroundedNumbersForCells(
-  narrative:string,
-  cells:readonly TraceCell[],
-  copiedLabels:readonly string[]=[]
-):readonly string[]{
-  const groundedCells=new Set<string>();
-  for(const value of cells){
-    if(typeof value==="number")groundedCells.add(normalizeNumericToken(String(value)));
-    if(typeof value==="string"&&/^[-+]?\$?\d[\d,]*(?:\.\d+)?%?$/u.test(value.trim())){
-      groundedCells.add(normalizeNumericToken(value));
-    }
-  }
-  return findUngroundedNumbersWithEvidence(narrative,groundedCells,copiedLabels);
+  narrative: string,
+  cells: readonly TraceCell[],
+  copiedLabels: readonly string[] = [],
+): readonly string[] {
+  const values = cells.map(numericCellValue).filter((value): value is number => value !== null);
+  return findUngroundedNumbersWithEvidence(narrative, values, copiedLabels);
+}
+
+/** True when the narrative states this cell at some faithful precision. */
+export function mentionsCellValue(narrative: string, cell: TraceCell): boolean {
+  const value = numericCellValue(cell);
+  if (value === null) return false;
+  return numericTokens(narrative).some((token) => tokenMatchesCellValue(token, value));
 }
 
 export function normalizedQuantitativeClaims(
-  narrative:string,
-  copiedLabels:readonly string[]=[]
-):readonly string[]{
-  const values=(narrative.match(numericTokenPattern)??[]).map(normalizeNumericToken);
-  for(const claim of quantitativeWordClaims(narrative,copiedLabels))values.push(claim.normalized);
+  narrative: string,
+  copiedLabels: readonly string[] = [],
+): readonly string[] {
+  const values = numericTokens(narrative).map((token) => String(token.value * token.scale));
+  for (const claim of quantitativeWordClaims(narrative, copiedLabels)) values.push(claim.normalized);
   return Object.freeze(values);
 }
 
+/**
+ * Ordered-list markers ("1.", "2)") number the presentation, not the business.
+ * Reading them as unsupported figures blocked every ranked answer, which is the
+ * shape most of these questions want.
+ */
+const listMarkerPattern = /^[ \t]*(?:[-*]\s*)?\d+[.)](?=\s)/gmu;
+
+function numericTokens(narrative: string): readonly NumericToken[] {
+  const withoutListMarkers = narrative.replace(listMarkerPattern, "");
+  numericTokenPattern.lastIndex = 0;
+  return (withoutListMarkers.match(numericTokenPattern) ?? [])
+    .map(parseNumericToken)
+    .filter((token): token is NumericToken => token !== null);
+}
+
 function findUngroundedNumbersWithEvidence(
-  narrative:string,
-  groundedCells:ReadonlySet<string>,
-  copiedLabels:readonly string[],
-  rowCount?:string,
-):readonly string[]{
-  const grounded=new Set(groundedCells);if(rowCount!==undefined)grounded.add(rowCount);
-  const tokens = narrative.match(numericTokenPattern) ?? [];
-  const ungrounded = tokens.filter((token) => !grounded.has(normalizeNumericToken(token)));
+  narrative: string,
+  cellValues: readonly number[],
+  copiedLabels: readonly string[],
+  rowCount?: number,
+): readonly string[] {
+  const grounded = rowCount === undefined ? cellValues : [...cellValues, rowCount];
+  const ungrounded = numericTokens(narrative)
+    .filter((token) => !grounded.some((value) => tokenMatchesCellValue(token, value)))
+    // A digit inside a governed label the answer quoted verbatim — "CO2",
+    // "Shimano 105", "700x25c" — is part of a name, not a figure.
+    .filter((token) => !copiedSourceLabel(narrative, token.token, copiedLabels))
+    .map((token) => token.token);
   for (const claim of quantitativeWordClaims(narrative, copiedLabels)) {
-    const evidence = claim.allowRowCount ? grounded : groundedCells;
-    if (!evidence.has(claim.normalized)) ungrounded.push(claim.token);
+    const evidence = claim.allowRowCount ? grounded : cellValues;
+    const claimed = Number(claim.normalized);
+    if (!evidence.some((value) => value === claimed)) ungrounded.push(claim.token);
   }
   return Object.freeze([...new Set(ungrounded)]);
 }

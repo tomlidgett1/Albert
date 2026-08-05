@@ -53,8 +53,8 @@ const compilerContext = {
 test("all 25 V1 seed questions run through the deterministic golden harness", async () => {
   const result = await runSeedGoldenSuite(registryPath);
 
-  assert.equal(result.metricCount, 47);
-  assert.equal(result.topicCount, 7);
+  assert.equal(result.metricCount, 51);
+  assert.equal(result.topicCount, 8);
   assert.equal(result.questionCount, 25);
   assert.equal(result.cases.length, 25);
   assert.equal(new Set(result.cases.map((item) => item.id)).size, 25);

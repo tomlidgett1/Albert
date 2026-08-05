@@ -65,15 +65,36 @@ function renderInlineMarkdown(value: string, linkMode: LinkMode): string {
 function splitTableRow(line: string): string[] {
   const trimmed = line.trim();
   if (!trimmed.includes("|")) return [];
-  return trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  return trimmed
+    .replace(/^\|/, "")
+    .replace(/(?<!\\)\|$/, "")
+    // A governed label may contain a pipe ("700x25c | Black"); the author
+    // escapes it, and an escaped pipe is data rather than a column boundary.
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.replace(/\\\|/g, "|").trim());
 }
 
 function isTableRow(line: string): boolean {
   return splitTableRow(line).length >= 2;
 }
 
+/**
+ * GitHub-flavoured markdown needs only one dash per column, and models write
+ * every width — `|---|`, `|--|`, `|-|`, `|:-:|`. Demanding three silently
+ * turned a whole table back into loose pipes.
+ */
 function isTableSeparator(line: string): boolean {
-  return isTableRow(line) && splitTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell));
+  return isTableRow(line) && splitTableRow(line).every((cell) => /^:?-+:?$/.test(cell));
+}
+
+/** A table opens only where a header row is followed by its separator. */
+function startsTable(lines: readonly string[], index: number): boolean {
+  const header = lines[index];
+  const separator = lines[index + 1];
+  return header !== undefined
+    && separator !== undefined
+    && isTableRow(header)
+    && isTableSeparator(separator);
 }
 
 function renderHeading(level: number, text: string, options: Required<RenderAssistantMarkdownOptions>): string {
@@ -97,11 +118,23 @@ function renderList(items: string[], ordered: boolean, options: Required<RenderA
 function renderTable(headers: string[], rows: string[][], options: Required<RenderAssistantMarkdownOptions>): string {
   const head = headers.map((cell) => `<th>${renderInlineMarkdown(cell, options.linkMode)}</th>`).join("");
   const body = rows.map((row) => {
-    const cells = row.map((cell) => `<td>${renderInlineMarkdown(cell, options.linkMode)}</td>`).join("");
+    // A ragged row must not shift its neighbours' figures into the wrong
+    // column: pad short rows and drop cells past the last header.
+    const cells = headers
+      .map((_, column) => `<td>${renderInlineMarkdown(row[column] ?? "", options.linkMode)}</td>`)
+      .join("");
     return `<tr>${cells}</tr>`;
   }).join("");
-  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  // Data tables are wider than a chat column. Scrolling the table keeps the
+  // figures legible instead of crushing every column to fit.
+  return `<div class="answerTableScroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
+
+// Leading indentation is tolerated: a model that indents a list or a heading
+// still meant one, and a literal "- Services" in the prose helps nobody.
+const headingPattern = /^\s*(#{1,6})\s+(.+)$/;
+const unorderedItemPattern = /^\s*[-*]\s+(.+)$/;
+const orderedItemPattern = /^\s*\d+[.)]\s+(.+)$/;
 
 /** Bike Insights New / Genie markdown renderer, adapted for Albert answers. */
 export function renderAssistantMarkdown(
@@ -123,14 +156,14 @@ export function renderAssistantMarkdown(
       continue;
     }
 
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    const heading = headingPattern.exec(line);
     if (heading) {
       blocks.push(renderHeading(heading[1]!.length, heading[2]!, resolved));
       index += 1;
       continue;
     }
 
-    if (isTableRow(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1]!)) {
+    if (startsTable(lines, index)) {
       const headers = splitTableRow(line);
       index += 2;
       const rows: string[][] = [];
@@ -142,16 +175,16 @@ export function renderAssistantMarkdown(
       continue;
     }
 
-    const unordered = /^[-*]\s+(.+)$/.exec(line);
-    const ordered = /^\d+[.)]\s+(.+)$/.exec(line);
+    const unordered = unorderedItemPattern.exec(line);
+    const ordered = orderedItemPattern.exec(line);
     if (unordered || ordered) {
       const items: string[] = [];
       const isOrdered = Boolean(ordered);
       while (index < lines.length) {
         const current = lines[index] ?? "";
         const match = isOrdered
-          ? /^\d+[.)]\s+(.+)$/.exec(current)
-          : /^[-*]\s+(.+)$/.exec(current);
+          ? orderedItemPattern.exec(current)
+          : unorderedItemPattern.exec(current);
         if (!match) break;
         items.push(match[1]!);
         index += 1;
@@ -165,7 +198,14 @@ export function renderAssistantMarkdown(
     while (index < lines.length) {
       const next = lines[index] ?? "";
       if (!next.trim()) break;
-      if (/^#{1,6}\s+/.test(next) || isTableRow(next) || /^[-*]\s+/.test(next) || /^\d+[.)]\s+/.test(next)) {
+      // Only a real table header interrupts a paragraph. A sentence that
+      // happens to contain a pipe is prose, not the start of a table.
+      if (
+        headingPattern.test(next)
+        || startsTable(lines, index)
+        || unorderedItemPattern.test(next)
+        || orderedItemPattern.test(next)
+      ) {
         break;
       }
       paragraph.push(next);

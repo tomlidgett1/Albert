@@ -296,11 +296,35 @@ function assertNoForbiddenTraceKeys(value: unknown, path: string): void {
   });
 }
 
+/** Control characters that must never reach a rendered surface. */
+const controlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+
 /** Removes control characters and bounds user-visible trace copy. */
 export function sanitizeTraceText(value: string, maxLength = 500): string {
   return value
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(controlCharacterPattern, "")
     .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+/**
+ * Bounds answer prose exactly as {@link sanitizeTraceText} bounds trace copy —
+ * same control-character strip, same length cap — but keeps the line breaks.
+ * An answer is markdown the reader sees rendered, and its block structure lives
+ * entirely in the newlines: collapsing them turns a table into a row of loose
+ * pipes and a list into one run-on sentence. Trace labels stay single-line;
+ * only the narrative the business owner reads comes through here.
+ */
+export function sanitizeAnswerText(value: string, maxLength = 4_000): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(controlCharacterPattern, "")
+    // Horizontal runs only. Leading indentation collapses with them so a list
+    // or table row the model nudged inward still reads as one at the margin.
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim()
     .slice(0, maxLength);
 }

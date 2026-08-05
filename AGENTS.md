@@ -133,9 +133,48 @@ Reference: Try Albert popup open / close.
   - Modal enter: `cubic-bezier(0.22, 1, 0.36, 1)` at **320ms**
 - Honour `prefers-reduced-motion: reduce` by disabling non-essential animation
 
+### Tooltips
+
+Required style for all tooltips and selection toolbars (Transitions.dev open/close).
+Reference: answer selection "Add to chat" in
+`/app/dash/components/insights-trace.module.css` (`.selectionToolbar`).
+
+Structure for hover/focus tooltips:
+
+```html
+<span class="t-tt-wrap">
+  <button class="t-tt-trigger" aria-describedby="tt-1">…</button>
+  <span class="t-tt" id="tt-1" role="tooltip">Tooltip text</span>
+</span>
+```
+
+- The wrap (not the trigger) is the hover target so the pointer can drift onto
+  the tooltip without flicker
+- Leave state snaps immediately: keep `transition-delay` only on the enter rule
+  (hover/focus/open), so exit plays with no delay
+- Tokens:
+  - Enter: **150ms** `ease-out`, delay **80ms**
+  - Exit: **50ms** `ease-out`, no delay
+  - Scale: enter from **0.98** to **1**
+  - Gap above anchor: **8px** (`bottom: calc(100% + 8px)` or equivalent)
+  - Transform origin: **50% 100%** when anchored above
+- Surface:
+  - Background: **#ffffff**
+  - Text: **#2f2f2f**
+  - Radius: **12px**
+  - Padding: **8px 12px**
+  - Shadow:
+    `0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px 0 rgba(0, 0, 0, 0.05), 0 4px 42px 0 rgba(0, 0, 0, 0.06)`
+- Hidden state: `opacity: 0`, `pointer-events: none`, scaled to `--tt-scale`
+- Visible/open state: `opacity: 1`, full scale, interactive when the tooltip
+  itself is a control
+- Selection toolbars must appear only after the selection gesture finishes
+  (mouseup / keyboard settle), not while dragging
+- Honour `prefers-reduced-motion: reduce` with `transition: none`
+
 ### Implementation rule
 
-Before introducing a new button, tab, menu, search field, pill, or popup,
-match the closest pattern above. If a needed pattern is missing from this
-style sheet, extend this file with the chosen dash-derived values instead of
-improvising a one-off style.
+Before introducing a new button, tab, menu, search field, pill, popup, or
+tooltip, match the closest pattern above. If a needed pattern is missing from
+this style sheet, extend this file with the chosen dash-derived values instead
+of improvising a one-off style.
