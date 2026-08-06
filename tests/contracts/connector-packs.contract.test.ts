@@ -16,6 +16,20 @@ import {
 } from "../../connectors/lightspeed-r/documented-fields";
 import { buildLightspeedRAuthorizationUrl } from "../../connectors/lightspeed-r/oauth-public";
 import { lightspeedSchemas } from "../../connectors/lightspeed-r/schemas";
+import { buildGoogleAdsAuthorizationUrl } from "../../connectors/google-ads/oauth-public";
+import { GOOGLE_ADS_DEFAULT_SCOPES } from "../../connectors/google-ads/manifest";
+import { buildMetaAdsAuthorizationUrl } from "../../connectors/meta-ads/oauth-public";
+import { META_ADS_DEFAULT_SCOPES } from "../../connectors/meta-ads/manifest";
+import { buildMomenceAuthorizationUrl } from "../../connectors/momence/oauth-public";
+import { verifyShopifyCallbackHmac } from "../../connectors/shopify/index";
+import { SHOPIFY_DEFAULT_SCOPES, normalizeShopifyShopDomain } from "../../connectors/shopify/manifest";
+import { buildShopifyAuthorizationUrl } from "../../connectors/shopify/oauth-public";
+import { buildStripeAuthorizationUrl } from "../../connectors/stripe/oauth-public";
+import { STRIPE_DEFAULT_SCOPES } from "../../connectors/stripe/manifest";
+import { connectorManifests } from "../../connectors/registry";
+import { SquareConnector } from "../../connectors/square/index";
+import { SQUARE_DEFAULT_SCOPES, squareManifest } from "../../connectors/square/manifest";
+import { buildSquareAuthorizationUrl } from "../../connectors/square/oauth-public";
 import { XeroConnector } from "../../connectors/xero/index";
 import {
   XERO_DEFAULT_SCOPES,
@@ -188,19 +202,23 @@ test("the Xero field catalogue is pinned to an immutable official OpenAPI revisi
 });
 
 test("Xero payments are settlement evidence and never fabricate POS tender facts", () => {
-  const payments = xeroManifest.streams.find((stream) => stream.id === "payments");
+  const payments = xeroManifest.streams.find((stream) => stream.id === "xero_payments");
   assert.ok(payments);
-  assert.deepEqual(payments.canonicalTargets, ["event_link","metadata"]);
+  assert.deepEqual([...payments.canonicalTargets], ["event_link","metadata"]);
   assert.equal(payments.canonicalTargets.includes("commerce_payment"), false);
-  const paymentFields = xeroManifest.fieldCoverage.filter((field) => field.stream === "payments");
+  const paymentFields = xeroManifest.fieldCoverage.filter((field) => field.stream === "xero_payments");
   assert.ok(paymentFields.filter((field) => field.disposition === "canonical").every((field) =>
-    field.target?.startsWith("event_link.")
+    field.target === "event_link" || field.target?.startsWith("event_link")
   ));
-  assert.equal(paymentFields.some((field) => field.target?.startsWith("commerce_payment.")), false);
+  assert.equal(paymentFields.some((field) => field.target?.startsWith("commerce_payment")), false);
 });
 
 test("lookup-only PaymentType coverage names only emitted metadata evidence", () => {
-  const fields = lightspeedRManifest.fieldCoverage.filter((field) => field.stream === "payment_types");
+  // The spec-generated ls_payment_types stream has no mapper of its own: it
+  // emits only the lookup metadata observation. Its generated coverage may
+  // therefore claim exactly one canonical disposition — the record id that
+  // becomes the recorded source id — never a target no mapper emits.
+  const fields = lightspeedRManifest.fieldCoverage.filter((field) => field.stream === "ls_payment_types");
   const canonical = fields.filter((field) => field.disposition === "canonical");
   assert.deepEqual(canonical.map((field) => [field.field, field.target]), [
     ["paymentTypeID", "metadata.source_record_id"],
@@ -210,9 +228,12 @@ test("lookup-only PaymentType coverage names only emitted metadata evidence", ()
   ));
 });
 
-test("all thirty-one V1 streams declare executable reconciliation policies", () => {
+test("every declared stream carries an executable reconciliation policy", () => {
   const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
-  assert.equal(manifests.reduce((count, manifest) => count + manifest.streams.length, 0), 31);
+  // The spec-driven packs derive their stream sets from their table specs;
+  // the count is pinned there (tables.json + streams contract tests), and this
+  // suite asserts policy validity for every stream that exists.
+  assert.ok(manifests.reduce((count, manifest) => count + manifest.streams.length, 0) >= 31);
   for (const manifest of manifests) {
     assert.doesNotThrow(() => assertConnectorManifestReconciliationPolicy(manifest));
     for (const stream of manifest.streams) {
@@ -285,7 +306,7 @@ test("reconciliation uses modification authority and unfiltered identity scans",
     },
   });
   const paymentStream = (await xero.list_streams(context)).find((stream) =>
-    stream.id === "payments"
+    stream.id === "xero_payments"
   );
   assert.ok(paymentStream);
   const latePage = await xero.reconciliation_sync(context, paymentStream, {
@@ -469,20 +490,29 @@ test("Lightspeed R-Series exchanges codes as multipart form with PKCE and redire
 });
 
 test("opaque cursors are provider and stream scoped", () => {
+  // The Lightspeed spec walk stores its continuation as opaque JSON state
+  // ({after, pass}). The shape may evolve; the invariant is scoping: a cursor
+  // replayed against another connector or another stream must be rejected as
+  // CURSOR_INVALID, never reinterpreted.
+  const continuation = JSON.stringify({ after: "vendor-after-token", pass: -1 });
   const cursor = encodeCursor({
     v: 1,
-    connector: "xero",
-    stream: "invoices",
+    connector: "lightspeed-r",
+    stream: "ls_sales",
     mode: "incremental",
     watermark: "2026-07-31T00:00:00.000Z",
-    continuation: 2,
+    continuation,
   });
   assert.equal(
-    decodeCursor(cursor, { connector: "xero", stream: "invoices" }).continuation,
-    2,
+    decodeCursor(cursor, { connector: "lightspeed-r", stream: "ls_sales" }).continuation,
+    continuation,
   );
   assert.throws(
-    () => decodeCursor(cursor, { connector: "xero", stream: "contacts" }),
+    () => decodeCursor(cursor, { connector: "lightspeed-r", stream: "ls_sale_lines" }),
+    /cursor is invalid/iu,
+  );
+  assert.throws(
+    () => decodeCursor(cursor, { connector: "xero", stream: "ls_sales" }),
     /cursor is invalid/iu,
   );
 });
@@ -495,20 +525,20 @@ test("a watermarkless cursor omits sourceUpdatedAt instead of carrying undefined
   const cursor = encodeCursor({
     v: 1,
     connector: "lightspeed-r",
-    stream: "categories",
+    stream: "ls_categories",
     mode: "reconciliation",
   });
   assert.deepEqual(Object.keys(cursor), ["value"]);
   assert.equal("sourceUpdatedAt" in cursor, false);
   assert.equal(
-    decodeCursor(cursor, { connector: "lightspeed-r", stream: "categories" }).watermark,
+    decodeCursor(cursor, { connector: "lightspeed-r", stream: "ls_categories" }).watermark,
     undefined,
   );
   assert.equal(
     encodeCursor({
       v: 1,
       connector: "lightspeed-r",
-      stream: "sales",
+      stream: "ls_sales",
       mode: "reconciliation",
       watermark: "2026-07-31T00:00:00.000Z",
     }).sourceUpdatedAt,
@@ -627,7 +657,7 @@ test("Xero and Deputy webhooks fail closed and normalize supported stream signal
     },
     body: xeroPayload,
   });
-  assert.deepEqual(xeroDisposition.streams, ["invoices"]);
+  assert.deepEqual(xeroDisposition.streams, ["xero_invoices"]);
   await assert.rejects(
     xero.handle_webhook(context, {
       id: "bad-xero",
@@ -791,8 +821,11 @@ test("connector workers execute typed, read-only extraction pages against vendor
       if (url.pathname === "/API/V3/Account.json") {
         return Response.json({ Account: { accountID: "101", name: "Demo" } });
       }
+      // The spec walk varies its pagination, sort, window and relation
+      // parameters; the sanitized recording represents one vendor page and is
+      // served whatever parameters the walk sends.
       if (url.pathname.endsWith("/Sale.json")) {
-        return Response.json(lightspeedFixture.responses.sales, {
+        return Response.json(lightspeedFixture.responses.ls_sales, {
           headers: {
             "x-ls-api-bucket-level": "2/90",
             "x-ls-api-drip-rate": "1",
@@ -800,12 +833,12 @@ test("connector workers execute typed, read-only extraction pages against vendor
         });
       }
       if (url.pathname.endsWith("/Vendor.json")) {
-        return Response.json(lightspeedFixture.responses.vendors);
+        return Response.json(lightspeedFixture.responses.ls_vendors);
       }
       return new Response(null, { status: 404 });
     },
   });
-  const saleStream = (await lightspeed.list_streams(context)).find((stream) => stream.id === "sales");
+  const saleStream = (await lightspeed.list_streams(context)).find((stream) => stream.id === "ls_sales");
   assert.ok(saleStream);
   const salePage = await lightspeed.initial_sync(
     context,
@@ -813,13 +846,23 @@ test("connector workers execute typed, read-only extraction pages against vendor
     { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
   );
   assert.equal(salePage.records.length, 1);
-  assert.equal(salePage.records[0]?.normalized?.money?.total?.exact, "1499.0000");
+  // Typed projection: approved coverage fields ride normalized.fields verbatim;
+  // exact money coercion is owned by typed staging downstream.
+  assert.equal(salePage.records[0]?.sourceRecordId, "601");
+  assert.equal(salePage.records[0]?.normalized?.fields.total, "1499.0000");
   assert.equal(salePage.records[0]?.validationIssues, undefined);
   const saleUrl = lightspeedRequests.find((url) => url.pathname.endsWith("/Sale.json"));
-  assert.equal(saleUrl?.searchParams.get("load_relations"), '["SaleLines","SalePayments"]');
-  assert.match(saleUrl?.searchParams.get("timeStamp") ?? "", /^><,/u);
+  // The walk pages by ascending immutable id and pushes the modified-time
+  // window down to the vendor, and it requests the scan group's collapsed
+  // relation union so every sale-derived stream's page is byte-identical and
+  // can be served from the leader's page cache without extra HTTP.
+  assert.equal(saleUrl?.searchParams.get("sort"), "saleID");
+  assert.match(saleUrl?.searchParams.get("updateTime") ?? "", /^><,/u);
+  const saleRelations = JSON.parse(saleUrl?.searchParams.get("load_relations") ?? "[]") as string[];
+  assert.ok(saleRelations.includes("SaleLines.InventorySales"));
+  assert.ok(saleRelations.includes("SalePayments.SaleAccounts"));
 
-  const vendorStream = (await lightspeed.list_streams(context)).find((stream) => stream.id === "vendors");
+  const vendorStream = (await lightspeed.list_streams(context)).find((stream) => stream.id === "ls_vendors");
   assert.ok(vendorStream);
   const vendorPage = await lightspeed.initial_sync(
     context,
@@ -831,12 +874,34 @@ test("connector workers execute typed, read-only extraction pages against vendor
   assert.equal(vendorPage.records[0]?.normalized?.fields.name, "Example Cycle Supply");
   assert.equal(vendorPage.records[0]?.validationIssues, undefined);
   const vendorUrl = lightspeedRequests.find((url) => url.pathname.endsWith("/Vendor.json"));
-  assert.equal(vendorUrl?.searchParams.get("archived"), "true");
   assert.equal(vendorUrl?.searchParams.get("load_relations"), '["Contact"]');
-  assert.equal(vendorUrl?.searchParams.get("sort"), "timeStamp");
+  assert.equal(vendorUrl?.searchParams.get("sort"), "vendorID");
+  assert.match(vendorUrl?.searchParams.get("timeStamp") ?? "", /^><,/u);
+  // Hidden populations are separate passes rather than a widened first pass:
+  // the default walk omits `archived`, and exhausting it hands back a cursor
+  // whose next pass asks the vendor for the archived-only population.
+  assert.equal(vendorUrl?.searchParams.has("archived"), false);
+  assert.equal(vendorPage.hasMore, true);
+  const archivedVendorPage = await lightspeed.initial_sync(
+    context,
+    vendorStream,
+    { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+    vendorPage.nextCursor!,
+  );
+  const archivedVendorUrl = lightspeedRequests
+    .filter((url) => url.pathname.endsWith("/Vendor.json"))
+    .at(-1);
+  assert.equal(archivedVendorUrl?.searchParams.get("archived"), "only");
+  assert.equal(archivedVendorPage.hasMore, false);
+  // The scan graph replaces the old lookup-table ordering: a derived stream
+  // depends on the leader whose walk produces its payload.
   assert.deepEqual(
-    lightspeedRManifest.streams.find((stream) => stream.id === "orders")?.dependencies,
-    ["shops", "employees", "items", "vendors"],
+    lightspeedRManifest.streams.find((stream) => stream.id === "ls_sale_lines")?.dependencies,
+    ["ls_sales"],
+  );
+  assert.deepEqual(
+    lightspeedRManifest.streams.find((stream) => stream.id === "ls_purchase_order_lines")?.dependencies,
+    ["ls_purchase_orders"],
   );
 
   const xeroFixture = fixture("../../connectors/xero/fixtures/sanitized-recording.json");
@@ -878,7 +943,7 @@ test("connector workers execute typed, read-only extraction pages against vendor
       return new Response(null, { status: 404 });
     },
   });
-  const invoiceStream = (await xero.list_streams(context)).find((stream) => stream.id === "invoices");
+  const invoiceStream = (await xero.list_streams(context)).find((stream) => stream.id === "xero_invoices");
   assert.ok(invoiceStream);
   const invoicePage = await xero.initial_sync(
     context,
@@ -891,7 +956,7 @@ test("connector workers execute typed, read-only extraction pages against vendor
   assert.equal(invoiceUrl?.searchParams.get("page"), "1");
   assert.match(invoiceUrl?.searchParams.get("where") ?? "", /^Date>=DateTime/u);
 
-  const paymentStream = (await xero.list_streams(context)).find((stream) => stream.id === "payments");
+  const paymentStream = (await xero.list_streams(context)).find((stream) => stream.id === "xero_payments");
   assert.ok(paymentStream);
   const paymentPage = await xero.initial_sync(
     context,
@@ -1035,9 +1100,10 @@ test("Deputy location extraction requests its documented AddressObject identity 
 
 test("Lightspeed InventoryLog advances by sortable ID and keeps additive drift out of staging", async () => {
   const recording = fixture("../../connectors/lightspeed-r/fixtures/sanitized-recording.json");
-  const inventoryResponse = recording.responses.inventory_logs as Record<string, unknown>;
+  const inventoryResponse = recording.responses.ls_inventory_logs as Record<string, unknown>;
   const inventory = (inventoryResponse.InventoryLog as readonly Record<string, unknown>[])[0];
   assert.ok(inventory);
+  const afterToken = "b2Zmc2V0PTEwMA";
   const requests: URL[] = [];
   let inventoryCalls = 0;
   const connector = new LightspeedRConnector({
@@ -1061,31 +1127,45 @@ test("Lightspeed InventoryLog advances by sortable ID and keeps additive drift o
       inventoryCalls += 1;
       return inventoryCalls === 1
         ? Response.json({
-            "@attributes": { next: "" },
+            "@attributes": {
+              next: `https://api.lightspeedapp.com/API/V3/Account/101/InventoryLog.json?after=${afterToken}`,
+            },
             InventoryLog: [{ ...inventory, newAdditiveVendorField: "raw-only" }],
           })
         : Response.json({ "@attributes": { next: "" }, InventoryLog: [] });
     },
   });
-  const stream = (await connector.list_streams(context)).find((item) => item.id === "inventory_logs");
+  const stream = (await connector.list_streams(context)).find((item) => item.id === "ls_inventory_logs");
   assert.ok(stream);
   const initial = await connector.initial_sync(
     context,
     stream,
     { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
   );
+  // The walk is ordered by ascending immutable id, so a record created
+  // mid-walk lands at the end and can never be skipped. createTime is not a
+  // sortable modified-time pushdown, so no time filter is sent: completeness
+  // comes from walking the id order to exhaustion, not from a vendor filter.
   assert.equal(requests.at(-1)?.searchParams.get("sort"), "inventoryLogID");
-  assert.match(requests.at(-1)?.searchParams.get("createTime") ?? "", /^><,/u);
-  assert.equal(
-    decodeCursor(initial.nextCursor!, { connector: "lightspeed-r", stream: "inventory_logs" }).continuation,
-    1101,
-  );
+  assert.equal(requests.at(-1)?.searchParams.has("createTime"), false);
+  // The cursor carries the vendor's opaque continuation for the open walk;
+  // the old numeric id checkpoint no longer exists.
+  const continuation = decodeCursor(initial.nextCursor!, {
+    connector: "lightspeed-r",
+    stream: "ls_inventory_logs",
+  }).continuation;
+  assert.deepEqual(JSON.parse(String(continuation)), { after: afterToken, pass: -1 });
+  assert.equal(initial.hasMore, true);
   assert.equal(initial.records[0]?.normalized?.fields.newAdditiveVendorField, undefined);
   assert.equal(initial.records[0]?.normalized?.fields.qohChange, "1.0000");
   assert.equal(initial.records[0]?.validationIssues?.[0]?.code, "schema_drift");
 
   await connector.incremental_sync(context, stream, initial.nextCursor!);
-  assert.equal(requests.at(-1)?.searchParams.get("inventoryLogID"), ">,1101");
+  // The vendor bakes sort, filter and page size into the continuation token;
+  // re-sending them alongside it would silently restart the walk.
+  assert.equal(requests.at(-1)?.searchParams.get("after"), afterToken);
+  assert.equal(requests.at(-1)?.searchParams.has("sort"), false);
+  assert.equal(requests.at(-1)?.searchParams.has("limit"), false);
   assert.equal(
     (await connector.describe_capabilities(context)).find((item) =>
       item.id === "inventory.movements")?.support,
@@ -1223,7 +1303,7 @@ test("Xero contact extraction always includes archived source records", async ()
       }] });
     },
   });
-  const stream = (await xero.list_streams(context)).find(({ id }) => id === "contacts");
+  const stream = (await xero.list_streams(context)).find(({ id }) => id === "xero_contacts");
   assert.ok(stream);
 
   const page = await xero.initial_sync(
@@ -1408,7 +1488,7 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
         : Response.json({ Invoices: [] });
     },
   });
-  const invoiceStream = (await xero.list_streams(context)).find((stream) => stream.id === "invoices");
+  const invoiceStream = (await xero.list_streams(context)).find((stream) => stream.id === "xero_invoices");
   assert.ok(invoiceStream);
   const firstXeroPage = await xero.incremental_sync(
     context,
@@ -1432,7 +1512,7 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
     context,invoiceStream,firstXeroPage.nextCursor!,
   );
   const restartCursor=decodeCursor(verificationRestart.nextCursor!,{
-    connector:"xero",stream:"invoices",
+    connector:"xero",stream:"xero_invoices",
   });
   assert.equal(verificationRestart.hasMore,true);
   assert.equal(restartCursor.continuation,undefined);
@@ -1571,10 +1651,10 @@ test("Xero page scans require two identical bounded passes before advancing", as
       return Response.json({Invoices:response});
     },
   });
-  const stream=(await xero.list_streams(context)).find((candidate)=>candidate.id==="invoices");
+  const stream=(await xero.list_streams(context)).find((candidate)=>candidate.id==="xero_invoices");
   assert.ok(stream);
   let cursor=encodeCursor({
-    v:1,connector:"xero",stream:"invoices",mode:"incremental",
+    v:1,connector:"xero",stream:"xero_invoices",mode:"incremental",
     watermark:"2026-07-01T00:00:00.000Z",
   });
   let page:Awaited<ReturnType<typeof xero.incremental_sync>>;
@@ -1586,7 +1666,7 @@ test("Xero page scans require two identical bounded passes before advancing", as
 
   assert.equal(dataCall,6,"a changed verification pass must be scanned again");
   assert.equal(
-    decodeCursor(cursor,{connector:"xero",stream:"invoices"}).watermark,
+    decodeCursor(cursor,{connector:"xero",stream:"xero_invoices"}).watermark,
     "2026-08-03T00:00:00.000Z",
   );
 });
@@ -1621,7 +1701,7 @@ test("malformed vendor pagination identities quarantine without creating a loopi
           });
     },
   });
-  const journalStream = (await xero.list_streams(context)).find(({ id }) => id === "journals");
+  const journalStream = (await xero.list_streams(context)).find(({ id }) => id === "xero_journals");
   assert.ok(journalStream);
   const journalPage = await xero.initial_sync(
     context,
@@ -1729,7 +1809,7 @@ test("Xero treats 304 Not Modified as a successful empty incremental page", asyn
         : new Response(null, { status: 304 });
     },
   });
-  const stream = (await xero.list_streams(context)).find((candidate) => candidate.id === "invoices");
+  const stream = (await xero.list_streams(context)).find((candidate) => candidate.id === "xero_invoices");
   assert.ok(stream);
   const page = await xero.incremental_sync(context, stream, encodeCursor({
     v: 1,
@@ -1741,7 +1821,173 @@ test("Xero treats 304 Not Modified as a successful empty incremental page", asyn
   assert.deepEqual(page.records, []);
   assert.equal(page.hasMore, false);
   assert.equal(
-    decodeCursor(page.nextCursor!,{connector:"xero",stream:"invoices"}).watermark,
+    decodeCursor(page.nextCursor!,{connector:"xero",stream:"xero_invoices"}).watermark,
     "2026-08-03T00:00:00.000Z",
   );
+});
+
+test("Square authorizes read-only over the confidential code flow and stays authorization-only", async () => {
+  const square = new URL(buildSquareAuthorizationUrl({
+    clientId: "public-square-id",
+    state: "state-square",
+    redirectUri: "https://albert.example/api/oauth/square/callback",
+  }));
+  assert.equal(square.hostname, "connect.squareup.com");
+  assert.equal(square.pathname, "/oauth2/authorize");
+  assert.equal(square.searchParams.get("client_id"), "public-square-id");
+  assert.equal(square.searchParams.get("state"), "state-square");
+  assert.equal(
+    square.searchParams.get("redirect_uri"),
+    "https://albert.example/api/oauth/square/callback",
+  );
+  // `session=false` stops Square silently reusing whichever seller session the
+  // browser already holds, which would connect the wrong merchant.
+  assert.equal(square.searchParams.get("session"), "false");
+  // Confidential code flow: PKCE parameters must never appear on the redirect.
+  assert.equal(square.searchParams.has("code_challenge"), false);
+  assert.equal(square.searchParams.has("code_challenge_method"), false);
+  assert.equal(square.toString().includes("secret"), false);
+
+  // Square scopes are space separated, and every one of them is a read grant.
+  const scopeParameter = square.searchParams.get("scope") ?? "";
+  const requested = scopeParameter.split(" ");
+  assert.equal(requested.length > 0, true);
+  assert.deepEqual([...requested], [...SQUARE_DEFAULT_SCOPES]);
+  for (const scope of requested) {
+    assert.equal(/_READ$/u.test(scope), true, `${scope} is not a read permission`);
+  }
+  // A management capability is not a read grant and must never be requested.
+  assert.equal(scopeParameter.includes("DEVICE_CREDENTIAL_MANAGEMENT"), false);
+
+  // A write permission must be refused rather than silently forwarded.
+  assert.throws(() => buildSquareAuthorizationUrl({
+    clientId: "public-square-id",
+    state: "state-square",
+    redirectUri: "https://albert.example/api/oauth/square/callback",
+    scopes: ["ORDERS_WRITE"],
+  }), /Invalid Square authorization parameters/u);
+
+  // Authorization-only: no stream, no capability, and no claimed authority.
+  assert.deepEqual([...squareManifest.streams], []);
+  assert.deepEqual(squareManifest.capabilities, {});
+  assert.deepEqual([...squareManifest.sourceAuthority.defaults], []);
+
+  const connector = new SquareConnector({
+    clientId: "square-client",
+    clientSecret: "square-secret",
+    redirectUri: "https://albert.example/api/oauth/square/callback",
+    vault: new MemoryVault({
+      provider: "square",
+      accessToken: "unused",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: [...SQUARE_DEFAULT_SCOPES],
+      metadata: { merchantId: "MERCHANT" },
+    }),
+  });
+  const context = { tenantId: "t", connectionId: "c", credentialRef: "ref" };
+  assert.deepEqual(await connector.list_streams(context), []);
+  assert.deepEqual(await connector.describe_capabilities(context), []);
+  // A sync routed to Square is a defect, so it must fail closed rather than
+  // return an empty page that would read as "synced, nothing found".
+  await assert.rejects(
+    () => connector.initial_sync(
+      context,
+      { id: "orders" } as never,
+      { from: "2026-01-01T00:00:00.000Z", to: "2026-02-01T00:00:00.000Z" },
+    ),
+    /declares no stream/u,
+  );
+  const webhook = await connector.handle_webhook(context, { body: "{}" } as never);
+  assert.equal(webhook.accepted, false);
+});
+
+test("authorization-only packs declare no stream, capability or source authority", () => {
+  const authorizationOnly = ["square", "shopify", "stripe", "momence", "meta-ads", "google-ads"];
+  for (const id of authorizationOnly) {
+    const manifest = connectorManifests.find((candidate) => candidate.id === id);
+    assert.ok(manifest, `${id} is not registered`);
+    assert.deepEqual([...manifest.streams], [], `${id} declares a stream`);
+    assert.deepEqual(manifest.capabilities, {}, `${id} declares a capability`);
+    assert.deepEqual([...manifest.sourceAuthority.defaults], [], `${id} claims source authority`);
+    assert.deepEqual([...manifest.fieldCoverage], [], `${id} declares field coverage`);
+  }
+});
+
+test("Shopify binds authorization to a validated shop and verifies the callback HMAC", () => {
+  assert.equal(normalizeShopifyShopDomain("My-Store"), "my-store.myshopify.com");
+  assert.equal(normalizeShopifyShopDomain("https://My-Store.myshopify.com/"), "my-store.myshopify.com");
+  // A custom domain does not host the OAuth endpoint, and an attacker-chosen
+  // host is exactly what this rejects.
+  for (const bad of ["evil.com", "shop.example.com", "my-store.myshopify.com.evil.com", ""]) {
+    assert.throws(() => normalizeShopifyShopDomain(bad), /myshopify\.com/u, `accepted ${bad}`);
+  }
+
+  const url = new URL(buildShopifyAuthorizationUrl({
+    clientId: "shopify-id",
+    state: "state-shopify",
+    redirectUri: "https://albert.example/api/oauth/shopify/callback",
+    shopDomain: "my-store",
+  }));
+  assert.equal(url.hostname, "my-store.myshopify.com");
+  assert.equal(url.pathname, "/admin/oauth/authorize");
+  // Shopify separates scopes with commas, and every one must be read-only.
+  const scopes = (url.searchParams.get("scope") ?? "").split(",");
+  assert.deepEqual(scopes, [...SHOPIFY_DEFAULT_SCOPES]);
+  for (const scope of scopes) assert.equal(scope.startsWith("read_"), true, `${scope} is not read-only`);
+  assert.equal(url.toString().includes("secret"), false);
+
+  const secret = "shopify-app-secret";
+  const signed = new URLSearchParams({ code: "abc", shop: "my-store.myshopify.com", state: "state-shopify" });
+  const digest = createHmac("sha256", secret)
+    .update([...signed.entries()].map(([k, v]) => `${k}=${v}`).sort().join("&"), "utf8")
+    .digest("hex");
+  signed.set("hmac", digest);
+  assert.equal(verifyShopifyCallbackHmac(signed, secret), true);
+  // Any tampering, and any wrong secret, must fail closed.
+  const tampered = new URLSearchParams(signed);
+  tampered.set("shop", "attacker.myshopify.com");
+  assert.equal(verifyShopifyCallbackHmac(tampered, secret), false);
+  assert.equal(verifyShopifyCallbackHmac(signed, "wrong-secret"), false);
+  assert.equal(verifyShopifyCallbackHmac(new URLSearchParams({ code: "abc" }), secret), false);
+});
+
+test("Stripe, Momence, Meta Ads and Google Ads build correct authorization redirects", () => {
+  const stripe = new URL(buildStripeAuthorizationUrl({
+    clientId: "ca_stripe", state: "s", redirectUri: "https://albert.example/api/oauth/stripe/callback",
+  }));
+  assert.equal(stripe.hostname, "connect.stripe.com");
+  assert.equal(stripe.searchParams.get("response_type"), "code");
+  // Stripe's scope parameter is single valued.
+  assert.equal(stripe.searchParams.get("scope"), STRIPE_DEFAULT_SCOPES[0]);
+  assert.throws(() => buildStripeAuthorizationUrl({
+    clientId: "ca_stripe", state: "s", redirectUri: "https://albert.example/api/oauth/stripe/callback",
+    scopes: ["read_only", "read_write"],
+  }), /Invalid Stripe authorization parameters/u);
+
+  const momence = new URL(buildMomenceAuthorizationUrl({
+    clientId: "m", state: "s", redirectUri: "https://albert.example/api/oauth/momence/callback",
+  }));
+  assert.equal(momence.hostname, "api.momence.com");
+  assert.equal(momence.searchParams.get("scope"), "public-api-v2");
+  assert.equal(momence.searchParams.get("prompt"), "login");
+
+  const meta = new URL(buildMetaAdsAuthorizationUrl({
+    clientId: "m", state: "s", redirectUri: "https://albert.example/api/oauth/meta-ads/callback",
+  }));
+  assert.equal(meta.hostname, "www.facebook.com");
+  // Meta separates permissions with commas, and ads_management is never asked for.
+  const metaScopeParameter = meta.searchParams.get("scope") ?? "";
+  assert.deepEqual([...metaScopeParameter.split(",")], [...META_ADS_DEFAULT_SCOPES]);
+  assert.equal(metaScopeParameter.includes("ads_management"), false);
+
+  const google = new URL(buildGoogleAdsAuthorizationUrl({
+    clientId: "g", state: "s", redirectUri: "https://albert.example/api/oauth/google-ads/callback",
+  }));
+  assert.equal(google.hostname, "accounts.google.com");
+  assert.deepEqual((google.searchParams.get("scope") ?? "").split(" "), [...GOOGLE_ADS_DEFAULT_SCOPES]);
+  // Both are required or Google silently omits the refresh token, leaving a
+  // connection that cannot be renewed unattended.
+  assert.equal(google.searchParams.get("access_type"), "offline");
+  assert.equal(google.searchParams.get("prompt"), "consent");
 });

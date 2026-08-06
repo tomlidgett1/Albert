@@ -68,6 +68,17 @@ const MAPPED_STREAM_AUTHORITY: Readonly<Record<string, string>> = Object.freeze(
   ls_inventory_logs: "stock",
 });
 
+/**
+ * The canonical targets a stream's mapper actually emits: the mapped list where
+ * an executable mapper exists, and the lookup-only metadata observation for
+ * every other spec stream. Field coverage derives its dispositions from THIS,
+ * not the spec's aspirational target list, so coverage can never name a
+ * canonical target no mapper emits.
+ */
+export function executableCanonicalTargets(tableId: string): readonly string[] {
+  return MAPPED_STREAM_TARGETS[tableId] ?? ["metadata"];
+}
+
 /** Product-facing readiness domain for each spec domain. */
 const PRODUCT_DOMAIN: Readonly<Record<string, StreamContract["productDomains"][number]>> = {
   sales: "sales",
@@ -81,7 +92,15 @@ const PRODUCT_DOMAIN: Readonly<Record<string, StreamContract["productDomains"][n
   taxreports: "accounting",
 };
 
-/** Governing source-authority concept for each spec domain. */
+/**
+ * Governing source-authority concept for each spec domain. A stream may only
+ * write under a concept the pack claims in its source-authority defaults
+ * (operational_sales, stock, product_master, customer_master) — the SDK
+ * refuses a manifest whose stream claims otherwise. Register counts and POS
+ * tax-report sweeps are operational observations from the till: settlement
+ * (cash_settlement) and statutory truth (statutory_finance) stay with the
+ * accounting connector, which is why those concepts never appear here.
+ */
 const AUTHORITY: Readonly<Record<string, StreamContract["authorityConcept"]>> = {
   sales: "operational_sales",
   catalogue: "product_master",
@@ -90,8 +109,8 @@ const AUTHORITY: Readonly<Record<string, StreamContract["authorityConcept"]>> = 
   customers: "customer_master",
   workshop: "operational_sales",
   org: "operational_sales",
-  registers: "cash_settlement",
-  taxreports: "statutory_finance",
+  registers: "operational_sales",
+  taxreports: "operational_sales",
 };
 
 /**

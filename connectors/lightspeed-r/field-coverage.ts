@@ -10,6 +10,7 @@
 import type { FieldCoverage, PiiClass, StagingFieldType } from "../../packages/connector-sdk/src/contract.js";
 import { LIGHTSPEED_R_DOCUMENTED_FIELDS } from "./documented-fields.js";
 import { SPEC_TABLES, type SpecColumn, type SpecTable } from "./scan-plan.js";
+import { executableCanonicalTargets } from "./streams.js";
 
 /**
  * Spec column type to the staging vocabulary the SDK accepts. That vocabulary is
@@ -68,13 +69,17 @@ function disposition(table: SpecTable, column: SpecColumn): FieldCoverage["dispo
 }
 
 /**
- * Streams whose only canonical output is the metadata observation. Their
- * record-id field is the one canonical disposition (it becomes the recorded
- * source id); every other column is a governed extension.
+ * Streams whose only canonical output is the metadata observation. Decided by
+ * the EXECUTABLE targets (what the mapper in canonical.ts actually emits), not
+ * the spec's aspirational target list: the spec documents what a table could
+ * feed, but a stream with no mapper of its own emits only the lookup metadata
+ * observation, so its coverage must claim exactly that. Their record-id field
+ * is the one canonical disposition (it becomes the recorded source id); every
+ * other column is a governed extension.
  */
 function isLookupOnly(table: SpecTable): boolean {
-  return table.canonicalTargets.length === 0
-    || (table.canonicalTargets.length === 1 && table.canonicalTargets[0] === "metadata");
+  const targets = executableCanonicalTargets(table.id);
+  return targets.length === 1 && targets[0] === "metadata";
 }
 
 export function buildFieldCoverage(
