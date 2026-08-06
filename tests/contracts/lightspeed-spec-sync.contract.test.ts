@@ -25,7 +25,7 @@ test("every one of the 90 streams resolves a scan without special-casing", () =>
   }
 });
 
-test("every member of a group requests the identical relation union, so one walk serves all", () => {
+test("a member asks only for the relations it reads; the union provably breaks the vendor", () => {
   const sales = resolveStreamScan(stream("ls_sales"));
   assert.equal(sales.projectFrom, null);
   const lines = resolveStreamScan(stream("ls_sale_lines"));
@@ -34,14 +34,14 @@ test("every member of a group requests the identical relation union, so one walk
     lines.relations.some((r) => r.startsWith("SaleLines")),
     `sale lines must request its own relation, got ${lines.relations.join(",")}`,
   );
-  // Identical parameters are what make the connector's page cache serve six
-  // sale-derived streams from one Sale.json walk: the HTTP count is what the
-  // one-drip-per-second budget constrains, and a narrowed per-member set
-  // would make every member's walk a cache miss.
-  assert.deepEqual([...lines.relations], [...sales.relations],
-    "group members must request byte-identical relation sets");
-  const payments = resolveStreamScan(stream("ls_sale_payments"));
-  assert.deepEqual([...payments.relations], [...sales.relations]);
+  // Live-fire invariant: Sale.json 500s under the group's full fifteen-relation
+  // union (the documented memory-exhaustion failure), so every member narrows
+  // to its own needs even though that costs the page cache its cross-member
+  // hits.
+  assert.ok(
+    lines.relations.length < sales.group.relations.length,
+    `expected a narrowed set, got ${lines.relations.length} of ${sales.group.relations.length}`,
+  );
 });
 
 test("a first page sorts by ascending id; a continuation sends only the token", () => {

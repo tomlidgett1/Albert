@@ -96,19 +96,36 @@ export function resolveStreamScan(stream: LightspeedStream): StreamScan {
     );
   }
 
-  // Every member of a group requests the group's collapsed relation union, so
-  // the pages of one walk are byte-identical across the group and the
-  // connector's page cache can serve six sale-derived streams from one
-  // Sale.json walk. That is what keeps a 90-stream backfill inside the one
-  // drip-per-second budget: the job count does not shrink, the HTTP count
-  // does. The cost is payload width on the leader's own walk, bounded by the
-  // same page size the 13-stream connector already fetched with relations on.
+  // The relation that carries this stream's rows, plus anything its own columns
+  // resolve through. A leader needs none of the group's child relations.
+  //
+  // Live-fire verdict on the union alternative: requesting the group's full
+  // relation union on every member (to make pages byte-identical for the page
+  // cache) pushed the vendor into its documented memory-exhaustion failure —
+  // Sale.json 500d under fifteen relations and Item.json started dropping
+  // relations silently, which the relation-presence guard rightly rejected.
+  // Narrowed requests are the correct trade: the page cache still serves
+  // retries and reconciliation re-walks, and the HTTP count stays inside the
+  // drip budget because each walk is small enough to actually succeed.
+  const own = new Set<string>();
+  if (member.projectFrom) own.add(member.projectFrom.split(".")[0] as string);
+  for (const relation of member.table.loadRelations) {
+    const root = relation.split(".")[0] as string;
+    // Keep a relation only when it hangs off the record this stream reads.
+    if (!member.projectFrom || relation.startsWith(`${member.projectFrom.split(".")[0]}.`)) {
+      own.add(relation);
+    } else if (!member.projectFrom) {
+      own.add(root);
+    }
+  }
+  // Parent-context columns resolve from the walked record itself and need no
+  // relation of their own.
   return {
     group,
     table: member.table,
     fanOut: null,
     projectFrom: member.projectFrom,
-    relations: collapseRelations([...group.relations]),
+    relations: collapseRelations([...own]),
     extraParamSets: group.extraParamSets,
   };
 }
