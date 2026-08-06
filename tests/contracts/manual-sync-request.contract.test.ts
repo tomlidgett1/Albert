@@ -5,8 +5,10 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 async function migrationSql(): Promise<string> {
+  // 0092 supersedes 0087's definer with the queue-contract-complete payload;
+  // the structural assertions read the executable version.
   return readFile(
-    new URL("infra/migrations/control-plane/0087_m2_manual_sync_request.sql", root),
+    new URL("infra/migrations/control-plane/0092_m2_manual_sync_coordinator_payload.sql", root),
     "utf8",
   );
 }
@@ -18,7 +20,7 @@ async function routeSource(): Promise<string> {
 test("manual sync enqueues an InitialBackfill coordinator, never a stream-less IncrementalSync", async () => {
   const sql = await migrationSql();
 
-  const enqueue = /control_plane\.enqueue_sync_job\(\s*jsonb_build_object\(([\s\S]*?)\)\s*,/u.exec(sql);
+  const enqueue = /control_plane\.enqueue_sync_job\(\s*jsonb_build_object\(([\s\S]*?)\)\s*,\s*'backfill'/u.exec(sql);
   assert.ok(enqueue, "the definer must enqueue through control_plane.enqueue_sync_job");
   const payload = enqueue[1];
 
@@ -29,6 +31,14 @@ test("manual sync enqueues an InitialBackfill coordinator, never a stream-less I
   assert.match(payload, /'type',\s*'InitialBackfill'/u);
   assert.doesNotMatch(payload, /'stream'/u);
   assert.doesNotMatch(payload, /IncrementalSync/u);
+
+  // The queue contract refuses an InitialBackfill without its window and plan
+  // lifecycle — a missing range made the enqueued message a poison pill that
+  // threw inside the worker's claim on every visibility window.
+  assert.match(payload, /'range',\s*jsonb_build_object\(/u);
+  assert.match(payload, /'phase',\s*'recent'/u);
+  assert.match(payload, /'replayVersion',\s*1/u);
+  assert.match(payload, /'planMode',\s*'progressive'/u);
 
   // A job must not outlive a disconnect/reconnect and write under a stale
   // credential: the generation is captured at enqueue time.
@@ -45,7 +55,11 @@ test("manual sync requests are idempotent within a minute bucket", async () => {
 });
 
 test("manual sync rate limit is seeded in the migration for the FK-referenced policy table", async () => {
-  const sql = await migrationSql();
+  // The policy seed lives in 0087; 0092 only supersedes the definer body.
+  const sql = await readFile(
+    new URL("infra/migrations/control-plane/0087_m2_manual_sync_request.sql", root),
+    "utf8",
+  );
   assert.match(sql, /INSERT INTO control_plane\.rate_limit_policies/u);
   assert.match(sql, /\('connection\.manual_sync', 6, 3600, true\)/u);
   assert.match(sql, /ON CONFLICT \(action\) DO UPDATE/u);

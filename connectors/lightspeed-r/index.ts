@@ -518,7 +518,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       ...(range ? { range } : {}),
       mode,
       fetchPage,
-      hash: (input) => hashPayload(input),
+      hash: (payload) => hashPayload(payload),
     });
     const records = page.records.map((record) => this.validateProjectedRecord(contract, record));
     if (contract.id === "ls_inventory_logs" && records.some((record) => {

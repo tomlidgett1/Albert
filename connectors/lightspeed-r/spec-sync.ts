@@ -175,7 +175,7 @@ export function nextPass(scan: StreamScan, pass: number): number | null {
 export function projectStreamRows(
   scan: StreamScan,
   records: readonly Readonly<Record<string, unknown>>[],
-  hash: (input: string) => string,
+  hash: (payload: unknown) => string,
 ): readonly RawSourceRecord[] {
   const out: RawSourceRecord[] = [];
   const idField = scan.table.recordIdField;
@@ -217,7 +217,10 @@ export function projectStreamRows(
         sourceRecordId,
         ...(updatedAt ? { sourceUpdatedAt: updatedAt } : {}),
         payload,
-        payloadHash: hash(stableStringify(payload)),
+        // Hashed over the payload object with the same canonicalization the
+        // raw-batch store uses to verify immutable payload bytes; hashing a
+        // pre-serialized string here made every landed batch fail validation.
+        payloadHash: hash(payload),
         normalized: {
           schemaVersion: "1",
           fields: payload,
@@ -243,22 +246,12 @@ function readId(record: Record<string, unknown>, field: string): string | null {
   return text.length > 0 && text !== "0" ? text : null;
 }
 
-function stableStringify(value: unknown): string {
-  return (
-    JSON.stringify(value, (_key, inner) =>
-      inner && typeof inner === "object" && !Array.isArray(inner)
-        ? Object.fromEntries(
-            Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
-          )
-        : inner,
-    ) ?? "null"
-  );
-}
 
 export type PageFetcher = (
   path: string,
   params: Readonly<Record<string, string>>,
 ) => Promise<unknown>;
+
 
 /**
  * Fetch and project one page for one stream, returning a SyncPage the worker
@@ -274,7 +267,7 @@ export async function syncStreamPage(input: {
   range?: SyncRange;
   mode: "initial" | "incremental" | "reconciliation";
   fetchPage: PageFetcher;
-  hash: (input: string) => string;
+  hash: (payload: unknown) => string;
 }): Promise<SyncPage> {
   const { stream, cursor, mode, fetchPage, hash } = input;
   const scan = resolveStreamScan(stream);
@@ -366,7 +359,7 @@ async function syncFanOutPage(
     connectorId: "lightspeed-r";
     mode: "initial" | "incremental" | "reconciliation";
     fetchPage: PageFetcher;
-    hash: (value: string) => string;
+    hash: (payload: unknown) => string;
   },
 ): Promise<SyncPage> {
   const { fetchPage, hash } = input;
@@ -391,7 +384,7 @@ async function syncFanOutPage(
         sourceRecordId: ownId ?? `${parentId}:${rows.length}`,
         ...(readSourceUpdatedAt(child) ? { sourceUpdatedAt: readSourceUpdatedAt(child)! } : {}),
         payload: child,
-        payloadHash: hash(stableStringify(child)),
+        payloadHash: hash(child),
         normalized: { schemaVersion: "1", fields: child },
       });
     }

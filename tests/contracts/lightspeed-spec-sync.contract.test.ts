@@ -10,7 +10,7 @@ import {
   syncStreamPage,
 } from "../../connectors/lightspeed-r/spec-sync.js";
 
-const hash = (input: string) => createHash("sha256").update(input).digest("hex");
+const hash = (payload: unknown) => createHash("sha256").update(JSON.stringify(payload) ?? "null").digest("hex");
 const stream = (id: string) => LIGHTSPEED_STREAMS.find((s) => s.id === id)!;
 
 test("every one of the 90 streams resolves a scan without special-casing", () => {
