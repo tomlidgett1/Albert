@@ -210,7 +210,6 @@ const rosterQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
   time: { field: "business_date", range: { type: "today" }, compare: "none" },
   sort: [{ metric: "rostered_hours", dir: "desc" }],
   limit: 50,
-  parameters: {},
 });
 
 const performanceQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
@@ -235,7 +234,6 @@ const performanceQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
         },
         compare: "none",
       },
-      parameters: {},
     },
     {
       topic: "workforce_labour",
@@ -251,13 +249,11 @@ const performanceQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
         },
         compare: "none",
       },
-      parameters: {},
     },
   ],
   alignOn: ["worker"],
   sort: [{ metric: "net_sales_ex_gst", dir: "desc" }],
   limit: 50,
-  parameters: {},
 });
 
 const grossProfitPerHourQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
@@ -279,7 +275,6 @@ const grossProfitPerHourQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
         },
         compare: "none",
       },
-      parameters: {},
     },
     {
       topic: "workforce_labour",
@@ -295,13 +290,11 @@ const grossProfitPerHourQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
         },
         compare: "none",
       },
-      parameters: {},
     },
   ],
   alignOn: ["worker"],
   sort: [{ metric: "gross_profit_per_labour_hour", dir: "desc" }],
   limit: 50,
-  parameters: {},
 });
 
 const rosterResponse = response({
@@ -443,6 +436,29 @@ type ScriptStep = Readonly<{
   responseId: string;
   output: Readonly<Record<string, unknown>>;
 }>;
+
+
+/**
+ * The model calls tools with the flattened tool-facing shape; the compiler IR
+ * (which defaults `parameters`) is what the service derives from it. These
+ * constants stay IR-parsed for response fixtures, so the scripted tool
+ * arguments strip the IR-only keys back off.
+ */
+function toolShapedQuery(query: SemanticQueryIr): Readonly<Record<string, unknown>> {
+  const { parameters: _parameters, ...rest } = query as Record<string, unknown> & { parameters?: unknown };
+  void _parameters;
+  if ((query as { kind?: string }).kind === "composite") {
+    const composite = rest as { queries?: readonly (Record<string, unknown> & { parameters?: unknown })[] };
+    return {
+      ...rest,
+      queries: (composite.queries ?? []).map(({ parameters: _sub, ...subRest }) => {
+        void _sub;
+        return subRest;
+      }),
+    };
+  }
+  return rest;
+}
 
 function toolStep(prefix: string, index: number, name: string, argumentsValue: Readonly<Record<string, unknown>>): ScriptStep {
   return Object.freeze({
@@ -614,7 +630,7 @@ test("the flagship employee question clarifies once, then runs the governed comp
     toolStep("answer", 3, "get_capabilities", { topic: "workforce_sales" }),
     toolStep("answer", 4, "get_data_health", { domain: "workforce" }),
     toolStep("answer", 5, "get_data_health", { domain: "sales" }),
-    toolStep("answer", 6, "run_semantic_query", rosterQuery),
+    toolStep("answer", 6, "run_semantic_query", toolShapedQuery(rosterQuery)),
     toolStep("answer", 7, "publish_observation", {
       claim: {
         statement: "Worker Sam had Rostered hours of 8.0000.",
@@ -626,7 +642,7 @@ test("the flagship employee question clarifies once, then runs the governed comp
       },
       nextStep: "check_labour",
     }),
-    toolStep("answer", 8, "run_semantic_query", performanceQuery),
+    toolStep("answer", 8, "run_semantic_query", toolShapedQuery(performanceQuery)),
     toolStep("answer", 9, "publish_observation", {
       claim: {
         statement: "Worker Sam had the highest Net sales at 15000.0000.",
