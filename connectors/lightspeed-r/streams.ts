@@ -267,7 +267,15 @@ function toStream(table: SpecTable, plan: ReturnType<typeof buildScanPlan>): Lig
     lateEditStrategy: lateEditStrategy(table),
     deletionStrategy: deletionStrategy(table),
     sourceTotalStrategy: "count_distinct_complete_scan",
-    ...(fanOut ? { availability: "optional" as const } : {}),
+    // Fan-outs and spec-added lookup-only streams are optional: live fire
+    // showed a block of documented endpoints (reports, custom fields,
+    // currency denominations, workorder config) returning 404 on a real
+    // account — plan-gated or absent resources. An absent lookup endpoint
+    // must be RECORDED as unavailable, not fail the backfill forever; the
+    // streams with canonical mappers stay required.
+    ...(fanOut || !(table.id in MAPPED_STREAM_TARGETS)
+      ? { availability: "optional" as const }
+      : {}),
     // A derived stream cannot run before the walk that produces its payload, and
     // a parent-scoped fan-out cannot run before the parent ids it iterates exist.
     dependencies: isScanLeader

@@ -501,7 +501,24 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       }
       const url = new URL(basePath + path, API_ORIGIN);
       for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-      const { value } = await this.apiJson<Record<string, unknown>>(context, url);
+      let value: Record<string, unknown>;
+      try {
+        ({ value } = await this.apiJson<Record<string, unknown>>(context, url));
+      } catch (error) {
+        // A 404 on a stream's walk means the documented resource does not
+        // exist for this account (plan-gated or absent) — observed live on
+        // reports, custom fields and currency denominations. That is an
+        // unavailable capability to record, not a transient vendor outage to
+        // retry every recovery sweep forever.
+        if (error instanceof ConnectorHttpError && error.status === 404) {
+          throw new ConnectorError(
+            "CAPABILITY_UNAVAILABLE",
+            `The vendor endpoint ${path} does not exist for this account.`,
+            { retryable: false, cause: error },
+          );
+        }
+        throw error;
+      }
       this.pageCache.set(cacheKey, { at: now(), body: value });
       while (this.pageCache.size > LightspeedRConnector.PAGE_CACHE_MAX_ENTRIES) {
         const oldest = this.pageCache.keys().next().value;
