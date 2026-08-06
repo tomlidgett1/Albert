@@ -82,6 +82,36 @@ function isLookupOnly(table: SpecTable): boolean {
   return targets.length === 1 && targets[0] === "metadata";
 }
 
+/**
+ * Fields the LIVE account returns that neither the spec nor the pinned
+ * documentation build lists — harvested from the quarantine census of the
+ * first real 90-stream backfill (2026-08-06, tenant Ashburton Cycles). Each
+ * gets an explicit unsupported disposition: staged tables omit them, the
+ * immutable raw payloads retain them, and their rows stop failing closed.
+ * This is the tier-0-meets-tier-1 correction the evidence ladder expects:
+ * the documentation asserted a shape, the live probe observed a wider one.
+ */
+const OBSERVED_LIVE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  ls_catalog_vendor_items: ["catalogMasterID", "timeStamp"],
+  ls_categories: ["Category"],
+  ls_credit_accounts: ["Contact", "creditLimit", "giftCardUuid", "WithdrawalPayments"],
+  ls_customers: ["Tags"],
+  ls_discounts: ["createTime"],
+  ls_images: ["baseImageURL", "createTime", "Item", "originalFilename", "size", "timeStamp"],
+  ls_item_attribute_sets: ["archived", "system"],
+  ls_item_matrices: ["attribute1Values", "attribute2Values", "attribute3Values", "Category", "ItemAttributeSet", "Manufacturer", "Prices"],
+  ls_items: ["Prices"],
+  ls_purchase_order_lines: ["OrderLine"],
+  ls_purchase_orders: ["subTotalCost", "totalCost"],
+  ls_register_withdraws: ["PaymentType"],
+  ls_registers: ["archived", "ccTerminalID"],
+  ls_sales: ["calcItemFees", "calcSurcharges", "displayableSubtotal", "isTaxInclusive", "receiptPreference", "taxTotal", "ticketNumber", "tippableAmount", "updateTime"],
+  ls_shops: ["companyRegistrationNumber", "gatewayConfigID", "timeStamp", "vatNumber", "zebraBrowserPrint"],
+  ls_tags: ["readOnly"],
+  ls_tax_category_classes: ["TaxClass", "timeStamp"],
+  ls_tax_classes: ["classType"],
+});
+
 export function buildFieldCoverage(
   tables: readonly SpecTable[] = SPEC_TABLES,
 ): readonly FieldCoverage[] {
@@ -115,7 +145,7 @@ export function buildFieldCoverage(
     // outside staging scope. They keep an explicit unsupported disposition, so
     // every documented field has a reviewable answer to "where did this go".
     const documented = LIGHTSPEED_R_DOCUMENTED_FIELDS[table.id as keyof typeof LIGHTSPEED_R_DOCUMENTED_FIELDS];
-    for (const field of documented ?? []) {
+    for (const field of [...(documented ?? []), ...(OBSERVED_LIVE_FIELDS[table.id] ?? [])]) {
       if (seen.has(field)) continue;
       seen.add(field);
       coverage.push({
