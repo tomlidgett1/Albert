@@ -37,6 +37,7 @@
       "SaleLine": [
         {
           "saleLineID": "611",
+          "saleID": "601",
           "itemID": "401",
           "employeeID": "201",
           "unitQuantity": "1.0000",
@@ -61,6 +62,7 @@
       "SalePayment": [
         {
           "salePaymentID": "621",
+          "saleID": "601",
           "paymentTypeID": "901",
           "amount": "1499.0000",
           "createTime": "2026-07-31T06:15:00+00:00",

@@ -53,6 +53,7 @@ export const mapLightspeedCanonical: CanonicalStreamMapper = (stream, row, conte
     case "ls_vendors": return mapVendor(row);
     case "ls_tax_categories": return mapTaxCategory(row);
     case "ls_inventory_logs": return mapInventoryLog(row, context);
+    case "ls_purchase_order_lines": return mapPurchaseOrderLine(row, context);
     // Reference and lookup streams — including the purchase-order header,
     // whose lines are first-class rows carrying projected parent context —
     // observe identity without projecting canonical rows.
@@ -496,7 +497,7 @@ function mapPurchaseOrderLine(row: CanonicalStagingRow, context: CanonicalMappin
   const shopId = optionalIdentifier(row.shop_id);
   const itemId = optionalIdentifier(row.item_id);
   const orderedAt = requiredInstant(
-    row.ordered_date ?? row.created_at ?? row.source_updated_at,
+    row.ordered_date ?? row.create_time ?? row.source_updated_at,
     "ls_purchase_order_lines.ordered_at",
   );
   const receivedAt = optionalInstant(row.received_date);
@@ -504,10 +505,13 @@ function mapPurchaseOrderLine(row: CanonicalStagingRow, context: CanonicalMappin
     ? "cancelled"
     : truthy(row.complete) ? "completed" : receivedAt ? "partially_received" : "open";
   const quantity = decimalOrZeroValue(row.quantity, "ls_purchase_order_lines.quantity");
-  const received = optionalDecimalValue(row.qty_checked_in, "ls_purchase_order_lines.qty_checked_in")
+  // Staging columns are the snake_case api leaves: `price` is the documented
+  // discounted unit COST, `checked_in` the units added to inventory, `total`
+  // the documented quantity x price line cost.
+  const received = optionalDecimalValue(row.checked_in, "ls_purchase_order_lines.checked_in")
     ?? (status === "completed" ? quantity : ZERO);
-  const unitCost = optionalDecimalValue(row.unit_cost, "ls_purchase_order_lines.unit_cost");
-  const totalCost = optionalDecimalValue(row.line_total, "ls_purchase_order_lines.line_total")
+  const unitCost = optionalDecimalValue(row.price, "ls_purchase_order_lines.price");
+  const totalCost = optionalDecimalValue(row.total, "ls_purchase_order_lines.total")
     ?? unitCost?.multiply(quantity)
     ?? null;
   return [fact("purchase_order_line", row.source_object_type, lineId, {

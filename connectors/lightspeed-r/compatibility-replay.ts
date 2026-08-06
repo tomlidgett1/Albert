@@ -3,7 +3,9 @@ import {
 } from "../../services/sync-workers/src/canonical-contract.js";
 import { lightspeedRManifest } from "./manifest.js";
 
-const REPLAY_TRIGGER_STREAMS = new Set(["vendors", "orders"]);
+// Spec stream ids; the legacy pre-2.0.0 names are kept so a replay of
+// 1.0.0-era batches still recognises its own trigger streams.
+const REPLAY_TRIGGER_STREAMS = new Set(["ls_vendors", "ls_purchase_orders", "ls_purchase_order_lines", "vendors", "orders"]);
 const LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT = 100;
 const LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT = 500;
 
@@ -21,7 +23,7 @@ const noReplay = Object.freeze({
  */
 export const lightspeedRCompatibilityReplay: CanonicalCompatibilityReplayHook = Object.freeze({
   databaseRegistrationId: "lightspeed-r.compatibility-replay",
-  sourceStream: "orders",
+  sourceStream: "ls_purchase_order_lines",
   candidateLimit: LEGACY_LIGHTSPEED_REPLAY_CANDIDATE_LIMIT,
   commandLimit: LEGACY_LIGHTSPEED_REPLAY_COMMAND_LIMIT,
   handles(job, stream) {

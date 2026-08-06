@@ -4,6 +4,12 @@ import { readFile } from "node:fs/promises";
 import { ulid } from "ulid";
 
 import { mapDeputyCanonical } from "../connectors/deputy/canonical.js";
+import { mapSquareCanonical } from "../connectors/square/canonical.js";
+import { mapShopifyCanonical } from "../connectors/shopify/canonical.js";
+import { mapStripeCanonical } from "../connectors/stripe/canonical.js";
+import { mapMomenceCanonical } from "../connectors/momence/canonical.js";
+import { mapMetaAdsCanonical } from "../connectors/meta-ads/canonical.js";
+import { mapGoogleAdsCanonical } from "../connectors/google-ads/canonical.js";
 import { mapLightspeedCanonical } from "../connectors/lightspeed-r/canonical.js";
 import { lightspeedRManifest } from "../connectors/lightspeed-r/manifest.js";
 import { mapXeroCanonical } from "../connectors/xero/canonical.js";
@@ -133,6 +139,29 @@ function fixtureRecord(fixture: Fixture, streamId: string): Readonly<Record<stri
   return record as Readonly<Record<string, unknown>>;
 }
 
+/**
+ * A purchase-order line as the per-stream walk stages it: one flat row made of
+ * the line's own OrderLine fields plus the parent context the projection
+ * resolves from the walked Order header (vendor, destination shop, lifecycle,
+ * currency; the 0125 additive columns). The Order header stream itself is a
+ * lookup-only identity sweep.
+ */
+function purchaseOrderLineFields(fixture: Fixture): Readonly<Record<string, unknown>> {
+  const line = fixtureRecord(fixture, "ls_purchase_order_lines");
+  const order = fixtureRecord(fixture, "ls_purchase_orders");
+  const parentContext: Record<string, unknown> = {};
+  for (const field of [
+    "vendorID", "shopID", "complete", "orderedDate", "receivedDate", "archived", "vendorCurrencyCode",
+  ] as const) {
+    if (order[field] !== undefined) parentContext[field] = order[field];
+  }
+  assert.ok(
+    parentContext.vendorID,
+    "The supplier proof requires a parent vendorID projected onto the order line.",
+  );
+  return { ...line, ...parentContext };
+}
+
 function sourceRecord(
   streamId: string,
   fields: Readonly<Record<string, unknown>>,
@@ -178,6 +207,7 @@ function fixtureBatch(
     schemaVersion?: string;
     connectorVersion?: string;
     connectionGeneration?: number;
+    fields?: Readonly<Record<string, unknown>>;
   }> = {},
 ): FixtureBatch {
   const stream = lightspeedRManifest.streams.find((candidate) => candidate.id === streamId);
@@ -186,7 +216,7 @@ function fixtureBatch(
   const syncRunId = ulid();
   const record = sourceRecord(
     streamId,
-    fixtureRecord(fixture, streamId),
+    options.fields ?? fixtureRecord(fixture, streamId),
     options.schemaVersion ?? lightspeedRManifest.packVersion,
   );
   const job: SyncJob = {
@@ -251,9 +281,10 @@ function reconciliationRepairBatch(
   connectionId: string,
   connectionGeneration = 2,
 ): FixtureBatch {
-  const batch = fixtureBatch(fixture, tenantId, connectionId, "vendors", {
-    schemaVersion: "1.1.0",
-    connectorVersion: "1.1.0",
+  // The repair is a current-pack re-extraction of the vendor: it defaults to
+  // the manifest's own pack version, in contrast to the pack-1.0 legacy
+  // lineage the purchase-order-line batch models.
+  const batch = fixtureBatch(fixture, tenantId, connectionId, "ls_vendors", {
     connectionGeneration,
   });
   const job: SyncJob = {
@@ -269,7 +300,7 @@ function reconciliationRepairBatch(
     requestedAt: REQUESTED_AT,
     reconciliationSweepId: ulid(),
     phase: "apply_tombstones",
-    stream: "vendors",
+    stream: "ls_vendors",
     lookbackFrom: "2025-07-01T00:00:00.000Z",
     lookbackTo: REQUESTED_AT,
   };
@@ -285,7 +316,9 @@ async function establishCurrentReconciledRepairEvidence(
   const connectionGeneration = repair.job.connectionGeneration;
   await database.transaction(async (client) => {
     await client.query("select set_config('albert.tenant_id',$1,true)", [tenantId]);
-    for (const stream of ["vendors", "orders"] as const) {
+    for (const streamId of ["ls_vendors", "ls_purchase_order_lines"] as const) {
+      const stream = lightspeedRManifest.streams.find((candidate) => candidate.id === streamId);
+      assert.ok(stream, `${streamId} is required by the supplier repair evidence.`);
       await client.query(
         `insert into quality.connector_stream_state (
            tenant_id,connection_id,connection_generation,connector_id,stream,required,
@@ -296,16 +329,25 @@ async function establishCurrentReconciledRepairEvidence(
            unresolved_quarantine_count,last_page_at
          ) values (
            $1,$2,$3::bigint,'lightspeed-r',$4,true,
-           'modified_field','soft_delete','count_distinct_complete_scan',
-           1,true,true,true,$5::timestamptz,0,0,0,0,$5::timestamptz
+           $5,$6,$7,
+           1,true,true,true,$8::timestamptz,0,0,0,0,$8::timestamptz
          )`,
-        [tenantId, connectionId, connectionGeneration, stream, REQUESTED_AT],
+        [
+          tenantId,
+          connectionId,
+          connectionGeneration,
+          streamId,
+          stream.lateEditStrategy,
+          stream.deletionStrategy,
+          stream.sourceTotalStrategy,
+          REQUESTED_AT,
+        ],
       );
     }
     await client.query(
       `insert into quality.connector_stream_page_evidence (
          tenant_id,batch_id,connection_id,connection_generation,stream,evidence
-       ) values ($1,$2,$3,$4::bigint,'vendors',$5::jsonb)`,
+       ) values ($1,$2,$3,$4::bigint,'ls_vendors',$5::jsonb)`,
       [tenantId, repair.job.batchId, connectionId, connectionGeneration, JSON.stringify({
         recordCount: 1,
         quarantineCount: 0,
@@ -352,18 +394,34 @@ async function run(): Promise<void> {
         "lightspeed-r": mapLightspeedCanonical,
         xero: mapXeroCanonical,
         deputy: mapDeputyCanonical,
+        square: mapSquareCanonical,
+        "shopify": mapShopifyCanonical,
+        "stripe": mapStripeCanonical,
+        "momence": mapMomenceCanonical,
+        "meta-ads": mapMetaAdsCanonical,
+        "google-ads": mapGoogleAdsCanonical,
       },
       () => new Date(REQUESTED_AT),
     );
     const batches = new Map(
-      ["shops", "categories", "items", "vendors", "orders"].map((stream) => {
+      [
+        "ls_shops", "ls_categories", "ls_items", "ls_vendors",
+        "ls_purchase_orders", "ls_purchase_order_lines",
+      ].map((stream) => {
+        // The purchase-order-line batch models the pack-1.0 legacy lineage the
+        // replay lane repairs; its rows are flat and carry the parent context
+        // the walk projects from the Order header.
         const batch = fixtureBatch(
           fixture,
           tenantId,
           connectionId,
           stream,
-          stream === "orders"
-            ? { schemaVersion: "1.0.0", connectorVersion: "1.0.0" }
+          stream === "ls_purchase_order_lines"
+            ? {
+                schemaVersion: "1.0.0",
+                connectorVersion: "1.0.0",
+                fields: purchaseOrderLineFields(fixture),
+              }
             : {},
         );
         return [stream, batch] as const;
@@ -376,18 +434,40 @@ async function run(): Promise<void> {
       assert.deepEqual(result.quarantined, [], `${batch.stream} fixture was quarantined.`);
     }
 
-    for (const stream of ["shops", "categories", "items"] as const) {
+    for (const stream of ["ls_shops", "ls_categories", "ls_items"] as const) {
       const batch = batches.get(stream);
       assert.ok(batch);
       await pipeline.transformBatch(batch.transform, stream, batch.domains, false, false);
     }
 
-    const order = batches.get("orders");
-    assert.ok(order);
+    // The Order header stream is a lookup-only identity sweep: it transforms
+    // before any supplier exists and must never materialise a purchase-order
+    // line of its own.
+    const orderHeader = batches.get("ls_purchase_orders");
+    assert.ok(orderHeader);
+    await pipeline.transformBatch(
+      orderHeader.transform,
+      orderHeader.stream,
+      orderHeader.domains,
+      false,
+      false,
+    );
+    assert.equal(
+      await scalarCount(
+        database,
+        "select count(*)::text as row_count from core.purchase_order_line where tenant_id=$1",
+        tenantId,
+      ),
+      0,
+      "The lookup-only Order header stream must not materialise purchase-order lines.",
+    );
+
+    const orderLines = batches.get("ls_purchase_order_lines");
+    assert.ok(orderLines);
     await assert.rejects(
-      pipeline.transformBatch(order.transform, order.stream, order.domains, false, false),
+      pipeline.transformBatch(orderLines.transform, orderLines.stream, orderLines.domains, false, false),
       /canonical_reference_missing:supplier:Vendor:802/u,
-      "A present vendorID must never degrade to a null supplier foreign key.",
+      "A present projected vendor_id must never degrade to a null supplier foreign key.",
     );
     assert.equal(
       await scalarCount(
@@ -399,7 +479,7 @@ async function run(): Promise<void> {
       "The failed supplier resolution must roll back the purchase-order projection.",
     );
 
-    const vendor = batches.get("vendors");
+    const vendor = batches.get("ls_vendors");
     assert.ok(vendor);
     await pipeline.transformBatch(vendor.transform, vendor.stream, vendor.domains, false, false);
 
@@ -410,7 +490,7 @@ async function run(): Promise<void> {
         tenantId,
       ),
       0,
-      "Vendor materialisation alone must not replay an Order before current-generation reconciliation.",
+      "Vendor materialisation alone must not replay an order line before current-generation reconciliation.",
     );
 
     const repair = reconciliationRepairBatch(fixture, tenantId, connectionId);
@@ -433,10 +513,10 @@ async function run(): Promise<void> {
             makeNamespacedSourceKey(
               "lightspeed-r",
               EXTERNAL_ACCOUNT_REFERENCE,
-              order.record.sourceObjectType,
-              order.record.sourceRecordId,
+              orderLines.record.sourceObjectType,
+              orderLines.record.sourceRecordId,
             ),
-            order.record.payloadHash,
+            orderLines.record.payloadHash,
             MAPPING_VERSION,
           ],
         );
@@ -451,12 +531,18 @@ async function run(): Promise<void> {
       {
         "lightspeed-r": (stream, row, context) => {
           const commands = mapLightspeedCanonical(stream, row, context);
-          return stream === "orders" && commands[0]
+          return stream === "ls_purchase_order_lines" && commands[0]
             ? [...commands, commands[0]]
             : commands;
         },
         xero: mapXeroCanonical,
         deputy: mapDeputyCanonical,
+        square: mapSquareCanonical,
+        "shopify": mapShopifyCanonical,
+        "stripe": mapStripeCanonical,
+        "momence": mapMomenceCanonical,
+        "meta-ads": mapMetaAdsCanonical,
+        "google-ads": mapGoogleAdsCanonical,
       },
       () => new Date(REQUESTED_AT),
     );
@@ -531,8 +617,8 @@ async function run(): Promise<void> {
       materialized_command_count: Number(row.materialized_command_count),
     })), [{
       repair_batch_id: repair.job.batchId,
-      source_order_batch_id: order.job.batchId,
-      legacy_origin_batch_id: order.job.batchId,
+      source_order_batch_id: orderLines.job.batchId,
+      legacy_origin_batch_id: orderLines.job.batchId,
       connection_generation: 2,
       result: "materialized",
       materialized_command_count: 1,

@@ -38,7 +38,9 @@ import {
 type Fixture = Readonly<{ responses: Readonly<Record<string, unknown>> }>;
 type JsonObject = Readonly<Record<string, unknown>>;
 
-const manifests = [lightspeedRManifest, xeroManifest, deputyManifest] as const;
+// Ordered so the connectors this suite owns assert before any in-flight
+// rebuild of another pack can halt the shared loops.
+const manifests = [lightspeedRManifest, deputyManifest, xeroManifest] as const;
 const contracts = buildStagingContracts(manifests);
 const fixtureByConnector = new Map([
   ["lightspeed-r", readFixture("../../connectors/lightspeed-r/fixtures/sanitized-recording.json")],
@@ -56,7 +58,11 @@ const context: CanonicalMappingContext = {
   tradingDayCutoff: "04:00",
 };
 
-test("all 31 connector streams produce non-empty, schema-bounded canonical commands", () => {
+test("every declared connector stream produces non-empty, schema-bounded canonical commands", () => {
+  // The cross-pack stream count is derived from the manifests at runtime: a
+  // pack widening its spec must widen this suite's coverage automatically
+  // rather than tripping a stale hand-pinned total.
+  const declaredStreams = manifests.reduce((count, manifest) => count + manifest.streams.length, 0);
   let streamCount = 0;
   for (const manifest of manifests) {
     const fixture = fixtureByConnector.get(manifest.id);
@@ -77,26 +83,41 @@ test("all 31 connector streams produce non-empty, schema-bounded canonical comma
             `${manifest.id}.${stream.id}.${command.kind} is not admitted by its manifest`,
           );
         }
+        // A stream with no mapper of its own must still say something: the
+        // observed lookup-only classification, never zero commands.
+        if (
+          manifest.id === "lightspeed-r" &&
+          stream.canonicalTargets.length === 1 &&
+          stream.canonicalTargets[0] === "metadata"
+        ) {
+          for (const command of commands) {
+            assert.equal(command.kind, "metadata", `${stream.id} may only observe`);
+            if (command.kind !== "metadata") assert.fail(`${stream.id} may only observe`);
+            assert.equal(command.classification, "lookup_only");
+            assert.equal(command.sourceRecordId, row.source_record_id);
+          }
+        }
       }
       streamCount += 1;
     }
   }
-  assert.equal(streamCount, 31);
+  assert.equal(streamCount, declaredStreams);
+  assert.ok(streamCount >= lightspeedRManifest.streams.length);
 });
 
 test("every canonical command kind is denied when its exact target is undeclared", () => {
   const commands: readonly CanonicalProjectionCommand[] = [
-    mapLightspeedCanonical("items", fixtureRow("lightspeed-r", "items"), context)
+    mapLightspeedCanonical("ls_items", fixtureRow("lightspeed-r", "ls_items"), context)
       .find((command) => command.kind === "dimension")!,
-    mapLightspeedCanonical("sales", fixtureRow("lightspeed-r", "sales"), context)
+    mapLightspeedCanonical("ls_sales", fixtureRow("lightspeed-r", "ls_sales"), context)
       .find((command) => command.kind === "fact")!,
-    mapLightspeedCanonical("items", fixtureRow("lightspeed-r", "items"), context)
+    mapLightspeedCanonical("ls_items", fixtureRow("lightspeed-r", "ls_items"), context)
       .find((command) => command.kind === "category_assignment")!,
-    mapXeroCanonical("payments", fixtureRow("xero", "payments"), context)
+    mapLightspeedCanonical("ls_sale_lines", lightspeedRefundLineRow(), context)
       .find((command) => command.kind === "event_link")!,
     mapDeputyCanonical("contacts", fixtureRow("deputy", "contacts"), context)
       .find((command) => command.kind === "identity_hint")!,
-    mapLightspeedCanonical("payment_types", fixtureRow("lightspeed-r", "payment_types"), context)
+    mapLightspeedCanonical("ls_payment_types", fixtureRow("lightspeed-r", "ls_payment_types"), context)
       .find((command) => command.kind === "metadata")!,
   ];
   for (const command of commands) {
@@ -128,7 +149,7 @@ test("Deputy identity-only tombstones remain inside each stream target declarati
 });
 
 test("fact command authority is bound to the exact producing stream", () => {
-  const sale = mapLightspeedCanonical("sales", fixtureRow("lightspeed-r", "sales"), context)
+  const sale = mapLightspeedCanonical("ls_sales", fixtureRow("lightspeed-r", "ls_sales"), context)
     .find((command) => command.kind === "fact");
   assert.ok(sale?.kind === "fact");
   assert.doesNotThrow(() => assertCanonicalCommandAuthority(sale, "operational_sales"));
@@ -140,8 +161,8 @@ test("fact command authority is bound to the exact producing stream", () => {
 
 test("email-less Deputy and Lightspeed workers retain resolvable location references", () => {
   const lightspeedWorker = mapLightspeedCanonical(
-    "employees",
-    { ...fixtureRow("lightspeed-r", "employees"), contact: null },
+    "ls_employees",
+    { ...fixtureRow("lightspeed-r", "ls_employees"), contact: null },
     context,
   ).find((command) => command.kind === "identity_hint" && command.entityType === "worker");
   const deputyWorker = mapDeputyCanonical(
@@ -165,7 +186,7 @@ test("email-less Deputy and Lightspeed workers retain resolvable location refere
 
 test("documented Xero payment and Deputy leave variants have explicit typed coverage", () => {
   const xeroPayments = contracts.find(
-    (contract) => contract.connectorId === "xero" && contract.stream === "payments",
+    (contract) => contract.connectorId === "xero" && contract.stream === "xero_payments",
   );
   const deputyLeave = contracts.find(
     (contract) => contract.connectorId === "deputy" && contract.stream === "leave",
@@ -221,7 +242,7 @@ test("documented Xero payment and Deputy leave variants have explicit typed cove
     },
   );
 
-  const payment = fixtureRow("xero", "payments");
+  const payment = fixtureRow("xero", "xero_payments");
   const leave = fixtureRow("deputy", "leave");
   assert.equal(payment.bank_amount, "1499.0000");
   assert.equal(asObject(payment.prepayment), null);
@@ -231,127 +252,132 @@ test("documented Xero payment and Deputy leave variants have explicit typed cove
 });
 
 test("Lightspeed expands sale detail, keeps exact components, and uses tenant-local context", () => {
-  const row = fixtureRow("lightspeed-r", "sales");
-  const commands = mapLightspeedCanonical("sales", row, context);
-  const order = upsert(commands, "commerce_order");
-  const lines = upserts(commands, "commerce_order_line");
-  const payments = upserts(commands, "commerce_payment");
-
-  assert.equal(lines.length, 1);
-  assert.equal(payments.length, 1);
+  // The sale walk is split: the header stream owns the order (plus the
+  // synthetic channel and register stub), lines own order lines, payments own
+  // tenders. Each stream projects its own economic event exactly once.
+  const saleRow = fixtureRow("lightspeed-r", "ls_sales");
+  const headerCommands = mapLightspeedCanonical("ls_sales", saleRow, context);
+  const order = upsert(headerCommands, "commerce_order");
+  assert.equal(upserts(headerCommands, "commerce_order_line").length, 0, "the header never emits lines");
+  assert.equal(upserts(headerCommands, "commerce_payment").length, 0, "the header never emits tenders");
+  assert.ok(upserts(headerCommands, "channel").length === 1);
+  assert.ok(upserts(headerCommands, "register").length === 1);
   assert.equal(order.values.business_date, "2026-07-31");
   assert.equal(order.values.currency, "NZD");
   assert.equal(order.values.net_amount_inc_tax, "1499.0000");
   assert.equal(order.values.tax_amount, "136.2727");
-  assert.equal(lines[0]?.sourceRecordId, "611", "native nested IDs remain globally addressable");
-  assert.equal(lines[0]?.values.net_amount_ex_tax, "1362.7273");
-  assert.equal(payments[0]?.sourceRecordId, "621");
-  assert.ok(upserts(commands, "channel").length === 1);
-  assert.ok(upserts(commands, "register").length === 1);
+
+  // Per-line tax comes from the line's own calculated components, never a
+  // header allocation.
+  const lineRow: CanonicalStagingRow = {
+    ...fixtureRow("lightspeed-r", "ls_sale_lines"),
+    calc_tax1: "136.2727",
+    calc_tax2: "0.0000",
+  };
+  const lineCommands = mapLightspeedCanonical("ls_sale_lines", lineRow, context);
+  const line = upsert(lineCommands, "commerce_order_line");
+  assert.equal(upserts(lineCommands, "commerce_order").length, 0, "the same economic event cannot project twice");
+  assert.equal(line.sourceRecordId, "611", "native nested IDs remain globally addressable");
+  assert.equal(line.values.net_amount_inc_tax, "1499.0000");
+  assert.equal(line.values.net_amount_ex_tax, "1362.7273");
+  assert.equal(line.values.business_date, "2026-07-31");
+  assert.deepEqual(line.values.order_id, {
+    sourceRef: {
+      table: "commerce_order",
+      sourceObjectType: "Sale",
+      sourceRecordId: "601",
+      connectionId: lineRow.connection_id,
+    },
+  });
+
+  const paymentCommands = mapLightspeedCanonical(
+    "ls_sale_payments",
+    fixtureRow("lightspeed-r", "ls_sale_payments"),
+    context,
+  );
+  const payment = upsert(paymentCommands, "commerce_payment");
+  assert.equal(upserts(paymentCommands, "commerce_order").length, 0, "the tender never emits the order");
+  assert.equal(payment.sourceRecordId, "621");
+  assert.deepEqual(payment.values.order_id, {
+    sourceRef: {
+      table: "commerce_order",
+      sourceObjectType: "Sale",
+      sourceRecordId: "601",
+      connectionId: saleRow.connection_id,
+    },
+  });
 
   const afterMidnight: CanonicalStagingRow = {
-    ...row,
+    ...saleRow,
     complete_time: "2026-07-31T14:30:00.000Z", // 02:30 on 1 Aug in Auckland.
   };
   const cutoffOrder = upsert(
-    mapLightspeedCanonical("sales", afterMidnight, context),
+    mapLightspeedCanonical("ls_sales", afterMidnight, context),
     "commerce_order",
   );
   assert.equal(cutoffOrder.values.business_date, "2026-07-31", "04:00 cutoff belongs to prior trading day");
 });
 
 test("Lightspeed uses calculated discounts and voids archived payment attempts", () => {
-  const base = fixtureRow("lightspeed-r", "sales");
-  const row: CanonicalStagingRow = {
-    ...base,
-    total: "95.0000",
+  // The applied calc_* discount allocations win over the configured
+  // discount_amount input and over the normal unit price.
+  const line = upsert(mapLightspeedCanonical("ls_sale_lines", {
+    ...fixtureRow("lightspeed-r", "ls_sale_lines"),
+    unit_quantity: "2.0000",
+    unit_price: "50.0000",
+    normal_unit_price: "999.0000",
+    discount_amount: "0.0000",
+    calc_line_discount: "10.0000",
+    calc_transaction_discount: "5.0000",
     calc_total: "95.0000",
-    calc_discount: "15.0000",
-    calc_subtotal: "100.0000",
-    tax_total: "10.0000",
-    sale_lines: {
-      SaleLine: [{
-        saleLineID: "calculated-line",
-        itemID: "401",
-        employeeID: "201",
-        unitQuantity: "2.0000",
-        unitPrice: "50.0000",
-        normalUnitPrice: "999.0000",
-        discountAmount: "0.0000",
-        calcLineDiscount: "10.0000",
-        calcTransactionDiscount: "5.0000",
-        calcTotal: "95.0000",
-        calcTax1: "10.0000",
-        calcTax2: "0.0000",
-        avgCost: "20.0000",
-      }],
-    },
-    sale_payments: {
-      SalePayment: [
-        {
-          salePaymentID: "active-payment",
-          paymentTypeID: "901",
-          amount: "95.0000",
-          archived: "false",
-        },
-        {
-          salePaymentID: "archived-payment",
-          paymentTypeID: "901",
-          amount: "95.0000",
-          archived: "true",
-        },
-      ],
-    },
-  };
-
-  const commands = mapLightspeedCanonical("sales", row, context);
-  const order = upsert(commands, "commerce_order");
-  const line = upsert(commands, "commerce_order_line");
-  const payments = upserts(commands, "commerce_payment");
-  const active = payments.find((payment) => payment.sourceRecordId === "active-payment");
-  const archived = payments.find((payment) => payment.sourceRecordId === "archived-payment");
-
+    calc_tax1: "10.0000",
+    calc_tax2: "0.0000",
+    avg_cost: "20.0000",
+  }, context), "commerce_order_line");
   assert.equal(line.values.discount_amount, "15.0000");
   assert.equal(line.values.gross_amount, "110.0000");
   assert.equal(line.values.net_amount_inc_tax, "95.0000");
   assert.equal(line.values.tax_amount, "10.0000");
+
+  // The header reaches the same totals from its own calculated components, so
+  // the split streams reconcile without either projecting the other's event.
+  const order = upsert(mapLightspeedCanonical("ls_sales", {
+    ...fixtureRow("lightspeed-r", "ls_sales"),
+    total: "95.0000",
+    calc_total: "95.0000",
+    calc_discount: "15.0000",
+    calc_subtotal: "100.0000",
+    calc_tax1: "10.0000",
+    calc_tax2: "0.0000",
+  }, context), "commerce_order");
   assert.equal(order.values.gross_amount, line.values.gross_amount);
   assert.equal(order.values.discount_amount, line.values.discount_amount);
   assert.equal(order.values.net_amount_inc_tax, line.values.net_amount_inc_tax);
-  assert.equal(active?.values.status, "captured");
-  assert.equal(active?.tombstone, undefined);
-  assert.equal(archived?.values.status, "voided");
-  assert.equal(archived?.tombstone, true);
+  assert.equal(order.values.tax_amount, line.values.tax_amount);
+
+  const paymentBase = fixtureRow("lightspeed-r", "ls_sale_payments");
+  const active = upsert(mapLightspeedCanonical("ls_sale_payments", {
+    ...paymentBase,
+    amount: "95.0000",
+    archived: "false",
+  }, context), "commerce_payment");
+  const archived = upsert(mapLightspeedCanonical("ls_sale_payments", {
+    ...paymentBase,
+    namespaced_source_key: "lightspeed-r:account-101:SalePayment:622",
+    source_record_id: "622",
+    sale_payment_id: "622",
+    amount: "95.0000",
+    archived: "true",
+  }, context), "commerce_payment");
+  assert.equal(active.values.status, "captured");
+  assert.equal(active.tombstone, undefined);
+  assert.equal(archived.values.status, "voided");
+  assert.equal(archived.tombstone, true);
 });
 
 test("Lightspeed refunds become reversal facts linked to the native original sale line", () => {
-  const base = fixtureRow("lightspeed-r", "sales");
-  const row: CanonicalStagingRow = {
-    ...base,
-    namespaced_source_key: "lightspeed-r:account:Sale:602",
-    source_record_id: "602",
-    sale_id: "602",
-    total: "-100.0000",
-    tax_total: "-9.0909",
-    calc_total: "-100.0000",
-    calc_subtotal: "-90.9091",
-    sale_payments: null,
-    sale_lines: {
-      SaleLine: [{
-        saleLineID: "612",
-        parentSaleLineID: "611",
-        itemID: "401",
-        employeeID: "201",
-        unitQuantity: "-1.0000",
-        unitPrice: "100.0000",
-        normalUnitPrice: "100.0000",
-        discountAmount: "0.0000",
-        calcTotal: "-100.0000",
-        avgCost: "50.0000",
-      }],
-    },
-  };
-  const commands = mapLightspeedCanonical("sales", row, context);
+  const row = lightspeedRefundLineRow();
+  const commands = mapLightspeedCanonical("ls_sale_lines", row, context);
   const refundOrderLine = upsert(commands, "commerce_order_line");
   const refund = upsert(commands, "commerce_refund_line");
   assert.equal(refundOrderLine.values.quantity, "-1.0000");
@@ -372,32 +398,18 @@ test("Lightspeed refunds become reversal facts linked to the native original sal
   assert.ok(reversal);
   if (reversal.kind !== "event_link") assert.fail("Expected Lightspeed reversal evidence");
   assert.equal(reversal.to.sourceRecordId, "611");
+  assert.equal(reversal.from.sourceRecordId, "612");
 });
 
 test("canonical mapping isolates malformed Xero and Lightspeed records from valid peers", () => {
+  // Valid rows are built lazily so the Lightspeed scenarios can run and assert
+  // even while another pack's fixtures are mid-rebuild.
   const cases = [
     {
-      connectorId: "xero" as const,
-      stream: "invoices",
-      mapper: mapXeroCanonical,
-      valid: fixtureRow("xero", "invoices"),
-      invalid(base:CanonicalStagingRow):CanonicalStagingRow {
-        const id="00000000-0000-4000-8000-000000000099";
-        return {
-          ...base,
-          namespaced_source_key:`xero:${base.external_account_reference}:Invoices:${id}`,
-          source_record_id:id,
-          invoice_id:id,
-          date:null,
-        };
-      },
-      errorCode:"canonical.xero_canonical_date_missing",
-    },
-    {
       connectorId: "lightspeed-r" as const,
-      stream: "sales",
+      stream: "ls_sales",
       mapper: mapLightspeedCanonical,
-      valid: fixtureRow("lightspeed-r", "sales"),
+      valid: () => fixtureRow("lightspeed-r", "ls_sales"),
       invalid(base:CanonicalStagingRow):CanonicalStagingRow {
         return {
           ...base,
@@ -411,56 +423,69 @@ test("canonical mapping isolates malformed Xero and Lightspeed records from vali
     },
     {
       connectorId: "lightspeed-r" as const,
-      stream: "sales",
+      stream: "ls_sale_lines",
       mapper: mapLightspeedCanonical,
-      valid: fixtureRow("lightspeed-r", "sales"),
+      valid: () => fixtureRow("lightspeed-r", "ls_sale_lines"),
       invalid(base:CanonicalStagingRow):CanonicalStagingRow {
         return {
           ...base,
-          namespaced_source_key:`lightspeed-r:${base.external_account_reference}:Sale:missing-refund-parent`,
-          source_record_id:"missing-refund-parent",
-          sale_id:"missing-refund-parent",
-          total:"-25.0000",
-          tax_total:"-2.2727",
-          sale_payments:null,
-          sale_lines:{SaleLine:[{
-            saleLineID:"refund-without-parent",
-            itemID:"401",
-            unitQuantity:"-1.0000",
-            unitPrice:"25.0000",
-            normalUnitPrice:"25.0000",
-            calcTotal:"-25.0000",
-          }]},
+          namespaced_source_key:`lightspeed-r:${base.external_account_reference}:SaleLine:refund-without-parent`,
+          source_record_id:"refund-without-parent",
+          sale_line_id:"refund-without-parent",
+          parent_sale_line_id:null,
+          unit_quantity:"-1.0000",
+          unit_price:"25.0000",
+          normal_unit_price:"25.0000",
+          discount_amount:"0.0000",
+          calc_total:"-25.0000",
         };
       },
       errorCode:"canonical.lightspeed_refund_parent_missing",
     },
+    {
+      connectorId: "xero" as const,
+      stream: "invoices",
+      mapper: mapXeroCanonical,
+      valid: () => fixtureRow("xero", "xero_invoices"),
+      invalid(base:CanonicalStagingRow):CanonicalStagingRow {
+        const id="00000000-0000-4000-8000-000000000099";
+        return {
+          ...base,
+          namespaced_source_key:`xero:${base.external_account_reference}:Invoices:${id}`,
+          source_record_id:id,
+          invoice_id:id,
+          date:null,
+        };
+      },
+      errorCode:"canonical.xero_canonical_date_missing",
+    },
   ];
 
   for(const scenario of cases){
+    const valid=scenario.valid();
     const job:CanonicalTransformBatch={
-      tenantId:scenario.valid.tenant_id,
-      batchId:scenario.valid.payload_batch_id,
-      syncRunId:scenario.valid.sync_run_id,
-      connectionId:scenario.valid.connection_id,
+      tenantId:valid.tenant_id,
+      batchId:valid.payload_batch_id,
+      syncRunId:valid.sync_run_id,
+      connectionId:valid.connection_id,
       connectionGeneration:1,
       connectorId:scenario.connectorId,
-      mappingVersion:scenario.valid.mapping_version,
+      mappingVersion:valid.mapping_version,
     };
     const isolated=isolateCanonicalMappings(
-      [scenario.invalid(scenario.valid),scenario.valid],job,scenario.stream,
-      scenario.valid.mapping_version,scenario.mapper,context,
+      [scenario.invalid(valid),valid],job,scenario.stream,
+      valid.mapping_version,scenario.mapper,context,
     );
     assert.equal(isolated.accepted.length,1,`${scenario.connectorId}.${scenario.stream} valid peer`);
     assert.equal(isolated.rejected.length,1,`${scenario.connectorId}.${scenario.stream} rejection`);
     assert.equal(isolated.rejected[0]?.errorCode,scenario.errorCode);
-    assert.equal(isolated.accepted[0]?.row.source_record_id,scenario.valid.source_record_id);
+    assert.equal(isolated.accepted[0]?.row.source_record_id,valid.source_record_id);
     assert.ok((isolated.accepted[0]?.commands.length??0)>0);
   }
 });
 
 test("projection reference isolation preserves same-batch parents and closes rejected dependency chains", async () => {
-  const base = fixtureRow("lightspeed-r", "sales");
+  const base = fixtureRow("lightspeed-r", "ls_sales");
   const row = (sourceRecordId:string):CanonicalStagingRow => ({
     ...base,
     namespaced_source_key:`lightspeed-r:account-101:Sale:${sourceRecordId}`,
@@ -526,8 +551,8 @@ test("projection reference isolation preserves same-batch parents and closes rej
 });
 
 test("Lightspeed product mapping retains effective-dated category membership", () => {
-  const row = fixtureRow("lightspeed-r", "items");
-  const commands = mapLightspeedCanonical("items", row, context);
+  const row = fixtureRow("lightspeed-r", "ls_items");
+  const commands = mapLightspeedCanonical("ls_items", row, context);
   const assignment = commands.find((command) => command.kind === "category_assignment");
   assert.ok(assignment);
   assert.equal(assignment.sourceRecordId, "401");
@@ -536,12 +561,12 @@ test("Lightspeed product mapping retains effective-dated category membership", (
 });
 
 test("Lightspeed current balances become date-grained observations even when unchanged", () => {
-  const row = fixtureRow("lightspeed-r", "item_shops");
-  const first = upsert(mapLightspeedCanonical("item_shops", {
+  const row = fixtureRow("lightspeed-r", "ls_item_shops");
+  const first = upsert(mapLightspeedCanonical("ls_item_shops", {
     ...row,
     ingested_at: "2026-08-01T02:00:00.000Z",
   }, context), "inventory_balance_snapshot");
-  const unchangedNextDay = upsert(mapLightspeedCanonical("item_shops", {
+  const unchangedNextDay = upsert(mapLightspeedCanonical("ls_item_shops", {
     ...row,
     ingested_at: "2026-08-02T02:00:00.000Z",
   }, context), "inventory_balance_snapshot");
@@ -555,7 +580,7 @@ test("Lightspeed current balances become date-grained observations even when unc
 });
 
 test("Lightspeed all-shops roll-up rows are observed without being projected or quarantined", () => {
-  const row = fixtureRow("lightspeed-r", "item_shops");
+  const row = fixtureRow("lightspeed-r", "ls_item_shops");
   const rollUp = { ...row, shop_id: "0" };
   const job: CanonicalTransformBatch = {
     tenantId: row.tenant_id,
@@ -567,7 +592,7 @@ test("Lightspeed all-shops roll-up rows are observed without being projected or 
     mappingVersion: row.mapping_version,
   };
   const isolated = isolateCanonicalMappings(
-    [rollUp, row], job, "item_shops", row.mapping_version, mapLightspeedCanonical, context,
+    [rollUp, row], job, "ls_item_shops", row.mapping_version, mapLightspeedCanonical, context,
   );
 
   // Consumed, not rejected: a re-run must heal the record's prior quarantine.
@@ -581,35 +606,39 @@ test("Lightspeed all-shops roll-up rows are observed without being projected or 
 
   // A genuinely absent shop stays a mapping defect rather than a silent skip.
   const missingShop = isolateCanonicalMappings(
-    [{ ...row, shop_id: null }], job, "item_shops", row.mapping_version, mapLightspeedCanonical, context,
+    [{ ...row, shop_id: null }], job, "ls_item_shops", row.mapping_version, mapLightspeedCanonical, context,
   );
   assert.equal(missingShop.accepted.length, 0);
   assert.equal(missingShop.rejected[0]?.errorCode, "canonical.lightspeed_canonical_id_missing");
 });
 
 test("Lightspeed derived costs round to the canonical scale instead of rejecting the record", () => {
-  const row = fixtureRow("lightspeed-r", "item_shops");
-  const snapshot = upsert(mapLightspeedCanonical("item_shops", {
+  const row = fixtureRow("lightspeed-r", "ls_item_shops");
+  const snapshot = upsert(mapLightspeedCanonical("ls_item_shops", {
     ...row,
-    average_cost: "6.263636364",
-    total_value_avg_cost: null,
+    avg_cost: "6.263636364",
   }, context), "inventory_balance_snapshot");
   assert.equal(snapshot.values.unit_cost, "6.2636");
 
   // Money and quantity keep the exact parser: an unrepresentable value there
   // is a mapping error, not something to round away.
   assert.throws(
-    () => mapLightspeedCanonical("item_shops", { ...row, qoh: "1.00005" }, context),
+    () => mapLightspeedCanonical("ls_item_shops", { ...row, qoh: "1.00005" }, context),
     /lightspeed_canonical_decimal_invalid/u,
   );
 });
 
 test("Lightspeed purchase orders have one complete arrival-order-independent projection", () => {
-  const vendor=mapLightspeedCanonical("vendors",fixtureRow("lightspeed-r","vendors"),context);
-  const embedded=mapLightspeedCanonical("orders",fixtureRow("lightspeed-r","orders"),context);
-  const standalone=mapLightspeedCanonical("order_lines",fixtureRow("lightspeed-r","order_lines"),context);
+  // Ownership is inverted from the embedded-header era: the Order header is a
+  // lookup-only identity sweep, and OrderLine rows are first-class, carrying
+  // projected parent context (vendor, shop, lifecycle, currency) so a line
+  // maps standalone in any arrival order.
+  const vendor=mapLightspeedCanonical("ls_vendors",fixtureRow("lightspeed-r","ls_vendors"),context);
+  const header=mapLightspeedCanonical("ls_purchase_orders",fixtureRow("lightspeed-r","ls_purchase_orders"),context);
+  const lineRow=lightspeedPurchaseOrderLineRow();
+  const line=mapLightspeedCanonical("ls_purchase_order_lines",lineRow,context);
   const supplier=upsert(vendor,"supplier");
-  const embeddedLine=upsert(embedded,"purchase_order_line");
+  const poLine=upsert(line,"purchase_order_line");
 
   assert.equal(supplier.sourceObjectType,"Vendor");
   assert.equal(supplier.sourceRecordId,"802");
@@ -620,10 +649,14 @@ test("Lightspeed purchase orders have one complete arrival-order-independent pro
   assert.ok(supplierHint?.kind==="identity_hint");
   assert.equal(supplierHint.entityType,"supplier");
   assert.equal(supplierHint.normalizedName,"example cycle supply");
-  assert.equal(upserts(standalone,"purchase_order_line").length,0);
-  assert.equal(standalone[0]?.kind,"metadata");
-  assert.ok(isCanonicalSourceReference(embeddedLine.values.supplier_id));
-  assert.deepEqual(embeddedLine.values.supplier_id.sourceRef,{
+  assert.equal(upserts(header,"purchase_order_line").length,0);
+  assert.equal(header.length,1);
+  assert.equal(header[0]?.kind,"metadata");
+  if(header[0]?.kind!=="metadata")assert.fail("Expected lookup-only purchase-order header");
+  assert.equal(header[0].classification,"lookup_only");
+  assert.equal(header[0].sourceRecordId,"801");
+  assert.ok(isCanonicalSourceReference(poLine.values.supplier_id));
+  assert.deepEqual(poLine.values.supplier_id.sourceRef,{
     table:"supplier",
     sourceObjectType:supplier.sourceObjectType,
     sourceRecordId:supplier.sourceRecordId,
@@ -631,10 +664,14 @@ test("Lightspeed purchase orders have one complete arrival-order-independent pro
     entityType:"supplier",
     nullable:true,
   });
-  assert.notEqual(embeddedLine.values.stock_location_id,null);
-  assert.notEqual(embeddedLine.values.ordered_at,null);
-  assert.ok("expected_at" in embeddedLine.values);
-  assert.ok("received_at" in embeddedLine.values);
+  assert.notEqual(poLine.values.stock_location_id,null);
+  assert.notEqual(poLine.values.ordered_at,null);
+  assert.ok("expected_at" in poLine.values);
+  assert.ok("received_at" in poLine.values);
+  assert.equal(poLine.values.status,"completed");
+  assert.equal(poLine.values.unit_cost,"800.0000");
+  assert.equal(poLine.values.total_cost,"800.0000");
+  assert.equal(poLine.values.received_quantity,"1.0000");
 
   const materialize=(sequence:readonly (readonly CanonicalProjectionCommand[])[])=>{
     let value:Readonly<Record<string,unknown>>|null=null;
@@ -648,10 +685,11 @@ test("Lightspeed purchase orders have one complete arrival-order-independent pro
     }
     return value;
   };
-  assert.deepEqual(materialize([standalone,embedded]),materialize([embedded,standalone]));
+  assert.deepEqual(materialize([header,line]),materialize([line,header]));
+  assert.notEqual(materialize([header,line]),null,"exactly one stream projects the line");
 
-  const deletion=mapLightspeedCanonical("order_lines",{
-    ...fixtureRow("lightspeed-r","order_lines"),tombstone:true,
+  const deletion=mapLightspeedCanonical("ls_purchase_order_lines",{
+    ...lineRow,tombstone:true,
   },context)[0];
   assert.equal(deletion?.kind,"fact");
   if(deletion?.kind!=="fact")assert.fail("Expected purchase-order deletion projection");
@@ -676,19 +714,19 @@ test("Xero AU account types classify direct costs separately from operating expe
 });
 
 test("Xero nested finance rows expand without floating point and preserve posting/settlement links", () => {
-  const invoiceCommands = mapXeroCanonical("invoices", fixtureRow("xero", "invoices"), context);
+  const invoiceCommands = mapXeroCanonical("xero_invoices", fixtureRow("xero", "xero_invoices"), context);
   const invoiceLine = upsert(invoiceCommands, "finance_invoice_line");
   assert.equal(invoiceLine.sourceRecordId, "00000000-0000-4000-8000-000000000014");
   assert.equal(invoiceLine.values.currency, "AUD", "source document currency overrides tenant base currency");
   assert.equal(invoiceLine.values.net_amount_ex_tax, "1362.7273");
   assert.equal(invoiceLine.values.net_amount_inc_tax, "1499.0000");
 
-  const creditCommands = mapXeroCanonical("credit_notes", fixtureRow("xero", "credit_notes"), context);
+  const creditCommands = mapXeroCanonical("xero_credit_notes", fixtureRow("xero", "xero_credit_notes"), context);
   const creditLine = upsert(creditCommands, "finance_invoice_line");
   assert.equal(creditLine.values.net_amount_inc_tax, "-100.0000");
   assert.match(creditLine.sourceRecordId, /#line-item:1$/u);
 
-  const manualCommands = mapXeroCanonical("manual_journals", fixtureRow("xero", "manual_journals"), context);
+  const manualCommands = mapXeroCanonical("xero_manual_journals", fixtureRow("xero", "xero_manual_journals"), context);
   assert.equal(upserts(manualCommands, "finance_journal_line").length, 2);
   const manualAccount = upsert(manualCommands, "finance_journal_line").values.gl_account_id;
   assert.deepEqual(manualAccount, {
@@ -701,7 +739,7 @@ test("Xero nested finance rows expand without floating point and preserve postin
     },
   });
 
-  const journalCommands = mapXeroCanonical("journals", fixtureRow("xero", "journals"), context);
+  const journalCommands = mapXeroCanonical("xero_journals", fixtureRow("xero", "xero_journals"), context);
   assert.equal(upserts(journalCommands, "finance_journal_line").length, 2);
   const posting = journalCommands.find(
     (command) => command.kind === "event_link" && command.linkType === "accounting_posting_of",
@@ -710,7 +748,7 @@ test("Xero nested finance rows expand without floating point and preserve postin
   if (posting.kind !== "event_link") assert.fail("Expected Xero posting evidence");
   assert.equal(posting.to.sourceObjectType, "ManualJournals");
 
-  const paymentCommands = mapXeroCanonical("payments", fixtureRow("xero", "payments"), context);
+  const paymentCommands = mapXeroCanonical("xero_payments", fixtureRow("xero", "xero_payments"), context);
   assert.equal(paymentCommands.length, 2);
   const settlement = paymentCommands.find(
     (command) => command.kind === "event_link" && command.linkType === "settlement_of",
@@ -731,8 +769,8 @@ test("Xero nested finance rows expand without floating point and preserve postin
   for (const type of [
     "RECEIVE","RECEIVE-PREPAYMENT","RECEIVE-OVERPAYMENT","RECEIVE-TRANSFER",
   ]) {
-    const bank=upsert(mapXeroCanonical("bank_transactions",{
-      ...fixtureRow("xero","bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
+    const bank=upsert(mapXeroCanonical("xero_bank_transactions",{
+      ...fixtureRow("xero","xero_bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
     },context),"finance_bank_transaction");
     assert.equal(bank.values.amount,"100.0000",`${type} must remain an inbound receipt`);
     assert.equal(bank.values.tax_amount,"10.0000");
@@ -740,21 +778,21 @@ test("Xero nested finance rows expand without floating point and preserve postin
   for (const type of [
     "SPEND","SPEND-PREPAYMENT","SPEND-OVERPAYMENT","SPEND-TRANSFER",
   ]) {
-    const bank=upsert(mapXeroCanonical("bank_transactions",{
-      ...fixtureRow("xero","bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
+    const bank=upsert(mapXeroCanonical("xero_bank_transactions",{
+      ...fixtureRow("xero","xero_bank_transactions"),type,total:"100.0000",total_tax:"10.0000",
     },context),"finance_bank_transaction");
     assert.equal(bank.values.amount,"-100.0000",`${type} must remain an outbound spend`);
     assert.equal(bank.values.tax_amount,"-10.0000");
   }
   assert.throws(
-    ()=>mapXeroCanonical("bank_transactions",{
-      ...fixtureRow("xero","bank_transactions"),type:"UNREVIEWED-CASH-DIRECTION",
+    ()=>mapXeroCanonical("xero_bank_transactions",{
+      ...fixtureRow("xero","xero_bank_transactions"),type:"UNREVIEWED-CASH-DIRECTION",
     },context),
     /xero_bank_transaction_type_invalid/iu,
   );
 
   const paymentBase: CanonicalStagingRow = {
-    ...fixtureRow("xero", "payments"),
+    ...fixtureRow("xero", "xero_payments"),
     invoice: [],
     credit_note: null,
     prepayment: null,
@@ -767,7 +805,7 @@ test("Xero nested finance rows expand without floating point and preserve postin
     ["prepayment", "PrepaymentID", "Prepayments", "00000000-0000-4000-8000-000000000017"],
     ["overpayment", "OverpaymentID", "Overpayments", "00000000-0000-4000-8000-000000000019"],
   ] as const) {
-    const evidence = mapXeroCanonical("payments", {
+    const evidence = mapXeroCanonical("xero_payments", {
       ...paymentBase,
       [column]: { [idField]: sourceRecordId },
     }, context)[0];
@@ -777,7 +815,7 @@ test("Xero nested finance rows expand without floating point and preserve postin
     assert.equal(evidence.to.sourceRecordId, sourceRecordId);
   }
   assert.throws(
-    () => mapXeroCanonical("payments", {
+    () => mapXeroCanonical("xero_payments", {
       ...paymentBase,
       invoice: { InvoiceID: "00000000-0000-4000-8000-000000000004" },
       prepayment: { PrepaymentID: "00000000-0000-4000-8000-000000000017" },
@@ -889,9 +927,9 @@ test("Deputy and Lightspeed fixtures produce source-neutral worker and location 
   // independent of stream/batch arrival order.
   const observations = [
     ...identityObservations("deputy", "employees"),
-    ...identityObservations("lightspeed-r", "employees"),
+    ...identityObservations("lightspeed-r", "ls_employees"),
     ...identityObservations("deputy", "companies"),
-    ...identityObservations("lightspeed-r", "shops"),
+    ...identityObservations("lightspeed-r", "ls_shops"),
     ...identityObservations("deputy", "contacts"),
   ];
   const suggestions = buildIdentitySuggestions(observations);
@@ -922,18 +960,30 @@ test("Deputy and Lightspeed fixtures produce source-neutral worker and location 
 });
 
 test("mappers fail closed on source identity mismatch and post-staging drift", () => {
-  const sale = fixtureRow("lightspeed-r", "sales");
+  const sale = fixtureRow("lightspeed-r", "ls_sales");
   assert.throws(
-    () => mapLightspeedCanonical("sales", { ...sale, undocumented_column: "drift" }, context),
+    () => mapLightspeedCanonical("ls_sales", { ...sale, undocumented_column: "drift" }, context),
     /lightspeed_canonical_staging_drift/u,
   );
   assert.throws(
-    () => mapXeroCanonical("invoices", { ...fixtureRow("xero", "invoices"), source_record_id: "wrong" }, context),
-    /xero_canonical_source_id_mismatch/u,
+    () => mapLightspeedCanonical("ls_sales", { ...sale, source_record_id: "wrong" }, context),
+    /lightspeed_canonical_source_id_mismatch/u,
+  );
+  assert.throws(
+    () => mapLightspeedCanonical("ls_sale_lines", sale, context),
+    /lightspeed_canonical_source_type_mismatch/u,
+  );
+  assert.throws(
+    () => mapLightspeedCanonical("unknown", sale, context),
+    /lightspeed_canonical_stream_unsupported/u,
   );
   assert.throws(
     () => mapDeputyCanonical("unknown", fixtureRow("deputy", "employees"), context),
     /deputy_canonical_stream_unsupported/u,
+  );
+  assert.throws(
+    () => mapXeroCanonical("xero_invoices", { ...fixtureRow("xero", "xero_invoices"), source_record_id: "wrong" }, context),
+    /xero_canonical_source_id_mismatch/u,
   );
 });
 
@@ -949,6 +999,45 @@ function fixtureRow(connectorId: string, streamId: string): CanonicalStagingRow 
   const record = fixtureRecords(manifest, fixture, streamId)[0];
   assert.ok(record);
   return stagingRow(manifest, streamId, record);
+}
+
+/**
+ * A refund observation as the walk stages it: the fixture line's own row with
+ * a negative quantity and the native parent line reference. Every overlaid
+ * column is coverage-derived, so assertStagingRow admits the row unchanged.
+ */
+function lightspeedRefundLineRow(): CanonicalStagingRow {
+  const base = fixtureRow("lightspeed-r", "ls_sale_lines");
+  return {
+    ...base,
+    namespaced_source_key: `lightspeed-r:${base.external_account_reference}:SaleLine:612`,
+    source_record_id: "612",
+    sale_line_id: "612",
+    parent_sale_line_id: "611",
+    unit_quantity: "-1.0000",
+    unit_price: "100.0000",
+    normal_unit_price: "100.0000",
+    discount_amount: "0.0000",
+    calc_total: "-100.0000",
+    avg_cost: "50.0000",
+  };
+}
+
+/**
+ * An OrderLine row as the walk stages it: the fixture line's native columns
+ * plus the projected parent context (vendor, destination shop, lifecycle
+ * dates, archive flag) the sanitized recording leaves to the walk.
+ */
+function lightspeedPurchaseOrderLineRow(): CanonicalStagingRow {
+  return {
+    ...fixtureRow("lightspeed-r", "ls_purchase_order_lines"),
+    vendor_id: "802",
+    shop_id: "101",
+    complete: "true",
+    ordered_date: "2026-07-01T00:00:00+00:00",
+    received_date: "2026-07-10T00:00:00+00:00",
+    archived: "false",
+  };
 }
 
 function identityObservations(
