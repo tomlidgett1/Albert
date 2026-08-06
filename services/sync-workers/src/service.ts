@@ -82,8 +82,15 @@ export class SyncWorkerService {
           workerId: this.workerId,
           visibilityTimeoutSeconds: this.options.visibilityTimeoutSeconds ?? 900,
         });
-      } catch {
+      } catch (error) {
+        // A malformed queue payload lands here: pgmq has already read the
+        // message (burning a visibility window), so without this line the
+        // poison pill retries forever while the worker looks healthily idle.
         this.lastErrorCode = "queue_claim_failed";
+        console.error("Albert sync worker queue claim failed", {
+          workerId: this.workerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         await wait(1_000, signal);
         continue;
       }
