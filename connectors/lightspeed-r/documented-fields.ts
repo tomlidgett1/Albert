@@ -7,23 +7,23 @@
 export const LIGHTSPEED_R_DOCUMENTATION_BUILD = "2026-07-27T19:51:56Z";
 
 export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
-  shops: Object.freeze([
+  ls_shops: Object.freeze([
     "shopID", "name", "serviceRate", "timeZone", "taxLabor", "labelTitle",
     "labelMsrp", "archived", "contactID", "taxCategoryID", "receiptSetupID",
     "ccGatewayID", "priceLevelID", "Contact", "TaxCategory", "ReceiptSetup",
     "CCGateway", "PriceLevel", "Registers", "networkHealthTool",
   ]),
-  employees: Object.freeze([
+  ls_employees: Object.freeze([
     "employeeID", "firstName", "lastName", "lockOut", "archived", "contactID",
     "clockInEmployeeHoursID", "employeeRoleID", "limitToShopID", "lastShopID",
     "lastSaleID", "lastRegisterID", "Contact", "EmployeeRole", "EmployeeRights",
     "timeStamp", "createTime",
   ]),
-  categories: Object.freeze([
+  ls_categories: Object.freeze([
     "categoryID", "name", "nodeDepth", "fullPathName", "leftNode", "rightNode",
     "createTime", "timeStamp", "parentID", "Parent",
   ]),
-  items: Object.freeze([
+  ls_items: Object.freeze([
     "itemID", "systemSku", "defaultCost", "avgCost", "tax", "archived",
     "discountable", "itemType", "serialized", "description", "modelYear", "upc",
     "ean", "customSku", "manufacturerSku", "timeStamp", "createTime",
@@ -33,7 +33,7 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "ItemComponents", "ItemShelfLocations", "ItemVendorNums", "CustomFieldValues",
     "laborDurationMinutes",
   ]),
-  item_shops: Object.freeze([
+  ls_item_shops: Object.freeze([
     "itemShopID", "qoh", "sellable", "backorder", "componentQoh",
     "componentBackorder", "reorderPoint", "reorderLevel", "timeStamp", "itemID",
     "shopID", "onLayaway", "onSpecialOrder", "onWorkOrder", "onTransferOut",
@@ -41,7 +41,7 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "totalValueNegativeInventory", "lastReceivedCost", "lastReceivedLotID",
     "nextFifoLotCost", "nextFifoLotID",
   ]),
-  sales: Object.freeze([
+  ls_sales: Object.freeze([
     "saleID", "timeStamp", "discountPercent", "completed", "archived", "voided",
     "enablePromotions", "createTime", "updatetime", "completeTime", "referenceNumber",
     "referenceNumberSource", "tax1Rate", "tax2Rate", "change", "tipEnabled",
@@ -53,19 +53,19 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "shipToID", "shopID", "taxCategoryID", "Customer", "Discount", "Quote",
     "ShipTo", "TaxCategory", "SaleLines", "SalePayments",
   ]),
-  customers: Object.freeze([
+  ls_customers: Object.freeze([
     "customerID", "firstName", "lastName", "dob", "archived", "title", "company",
     "companyRegistrationNumber", "vatNumber", "createTime", "timeStamp",
     "creditAccountID", "customerTypeID", "discountID", "taxCategoryID", "Contact",
     "CreditAccount", "CustomerType", "Discount", "Note", "TaxCategory",
     "CustomFieldValues", "contactID",
   ]),
-  vendors: Object.freeze([
+  ls_vendors: Object.freeze([
     "vendorID", "name", "archived", "accountNumber", "priceLevel", "updatePrice",
     "updateCost", "updateDescription", "shareSellThrough", "timeStamp", "b2bSellerUID",
     "Contact", "Reps", "purchasingCurrency",
   ]),
-  orders: Object.freeze([
+  ls_purchase_orders: Object.freeze([
     "orderID", "orderedDate", "receivedDate", "arrivalDate", "refNum",
     "shipInstructions", "stockInstructions", "shipCost", "shipVendorCost", "otherCost",
     "otherVendorCost", "complete", "archived", "discount", "totalDiscount",
@@ -76,21 +76,21 @@ export const LIGHTSPEED_R_DOCUMENTED_FIELDS = Object.freeze({
     "discountIsPercent", "discountPercentValue", "costsModifiedAfterShipment",
     "b2bOrderUID", "b2bOrderNumber",
   ]),
-  order_lines: Object.freeze([
+  ls_purchase_order_lines: Object.freeze([
     "orderLineID", "quantity", "price", "originalPrice", "vendorCost", "checkedIn",
     "numReceived", "orderID", "itemID", "timeStamp", "total", "createTime",
     "shippingCost", "shippingVendorCost", "discountMoneyValue",
     "discountMoneyVendorValue", "discountPercentValue",
   ]),
-  payment_types: Object.freeze([
+  ls_payment_types: Object.freeze([
     "paymentTypeID", "name", "requireCustomer", "archived", "internalReserved",
     "type", "refundAsPaymentTypeID", "code", "channel",
   ]),
-  tax_categories: Object.freeze([
+  ls_tax_categories: Object.freeze([
     "taxCategoryID", "isTaxInclusive", "tax1Name", "tax2Name", "tax1Rate",
     "tax2Rate", "TaxCategoryClasses", "timeStamp",
   ]),
-  inventory_logs: Object.freeze([
+  ls_inventory_logs: Object.freeze([
     "inventoryLogID", "qohChange", "costChange", "createTime", "automated", "reason",
     "causedNegative", "employeeID", "itemID", "shopID", "orderID", "transferID",
     "saleID", "inventoryCountID", "customerID", "vendorReturnID", "itemImportID",

@@ -1,4 +1,4 @@
-import { Decimal4, sumDecimal4 } from "../../packages/canonical-schema/src/index.js";
+import { Decimal4 } from "../../packages/canonical-schema/src/index.js";
 import { stagingColumnName } from "../../packages/connector-sdk/src/index.js";
 import { CanonicalRowNotApplicable } from "../../services/sync-workers/src/canonical-contract.js";
 import type {
@@ -36,31 +36,49 @@ const COMMON_STAGING_COLUMNS = new Set([
 type JsonObject = Readonly<Record<string, unknown>>;
 
 /** Pure, fail-closed Lightspeed R-Series typed-staging to canonical projection. */
+/** Pure, fail-closed Lightspeed R-Series typed-staging to canonical projection. */
 export const mapLightspeedCanonical: CanonicalStreamMapper = (stream, row, context) => {
   assertStagingRow(stream, row);
   switch (stream) {
-    case "shops": return mapShop(row, context);
-    case "employees": return mapEmployee(row);
-    case "categories": return mapCategory(row);
-    case "items": return mapItem(row);
-    case "item_shops": return mapItemShop(row, context);
-    case "sales": return mapSale(row, context);
-    case "customers": return mapCustomer(row);
-    case "vendors": return mapVendor(row);
-    case "orders": return mapOrder(row, context);
-    case "order_lines": return mapOrderLine(row);
-    case "payment_types": return mapPaymentType(row);
-    case "tax_categories": return mapTaxCategory(row);
-    case "inventory_logs": return mapInventoryLog(row, context);
-    default: throw new Error(`lightspeed_canonical_stream_unsupported:${stream}`);
+    case "ls_shops": return mapShop(row, context);
+    case "ls_registers": return mapRegister(row);
+    case "ls_employees": return mapEmployee(row);
+    case "ls_categories": return mapCategory(row);
+    case "ls_items": return mapItem(row);
+    case "ls_item_shops": return mapItemShop(row, context);
+    case "ls_sales": return mapSale(row, context);
+    case "ls_sale_lines": return mapSaleLine(row, context);
+    case "ls_sale_payments": return mapSalePayment(row, context);
+    case "ls_customers": return mapCustomer(row);
+    case "ls_vendors": return mapVendor(row);
+    case "ls_tax_categories": return mapTaxCategory(row);
+    case "ls_inventory_logs": return mapInventoryLog(row, context);
+    // Reference and lookup streams — including the purchase-order header,
+    // whose lines are first-class rows carrying projected parent context —
+    // observe identity without projecting canonical rows.
+    default: return lookupOnly(row);
   }
 };
 
+/**
+ * The one honest projection for a stream with no canonical target: record
+ * that the row was observed and classified, so zero commands (a hard defect)
+ * can never be confused with "nothing to say".
+ */
+function lookupOnly(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
+  return [{
+    kind: "metadata",
+    sourceObjectType: row.source_object_type,
+    sourceRecordId: requiredIdentifier(row.source_record_id, "metadata.source_record_id"),
+    classification: "lookup_only",
+  }];
+}
+
 function mapShop(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.shop_id, "shops.shop_id");
-  const name = requiredText(row.name, "shops.name");
+  const id = requiredIdentifier(row.shop_id, "ls_shops.shop_id");
+  const name = requiredText(row.name, "ls_shops.name");
   const active = !truthy(row.archived) && !row.tombstone;
-  const address = contactAddress(row.contact);
+  const address = contactAddress(row.contact_json ?? row.contact);
   return [
     dimension("location", row.source_object_type, id, {
       name,
@@ -83,11 +101,21 @@ function mapShop(row: CanonicalStagingRow, context: CanonicalMappingContext): re
   ];
 }
 
+function mapRegister(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
+  const id = requiredIdentifier(row.register_id, "ls_registers.register_id");
+  const shopId = requiredIdentifier(row.shop_id, "ls_registers.shop_id");
+  return [dimension("register", row.source_object_type, id, {
+    location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
+    name: optionalText(row.name) ?? `Register ${id}`,
+    active: !row.tombstone,
+  }, row)];
+}
+
 function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.employee_id, "employees.employee_id");
+  const id = requiredIdentifier(row.employee_id, "ls_employees.employee_id");
   const displayName = composeDisplayName(row.first_name, row.last_name, `Employee ${id}`);
   const active = !truthy(row.archived) && !row.tombstone;
-  const email = contactEmail(row.contact);
+  const email = contactEmail(row.contact_json ?? row.contact);
   const scope = optionalIdentifier(row.last_shop_id);
   return [
     dimension("person", row.source_object_type, id, { display_name: displayName }, row),
@@ -108,19 +136,19 @@ function mapEmployee(row: CanonicalStagingRow): readonly CanonicalProjectionComm
 }
 
 function mapCategory(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.category_id, "categories.category_id");
+  const id = requiredIdentifier(row.category_id, "ls_categories.category_id");
   const parentId = optionalIdentifier(row.parent_id);
   return [dimension("product_category", row.source_object_type, id, {
     parent_category_id: parentId
       ? sourceRef("product_category", "Category", parentId, row, { nullable: true })
       : null,
-    name: requiredText(row.name, "categories.name"),
+    name: requiredText(row.name, "ls_categories.name"),
     active: !row.tombstone,
   }, row)];
 }
 
 function mapItem(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.item_id, "items.item_id");
+  const id = requiredIdentifier(row.item_id, "ls_items.item_id");
   const sku = optionalText(row.system_sku) ?? optionalText(row.custom_sku);
   const name = optionalText(row.description) ?? sku ?? `Item ${id}`;
   const barcode = optionalText(row.upc) ?? optionalText(row.ean);
@@ -161,22 +189,21 @@ function mapItem(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[
 }
 
 function mapItemShop(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.item_shop_id, "item_shops.item_shop_id");
-  const itemId = requiredIdentifier(row.item_id, "item_shops.item_id");
+  const id = requiredIdentifier(row.item_shop_id, "ls_item_shops.item_shop_id");
+  const itemId = requiredIdentifier(row.item_id, "ls_item_shops.item_id");
   assertNotAggregateShopScope(row.shop_id, "item_shops");
-  const shopId = requiredIdentifier(row.shop_id, "item_shops.shop_id");
-  // ItemShop is a mutable current-balance resource. Its vendor timeStamp is a
+  const shopId = requiredIdentifier(row.shop_id, "ls_item_shops.shop_id");
+  // ItemShop is a mutable current-balance resource. Its vendor timestamp is a
   // change timestamp, not the time Albert observed the balance. Reconciliation
   // sweeps deliberately re-observe every row and preserve one snapshot a day.
   const snapshotAt = requiredInstant(
-    row.ingested_at ?? row.time_stamp ?? row.source_updated_at,
-    "item_shops.ingested_at",
+    row.ingested_at ?? row.updated_at ?? row.source_updated_at,
+    "ls_item_shops.ingested_at",
   );
   const snapshotDate = localCalendarDate(snapshotAt, context.timezone);
-  const quantity = decimalOrZero(row.qoh, "item_shops.qoh");
-  const unitCost = optionalCostDecimal(row.average_cost, "item_shops.average_cost");
-  const stockValue = optionalCostDecimal(row.total_value_avg_cost, "item_shops.total_value_avg_cost")
-    ?? (unitCost ? Decimal4.from(quantity).multiply(unitCost).toString() : null);
+  const quantity = decimalOrZero(row.qoh, "ls_item_shops.qoh");
+  const unitCost = optionalCostDecimal(row.avg_cost, "ls_item_shops.avg_cost");
+  const stockValue = unitCost ? Decimal4.from(unitCost).multiply(Decimal4.from(quantity)).toString() : null;
   return [fact("inventory_balance_snapshot", "ItemShopDailySnapshot", `${id}#snapshot:${snapshotDate}`, {
     product_variant_id: sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant" }),
     stock_location_id: sourceRef("stock_location", "Shop", shopId, row),
@@ -189,78 +216,31 @@ function mapItemShop(row: CanonicalStagingRow, context: CanonicalMappingContext)
   }, "stock")];
 }
 
-type SaleLine = Readonly<{
-  raw: JsonObject;
-  sourceRecordId: string;
-  parentSourceRecordId: string | null;
-  index: number;
-  quantity: Decimal4;
-  unitPrice: Decimal4;
-  discount: Decimal4;
-  netIncTax: Decimal4;
-  unitCost: Decimal4 | null;
-}>;
+/** The synthetic in-store channel every POS observation references. */
+const CHANNEL_OBJECT_TYPE = "LightspeedChannel";
+const CHANNEL_RECORD_ID = "in_store";
 
+/**
+ * Sale headers own the order and nothing below it: lines and payments are
+ * first-class rows of their own streams, so one economic event can never
+ * project twice. The header also emits the synthetic in-store channel and a
+ * register stub, so arrival order can never dangle an order's references.
+ */
 function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
-  const saleId = requiredIdentifier(row.sale_id, "sales.sale_id");
-  const shopId = requiredIdentifier(row.shop_id, "sales.shop_id");
+  const saleId = requiredIdentifier(row.sale_id, "ls_sales.sale_id");
+  const shopId = requiredIdentifier(row.shop_id, "ls_sales.shop_id");
   const orderedAt = requiredInstant(
     row.create_time ?? row.complete_time ?? row.time_stamp ?? row.source_updated_at,
-    "sales.ordered_at",
+    "ls_sales.ordered_at",
   );
   const completedAt = optionalInstant(row.complete_time);
   const businessDate = tradingBusinessDate(completedAt ?? orderedAt, context);
   const voided = truthy(row.voided) || row.tombstone;
   const completed = truthy(row.completed);
-  const rawLines = nestedRecords(row.sale_lines, "SaleLine");
-  const lines = rawLines.map((raw, index): SaleLine => {
-    const nativeId = optionalIdentifier(raw.saleLineID);
-    const quantity = decimalOrZeroValue(raw.unitQuantity, `sales.sale_lines[${index}].unitQuantity`);
-    const unitPrice = decimalOrZeroValue(raw.unitPrice, `sales.sale_lines[${index}].unitPrice`);
-    const rawDiscount = optionalDecimalValue(
-      raw.discountAmount,
-      `sales.sale_lines[${index}].discountAmount`,
-    ) ?? ZERO;
-    const lineDiscount = optionalDecimalValue(
-      raw.calcLineDiscount,
-      `sales.sale_lines[${index}].calcLineDiscount`,
-    );
-    const transactionDiscount = optionalDecimalValue(
-      raw.calcTransactionDiscount,
-      `sales.sale_lines[${index}].calcTransactionDiscount`,
-    );
-    // discountAmount is the configured dollar-discount input. The two calc*
-    // fields are the applied line and transaction allocations and therefore
-    // include percentage discounts. Older recordings may omit the calculated
-    // fields, so retain the signed input as a compatibility fallback.
-    const discount = lineDiscount || transactionDiscount
-      ? (lineDiscount ?? ZERO).add(transactionDiscount ?? ZERO)
-      : quantity.scaled < 0n ? negate(rawDiscount.abs()) : rawDiscount.abs();
-    const calculated = optionalDecimalValue(raw.calcTotal, `sales.sale_lines[${index}].calcTotal`);
-    return {
-      raw,
-      sourceRecordId: nativeId ?? `${saleId}#sale-line:${index + 1}`,
-      parentSourceRecordId: optionalIdentifier(raw.parentSaleLineID),
-      index,
-      quantity,
-      unitPrice,
-      discount,
-      netIncTax: calculated ?? unitPrice.multiply(quantity).subtract(discount),
-      unitCost: optionalCostDecimalValue(raw.avgCost, `sales.sale_lines[${index}].avgCost`),
-    };
-  });
-  const taxAllocations = saleLineTaxes(lines, decimalOrZeroValue(row.tax_total, "sales.tax_total"));
-  const positiveLines = lines.filter((line) => line.quantity.scaled > 0n);
-  const refundLines = lines.filter((line) => line.quantity.scaled < 0n);
-  const orderStatus = voided
-    ? "voided"
-    : completed
-      ? positiveLines.length === 0 && refundLines.length > 0 ? "refunded" : "completed"
-      : "open";
-  const channelObjectType = "LightspeedChannel";
-  const channelRecordId = "in_store";
+  const orderStatus = voided ? "voided" : completed ? "completed" : "open";
+
   const commands: CanonicalProjectionCommand[] = [
-    dimension("channel", channelObjectType, channelRecordId, {
+    dimension("channel", CHANNEL_OBJECT_TYPE, CHANNEL_RECORD_ID, {
       name: "In-store",
       channel_type: "in_store",
       active: true,
@@ -275,22 +255,16 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     }, row));
   }
 
-  const mappedDiscount = sum(lines.map((line) => line.discount));
-  const mappedNet = sum(lines.map((line) => line.netIncTax));
-  const mappedTax = sum(lines.map((line) => taxAllocations[line.index] ?? ZERO));
-  const sourceNet = optionalDecimalValue(row.total, "sales.total")
-    ?? optionalDecimalValue(row.calc_total, "sales.calc_total")
-    ?? mappedNet;
-  const sourceDiscount = optionalDecimalValue(row.calc_discount, "sales.calc_discount") ?? mappedDiscount;
-  const sourceTax = optionalDecimalValue(row.tax_total, "sales.tax_total") ?? mappedTax;
-  const orderGross = sourceNet.add(sourceDiscount);
-  const orderExTax = sourceNet.subtract(sourceTax);
-  const orderCost = optionalDecimal(row.calc_avg_cost, "sales.calc_avg_cost")
-    ?? sumNullable(lines.map((line) => line.unitCost?.multiply(line.quantity) ?? null));
+  const net = optionalDecimalValue(row.total, "ls_sales.total")
+    ?? optionalDecimalValue(row.calc_total, "ls_sales.calc_total")
+    ?? ZERO;
+  const discount = optionalDecimalValue(row.calc_discount, "ls_sales.calc_discount") ?? ZERO;
+  const tax = (optionalDecimalValue(row.calc_tax1, "ls_sales.calc_tax1") ?? ZERO)
+    .add(optionalDecimalValue(row.calc_tax2, "ls_sales.calc_tax2") ?? ZERO);
   commands.push(fact("commerce_order", row.source_object_type, saleId, {
     location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
     register_id: registerId ? sourceRef("register", "Register", registerId, row) : null,
-    channel_id: sourceRef("channel", channelObjectType, channelRecordId, row),
+    channel_id: sourceRef("channel", CHANNEL_OBJECT_TYPE, CHANNEL_RECORD_ID, row),
     customer_account_id: optionalEntityRef("customer_account", "Customer", row.customer_id, row, "customer_account"),
     worker_id: optionalEntityRef("worker", "Employee", row.employee_id, row, "worker"),
     ordered_at: orderedAt,
@@ -300,71 +274,108 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
     status: orderStatus,
     voided,
     internal_transaction: false,
-    gross_amount: orderGross.toString(),
-    discount_amount: sourceDiscount.toString(),
-    net_amount_inc_tax: sourceNet.toString(),
-    tax_amount: sourceTax.toString(),
-    net_amount_ex_tax: orderExTax.toString(),
-    total_cost: orderCost,
+    gross_amount: net.add(discount).toString(),
+    discount_amount: discount.toString(),
+    net_amount_inc_tax: net.toString(),
+    tax_amount: tax.toString(),
+    net_amount_ex_tax: net.subtract(tax).toString(),
+    total_cost: optionalDecimal(row.calc_avg_cost, "ls_sales.calc_avg_cost"),
     currency: context.baseCurrency,
   }, "operational_sales", row.tombstone));
+  return commands;
+}
 
-  for (const line of lines) {
-    const tax = taxAllocations[line.index] ?? ZERO;
-    const itemId = optionalIdentifier(line.raw.itemID);
-    const workerId = optionalIdentifier(line.raw.employeeID) ?? optionalIdentifier(row.employee_id);
-    const taxCategoryId = optionalIdentifier(line.raw.taxCategoryID) ?? optionalIdentifier(row.tax_category_id);
-    const lineOrderedAt = optionalInstant(line.raw.createTime) ?? orderedAt;
-    commands.push(fact("commerce_order_line", "SaleLine", line.sourceRecordId, {
-      order_id: sourceRef("commerce_order", row.source_object_type, saleId, row),
-      line_number: line.index + 1,
-      product_variant_id: itemId
-        ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })
-        : null,
-      location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
-      register_id: registerId ? sourceRef("register", "Register", registerId, row) : null,
-      channel_id: sourceRef("channel", channelObjectType, channelRecordId, row),
-      customer_account_id: optionalEntityRef("customer_account", "Customer", row.customer_id, row, "customer_account"),
-      worker_id: workerId
-        ? sourceRef("worker", "Employee", workerId, row, { entityType: "worker", nullable: true })
-        : null,
-      tax_code_id: taxCategoryId
-        ? sourceRef("tax_code", "TaxCategory", taxCategoryId, row, { nullable: true })
-        : null,
-      ordered_at: lineOrderedAt,
-      completed_at: completedAt,
-      fulfilled_at: completedAt,
-      business_date: businessDate,
-      // Refund lines remain on their source sale so the signed line set
-      // reconciles the source header. The governed sales event excludes this
-      // refunded order-line projection and uses commerce_refund_line instead,
-      // avoiding double-counting while preserving the original-line link.
-      order_status: line.quantity.scaled < 0n ? "refunded" : orderStatus,
-      voided,
-      internal_transaction: false,
-      quantity: line.quantity.toString(),
-      unit_price: line.unitPrice.toString(),
-      unit_cost: line.unitCost?.toString() ?? null,
-      gross_amount: line.netIncTax.add(line.discount).toString(),
-      discount_amount: line.discount.toString(),
-      net_amount_inc_tax: line.netIncTax.toString(),
-      tax_amount: tax.toString(),
-      net_amount_ex_tax: line.netIncTax.subtract(tax).toString(),
-      total_cost: line.unitCost?.multiply(line.quantity).toString() ?? null,
-      currency: context.baseCurrency,
-    }, "operational_sales", row.tombstone));
-  }
+/**
+ * One sale line, mapped standalone from its own row. Parent context —
+ * completed, voided, completion time — is projected onto the row by the walk,
+ * which is what makes a line's status honest without its header in hand. A
+ * negative quantity is a reversal observation: it projects the refund fact
+ * and its link to the original line, never an additional positive sale.
+ */
+function mapSaleLine(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
+  const lineId = requiredIdentifier(row.sale_line_id, "ls_sale_lines.sale_line_id");
+  const saleId = requiredIdentifier(row.sale_id, "ls_sale_lines.sale_id");
+  const shopId = requiredIdentifier(row.shop_id, "ls_sale_lines.shop_id");
+  const orderedAt = requiredInstant(
+    row.create_time ?? row.time_stamp ?? row.source_updated_at,
+    "ls_sale_lines.ordered_at",
+  );
+  const completedAt = optionalInstant(row.complete_time);
+  const businessDate = tradingBusinessDate(completedAt ?? orderedAt, context);
+  const voided = truthy(row.voided) || row.tombstone;
+  const completed = truthy(row.completed);
 
-  for (const line of refundLines) {
-    if (!line.parentSourceRecordId) {
-      throw new Error(`lightspeed_refund_parent_missing:${saleId}:${line.sourceRecordId}`);
+  const quantity = decimalOrZeroValue(row.unit_quantity, "ls_sale_lines.unit_quantity");
+  const unitPrice = decimalOrZeroValue(row.unit_price, "ls_sale_lines.unit_price");
+  const rawDiscount = optionalDecimalValue(row.discount_amount, "ls_sale_lines.discount_amount") ?? ZERO;
+  const lineDiscount = optionalDecimalValue(row.calc_line_discount, "ls_sale_lines.calc_line_discount");
+  const transactionDiscount = optionalDecimalValue(row.calc_transaction_discount, "ls_sale_lines.calc_transaction_discount");
+  // discount_amount is the configured dollar-discount input. The two calc_*
+  // fields are the applied line and transaction allocations and therefore
+  // include percentage discounts. Older recordings may omit the calculated
+  // fields, so retain the signed input as a compatibility fallback.
+  const discount = lineDiscount || transactionDiscount
+    ? (lineDiscount ?? ZERO).add(transactionDiscount ?? ZERO)
+    : quantity.scaled < 0n ? negate(rawDiscount.abs()) : rawDiscount.abs();
+  const netIncTax = optionalDecimalValue(row.calc_total, "ls_sale_lines.calc_total")
+    ?? unitPrice.multiply(quantity).subtract(discount);
+  const tax = (optionalDecimalValue(row.calc_tax1, "ls_sale_lines.calc_tax1") ?? ZERO)
+    .add(optionalDecimalValue(row.calc_tax2, "ls_sale_lines.calc_tax2") ?? ZERO);
+  const unitCost = optionalCostDecimalValue(row.avg_cost, "ls_sale_lines.avg_cost");
+  const itemId = optionalIdentifier(row.item_id);
+  const workerId = optionalIdentifier(row.employee_id);
+  const taxCategoryId = optionalIdentifier(row.tax_category_id);
+  const refund = quantity.scaled < 0n;
+  const orderStatus = voided ? "voided" : refund ? "refunded" : completed ? "completed" : "open";
+
+  const commands: CanonicalProjectionCommand[] = [fact("commerce_order_line", row.source_object_type, lineId, {
+    order_id: sourceRef("commerce_order", "Sale", saleId, row),
+    line_number: stablePositiveInteger(lineId),
+    product_variant_id: itemId
+      ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })
+      : null,
+    location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
+    register_id: null,
+    channel_id: sourceRef("channel", CHANNEL_OBJECT_TYPE, CHANNEL_RECORD_ID, row),
+    customer_account_id: optionalEntityRef("customer_account", "Customer", row.customer_id, row, "customer_account"),
+    worker_id: workerId
+      ? sourceRef("worker", "Employee", workerId, row, { entityType: "worker", nullable: true })
+      : null,
+    tax_code_id: taxCategoryId
+      ? sourceRef("tax_code", "TaxCategory", taxCategoryId, row, { nullable: true })
+      : null,
+    ordered_at: orderedAt,
+    completed_at: completedAt,
+    fulfilled_at: completedAt,
+    business_date: businessDate,
+    // Refund lines remain on their source sale so the signed line set
+    // reconciles the source header. The governed sales event excludes this
+    // refunded order-line projection and uses commerce_refund_line instead,
+    // avoiding double-counting while preserving the original-line link.
+    order_status: orderStatus,
+    voided,
+    internal_transaction: false,
+    quantity: quantity.toString(),
+    unit_price: unitPrice.toString(),
+    unit_cost: unitCost?.toString() ?? null,
+    gross_amount: netIncTax.add(discount).toString(),
+    discount_amount: discount.toString(),
+    net_amount_inc_tax: netIncTax.toString(),
+    tax_amount: tax.toString(),
+    net_amount_ex_tax: netIncTax.subtract(tax).toString(),
+    total_cost: unitCost?.multiply(quantity).toString() ?? null,
+    currency: context.baseCurrency,
+  }, "operational_sales", row.tombstone)];
+
+  if (refund) {
+    const parentLineId = optionalIdentifier(row.parent_sale_line_id);
+    if (!parentLineId) {
+      throw new Error(`lightspeed_refund_parent_missing:${saleId}:${lineId}`);
     }
-    const tax = (taxAllocations[line.index] ?? ZERO).abs();
-    const amount = line.netIncTax.abs();
-    const itemId = optionalIdentifier(line.raw.itemID);
-    const workerId = optionalIdentifier(line.raw.employeeID) ?? optionalIdentifier(row.employee_id);
-    commands.push(fact("commerce_refund_line", "SaleLine", line.sourceRecordId, {
-      original_order_line_id: sourceRef("commerce_order_line", "SaleLine", line.parentSourceRecordId, row),
+    const refundTax = tax.abs();
+    const amount = netIncTax.abs();
+    commands.push(fact("commerce_refund_line", row.source_object_type, lineId, {
+      original_order_line_id: sourceRef("commerce_order_line", row.source_object_type, parentLineId, row),
       location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
       product_variant_id: itemId
         ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })
@@ -372,49 +383,59 @@ function mapSale(row: CanonicalStagingRow, context: CanonicalMappingContext): re
       worker_id: workerId
         ? sourceRef("worker", "Employee", workerId, row, { entityType: "worker", nullable: true })
         : null,
-      refunded_at: completedAt ?? requiredInstant(line.raw.timeStamp ?? orderedAt, "sales.refunded_at"),
+      refunded_at: completedAt ?? orderedAt,
       business_date: businessDate,
-      quantity: line.quantity.abs().toString(),
+      quantity: quantity.abs().toString(),
       refund_amount_inc_tax: amount.toString(),
-      tax_amount: tax.toString(),
-      refund_amount_ex_tax: amount.subtract(tax).toString(),
-      total_cost_reversed: line.unitCost?.multiply(line.quantity.abs()).toString() ?? null,
+      tax_amount: refundTax.toString(),
+      refund_amount_ex_tax: amount.subtract(refundTax).toString(),
+      total_cost_reversed: unitCost?.multiply(quantity.abs()).toString() ?? null,
       currency: context.baseCurrency,
     }, "operational_sales"));
     commands.push({
       kind: "event_link",
       linkType: "reversal_of",
-      from: { connectionId: row.connection_id, sourceObjectType: "SaleLine", sourceRecordId: line.sourceRecordId },
-      to: { connectionId: row.connection_id, sourceObjectType: "SaleLine", sourceRecordId: line.parentSourceRecordId },
-      evidence: { sale_id: saleId, quantity: line.quantity.toString(), amount: line.netIncTax.toString() },
+      from: { connectionId: row.connection_id, sourceObjectType: row.source_object_type, sourceRecordId: lineId },
+      to: { connectionId: row.connection_id, sourceObjectType: row.source_object_type, sourceRecordId: parentLineId },
+      evidence: { sale_id: saleId, quantity: quantity.toString(), amount: netIncTax.toString() },
     });
-  }
-
-  for (const [index, payment] of nestedRecords(row.sale_payments, "SalePayment").entries()) {
-    const paymentId = optionalIdentifier(payment.salePaymentID) ?? `${saleId}#sale-payment:${index + 1}`;
-    const amount = decimalOrZeroValue(payment.amount, `sales.sale_payments[${index}].amount`);
-    const paidAt = optionalInstant(payment.createTime) ?? completedAt ?? orderedAt;
-    const archived = truthy(payment.archived);
-    commands.push(fact("commerce_payment", "SalePayment", paymentId, {
-      order_id: sourceRef("commerce_order", row.source_object_type, saleId, row),
-      location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
-      channel_id: sourceRef("channel", channelObjectType, channelRecordId, row),
-      paid_at: paidAt,
-      business_date: tradingBusinessDate(paidAt, context),
-      tender_type: optionalIdentifier(payment.paymentTypeID) ?? "unknown",
-      status: voided || archived ? "voided" : amount.scaled < 0n ? "refunded" : "captured",
-      amount: amount.toString(),
-      currency: context.baseCurrency,
-    }, "operational_sales", row.tombstone || archived));
   }
   return commands;
 }
 
+/**
+ * One tender, mapped standalone. The sale's shop and lifecycle ride the row
+ * as projected parent context, because a payment carries no location of its
+ * own and its status depends on whether the sale it settles was voided.
+ */
+function mapSalePayment(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
+  const paymentId = requiredIdentifier(row.sale_payment_id, "ls_sale_payments.sale_payment_id");
+  const saleId = requiredIdentifier(row.sale_id, "ls_sale_payments.sale_id");
+  const shopId = requiredIdentifier(row.shop_id, "ls_sale_payments.shop_id");
+  const amount = decimalOrZeroValue(row.amount, "ls_sale_payments.amount");
+  const paidAt = optionalInstant(row.create_time)
+    ?? optionalInstant(row.complete_time)
+    ?? requiredInstant(row.source_updated_at, "ls_sale_payments.paid_at");
+  const archived = truthy(row.archived);
+  const voided = truthy(row.voided) || row.tombstone;
+  return [fact("commerce_payment", row.source_object_type, paymentId, {
+    order_id: sourceRef("commerce_order", "Sale", saleId, row),
+    location_id: sourceRef("location", "Shop", shopId, row, { entityType: "location" }),
+    channel_id: sourceRef("channel", CHANNEL_OBJECT_TYPE, CHANNEL_RECORD_ID, row),
+    paid_at: paidAt,
+    business_date: tradingBusinessDate(paidAt, context),
+    tender_type: optionalIdentifier(row.payment_type_id) ?? "unknown",
+    status: voided || archived ? "voided" : amount.scaled < 0n ? "refunded" : "captured",
+    amount: amount.toString(),
+    currency: context.baseCurrency,
+  }, "operational_sales", row.tombstone || archived)];
+}
+
 function mapCustomer(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.customer_id, "customers.customer_id");
+  const id = requiredIdentifier(row.customer_id, "ls_customers.customer_id");
   const name = optionalText(row.company)
     ?? composeDisplayName(row.first_name, row.last_name, `Customer ${id}`);
-  const email = contactEmail(row.contact);
+  const email = contactEmail(row.contact_json ?? row.contact);
   return [
     dimension("person", row.source_object_type, id, { display_name: name }, row),
     dimension("customer_account", row.source_object_type, id, {
@@ -432,8 +453,8 @@ function mapCustomer(row: CanonicalStagingRow): readonly CanonicalProjectionComm
 }
 
 function mapVendor(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.vendor_id, "vendors.vendor_id");
-  const name = requiredText(row.name, "vendors.name");
+  const id = requiredIdentifier(row.vendor_id, "ls_vendors.vendor_id");
+  const name = requiredText(row.name, "ls_vendors.name");
   const active = !truthy(row.archived) && !row.tombstone;
   return [
     dimension("supplier", row.source_object_type, id, {
@@ -451,107 +472,70 @@ function mapVendor(row: CanonicalStagingRow): readonly CanonicalProjectionComman
   ];
 }
 
-function mapOrder(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
-  const orderId = requiredIdentifier(row.order_id, "orders.order_id");
-  const shopId = optionalIdentifier(row.shop_id);
-  const supplierId = optionalIdentifier(row.vendor_id);
-  const orderedAt = requiredInstant(
-    row.ordered_date ?? row.create_time ?? row.time_stamp ?? row.source_updated_at,
-    "orders.ordered_at",
-  );
-  const expectedAt = optionalInstant(row.arrival_date);
-  const receivedAt = optionalInstant(row.received_date);
-  const status = row.tombstone || truthy(row.archived)
-    ? "cancelled"
-    : truthy(row.complete) ? "completed" : receivedAt ? "partially_received" : "open";
-  const lines = nestedRecords(row.order_lines, "OrderLine");
-  if (lines.length === 0) {
-    return [{
-      kind: "metadata",
-      sourceObjectType: row.source_object_type,
-      sourceRecordId: orderId,
-      classification: "lookup_only",
-    }];
-  }
-  return lines.map((line, index) => {
-    const lineId = optionalIdentifier(line.orderLineID) ?? `${orderId}#order-line:${index + 1}`;
-    const quantity = decimalOrZeroValue(line.quantity, `orders.order_lines[${index}].quantity`);
-    const received = optionalDecimalValue(line.numReceived, `orders.order_lines[${index}].numReceived`)
-      ?? optionalDecimalValue(line.checkedIn, `orders.order_lines[${index}].checkedIn`)
-      ?? (status === "completed" ? quantity : ZERO);
-    const unitCost = optionalDecimalValue(
-      line.vendorCost ?? line.price,
-      `orders.order_lines[${index}].unit_cost`,
-    );
-    const totalCost = optionalDecimalValue(line.total, `orders.order_lines[${index}].total`)
-      ?? unitCost?.multiply(quantity)
-      ?? null;
-    const itemId = optionalIdentifier(line.itemID);
-    return fact("purchase_order_line", "OrderLine", lineId, {
-      purchase_order_ref: orderId,
-      line_number: stablePositiveInteger(lineId),
-      supplier_id: supplierId
-        ? sourceRef("supplier", "Vendor", supplierId, row, { entityType: "supplier", nullable: true })
-        : null,
-      product_variant_id: itemId
-        ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })
-        : null,
-      stock_location_id: shopId ? sourceRef("stock_location", "Shop", shopId, row, { nullable: true }) : null,
-      ordered_at: orderedAt,
-      expected_at: expectedAt,
-      received_at: receivedAt,
-      business_date: localCalendarDate(orderedAt, context.timezone),
-      status,
-      ordered_quantity: quantity.toString(),
-      received_quantity: received.toString(),
-      unit_cost: unitCost?.toString() ?? null,
-      total_cost: totalCost instanceof Decimal4 ? totalCost.toString() : totalCost,
-      currency: optionalText(row.vendor_currency_code)?.toUpperCase() ?? context.baseCurrency,
-    }, "stock", row.tombstone);
-  });
-}
-
-function mapOrderLine(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.order_line_id, "order_lines.order_line_id");
-  requiredIdentifier(row.order_id, "order_lines.order_id");
-  requiredIdentifier(row.item_id, "order_lines.item_id");
+/**
+ * One purchase-order line, mapped standalone from its own row plus the parent
+ * context the walk projected onto it (vendor, destination shop, lifecycle
+ * dates, currency). The Order header stream is a lookup-only identity sweep.
+ */
+function mapPurchaseOrderLine(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
+  const lineId = requiredIdentifier(row.order_line_id, "ls_purchase_order_lines.order_line_id");
+  const orderId = requiredIdentifier(row.order_id, "ls_purchase_order_lines.order_id");
   if (row.tombstone) {
     return [{
       kind: "fact",
       table: "purchase_order_line",
       sourceObjectType: row.source_object_type,
-      sourceRecordId: id,
+      sourceRecordId: lineId,
       values: { status: "cancelled" },
       authorityConcept: "stock",
       tombstone: true,
       updateOnly: true,
     }];
   }
-  // Order.json is requested with the OrderLines relation and is the sole
-  // materialising projection. It carries supplier, shop, lifecycle dates,
-  // status and currency that the standalone OrderLine endpoint cannot. The
-  // standalone stream remains an identity/deletion sweep, so arrival order can
-  // never erase complete purchase-order truth with null placeholders.
-  return [{
-    kind: "metadata",
-    sourceObjectType: row.source_object_type,
-    sourceRecordId: id,
-    classification: "lookup_only",
-  }];
-}
-
-function mapPaymentType(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  return [{
-    kind: "metadata",
-    sourceObjectType: row.source_object_type,
-    sourceRecordId: requiredIdentifier(row.payment_type_id, "payment_types.payment_type_id"),
-    classification: "lookup_only",
-  }];
+  const supplierId = optionalIdentifier(row.vendor_id);
+  const shopId = optionalIdentifier(row.shop_id);
+  const itemId = optionalIdentifier(row.item_id);
+  const orderedAt = requiredInstant(
+    row.ordered_date ?? row.created_at ?? row.source_updated_at,
+    "ls_purchase_order_lines.ordered_at",
+  );
+  const receivedAt = optionalInstant(row.received_date);
+  const status = truthy(row.archived)
+    ? "cancelled"
+    : truthy(row.complete) ? "completed" : receivedAt ? "partially_received" : "open";
+  const quantity = decimalOrZeroValue(row.quantity, "ls_purchase_order_lines.quantity");
+  const received = optionalDecimalValue(row.qty_checked_in, "ls_purchase_order_lines.qty_checked_in")
+    ?? (status === "completed" ? quantity : ZERO);
+  const unitCost = optionalDecimalValue(row.unit_cost, "ls_purchase_order_lines.unit_cost");
+  const totalCost = optionalDecimalValue(row.line_total, "ls_purchase_order_lines.line_total")
+    ?? unitCost?.multiply(quantity)
+    ?? null;
+  return [fact("purchase_order_line", row.source_object_type, lineId, {
+    purchase_order_ref: orderId,
+    line_number: stablePositiveInteger(lineId),
+    supplier_id: supplierId
+      ? sourceRef("supplier", "Vendor", supplierId, row, { entityType: "supplier", nullable: true })
+      : null,
+    product_variant_id: itemId
+      ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })
+      : null,
+    stock_location_id: shopId ? sourceRef("stock_location", "Shop", shopId, row, { nullable: true }) : null,
+    ordered_at: orderedAt,
+    expected_at: null,
+    received_at: receivedAt,
+    business_date: localCalendarDate(orderedAt, context.timezone),
+    status,
+    ordered_quantity: quantity.toString(),
+    received_quantity: received.toString(),
+    unit_cost: unitCost?.toString() ?? null,
+    total_cost: totalCost instanceof Decimal4 ? totalCost.toString() : totalCost,
+    currency: optionalText(row.vendor_currency_code)?.toUpperCase() ?? context.baseCurrency,
+  }, "stock", row.tombstone)];
 }
 
 function mapTaxCategory(row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.tax_category_id, "tax_categories.tax_category_id");
-  const rate = decimalOrZero(row.tax1_rate, "tax_categories.tax1_rate");
+  const id = requiredIdentifier(row.tax_category_id, "ls_tax_categories.tax_category_id");
+  const rate = decimalOrZero(row.tax1_rate, "ls_tax_categories.tax1_rate");
   return [dimension("tax_code", row.source_object_type, id, {
     name: optionalText(row.tax1_name) ?? optionalText(row.tax2_name) ?? `Tax ${id}`,
     rate,
@@ -560,25 +544,25 @@ function mapTaxCategory(row: CanonicalStagingRow): readonly CanonicalProjectionC
 }
 
 function mapInventoryLog(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
-  const id = requiredIdentifier(row.inventory_log_id, "inventory_logs.inventory_log_id");
-  const itemId = requiredIdentifier(row.item_id, "inventory_logs.item_id");
+  const id = requiredIdentifier(row.inventory_log_id, "ls_inventory_logs.inventory_log_id");
+  const itemId = requiredIdentifier(row.item_id, "ls_inventory_logs.item_id");
   assertNotAggregateShopScope(row.shop_id, "inventory_logs");
-  const shopId = requiredIdentifier(row.shop_id, "inventory_logs.shop_id");
+  const shopId = requiredIdentifier(row.shop_id, "ls_inventory_logs.shop_id");
   const occurredAt = requiredInstant(
-    row.create_time ?? row.source_updated_at,
-    "inventory_logs.create_time",
+    row.created_at ?? row.create_time ?? row.source_updated_at,
+    "ls_inventory_logs.created_at",
   );
-  const quantity = decimalOrZero(row.qoh_change, "inventory_logs.qoh_change");
-  const unitCost = optionalCostDecimal(row.cost_change, "inventory_logs.cost_change");
+  const quantity = decimalOrZero(row.qoh_change, "ls_inventory_logs.qoh_change");
+  const unitCost = optionalCostDecimal(row.cost_change, "ls_inventory_logs.cost_change");
   return [fact("inventory_movement", row.source_object_type, id, {
     product_variant_id: sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant" }),
     stock_location_id: sourceRef("stock_location", "Shop", shopId, row),
-    movement_type: inventoryMovementType(row.reason,truthy(row.automated)),
+    movement_type: inventoryMovementType(row.reason, truthy(row.automated)),
     occurred_at: occurredAt,
     business_date: tradingBusinessDate(occurredAt, context),
     quantity_delta: quantity,
     unit_cost: unitCost,
-    total_cost: unitCost ? Decimal4.from(unitCost).multiply(quantity).toString() : null,
+    total_cost: unitCost ? Decimal4.from(unitCost).multiply(Decimal4.from(quantity)).toString() : null,
     currency: context.baseCurrency,
   }, "stock")];
 }
@@ -681,52 +665,10 @@ function optionalEntityRef(
   return id ? sourceRef(table, sourceObjectType, id, row, { entityType, nullable: true }) : null;
 }
 
-function nestedRecords(value: unknown, relationName: string): readonly JsonObject[] {
-  if (value === null || value === undefined || value === "") return [];
-  const container = asObject(value);
-  const relation = container ? container[relationName] : value;
-  if (relation === null || relation === undefined || relation === "") return [];
-  const candidates = Array.isArray(relation) ? relation : [relation];
-  return candidates.map((candidate, index) => {
-    const record = asObject(candidate);
-    if (!record) throw new Error(`lightspeed_canonical_nested_shape:${relationName}:${index}`);
-    return record;
-  });
-}
 
-function saleLineTaxes(lines: readonly SaleLine[], headerTax: Decimal4): readonly Decimal4[] {
-  const explicit = lines.map((line) => {
-    const first = optionalDecimalValue(line.raw.calcTax1, `sales.sale_lines[${line.index}].calcTax1`);
-    const second = optionalDecimalValue(line.raw.calcTax2, `sales.sale_lines[${line.index}].calcTax2`);
-    return first || second ? (first ?? ZERO).add(second ?? ZERO) : null;
-  });
-  if (explicit.every((value) => value !== null)) return explicit as readonly Decimal4[];
-  return allocateSigned(headerTax, lines.map((line) => line.netIncTax));
-}
 
-function allocateSigned(total: Decimal4, weights: readonly Decimal4[]): readonly Decimal4[] {
-  if (weights.length === 0) return [];
-  const denominator = sum(weights);
-  if (denominator.scaled === 0n) {
-    return weights.map((_, index) => index === 0 ? total : ZERO);
-  }
-  let allocated = ZERO;
-  return weights.map((weight, index) => {
-    if (index === weights.length - 1) return total.subtract(allocated);
-    const value = total.multiply(weight).divide(denominator);
-    allocated = allocated.add(value);
-    return value;
-  });
-}
 
-function sum(values: readonly Decimal4[]): Decimal4 {
-  return sumDecimal4(values);
-}
 
-function sumNullable(values: readonly (Decimal4 | null)[]): string | null {
-  const present = values.filter((value): value is Decimal4 => value !== null);
-  return present.length > 0 ? sum(present).toString() : null;
-}
 
 function negate(value: Decimal4): Decimal4 {
   return Decimal4.fromScaled(-value.scaled);

@@ -35,7 +35,7 @@ import {
   resolvePath,
 } from "./fetch-core.js";
 import { buildScanPlan, collapseRelations, type ScanGroup, type SpecTable } from "./scan-plan.js";
-import type { LightspeedStream } from "./streams.js";
+import { apiOwner, ownResource, type LightspeedStream } from "./streams.js";
 
 const PLAN = buildScanPlan();
 
@@ -96,26 +96,19 @@ export function resolveStreamScan(stream: LightspeedStream): StreamScan {
     );
   }
 
-  // The relation that carries this stream's rows, plus anything its own columns
-  // resolve through. A leader needs none of the group's child relations.
-  const own = new Set<string>();
-  if (member.projectFrom) own.add(member.projectFrom.split(".")[0]);
-  for (const relation of member.table.loadRelations) {
-    const root = relation.split(".")[0];
-    // Keep a relation only when it hangs off the record this stream reads.
-    if (!member.projectFrom || relation.startsWith(`${member.projectFrom.split(".")[0]}.`)) {
-      own.add(relation);
-    } else if (!member.projectFrom) {
-      own.add(root);
-    }
-  }
-
+  // Every member of a group requests the group's collapsed relation union, so
+  // the pages of one walk are byte-identical across the group and the
+  // connector's page cache can serve six sale-derived streams from one
+  // Sale.json walk. That is what keeps a 90-stream backfill inside the one
+  // drip-per-second budget: the job count does not shrink, the HTTP count
+  // does. The cost is payload width on the leader's own walk, bounded by the
+  // same page size the 13-stream connector already fetched with relations on.
   return {
     group,
     table: member.table,
     fanOut: null,
     projectFrom: member.projectFrom,
-    relations: collapseRelations([...own]),
+    relations: collapseRelations([...group.relations]),
     extraParamSets: group.extraParamSets,
   };
 }
@@ -127,10 +120,17 @@ export type ScanCursorState = Readonly<{
   pass?: number;
 }>;
 
+export type ScanWindow = Readonly<{
+  /** Vendor-format modified-time filter, e.g. ">=,2026-08-01T00:00:00+00:00". */
+  field: string;
+  expression: string;
+}>;
+
 /** Build the query parameters for one page of one stream. */
 export function pageParams(
   scan: StreamScan,
   state: ScanCursorState,
+  window?: ScanWindow,
 ): Readonly<Record<string, string>> {
   const params: Record<string, string> = {};
 
@@ -143,6 +143,9 @@ export function pageParams(
     // Ascending primary id: records created mid-walk take higher ids and land at
     // the end, so a long walk can never skip one.
     params.sort = scan.group.idField;
+    // Incremental and late-edit sweeps push the modified-time bound down to the
+    // vendor; without it every 15-minute incremental would re-walk the account.
+    if (window) params[window.field] = window.expression;
   }
 
   if (scan.relations.length > 0) {
@@ -176,12 +179,29 @@ export function projectStreamRows(
 ): readonly RawSourceRecord[] {
   const out: RawSourceRecord[] = [];
   const idField = scan.table.recordIdField;
+  // The stream's own resource, not the group's: rows are recorded and
+  // referenced by (sourceObjectType, sourceRecordId), and a nested child that
+  // kept its parent's resource would conflate Sale 5 with SaleLine 5.
+  const resource = ownResource(scan.table, scan.group.resource);
+  // Columns whose field lives on the walked parent are context a nested row
+  // needs to map standalone (Sale.completed on a sale line). They resolve
+  // from the walked record and ride the child payload under their leaf name.
+  const parentColumns = scan.projectFrom
+    ? scan.table.columns.filter((column) => apiOwner(column.api) === scan.group.resource
+        && apiOwner(column.api) !== resource)
+    : [];
 
   for (const record of records) {
     const rows = scan.projectFrom ? resolvePath(record, scan.projectFrom) : [record];
     for (const row of rows) {
       if (row === null || typeof row !== "object") continue;
-      const payload = row as Record<string, unknown>;
+      const payload = { ...(row as Record<string, unknown>) };
+      for (const column of parentColumns) {
+        const leaf = column.api.split(".").pop();
+        if (!leaf || payload[leaf] !== undefined) continue;
+        const value = (record as Record<string, unknown>)[leaf];
+        if (value !== undefined) payload[leaf] = value;
+      }
 
       const ownId = idField ? readId(payload, idField) : null;
       const parentId = readId(record, scan.group.idField);
@@ -193,9 +213,7 @@ export function projectStreamRows(
 
       const updatedAt = readSourceUpdatedAt(payload) ?? readSourceUpdatedAt(record);
       out.push({
-        // The vendor resource, not the table id: the canonical guard asserts
-        // source_object_type equals the stream contract's resource.
-        sourceObjectType: scan.group.resource,
+        sourceObjectType: resource,
         sourceRecordId,
         ...(updatedAt ? { sourceUpdatedAt: updatedAt } : {}),
         payload,
@@ -208,6 +226,14 @@ export function projectStreamRows(
     }
   }
   return out;
+}
+
+function vendorTime(value: string): string {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new ConnectorError("CURSOR_INVALID", "Lightspeed sync time is invalid.");
+  }
+  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/u, "+00:00");
 }
 
 function readId(record: Record<string, unknown>, field: string): string | null {
@@ -263,7 +289,20 @@ export async function syncStreamPage(input: {
 
   if (scan.fanOut) return syncFanOutPage(scan, state, input);
 
-  const body = await fetchPage(scan.group.path, pageParams(scan, state));
+  // The modified-time bound is pushed to the vendor on the WALKED resource:
+  // a member's own timestamps live under its parent, and it is the parent
+  // walk the vendor filters. Inclusive boundaries are at-least-once delivery.
+  const leaderModified = scan.group.leader.pushdowns.find((pushdown) =>
+    /^(timeStamp|updateTime)$/.test(pushdown.param))?.param;
+  const window = leaderModified
+    ? input.mode === "incremental" && decoded?.watermark
+      ? { field: leaderModified, expression: `>=,${vendorTime(decoded.watermark)}` }
+      : input.mode !== "incremental" && input.range && stream.backfillStrategy === "time_windowed"
+        ? { field: leaderModified, expression: `><,${vendorTime(input.range.from)},${vendorTime(input.range.to)}` }
+        : undefined
+    : undefined;
+
+  const body = await fetchPage(scan.group.path, pageParams(scan, state, window));
   const page = parseEnvelope(body, scan.group.resource);
 
   // A relation-free response is a silent disaster: the walk succeeds and this
@@ -348,7 +387,7 @@ async function syncFanOutPage(
     for (const child of childPage.records) {
       const ownId = scan.table.recordIdField ? readId(child, scan.table.recordIdField) : null;
       rows.push({
-        sourceObjectType: scan.group.resource,
+        sourceObjectType: ownResource(scan.table, scan.group.resource),
         sourceRecordId: ownId ?? `${parentId}:${rows.length}`,
         ...(readSourceUpdatedAt(child) ? { sourceUpdatedAt: readSourceUpdatedAt(child)! } : {}),
         payload: child,

@@ -8,6 +8,7 @@
  * its mapper writes, and that failure only appears at ingest time.
  */
 import type { FieldCoverage, PiiClass, StagingFieldType } from "../../packages/connector-sdk/src/contract.js";
+import { LIGHTSPEED_R_DOCUMENTED_FIELDS } from "./documented-fields.js";
 import { SPEC_TABLES, type SpecColumn, type SpecTable } from "./scan-plan.js";
 
 /**
@@ -66,11 +67,22 @@ function disposition(table: SpecTable, column: SpecColumn): FieldCoverage["dispo
   return table.canonicalTargets.length > 0 ? "canonical" : "governed_extension";
 }
 
+/**
+ * Streams whose only canonical output is the metadata observation. Their
+ * record-id field is the one canonical disposition (it becomes the recorded
+ * source id); every other column is a governed extension.
+ */
+function isLookupOnly(table: SpecTable): boolean {
+  return table.canonicalTargets.length === 0
+    || (table.canonicalTargets.length === 1 && table.canonicalTargets[0] === "metadata");
+}
+
 export function buildFieldCoverage(
   tables: readonly SpecTable[] = SPEC_TABLES,
 ): readonly FieldCoverage[] {
   const coverage: FieldCoverage[] = [];
   for (const table of tables) {
+    const idLeaf = String(table.recordIdField ?? "").split(".").pop() ?? "";
     const seen = new Set<string>();
     for (const column of table.columns) {
       // The spec addresses a field by its API path; staging addresses it by the
@@ -78,14 +90,36 @@ export function buildFieldCoverage(
       const field = column.api.split(".").pop() ?? column.name;
       if (seen.has(field)) continue; // a duplicate would collide on the staging column
       seen.add(field);
+      const lookupOnly = isLookupOnly(table);
+      const canonical = lookupOnly ? field === idLeaf : disposition(table, column) === "canonical";
       coverage.push({
         stream: table.id,
         field,
-        disposition: disposition(table, column),
+        disposition: canonical ? "canonical" : "governed_extension",
         stagingType: stagingType(column),
-        ...(table.canonicalTargets.length > 0 ? { target: table.canonicalTargets[0] } : {}),
+        ...(canonical && lookupOnly
+          ? { target: "metadata.source_record_id" }
+          : table.canonicalTargets.length > 0 && !lookupOnly
+            ? { target: table.canonicalTargets[0] }
+            : {}),
         ...(column.deprecated ? { reason: "Deprecated by the vendor; retained for history." } : {}),
         pii: piiClass(table, column),
+      });
+    }
+    // The pinned documentation build lists fields the spec deliberately leaves
+    // outside staging scope. They keep an explicit unsupported disposition, so
+    // every documented field has a reviewable answer to "where did this go".
+    const documented = LIGHTSPEED_R_DOCUMENTED_FIELDS[table.id as keyof typeof LIGHTSPEED_R_DOCUMENTED_FIELDS];
+    for (const field of documented ?? []) {
+      if (seen.has(field)) continue;
+      seen.add(field);
+      coverage.push({
+        stream: table.id,
+        field,
+        disposition: "unsupported",
+        stagingType: "text",
+        reason: "Published by the pinned Lightspeed R-Series V3 documentation build but outside Albert V1 canonical and governed source-extension scope; retained only in immutable encrypted raw storage.",
+        pii: /Note|Instructions|CustomFieldValues/u.test(field) ? "free_text_untrusted" : "none",
       });
     }
     if (coverage.filter((entry) => entry.stream === table.id).length === 0) {

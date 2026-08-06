@@ -22,16 +22,22 @@ import { SPEC_TABLES, buildScanPlan, type SpecTable } from "./scan-plan.js";
  */
 const MAPPED_STREAM_TARGETS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   ls_shops: ["location", "stock_location", "identity_hint"],
+  ls_registers: ["register"],
   ls_employees: ["person", "worker", "identity_hint"],
   ls_categories: ["product_category"],
   ls_items: ["product", "product_variant", "identity_hint", "category_assignment"],
   ls_item_shops: ["inventory_balance_snapshot"],
-  ls_sales: ["channel", "register", "commerce_order", "commerce_order_line",
-             "commerce_payment", "commerce_refund_line", "event_link"],
+  // The sale walk is split: the header owns the order (plus the synthetic
+  // in-store channel and a register stub for arrival-order robustness), lines
+  // own order lines and refunds, payments own tenders. One economic event can
+  // therefore never project twice.
+  ls_sales: ["channel", "register", "commerce_order"],
+  ls_sale_lines: ["commerce_order_line", "commerce_refund_line", "event_link"],
+  ls_sale_payments: ["commerce_payment"],
   ls_customers: ["person", "customer_account", "identity_hint"],
   ls_vendors: ["supplier", "identity_hint"],
-  ls_purchase_orders: ["purchase_order_line", "metadata"],
-  ls_purchase_order_lines: ["purchase_order_line", "metadata"],
+  ls_purchase_orders: ["metadata"],
+  ls_purchase_order_lines: ["purchase_order_line"],
   ls_payment_types: ["metadata"],
   ls_tax_categories: ["tax_code"],
   ls_inventory_logs: ["inventory_movement"],
@@ -45,11 +51,14 @@ const MAPPED_STREAM_TARGETS: Readonly<Record<string, readonly string[]>> = Objec
  */
 const MAPPED_STREAM_AUTHORITY: Readonly<Record<string, string>> = Object.freeze({
   ls_shops: "operational_sales",
+  ls_registers: "operational_sales",
   ls_employees: "operational_sales",
   ls_categories: "product_master",
   ls_items: "product_master",
   ls_item_shops: "stock",
   ls_sales: "operational_sales",
+  ls_sale_lines: "operational_sales",
+  ls_sale_payments: "operational_sales",
   ls_customers: "customer_master",
   ls_vendors: "stock",
   ls_purchase_orders: "stock",
@@ -103,7 +112,10 @@ function lateEditStrategy(table: SpecTable): StreamContract["lateEditStrategy"] 
 function deletionStrategy(table: SpecTable): StreamContract["deletionStrategy"] {
   const hasArchived = table.columns.some((c) => c.name === "archived");
   if (hasArchived) return "soft_delete";
-  if (table.additivity === "additive") return "immutable_append_only";
+  // Immutability is earned twice over: additive grain AND no modified field.
+  // An additive table the vendor stamps with edit times (a sale line) is
+  // editable and deletable, so only an authoritative scan may retire its rows.
+  if (table.additivity === "additive" && !modifiedField(table)) return "immutable_append_only";
   return "authoritative_identity_scan";
 }
 
@@ -146,6 +158,42 @@ function resolveRecordIdField(table: SpecTable): string {
   return clean(table.primaryKey[0]) ?? "id";
 }
 
+/**
+ * The vendor object a column's field lives on: the segment immediately before
+ * the leaf. The spec addresses some tables from the walk root
+ * (Item.ItemShops.ItemShop.qoh) and others from the child itself
+ * (SaleLine.saleLineID); the penultimate segment names the owner either way.
+ */
+export function apiOwner(api: string): string {
+  const segments = api.split(".");
+  return segments.length >= 2 ? (segments[segments.length - 2] as string) : (segments[0] ?? "");
+}
+
+/**
+ * The vendor resource this table's rows belong to. Identity decides: the
+ * owner of the record-id column names the resource the row IS, no matter how
+ * many parent-context columns (Sale.completed on a sale line, Item.* on an
+ * item shop) ride along. Tables whose id is documented in prose fall back to
+ * the majority owner across columns.
+ */
+export function ownResource(table: SpecTable, fallback: string): string {
+  const idLeaf = String(table.recordIdField ?? "").split(".").pop() ?? "";
+  const idColumn = table.columns.find((column) => column.api.split(".").pop() === idLeaf);
+  if (idColumn) return apiOwner(idColumn.api);
+  const counts = new Map<string, number>();
+  for (const column of table.columns) {
+    const owner = apiOwner(column.api);
+    if (!owner) continue;
+    counts.set(owner, (counts.get(owner) ?? 0) + 1);
+  }
+  let best = fallback;
+  let bestCount = 0;
+  for (const [owner, count] of counts) {
+    if (count > bestCount) { best = owner; bestCount = count; }
+  }
+  return best;
+}
+
 /** The leader whose ids a parent-scoped fan-out must wait for. */
 function fanOutParentLeader(
   plan: ReturnType<typeof buildScanPlan>,
@@ -182,7 +230,11 @@ function toStream(table: SpecTable, plan: ReturnType<typeof buildScanPlan>): Lig
 
   return {
     id: table.id,
-    resource: scanResource,
+    // The stream's OWN vendor resource — the root every one of its columns is
+    // addressed under — not the resource it is walked from. Rows are recorded
+    // and referenced by (sourceObjectType, sourceRecordId), so a nested child
+    // keeping its parent's resource would conflate Sale 5 with SaleLine 5.
+    resource: ownResource(table, scanResource),
     endpoint: group ? group.path : (fanOut?.endpoint ?? ""),
     // Must name a field the vendor actually returns: the transform reads it
     // from the staged row by its source-field name, and a snake_case column name

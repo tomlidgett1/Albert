@@ -5,13 +5,8 @@ import {
   ConnectorError,
   ConnectorHttpError,
   credentialExpiresSoon,
-  decodeCursor,
-  encodeCursor,
   fetchWithRetry,
   hashPayload,
-  normalizeDecimal,
-  normalizeTimestamp,
-  projectSourceRecord,
   requestJson,
   splitOAuthScopes,
   withVendorRateBudget,
@@ -41,7 +36,9 @@ import {
 } from "../../packages/connector-sdk/src";
 import { LIGHTSPEED_R_DEFAULT_SCOPES, lightspeedRManifest } from "./manifest";
 import { buildLightspeedRAuthorizationUrl } from "./oauth-public";
-import { lightspeedSchemas, type LightspeedStreamId } from "./schemas";
+import { lightspeedSchemas } from "./schemas";
+import { syncStreamPage, type PageFetcher } from "./spec-sync.js";
+import { LIGHTSPEED_STREAMS, type LightspeedStream } from "./streams.js";
 
 const TOKEN_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/token";
 const REVOCATION_ENDPOINT = "https://cloud.lightspeedapp.com/auth/oauth/revoke";
@@ -71,21 +68,21 @@ export type LightspeedRConnectorConfig = Readonly<{
   now?: () => number;
 }>;
 
-const streamPriority: Readonly<Record<LightspeedStreamId, number>> = {
-  shops: 10,
-  employees: 20,
-  categories: 30,
-  items: 31,
-  sales: 40,
-  item_shops: 50,
-  customers: 60,
-  vendors: 61,
-  payment_types: 70,
-  tax_categories: 71,
-  orders: 80,
-  order_lines: 81,
-  inventory_logs: 90,
-};
+/**
+ * Worker ordering: a stream never outranks what it depends on, and ties keep
+ * spec order. Derived from the generated contracts so a new spec table can
+ * never be forgotten here.
+ */
+const streamPriority: ReadonlyMap<string, number> = (() => {
+  const byId = new Map(LIGHTSPEED_STREAMS.map((stream) => [stream.id, stream]));
+  const depthOf = (id: string, trail: readonly string[] = []): number => {
+    if (trail.includes(id)) return trail.length;
+    const stream = byId.get(id);
+    if (!stream || stream.dependencies.length === 0) return 0;
+    return 1 + Math.max(...stream.dependencies.map((dependency) => depthOf(dependency, [...trail, id])));
+  };
+  return new Map(LIGHTSPEED_STREAMS.map((stream, index) => [stream.id, depthOf(stream.id) * 1000 + index]));
+})();
 
 function required(value: string, name: string): string {
   if (value.trim().length === 0) {
@@ -93,6 +90,7 @@ function required(value: string, name: string): string {
   }
   return value;
 }
+
 
 function asArray(value: unknown): readonly unknown[] {
   if (Array.isArray(value)) return value;
@@ -103,33 +101,10 @@ function truthy(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
 
-function lightspeedTime(value: string): string {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    throw new ConnectorError("CURSOR_INVALID", "Lightspeed sync time is invalid.");
-  }
-  return new Date(parsed).toISOString().replace(/\.\d{3}Z$/u, "+00:00");
-}
 
-function latestTimestamp(values: readonly (string | undefined)[], fallback?: string): string | undefined {
-  return values.reduce<string | undefined>((latest, value) => {
-    if (!value || !Number.isFinite(Date.parse(value))) return latest;
-    if (!latest || Date.parse(value) > Date.parse(latest)) return value;
-    return latest;
-  }, fallback);
-}
 
 const DISCOVERED_ACCOUNT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-function oldestRecordTimestamp(records: readonly RawSourceRecord[], fallback?: string): string | undefined {
-  return records.flatMap((record) => [
-    record.sourceUpdatedAt,
-    ...Object.values(record.normalized?.timestamps ?? {}).map((value) => value.utc ?? undefined),
-  ]).reduce<string | undefined>((oldest, value) => {
-    if (!value || !Number.isFinite(Date.parse(value))) return oldest;
-    return !oldest || Date.parse(value) < Date.parse(oldest) ? value : oldest;
-  }, fallback);
-}
 
 export class LightspeedRConnector implements OAuthConnectorPack {
   readonly id = "lightspeed-r" as const;
@@ -334,7 +309,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
         availability: stream.availability ?? "required",
         dependencies: stream.dependencies,
         productDomains: stream.productDomains,
-        priority: streamPriority[stream.id as LightspeedStreamId],
+        priority: streamPriority.get(stream.id) ?? 0,
       }))
       .sort((left, right) => (left.priority ?? 0) - (right.priority ?? 0));
   }
@@ -437,7 +412,7 @@ export class LightspeedRConnector implements OAuthConnectorPack {
         : "required_scope_missing",
       requiredScopes,
     });
-    const inventoryLogObserved = this.successfulStreams.has(`${context.connectionId}:inventory_logs`);
+    const inventoryLogObserved = this.successfulStreams.has(`${context.connectionId}:ls_inventory_logs`);
     return [
       {
         id: "connector.variant.r_series",
@@ -481,6 +456,19 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     ];
   }
 
+  /**
+   * Every mode routes through the spec walk: one implementation, ninety
+   * streams. A bounded per-process page cache keyed on the exact request lets
+   * the members of a scan group serve their walks from the leader's pages —
+   * the six Sale-derived streams cost one Sale.json walk in HTTP, not six —
+   * which is what keeps the widened manifest inside the one-drip-per-second
+   * budget. Incremental walks carry per-stream watermarks in their filters,
+   * so the cache pays off on backfill and reconciliation, where the volume is.
+   */
+  private static readonly PAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+  private static readonly PAGE_CACHE_MAX_ENTRIES = 40;
+  private readonly pageCache = new Map<string, { at: number; body: unknown }>();
+
   private async sync(
     context: ConnectorContext,
     stream: ConnectorStream,
@@ -489,145 +477,75 @@ export class LightspeedRConnector implements OAuthConnectorPack {
     range?: SyncRange,
     reconciliationPhase?: ReconciliationRequest["phase"],
   ): Promise<SyncPage> {
-    const contract = this.manifest.streams.find((candidate) => candidate.id === stream.id);
+    void reconciliationPhase;
+    const contract = LIGHTSPEED_STREAMS.find((candidate) => candidate.id === stream.id);
     if (!contract || !(contract.id in lightspeedSchemas)) {
       throw new ConnectorError("CONFIGURATION_INVALID", `Unknown Lightspeed stream: ${stream.id}.`);
     }
-    const streamId = contract.id as LightspeedStreamId;
     const account = await this.discover_account(context);
-    const state = cursor
-      ? decodeCursor(cursor, { connector: this.id, stream: stream.id })
-      : undefined;
+    const basePath = `/API/V3/Account/${encodeURIComponent(account.externalAccountId)}/`;
+    const now = this.config.now ?? Date.now;
 
-    let url: URL;
-    if (typeof state?.continuation === "string") {
-      url = this.validateContinuation(state.continuation, account.externalAccountId, contract.endpoint);
-    } else {
-      url = new URL(
-        `/API/V3/Account/${encodeURIComponent(account.externalAccountId)}/${contract.endpoint}`,
-        API_ORIGIN,
-      );
-      url.searchParams.set("limit", "100");
-      url.searchParams.set(
-        "sort",
-        mode === "reconciliation" && reconciliationPhase !== "late_edits"
-          ? contract.recordIdField
-          : streamId === "inventory_logs"
-          ? contract.recordIdField
-          : contract.modifiedField ?? contract.recordIdField,
-      );
-      if (["shops", "employees", "items", "sales", "customers", "vendors", "orders", "payment_types"].includes(streamId)) {
-        url.searchParams.set("archived", "true");
+    const fetchPage: PageFetcher = async (path, params) => {
+      const canonicalParams = Object.entries(params)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => `${key}=${value}`)
+        .join("&");
+      const cacheKey = `${context.connectionId}:${path}?${canonicalParams}`;
+      const cached = this.pageCache.get(cacheKey);
+      if (cached && now() - cached.at < LightspeedRConnector.PAGE_CACHE_TTL_MS) {
+        // Re-insert to keep the entry young: Map preserves insertion order.
+        this.pageCache.delete(cacheKey);
+        this.pageCache.set(cacheKey, cached);
+        return cached.body;
       }
-      if (streamId === "shops" || streamId === "employees" || streamId === "customers" || streamId === "vendors") {
-        url.searchParams.set("load_relations", JSON.stringify(["Contact"]));
-      } else if (streamId === "items") {
-        url.searchParams.set("load_relations", JSON.stringify(["ItemPrices"]));
-      } else if (streamId === "sales") {
-        url.searchParams.set("load_relations", JSON.stringify(["SaleLines", "SalePayments"]));
-      } else if (streamId === "orders") {
-        url.searchParams.set("load_relations", JSON.stringify(["OrderLines"]));
-      } else if (streamId === "tax_categories") {
-        url.searchParams.set("load_relations", JSON.stringify(["TaxCategoryClasses"]));
+      const url = new URL(basePath + path, API_ORIGIN);
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+      const { value } = await this.apiJson<Record<string, unknown>>(context, url);
+      this.pageCache.set(cacheKey, { at: now(), body: value });
+      while (this.pageCache.size > LightspeedRConnector.PAGE_CACHE_MAX_ENTRIES) {
+        const oldest = this.pageCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.pageCache.delete(oldest);
       }
-      if (streamId === "inventory_logs" && typeof state?.continuation === "number") {
-        url.searchParams.set(contract.recordIdField, `>,${state.continuation}`);
-      } else if (
-        contract.modifiedField && range &&
-        (
-          (mode === "initial" && contract.backfillStrategy !== "snapshot") ||
-          (mode === "reconciliation" && reconciliationPhase === "late_edits" &&
-            contract.lateEditStrategy === "modified_field")
-        )
-      ) {
-        url.searchParams.set(
-          contract.modifiedField,
-          `><,${lightspeedTime(range.from)},${lightspeedTime(range.to)}`,
-        );
-      } else if (mode === "incremental" && contract.modifiedField && state?.watermark) {
-        // Inclusive boundaries deliberately provide at-least-once delivery.
-        url.searchParams.set(contract.modifiedField, `>=,${lightspeedTime(state.watermark)}`);
-      }
-    }
+      return value;
+    };
 
-    const { value } = await this.apiJson<Record<string, unknown>>(context, url);
-    const rawRecords = asArray(value[contract.resource]);
-    const records = rawRecords.map((raw) => this.toRawRecord(streamId, raw));
-    const attributes =
-      value["@attributes"] && typeof value["@attributes"] === "object"
-        ? value["@attributes"] as Record<string, unknown>
-        : {};
-    const next = typeof attributes.next === "string" && attributes.next.length > 0
-      ? this.validateContinuation(attributes.next, account.externalAccountId, contract.endpoint).toString()
-      : undefined;
-    const watermark = latestTimestamp(
-      records.map((record) => record.sourceUpdatedAt),
-      state?.watermark ?? (mode === "initial" && !next ? range?.to : undefined),
-    );
-    const oldestObservedAt = oldestRecordTimestamp(records, state?.oldestObservedAt);
-    const inventoryIds = streamId === "inventory_logs"
-      ? records.map((record) => Number(record.sourceRecordId)).filter(Number.isSafeInteger)
-      : [];
-    if (streamId === "inventory_logs" && records.some((record) => {
+    const page = await syncStreamPage({
+      stream: contract,
+      connectorId: this.id,
+      ...(cursor ? { cursor } : {}),
+      ...(range ? { range } : {}),
+      mode,
+      fetchPage,
+      hash: (input) => hashPayload(input),
+    });
+    const records = page.records.map((record) => this.validateProjectedRecord(contract, record));
+    if (contract.id === "ls_inventory_logs" && records.some((record) => {
       const value = record.normalized?.fields.inventoryCountID;
       return value !== undefined && value !== null && String(value) !== "0" && String(value).trim() !== "";
     })) {
       this.observedStocktakes.add(context.connectionId);
     }
-    const inventoryCheckpoint = inventoryIds.length > 0
-      ? Math.max(...inventoryIds)
-      : streamId === "inventory_logs" && typeof state?.continuation === "number"
-        ? state.continuation
-        : undefined;
-    this.successfulStreams.add(`${context.connectionId}:${streamId}`);
-    return {
-      records,
-      nextCursor: encodeCursor({
-        v: 1,
-        connector: this.id,
-        stream: stream.id,
-        mode: mode === "reconciliation" ? "reconciliation" : mode,
-        watermark,
-        oldestObservedAt,
-        continuation: next ?? inventoryCheckpoint,
-        rangeFrom: range?.from ?? state?.rangeFrom,
-        rangeTo: range?.to ?? state?.rangeTo,
-      }),
-      hasMore: Boolean(next),
-      ...(mode === "initial" && !next && range
-        ? { coverage: contract.backfillStrategy === "snapshot"
-            ? {
-                boundaryKind: "snapshot_at" as const,
-                lowerBound: range.to,
-                verification: "point_in_time" as const,
-              }
-            : Date.parse(range.from) <= Date.parse("1970-01-01T00:00:00.000Z")
-              ? {
-                  boundaryKind: oldestObservedAt ? "verified_oldest" as const : "verified_empty" as const,
-                  lowerBound: oldestObservedAt ?? range.to,
-                  verification: "exhaustive_vendor_scan" as const,
-                }
-              : {
-                  boundaryKind: "window_exhausted" as const,
-                  lowerBound: range.from,
-                  verification: "exhaustive_vendor_scan" as const,
-                } }
-        : {}),
-    };
+    this.successfulStreams.add(`${context.connectionId}:${contract.id}`);
+    return { ...page, records };
   }
 
-  private toRawRecord(stream: LightspeedStreamId, raw: unknown): RawSourceRecord {
-    const payloadHash = hashPayload(raw);
-    const schema = lightspeedSchemas[stream];
-    const parsed = schema.safeParse(raw);
+  /**
+   * Validate one projected row against its generated schema and keep only
+   * approved coverage fields in the typed projection. A row that fails its
+   * schema keeps its raw payload and is quarantined downstream; the evidence
+   * is never discarded here.
+   */
+  private validateProjectedRecord(contract: LightspeedStream, record: RawSourceRecord): RawSourceRecord {
+    const schema = lightspeedSchemas[contract.id];
+    if (!schema) throw new ConnectorError("CONFIGURATION_INVALID", `Unknown stream ${contract.id}.`);
+    const parsed = schema.safeParse(record.payload);
     if (!parsed.success) {
-      const candidate = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-      const idField = this.manifest.streams.find((item) => item.id === stream)?.recordIdField;
+      const { normalized: _normalized, ...rest } = record;
+      void _normalized;
       return {
-        sourceObjectType: stream,
-        sourceRecordId: idField && candidate[idField] != null ? String(candidate[idField]) : `invalid:${payloadHash}`,
-        payload: raw,
-        payloadHash,
+        ...rest,
         validationIssues: parsed.error.issues.map((issue) => ({
           code: "schema_invalid" as const,
           path: issue.path.join("."),
@@ -635,88 +553,31 @@ export class LightspeedRConnector implements OAuthConnectorPack {
         })),
       };
     }
-    const fields = parsed.data as Record<string, unknown>;
-    const coverage = this.manifest.fieldCoverage.filter((item) => item.stream === stream);
-    const known = new Set(coverage.map((item) => item.field));
+    const coverage = this.manifest.fieldCoverage.filter((item) => item.stream === contract.id);
     const allowed = new Set(
       coverage.filter((item) => item.disposition !== "unsupported").map((item) => item.field),
     );
-    const drift = Object.keys(fields).filter((field) => !known.has(field));
-    const approvedFields = Object.fromEntries(
-      Object.entries(fields).filter(([field]) => allowed.has(field)),
+    const known = new Set(coverage.map((item) => item.field));
+    const payloadFields = record.payload && typeof record.payload === "object"
+      ? record.payload as Record<string, unknown>
+      : {};
+    const drift = Object.keys(payloadFields).filter((field) => !known.has(field));
+    const approved = Object.fromEntries(
+      Object.entries(payloadFields).filter(([field]) => allowed.has(field)),
     );
-    const config = this.manifest.streams.find((item) => item.id === stream);
-    if (!config) throw new ConnectorError("CONFIGURATION_INVALID", `Unknown stream ${stream}.`);
-    const timestamp = normalizeTimestamp(fields[config.modifiedField ?? "timeStamp"]);
-    const moneyFields: Record<string, readonly [unknown, unknown?]> = {};
-    for (const field of [
-      "defaultCost", "avgCost", "qoh", "sellable", "backorder", "componentQoh",
-      "componentBackorder", "reorderPoint", "reorderLevel", "onLayaway", "onSpecialOrder",
-      "onWorkOrder", "onWorkorder", "onTransferOut", "onTransferIn", "averageCost",
-      "totalValueFifo", "totalValueAvgCost", "totalValueNegativeInventory", "lastReceivedCost",
-      "nextFifoLotCost", "total", "taxTotal", "calcDiscount", "calcTotal", "calcSubtotal",
-      "calcTaxable", "calcNonTaxable", "calcAvgCost", "calcFIFOCost", "calcTax1", "calcTax2",
-      "calcPayments", "calcTips", "totalDue", "displayableTotal", "balance", "cashRoundingDelta",
-      "cashRoundedBalance", "cashRoundedTotal", "shipCost", "shipVendorCost", "otherCost",
-      "otherVendorCost", "totalDiscount", "subTotalCost", "totalCost", "discountMoneyValue",
-      "discountMoneyVendorValue", "quantity", "price", "originalPrice", "vendorCost", "checkedIn",
-      "numReceived", "shippingCost", "shippingVendorCost", "tax1Rate", "tax2Rate", "qohChange",
-      "costChange",
-    ]) {
-      if (field in fields) {
-        moneyFields[field] = [fields[field], fields.vendorCurrencyCode ?? fields.currency];
-      }
-    }
-    const normalizationIssues = Object.entries(moneyFields)
-      .filter(([, [value, currency]]) => value != null && normalizeDecimal(value, currency).exact === null)
-      .map(([field]) => ({
-        code: "normalization_invalid" as const,
-        path: field,
-        message: "The monetary or quantity value is not a valid exact decimal.",
-      }));
-    const issues = [
-      ...drift.map((field) => ({
-        code: "schema_drift" as const,
-        path: field,
-        message: "The vendor returned a field without an approved coverage disposition.",
-      })),
-      ...normalizationIssues,
-    ];
     return {
-      sourceObjectType: config.resource,
-      sourceRecordId: String(fields[config.recordIdField]),
-      sourceUpdatedAt: timestamp.utc ?? undefined,
-      payload: raw,
-      payloadHash,
-      normalized: normalizationIssues.length === 0
-        ? projectSourceRecord({
-            schemaVersion: this.version,
-            fields: approvedFields,
-            money: moneyFields,
-            timestamps: config.modifiedField
-              ? { [config.modifiedField]: [fields[config.modifiedField], undefined] }
-              : undefined,
-            tombstone: truthy(fields.archived),
-          })
-        : undefined,
-      validationIssues: issues.length > 0 ? issues : undefined,
+      ...record,
+      normalized: { schemaVersion: this.version, fields: approved },
+      ...(drift.length > 0
+        ? {
+          validationIssues: drift.map((field) => ({
+            code: "schema_drift" as const,
+            path: field,
+            message: "The vendor returned a field without an approved coverage disposition.",
+          })),
+        }
+        : {}),
     };
-  }
-
-  private validateContinuation(value: string, accountId: string, endpoint: string): URL {
-    const url = new URL(value);
-    const prefix = `/API/V3/Account/${encodeURIComponent(accountId)}/`;
-    if (
-      url.origin !== API_ORIGIN ||
-      !url.pathname.startsWith(prefix) ||
-      !url.pathname.endsWith(endpoint)
-    ) {
-      throw new ConnectorError(
-        "REMOTE_RESPONSE_INVALID",
-        "Lightspeed returned an unsafe pagination URL.",
-      );
-    }
-    return url;
   }
 
   private async apiJson<T>(

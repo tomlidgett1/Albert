@@ -25,7 +25,7 @@ test("every one of the 90 streams resolves a scan without special-casing", () =>
   }
 });
 
-test("a leader asks for no child relations it does not read", () => {
+test("every member of a group requests the identical relation union, so one walk serves all", () => {
   const sales = resolveStreamScan(stream("ls_sales"));
   assert.equal(sales.projectFrom, null);
   const lines = resolveStreamScan(stream("ls_sale_lines"));
@@ -34,12 +34,14 @@ test("a leader asks for no child relations it does not read", () => {
     lines.relations.some((r) => r.startsWith("SaleLines")),
     `sale lines must request its own relation, got ${lines.relations.join(",")}`,
   );
-  // Narrowing matters: the group union is 15 relations and sending all of them
-  // on every member multiplies payload and courts the documented 500.
-  assert.ok(
-    lines.relations.length < sales.group.relations.length,
-    `expected a narrowed set, got ${lines.relations.length} of ${sales.group.relations.length}`,
-  );
+  // Identical parameters are what make the connector's page cache serve six
+  // sale-derived streams from one Sale.json walk: the HTTP count is what the
+  // one-drip-per-second budget constrains, and a narrowed per-member set
+  // would make every member's walk a cache miss.
+  assert.deepEqual([...lines.relations], [...sales.relations],
+    "group members must request byte-identical relation sets");
+  const payments = resolveStreamScan(stream("ls_sale_payments"));
+  assert.deepEqual([...payments.relations], [...sales.relations]);
 });
 
 test("a first page sorts by ascending id; a continuation sends only the token", () => {
@@ -79,8 +81,12 @@ test("a nested stream projects one row per array element, not one per parent", (
     { saleID: 102, SaleLines: { SaleLine: { saleLineID: 3 } } },
   ], hash);
   assert.equal(rows.length, 3, "two lines plus one singular child");
-  assert.ok(rows.every((r) => r.sourceObjectType === "Sale"),
-    "source_object_type is the vendor resource, which the canonical guard asserts against");
+  // The child's OWN resource, never the parent's: rows are recorded and
+  // referenced by (sourceObjectType, sourceRecordId), so keeping "Sale" here
+  // would conflate Sale 5 with SaleLine 5. The stream contract's resource is
+  // derived the same way, which is what the canonical guard asserts against.
+  assert.ok(rows.every((r) => r.sourceObjectType === "SaleLine"),
+    "source_object_type is the child's own vendor resource");
   assert.deepEqual(rows.map((r) => r.sourceRecordId), ["1", "2", "3"]);
   assert.ok(rows.every((r) => r.normalized?.fields), "staging needs a typed projection");
 });

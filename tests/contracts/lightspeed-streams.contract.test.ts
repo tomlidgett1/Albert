@@ -152,10 +152,16 @@ test("a stream declares exactly what its mapper can emit, never the spec's inten
     }
   }
 
-  // The mapped streams must still carry their full historical target set, or the
-  // transform would reject commands their mappers have always produced.
+  // The sale walk is split so one economic event can never project twice:
+  // the header owns the order, lines own order lines and refunds, payments
+  // own tenders. Each stream declares exactly its own mapper's targets.
   const sales = LIGHTSPEED_STREAMS.find((s) => s.id === "ls_sales")!;
-  for (const required of ["commerce_order", "commerce_order_line", "commerce_payment", "channel"]) {
+  assert.deepEqual([...sales.canonicalTargets].sort(), ["channel", "commerce_order", "register"]);
+  const lines = LIGHTSPEED_STREAMS.find((s) => s.id === "ls_sale_lines")!;
+  assert.deepEqual([...lines.canonicalTargets].sort(), ["commerce_order_line", "commerce_refund_line", "event_link"]);
+  const payments = LIGHTSPEED_STREAMS.find((s) => s.id === "ls_sale_payments")!;
+  assert.deepEqual([...payments.canonicalTargets].sort(), ["commerce_payment"]);
+  for (const required of [] as string[]) {
     assert.ok(sales.canonicalTargets.includes(required as never),
       `ls_sales must still declare ${required}`);
   }
