@@ -78,9 +78,14 @@ test("governed connector fields form a complete, PII-labelled immutable catalogu
     assert.ok(typeof document.metadata.pii === "string");
     assert.ok(typeof document.metadata.queryable === "boolean");
   }
-  const alias = documents.find(({ id }) => id === "source_field:lightspeed-r:item_shops:on_work_order");
-  assert.ok(alias);
-  assert.match(alias.content,/onWorkorder/);
+  // The catalogue keys governed Lightspeed fields by their ls_* staging table
+  // and its content carries the vendor's original camelCase spelling so search
+  // hits vendor terminology. The pre-widening item_shops.onWorkOrder field is
+  // documented-but-unspecced ("unsupported") and must no longer be published.
+  const vendorSpelled = documents.find(({ id }) => id === "source_field:lightspeed-r:ls_workorders:workorder_status_id");
+  assert.ok(vendorSpelled);
+  assert.match(vendorSpelled.content,/workorderStatusID/);
+  assert.equal(documents.some(({ id }) => id.startsWith("source_field:lightspeed-r:ls_item_shops:on_work_order")),false);
   const all = combineCatalogueDocuments(createRegistryCatalogueDocuments(registry),documents);
   assert.equal(all.length,createRegistryCatalogueDocuments(registry).length+documents.length);
 });

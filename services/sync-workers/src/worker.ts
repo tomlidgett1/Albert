@@ -1074,7 +1074,7 @@ export class SyncJobProcessor {
       });
     } else {
       // Use the hashed default idempotency key. Embedding cursor.value inline
-      // overflows the 240-char enqueue limit once Lightspeed opaque cursors grow.
+      // overflows the 240-char enqueue limit once vendor opaque cursors grow.
       await this.orchestrator.enqueueReconciliationSweep({
         tenantId: job.tenantId,
         connectionId: job.connectionId,

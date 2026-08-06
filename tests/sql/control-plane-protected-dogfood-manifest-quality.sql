@@ -134,7 +134,7 @@ WITH quality(value) AS (
 ), quality_run(value) AS (
   SELECT sync_run_id
     FROM dogfood_stream_seed
-   WHERE connector_key='xero' AND stream='invoices'
+   WHERE connector_key='xero' AND stream='xero_invoices'
 ), inventory_attestation(table_count,inventory_hash) AS (
   SELECT count(*)::integer,
          encode(extensions.digest(convert_to(
@@ -272,7 +272,7 @@ BEGIN
      SET required=false
    WHERE tenant_id='01H00000000000000000005401'
      AND connection_id='01H00000000000000000005411'
-     AND stream='sales';
+     AND stream='ls_sales';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -290,7 +290,7 @@ BEGIN
      SET domains=ARRAY['workforce']::text[]
    WHERE tenant_id='01H00000000000000000005401'
      AND connection_id='01H00000000000000000005412'
-     AND stream='invoices';
+     AND stream='xero_invoices';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -308,7 +308,7 @@ BEGIN
      SET dependencies=ARRAY['organisation']::text[]
    WHERE tenant_id='01H00000000000000000005401'
      AND connection_id='01H00000000000000000005412'
-     AND stream='invoices';
+     AND stream='xero_invoices';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -326,7 +326,7 @@ ALTER TABLE control_plane.raw_batch_manifests
 UPDATE control_plane.raw_batch_manifests
    SET api_version='unreviewed-api-version'
  WHERE tenant_id='01H00000000000000000005401'
-   AND connector_key='xero' AND stream='invoices';
+   AND connector_key='xero' AND stream='xero_invoices';
 ALTER TABLE control_plane.raw_batch_manifests
   ENABLE TRIGGER raw_batch_manifests_reject_mutation;
 DO $$
@@ -350,7 +350,7 @@ BEGIN
     FROM dogfood_stream_seed seed
    WHERE run.tenant_id='01H00000000000000000005401'
      AND run.sync_run_id=seed.sync_run_id
-     AND seed.connector_key='xero' AND seed.stream='invoices';
+     AND seed.connector_key='xero' AND seed.stream='xero_invoices';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -368,11 +368,11 @@ BEGIN
   -- manifest's connection and stream. Keep the borrowed run successful and
   -- on generation one while moving it to another selected connector/stream.
   UPDATE control_plane.sync_runs run
-     SET connection_id='01H00000000000000000005411',stream='sales'
+     SET connection_id='01H00000000000000000005411',stream='ls_sales'
     FROM dogfood_stream_seed seed
    WHERE run.tenant_id='01H00000000000000000005401'
      AND run.sync_run_id=seed.sync_run_id
-     AND seed.connector_key='xero' AND seed.stream='invoices';
+     AND seed.connector_key='xero' AND seed.stream='xero_invoices';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -393,7 +393,7 @@ BEGIN
      SET completed_at=clock_timestamp()
    WHERE tenant_id='01H00000000000000000005401'
      AND connection_id='01H00000000000000000005412'
-     AND stream='invoices' AND phase='recent';
+     AND stream='xero_invoices' AND phase='recent';
   PERFORM control_plane.assert_protected_dogfood_manifest_and_quality(
     '01H00000000000000000005401',
     '{"lightspeed-r":"01H00000000000000000005411","xero":"01H00000000000000000005412","deputy":"01H00000000000000000005413"}'::jsonb,
@@ -480,12 +480,12 @@ UPDATE control_plane.sync_stream_phases
        last_error='{"code":"capability_unavailable","retryable":false}'::jsonb
  WHERE tenant_id='01H00000000000000000005401'
    AND connection_id='01H00000000000000000005411'
-   AND stream='inventory_logs' AND phase='recent';
+   AND stream='ls_register_calculated' AND phase='recent';
 UPDATE control_plane.sync_stream_phases
    SET status='planned',completed_at=NULL
  WHERE tenant_id='01H00000000000000000005401'
    AND connection_id='01H00000000000000000005411'
-   AND stream='inventory_logs' AND phase<>'recent';
+   AND stream='ls_register_calculated' AND phase<>'recent';
 -- Optional-unavailable is a supported terminal policy, but its terminal event
 -- is still candidate evidence. Publish a causally later exact-run snapshot;
 -- the pre-terminal snapshot above must not be reused.
@@ -497,7 +497,7 @@ WITH quality(value) AS (
 ), quality_run(value) AS (
   SELECT sync_run_id
     FROM dogfood_stream_seed
-   WHERE connector_key='xero' AND stream='invoices'
+   WHERE connector_key='xero' AND stream='xero_invoices'
 ), inventory_attestation(table_count,inventory_hash) AS (
   SELECT count(*)::integer,
          encode(extensions.digest(convert_to(

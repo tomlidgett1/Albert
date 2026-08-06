@@ -110,7 +110,7 @@ test("catalogue list, search, resolve and values all fail closed for forbidden d
   const manager = { ...trusted, role: "manager" as const };
   assert.deepEqual(await provider.listFields(manager, financeField.connectionId, financeField.sourceTable), []);
   assert.deepEqual(await provider.searchFields(manager, "reference", 10), []);
-  assert.deepEqual(await provider.resolveRankedFields(manager, [{ connectorId: "xero", sourceTable: "bank_transactions", sourceField: "reference" }], 10), []);
+  assert.deepEqual(await provider.resolveRankedFields(manager, [{ connectorId: "xero", sourceTable: "xero_bank_transactions", sourceField: "reference" }], 10), []);
   await assert.rejects(() => provider.listFieldValues(manager, "source:connection-xero:bank_transactions:reference", undefined, 10), /cannot explore cash_settlement/iu);
   assert.ok(calls.every((call) => /authority_concept=ANY\(\$[34]::text\[\]\)/u.test(call.sql)));
   assert.ok(calls.every((call) => call.parameters.some((value) => Array.isArray(value) && !value.includes("cash_settlement"))));
@@ -195,26 +195,26 @@ test("source exploration fails closed when the selected connection watermark is 
     audit: { async append() {},async promoteSourceField() { return "promotion-01"; } },
   });
   await assert.rejects(() => service.execute("run_source_query",{
-    connectionId: "connection-xero",sourceTable: "bank_transactions",fields: ["reference"],
+    connectionId: "connection-xero",sourceTable: "xero_bank_transactions",fields: ["reference"],
     aggregates: [],groupBy: [],filters: [],limit: 10,
   },trusted),/selected source has no valid watermark/iu);
   assert.equal(databaseCalls,0);
 });
 
 test("connector stream authority mapping is explicit and rejects drift", () => {
-  assert.equal(sourceAuthorityForField("xero", "bank_transactions", "source_xero.bank_transactions.reference"), "cash_settlement");
-  assert.equal(sourceAuthorityForField("xero", "journals", "source_xero.journals.source_type"), "statutory_finance");
+  assert.equal(sourceAuthorityForField("xero", "xero_bank_transactions", "source_xero.bank_transactions.reference"), "cash_settlement");
+  assert.equal(sourceAuthorityForField("xero", "xero_journals", "source_xero.journals.source_type"), "statutory_finance");
   assert.equal(sourceAuthorityForField("deputy", "rosters", "source_deputy.rosters.open"), "planned_shifts");
   assert.equal(sourceAuthorityForField("deputy", "timesheets", "source_deputy.timesheets.exported"), "worked_hours");
-  assert.equal(sourceAuthorityForField("lightspeed-r", "customers", "source_lightspeed.customers.credit_limit"), "customer_master");
-  assert.equal(sourceAuthorityForField("lightspeed-r", "item_shops", "source_lightspeed.item_shops.reorder_point"), "stock");
-  assert.equal(sourceAuthorityForField("lightspeed-r", "vendors", "source_lightspeed.vendors.account_number"), "stock");
+  assert.equal(sourceAuthorityForField("lightspeed-r", "ls_customers", "source_lightspeed.ls_customers.credit_limit"), "customer_master");
+  assert.equal(sourceAuthorityForField("lightspeed-r", "ls_item_shops", "source_lightspeed.ls_item_shops.reorder_point"), "stock");
+  assert.equal(sourceAuthorityForField("lightspeed-r", "ls_vendors", "source_lightspeed.ls_vendors.account_number"), "stock");
   assert.throws(() => sourceAuthorityForField("xero", "unknown", "source_xero.unknown.value"), /source_authority_unmapped/u);
   assert.throws(() => sourceAuthorityForField("xero", "journals", "source_deputy.journals.value"), /target_mismatch/u);
 });
 
 function query(fields: readonly string[]) {
-  return { connectionId: fields.includes("reference") ? "connection-xero" : "connection-lightspeed", sourceTable: fields.includes("reference") ? "bank_transactions" : "items", fields, aggregates: [], groupBy: [], filters: [], limit: 10 };
+  return { connectionId: fields.includes("reference") ? "connection-xero" : "connection-lightspeed", sourceTable: fields.includes("reference") ? "bank_transactions" : "ls_items", fields, aggregates: [], groupBy: [], filters: [], limit: 10 };
 }
 
 function field(overrides: Partial<SourceField>): SourceField {
@@ -222,7 +222,7 @@ function field(overrides: Partial<SourceField>): SourceField {
     connectionId: "connection-lightspeed",
     connectorId: "lightspeed-r",
     sourceSchema: "source_lightspeed",
-    sourceTable: "items",
+    sourceTable: "ls_items",
     sourceField: "extension",
     fieldType: "text",
     piiClass: "none",

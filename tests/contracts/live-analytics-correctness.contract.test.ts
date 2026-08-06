@@ -52,7 +52,6 @@ test("compiler calculates stock cover at the requested aggregate grain and ignor
     time: { field: "snapshot_date", range: { type: "last_n_days", days: 1 }, compare: "none" },
     sort: [],
     limit: 100,
-    parameters: {},
   }, registry, {
     tenantId,
     role: "owner",
@@ -77,7 +76,6 @@ test("compiler calculates stock cover at the requested aggregate grain and ignor
     time: { field: "snapshot_date", range: { type: "last_n_days", days: 1 }, compare: "none" },
     sort: [],
     limit: 100,
-    parameters: {},
   }, registry, {
     tenantId,
     role: "owner",
@@ -114,7 +112,6 @@ test("semantic execution measures cost coverage and blocks partial-cost verifica
     },
     sort: [],
     limit: 20,
-    parameters: {},
   };
   const trusted = {
     tenantId,
@@ -153,7 +150,6 @@ test("semantic execution blocks a finance slice that would sum multiple currenci
     },
     sort: [],
     limit: 20,
-    parameters: {},
   }, {
     tenantId,
     role: "owner",
@@ -186,21 +182,18 @@ test("POS tenders and Xero bank receipts compile through a governed settlement b
         dimensions: ["business_date", "location"],
         filters: [],
         time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" },
-        parameters: {},
-      },
+          },
       {
         topic: "profitability_cash",
         metrics: ["finance.cash_receipts"],
         dimensions: ["business_date", "location"],
         filters: [],
         time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" },
-        parameters: {},
-      },
+          },
     ],
     alignOn: ["business_date", "location"],
     sort: [],
     limit: 20,
-    parameters: {},
   }, registry, {
     tenantId,
     role: "owner",
@@ -240,14 +233,14 @@ test("an unlinked Tuesday bank shortfall is returned as qualified evidence", asy
     queries: [
       {
         topic: "reconciliation", metrics: ["commerce.tender_amount"], dimensions: ["business_date", "location"], filters: [],
-        time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" }, parameters: {},
+        time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" },
       },
       {
         topic: "profitability_cash", metrics: ["finance.cash_receipts"], dimensions: ["business_date", "location"], filters: [],
-        time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" }, parameters: {},
+        time: { field: "business_date", range: { type: "absolute", from: "2026-02-10T00:00:00.000Z", to: "2026-02-11T00:00:00.000Z" }, compare: "none" },
       },
     ],
-    alignOn: ["business_date", "location"], sort: [], limit: 20, parameters: {},
+    alignOn: ["business_date", "location"], sort: [], limit: 20,
   }, {
     tenantId, role: "owner", conversationId: "01J00000000000000000000006", turnId: "01J00000000000000000000007",
   });
@@ -269,6 +262,7 @@ test("nightly reconciliation schedules one coordinator that fans out unfiltered 
   const bootstrap = readFileSync(resolve("infra/bootstrap/control_plane_role.sql"), "utf8");
   const worker = readFileSync(resolve("services/sync-workers/src/worker.ts"), "utf8");
   const lightspeed = readFileSync(resolve("connectors/lightspeed-r/index.ts"), "utf8");
+  const lightspeedSpecSync = readFileSync(resolve("connectors/lightspeed-r/spec-sync.ts"), "utf8");
   const schedulerStart = operations.indexOf("CREATE OR REPLACE FUNCTION control_plane.enqueue_nightly_reconciliation_sweeps");
   const scheduler = operations.slice(schedulerStart, operations.indexOf("CREATE OR REPLACE FUNCTION control_plane.expire_oauth_sessions", schedulerStart));
 
@@ -280,7 +274,12 @@ test("nightly reconciliation schedules one coordinator that fans out unfiltered 
     worker,
     /connector\.reconciliation_sync\(context, stream,[\s\S]*?job\.lookbackFrom[\s\S]*?job\.lookbackTo/u,
   );
-  assert.match(lightspeed, /mode === "reconciliation" && reconciliationPhase !== "late_edits"/u);
+  // The spec-generated connector routes every reconciliation phase through the
+  // one spec walk. A late-edit sweep of an append-only stream is refused rather
+  // than fabricated, and only incremental mode may narrow a walk by watermark —
+  // a reconciliation sweep re-walks the population instead of trusting cursors.
+  assert.match(lightspeed, /request\.phase === "late_edits" && stream\.lateEditStrategy === "append_only"/u);
+  assert.match(lightspeedSpecSync, /input\.mode === "incremental" && decoded\?\.watermark/u);
 });
 
 function dependencies(

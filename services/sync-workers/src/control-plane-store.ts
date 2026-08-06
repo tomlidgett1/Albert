@@ -1038,7 +1038,7 @@ export class ControlPlaneStore implements RawManifestRepository {
       // Extraction owns 0..0.9 of the readiness bar; transform completion
       // claims the rest. Progress is measured against the sealed phase plan:
       // completed phases count fully, and the phase this claim is walking adds
-      // its watermark position inside the phase range (the Lightspeed walk is
+      // its watermark position inside the phase range (backfill walks are
       // timestamp-ascending, so the fraction is monotonic and truthful).
       let runningPhaseFraction = 0;
       if (input.job.type === "InitialBackfill" && input.hasMore) {

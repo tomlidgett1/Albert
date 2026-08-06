@@ -2449,8 +2449,9 @@ async function resolveValue(
       return id;
     }
     resolutionContext?.missing.add(resolutionKey);
-    // Nullable parents (Lightspeed Category.parentID) may resolve later in the
-    // same batch or a later stream page. Do not fail the whole transform.
+    // Nullable parents (a category's optional parent reference) may resolve
+    // later in the same batch or a later stream page. Do not fail the whole
+    // transform.
     if(ref.nullable)return null;
     throw new Error(`canonical_reference_missing:${ref.table}:${ref.lookup.value}`);
   }

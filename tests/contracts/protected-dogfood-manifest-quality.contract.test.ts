@@ -7,7 +7,7 @@ import { xeroManifest } from "../../connectors/xero/manifest.js";
 
 const root = new URL("../../", import.meta.url);
 const migrationUrl = new URL(
-  "infra/migrations/control-plane/0062_m3_m4_manifest_and_quality_dogfood_gate.sql",
+  "infra/migrations/control-plane/0091_m3_spec_driven_stream_expectations.sql",
   root,
 );
 
@@ -73,8 +73,18 @@ test("the protected M3 inventory is exactly the three reviewed connector manifes
   })));
 
   assert.deepEqual(sortStreams(seeded), sortStreams(reviewed));
-  assert.equal(seeded.length, 31, "V1 must gate the complete 31-stream manifest inventory");
-  assert.equal(seeded.filter(({ required }) => !required).length, 3);
+  // The gated inventory tracks the spec-generated manifests, so its size is
+  // derived from them at runtime rather than pinned to a stale count.
+  assert.equal(
+    seeded.length,
+    manifests.reduce((total, manifest) => total + manifest.streams.length, 0),
+    "V1 must gate the complete reviewed manifest stream inventory",
+  );
+  assert.equal(
+    seeded.filter(({ required }) => !required).length,
+    manifests.flatMap(({ streams }) => streams)
+      .filter((stream) => (stream.availability ?? "required") !== "required").length,
+  );
   assert.match(sql, /dogfood stream plan does not match the exact reviewed connector manifests/u);
   assert.match(sql, /manifest\.connector_version=expected\.pack_version/u);
   assert.match(sql, /manifest\.api_version=expected\.api_version/u);

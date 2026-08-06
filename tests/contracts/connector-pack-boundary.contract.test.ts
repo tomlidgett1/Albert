@@ -121,7 +121,7 @@ test("connector manifests own authority, staging, budget and webhook policy", ()
     source("services/sync-workers/src/webhook-tombstones.ts"),
     /manifest\.webhook\?\.verifiedTombstones/u,
   );
-  const itemShops = lightspeedRManifest.streams.find((stream) => stream.id === "item_shops");
+  const itemShops = lightspeedRManifest.streams.find((stream) => stream.id === "ls_item_shops");
   assert.equal(itemShops?.reprocessIdenticalPayloadOnNewBatch, true);
   assert.deepEqual(lightspeedRManifest.sourceAuthority.defaults, [{
     concepts: ["operational_sales", "stock", "product_master", "customer_master"],

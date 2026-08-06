@@ -20,7 +20,7 @@ const grant: OperatorDiagnosticGrant = Object.freeze({
   tenant_id: tenantId,
   pipeline_stage: "staging",
   schema_name: "source_xero",
-  table_name: "invoices",
+  table_name: "xero_invoices",
   row_limit: 3,
   expires_at: "2030-01-01T00:00:00.000Z",
   analytical_capability: JSON.stringify({
@@ -46,7 +46,7 @@ test("signed diagnostic transport consumes one grant and audits completion befor
           revealId,
           stage: "staging",
           schemaName: "source_xero",
-          tableName: "invoices",
+          tableName: "xero_invoices",
           columns: ["invoice_id", "total"],
           rows: [{ invoice_id: "invoice-1", total: "110.0000" }],
           rowCount: 1,
@@ -66,7 +66,7 @@ test("signed diagnostic transport consumes one grant and audits completion befor
   assert.equal(response.status, 200);
   assert.deepEqual(calls, [
     `claim:${revealId}`,
-    "sample:source_xero.invoices",
+    "sample:source_xero.xero_invoices",
     "complete:completed:1",
   ]);
   const payload = await response.json() as { sample: { rows: unknown[] } };
@@ -115,7 +115,7 @@ test("a transient completed-outcome failure is terminally recorded as failed bef
           revealId,
           stage: "staging",
           schemaName: "source_xero",
-          tableName: "invoices",
+          tableName: "xero_invoices",
           columns: ["invoice_id"],
           rows: [{ invoice_id: "invoice-1" }],
           rowCount: 1,
@@ -158,7 +158,7 @@ test("diagnostic SQL is fixed, tenant-parameterised, bounded, and omits secret-b
   assert.equal(sample.excludedColumnCount, 2);
   const select = statements.find(({ sql }) => sql.startsWith("SELECT CASE"));
   assert.ok(select);
-  assert.match(select.sql, /FROM "source_xero"\."invoices" WHERE tenant_id=\$1 LIMIT \$2/u);
+  assert.match(select.sql, /FROM "source_xero"\."xero_invoices" WHERE tenant_id=\$1 LIMIT \$2/u);
   assert.doesNotMatch(select.sql, /oauth_token|contact|tenant_id AS/u);
   assert.deepEqual(select.parameters, [tenantId, 3]);
   assert.ok(statements.some(({ sql }) => sql === "SET LOCAL ROLE diagnostic_ro"));
