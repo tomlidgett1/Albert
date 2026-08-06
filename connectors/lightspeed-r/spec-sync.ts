@@ -317,7 +317,12 @@ export async function syncStreamPage(input: {
 
   // A relation-free response is a silent disaster: the walk succeeds and this
   // stream's table stages nothing. Reject the page rather than commit it.
-  if (scan.projectFrom) assertRelationsPresent(scan.group, page.records);
+  // Assert only the relation roots THIS walk requested: each member's walk is
+  // narrowed to its own relations, so sibling members' roots are legitimately
+  // absent from the response and must not fail the page.
+  if (scan.projectFrom) {
+    assertRelationsPresent(scan.group, page.records, scan.relations);
+  }
 
   const records = projectStreamRows(scan, page.records, hash);
   const pagination = evaluatePagination(state.after ?? null, page.nextUrl, page.records.length);

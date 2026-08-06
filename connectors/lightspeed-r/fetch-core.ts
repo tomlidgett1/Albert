@@ -172,6 +172,7 @@ const SPARSE_RELATIONS: ReadonlySet<string> = new Set(["CreditAccount.Contact"])
 export function assertRelationsPresent(
   group: ScanGroup,
   records: readonly Readonly<Record<string, unknown>>[],
+  requestedRelations: readonly string[],
 ): void {
   if (records.length === 0) return;
 
@@ -180,11 +181,18 @@ export function assertRelationsPresent(
   // and will never appear on the parent record. What matters is the first
   // segment of each nested member's projection path: if that key is missing from
   // every record, that member's table silently stages zero rows.
+  //
+  // Only roots this walk actually put in load_relations can be demanded. Each
+  // member's walk is narrowed to its own relations, so a sibling member's root
+  // (SalePayments on the SaleLines walk) is legitimately absent — asserting
+  // the whole group's roots failed every Sale-child page on live fire.
+  const requestedRoots = new Set(requestedRelations.map((r) => r.split(".")[0]));
   const required = [
     ...new Set(
       group.members
         .filter((m) => m.projection === "nested" && m.projectFrom)
         .map((m) => m.projectFrom!.split(".")[0])
+        .filter((root) => requestedRoots.has(root!))
         .filter((root) => !SPARSE_RELATIONS.has(`${group.resource}.${root}`)),
     ),
   ];
@@ -204,7 +212,7 @@ export function assertRelationsPresent(
           resource: group.resource,
           missing: missing.join(","),
           affected: affected.join(","),
-          requested: group.relations.join(","),
+          requested: requestedRelations.join(","),
         },
       },
     );

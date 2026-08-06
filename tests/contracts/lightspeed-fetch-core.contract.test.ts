@@ -123,7 +123,7 @@ test("child rows are keyed so re-running a window is idempotent", () => {
 test("a silently relation-free response is rejected, not committed", () => {
   // The dangerous case: the walk succeeds, but every child table stages zero rows.
   assert.throws(
-    () => assertRelationsPresent(sale, [{ saleID: 1 }, { saleID: 2 }]),
+    () => assertRelationsPresent(sale, [{ saleID: 1 }, { saleID: 2 }], ["SaleLines"]),
     /Relations absent from every record/,
     "an empty child table is worse than a loud failure",
   );
@@ -139,14 +139,29 @@ test("a silently relation-free response is rejected, not committed", () => {
   ];
   const complete: Record<string, unknown> = { saleID: 1 };
   for (const key of requiredKeys) complete[key] = {};
-  assert.doesNotThrow(() => assertRelationsPresent(sale, [complete]),
+  assert.doesNotThrow(() => assertRelationsPresent(sale, [complete], requiredKeys as string[]),
     `a record carrying ${requiredKeys.join(", ")} must be accepted`);
 
-  assert.doesNotThrow(() => assertRelationsPresent(sale, []), "an empty page asserts nothing");
+  assert.doesNotThrow(
+    () => assertRelationsPresent(sale, [], ["SaleLines"]),
+    "an empty page asserts nothing",
+  );
+
+  // Live-fire verdict: each member's walk narrows load_relations to its own
+  // set, so a sibling's root (SalePayments on the SaleLines walk) is absent by
+  // construction and must not fail the page. Only requested roots are demanded.
+  assert.doesNotThrow(
+    () => assertRelationsPresent(
+      sale,
+      [{ saleID: 1, SaleLines: { SaleLine: [{ saleLineID: 2 }] } }],
+      ["SaleLines"],
+    ),
+    "a narrowed walk must not be failed over roots it never requested",
+  );
 
   // The error must name the table that would have been emptied, not just the key.
   try {
-    assertRelationsPresent(sale, [{ saleID: 1 }]);
+    assertRelationsPresent(sale, [{ saleID: 1 }], ["SaleLines"]);
     assert.fail("expected a rejection");
   } catch (error) {
     assert.match(String((error as Error).message), /would stage zero rows/);
