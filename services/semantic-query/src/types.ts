@@ -178,7 +178,7 @@ export type SemanticAuditRecord = Readonly<{
   conversationId: string;
   turnId: string;
   role: SemanticRole;
-  route: "semantic" | "source_exploration";
+  route: "semantic" | "source_exploration" | "sql_first";
   topic?: string;
   bundleHash: string;
   registryVersion: string;

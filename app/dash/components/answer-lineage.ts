@@ -15,7 +15,7 @@ export type SafeAnswerLineage = Readonly<{
   finalizedAt: string;
   queries: readonly Readonly<{
     queryAuditId: string;
-    route: "semantic" | "source_exploration";
+    route: "semantic" | "source_exploration" | "sql_first";
     topic: string | null;
     bundleHash: string;
     registryVersion: string;
@@ -72,7 +72,7 @@ export function parseSafeAnswerLineage(
     if (!isRecord(rawQuery)) return null;
     if (
       typeof rawQuery.queryAuditId !== "string" || !ulidPattern.test(rawQuery.queryAuditId)
-      || (rawQuery.route !== "semantic" && rawQuery.route !== "source_exploration")
+      || (rawQuery.route !== "semantic" && rawQuery.route !== "source_exploration" && rawQuery.route !== "sql_first")
       || (rawQuery.topic !== null && (typeof rawQuery.topic !== "string" || rawQuery.topic.length > 200))
       || typeof rawQuery.bundleHash !== "string" || !digestPattern.test(rawQuery.bundleHash)
       || typeof rawQuery.registryVersion !== "string" || rawQuery.registryVersion.length < 1 || rawQuery.registryVersion.length > 160

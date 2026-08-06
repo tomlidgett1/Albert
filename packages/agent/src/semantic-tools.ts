@@ -391,7 +391,7 @@ export const semanticToolResponseSchema = z.object({
    */
   queryAudit: z.object({
     queryAuditId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
-    route: z.enum(["semantic", "source_exploration"]),
+    route: z.enum(["semantic", "source_exploration", "sql_first"]),
     bundleHash: z.string().regex(/^[a-f0-9]{64}$/),
     registryVersion: z.string().min(1).max(160),
     resultDigest: z.string().regex(/^[a-f0-9]{64}$/),

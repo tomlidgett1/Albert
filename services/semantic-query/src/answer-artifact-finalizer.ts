@@ -10,7 +10,7 @@ import type { PgPoolLike, SemanticAnalyticalCapabilityIssuer } from "./database.
 
 const queryAuditRowSchema = z.object({
   query_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
-  route: z.enum(["semantic", "source_exploration"]),
+  route: z.enum(["semantic", "source_exploration", "sql_first"]),
   topic: z.string().nullable(),
   bundle_hash: z.string().regex(/^[a-f0-9]{64}$/),
   registry_version: z.string().min(1),
@@ -262,9 +262,14 @@ function assertEvidenceMatchesAnswerState(
   if (["verified", "qualified", "exploratory"].includes(state) && executions.length === 0 && !directoryAnswer) {
     throw new Error("Analytical answers require at least one immutable query audit reference.");
   }
-  if (state === "exploratory" && !routes.includes("source_exploration")) {
-    throw new Error("Exploratory answers require source-exploration evidence.");
+  if (state === "exploratory"
+    && !routes.includes("source_exploration")
+    && !routes.includes("sql_first")) {
+    throw new Error("Exploratory answers require source-exploration or sql-first evidence.");
   }
+  // sql_first evidence is deliberately admissible under Verified: its structure
+  // was linted before execution and its claims attested against governed
+  // contracts afterwards. source_exploration carries no such attestation.
   if (state === "verified" && routes.includes("source_exploration")) {
     throw new Error("Verified answers cannot be supported by source-exploration evidence.");
   }

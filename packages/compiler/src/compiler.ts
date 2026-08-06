@@ -87,7 +87,14 @@ export type CompiledSemanticValidationEvidence = Readonly<{
   joins: readonly Readonly<{
     factId: string;
     dimension: string;
-    cardinality: "many_to_one" | "one_to_one";
+    /**
+     * The compiler itself only ever emits the two safe cardinalities. The
+     * SQL-first linter reconstructs this same evidence from parsed SQL and
+     * additionally names what it cannot vouch for: "one_to_many" for a join
+     * that multiplies the fact, "unverified" for a relation the registry has
+     * never heard of. The invariant check treats both as fan-out unsafe.
+     */
+    cardinality: "many_to_one" | "one_to_one" | "one_to_many" | "unverified";
   }>[];
   metrics: readonly Readonly<{
     metricId: string;

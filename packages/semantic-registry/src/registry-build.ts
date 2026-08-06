@@ -76,6 +76,18 @@ export function validateRegistry(document: RegistryDocument): void {
     supplier: "core.supplier",
   } as const;
   for (const fact of document.facts) {
+    for (const measure of fact.measures) {
+      if (!fact.fields.includes(measure)) {
+        throw new Error(`Fact ${fact.id} declares unknown measure ${measure}.`);
+      }
+    }
+    if (!fact.fields.includes(fact.grainKey)) {
+      throw new Error(`Fact ${fact.id} grain key ${fact.grainKey} is not a field.`);
+    }
+    for (const target of fact.fansOut) {
+      if (!facts.has(target)) throw new Error(`Fact ${fact.id} fans out against unknown fact ${target}.`);
+      if (target === fact.id) throw new Error(`Fact ${fact.id} cannot fan out against itself.`);
+    }
     const identityTypesByKey = new Map<string, string>();
     for (const join of fact.joins) {
       if (!fact.fields.includes(join.factKey)) {

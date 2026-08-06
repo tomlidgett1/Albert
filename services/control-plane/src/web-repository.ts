@@ -70,7 +70,7 @@ const answerLineageSchema = z.object({
   artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
   queries: z.array(z.object({
     queryAuditId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
-    route: z.enum(["semantic", "source_exploration"]),
+    route: z.enum(["semantic", "source_exploration", "sql_first"]),
     topic: z.string().nullable(),
     bundleHash: z.string().regex(/^[a-f0-9]{64}$/),
     registryVersion: z.string().min(1),
@@ -129,6 +129,8 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "oauth.select": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.disconnect": Object.freeze({ limit: 5, windowSeconds: 3_600 }),
   "review.mutation": Object.freeze({ limit: 30, windowSeconds: 60 }),
+  // A backfill is expensive and vendor-rate-limited; cap it far below click speed.
+  "connection.manual_sync": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;

@@ -98,6 +98,30 @@ export const factModelSchema = z.object({
   joins: z.array(joinContractSchema),
   snapshotFields: z.array(z.string().regex(/^[a-z_]+$/)),
   snapshotEntityKeys: z.array(z.string().regex(/^[a-z_]+$/)).default([]),
+  /**
+   * The columns that are aggregable quantities at this fact's grain, as
+   * opposed to keys and attributes. The SQL linter refuses SUM/AVG over a
+   * declared non-measure; columns it has never heard of stay permitted, since
+   * a denylist is open by default.
+   */
+  measures: z.array(z.string().regex(/^[a-z_]+$/)).default([]),
+  /**
+   * Fact ids whose rows this fact multiplies when both appear in one FROM
+   * tree — the line fact that repeats its order, the tender fact that repeats
+   * it again. Summing a measure of a listed fact after such a join is the
+   * classic silent-inflation defect, so the linter blocks exactly that
+   * direction and nothing else.
+   */
+  fansOut: z.array(z.string().min(1)).default([]),
+  /** Column unique per fact row; backs the runtime fan-out canary. */
+  grainKey: z.string().regex(/^[a-z_]+$/).default("id"),
+  /**
+   * How much the numbers in this table have been earned: 0 asserted from
+   * documentation, 1 observed on live data, 2 reconciled against an
+   * independent source, 3 contracted with human sign-off and a regression
+   * test in CI. An answer's state is capped by the minimum tier it touched.
+   */
+  evidenceTier: z.number().int().min(0).max(3).default(0),
 }).strict();
 export type FactModel = z.infer<typeof factModelSchema>;
 
