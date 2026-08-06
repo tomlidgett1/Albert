@@ -109,11 +109,18 @@ export class SyncWorkerService {
           } else {
             this.lastErrorCode = outcome.failure.code;
           }
-        } catch {
+        } catch (error) {
           // A failed error-transition or a superseded lease must not stop the
           // always-on worker. PGMQ will make an unacknowledged message visible
           // again; readiness exposes the degraded worker state meanwhile.
+          // The cause is logged: a silent retry loop is indistinguishable
+          // from a healthy idle worker, which is how a broken coordinator
+          // once burned four visibility windows without one diagnostic line.
           this.lastErrorCode = "job_processing_failed";
+          console.error("Albert sync worker job processing failed", {
+            workerId: this.workerId,
+            error: error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error),
+          });
         }
       } finally {
         clearInterval(extensionInterval);
