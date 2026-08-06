@@ -162,7 +162,7 @@ export function promptRouteInstruction(contract: PromptRouteContract | undefined
 
 export function assertPromptRouteDataToolAllowed(
   contract: PromptRouteContract | undefined,
-  toolName: "run_semantic_query" | "run_source_query",
+  toolName: "run_semantic_query" | "run_source_query" | "run_sql",
 ): void {
   if (contract) {
     throw new Error(`${toolName} is not permitted by the current server-owned ${contract.route} route contract.`);

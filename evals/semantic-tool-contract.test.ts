@@ -169,6 +169,21 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
     assert.equal(exploratory.queryAudit?.route, "source_exploration");
     assert.ok(exploratory.validation.warnings.some((warning) => /not from a certified governed metric/u.test(warning)));
 
+    // The SQL-first path attests its declared claim against the governed
+    // contract and lands on the sql_first route, which Verified may rest on.
+    const sqlFirst = await client.execute("run_sql", {
+      sql: "SELECT SUM(f.signed_net_amount_ex_tax) AS net_sales_ex_gst FROM mart.commerce_sales_event f WHERE f.business_date >= '2026-03-01' AND f.business_date < '2026-03-15'",
+      purpose: "net sales for the first half of March",
+      claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
+      time: { from: "2026-03-01", to: "2026-03-15" },
+      filters: [],
+      limit: 20,
+    }, trusted);
+    assert.equal(sqlFirst.queryAudit?.route, "sql_first");
+    assert.equal(sqlFirst.state, "verified");
+    assert.ok(sqlFirst.validation.checks.some((check) =>
+      check.checkId === "claim_attested:commerce.net_sales_ex_gst" && check.status === "passed"));
+
     const remembered = requireRememberedPreference(await client.execute("remember", {
       preference: "employee.performance_default",
       value: "commerce.net_sales_ex_gst",
@@ -180,9 +195,10 @@ test("every remote agent tool traverses canonical schema, signed HTTP, service a
   }
   assert.deepEqual([...called].sort(), [...REMOTE_SEMANTIC_AGENT_TOOL_NAMES].sort());
   // Both exploratory paths — the documented single-source field and the
-  // model-authored SQL escape hatch — attest on source_exploration, which is
-  // what forbids either of them being reported as Verified.
-  assert.deepEqual(audits.sort(), ["semantic", "source_exploration", "source_exploration"]);
+  // claim-free SQL escape hatch — attest on source_exploration, which is what
+  // forbids either being reported as Verified. Attested SQL rides sql_first;
+  // its attestation re-statements are recorded inside that row's validation.
+  assert.deepEqual(audits.sort(), ["semantic", "source_exploration", "source_exploration", "sql_first"]);
   assert.doesNotThrow(() => semanticToolInputSchemas.ask_user.parse({ question: "Which lens?", options: [{ id: "employee.net_sales" }, { id: "employee.gross_margin" }] }));
   assert.doesNotThrow(() => semanticToolInputSchemas.make_chart.parse({ dataRef: "semantic:result", chartType: "bar", xKey: "location", yKey: "net_sales_ex_gst" }));
 });

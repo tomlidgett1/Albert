@@ -50,6 +50,10 @@ export type SelectScope = Readonly<{
   fromText?: string;
   /** Verbatim WHERE clause text (without the keyword), for the canary. */
   whereText?: string;
+  /** Top-level ORDER BY items, backing the result-window ordering proof. */
+  orderBy: readonly Readonly<{ column: string; direction: "asc" | "desc" }>[];
+  /** Top-level LIMIT, when written as a plain integer. */
+  limit?: number;
 }>;
 
 export type SqlSurface = Readonly<{
@@ -200,9 +204,11 @@ function readSelectScope(
   const aggregates: AggregateCall[] = [];
   const groupBy: ColumnRef[] = [];
   const whereEqualityColumns: ColumnRef[] = [];
+  const orderBy: { column: string; direction: "asc" | "desc" }[] = [];
   let hasGroupBy = false;
   let fromText: string | undefined;
   let whereText: string | undefined;
+  let limit: number | undefined;
 
   // UNION branches are read as one combined scope: relations and aggregates
   // from every branch accumulate, which is conservative in the right
@@ -278,6 +284,39 @@ function readSelectScope(
       continue;
     }
 
+    if (token.upper === "ORDER" && tokens[index + 1]?.upper === "BY") {
+      let cursor = index + 2;
+      while (cursor < tokens.length) {
+        const item = tokens[cursor] as SqlToken;
+        if (item.kind === "punct" && item.value === "(") { cursor = matchingParen(tokens, cursor) + 1 || tokens.length; continue; }
+        if (item.upper === "LIMIT" || item.upper === "OFFSET" || item.upper === "FETCH") break;
+        if (item.kind === "identifier" || item.kind === "quoted") {
+          const column = readColumnRef(tokens, cursor);
+          if (column) {
+            let direction: "asc" | "desc" = "asc";
+            let next = column.next;
+            if (tokens[next]?.upper === "ASC" || tokens[next]?.upper === "DESC") {
+              direction = tokens[next]!.upper === "DESC" ? "desc" : "asc";
+              next += 1;
+            }
+            if (tokens[next]?.upper === "NULLS") next += 2;
+            orderBy.push({ column: column.ref.column, direction });
+            cursor = next;
+            continue;
+          }
+        }
+        cursor += 1;
+      }
+      index = cursor - 1;
+      continue;
+    }
+
+    if (token.upper === "LIMIT") {
+      const value = tokens[index + 1];
+      if (value?.kind === "number" && /^\d+$/.test(value.value)) limit = Number(value.value);
+      continue;
+    }
+
     if (token.kind === "identifier" && AGGREGATE_FNS.has(token.upper) && tokens[index + 1]?.value === "(") {
       const close = matchingParen(tokens, index + 1);
       if (close === -1) { unparsed.push(`${token.upper}( never closes.`); return; }
@@ -320,6 +359,8 @@ function readSelectScope(
     hasGroupBy,
     ...(fromText !== undefined ? { fromText } : {}),
     ...(whereText !== undefined ? { whereText } : {}),
+    orderBy: Object.freeze(orderBy),
+    ...(limit !== undefined ? { limit } : {}),
   }));
 }
 

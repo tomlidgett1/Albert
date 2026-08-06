@@ -157,7 +157,7 @@ test("authority and provenance include recursively referenced metric dependencie
   const response = await service.execute("run_semantic_query",{
     topic: "workforce_labour",
     metrics: ["workforce.roster_adherence"],
-    dimensions: [],filters: [],time: absoluteTime(),sort: [],limit: 20,parameters: {},
+    dimensions: [],filters: [],time: absoluteTime(),sort: [],limit: 20,
   },trusted);
 
   assert.equal(response.state,"unavailable");
@@ -230,7 +230,6 @@ test("snapshot and aggregate-then-align evidence records the executed operations
     time: { field: "snapshot_date", range: { type: "last_n_days", days: 1 }, compare: "none" },
     sort: [],
     limit: 20,
-    parameters: {},
   }, trusted);
   const snapshotCheck = check(snapshot.validation, "snapshot_not_summed");
   assert.equal(snapshotCheck.status, "passed");
@@ -255,13 +254,12 @@ test("snapshot and aggregate-then-align evidence records the executed operations
     topic: "workforce_sales",
     metrics: ["composites.sales_per_labour_hour"],
     queries: [
-      { topic: "sales_performance", metrics: ["commerce.net_sales_ex_gst"], dimensions: ["location"], filters: [], time: absoluteTime(), parameters: {} },
-      { topic: "workforce_labour", metrics: ["workforce.worked_hours"], dimensions: ["location"], filters: [], time: absoluteTime(), parameters: {} },
+      { topic: "sales_performance", metrics: ["commerce.net_sales_ex_gst"], dimensions: ["location"], filters: [], time: absoluteTime() },
+      { topic: "workforce_labour", metrics: ["workforce.worked_hours"], dimensions: ["location"], filters: [], time: absoluteTime() },
     ],
     alignOn: ["location"],
     sort: [],
     limit: 20,
-    parameters: {},
   }, trusted);
   assert.equal(aligned.state, "verified");
   assert.equal(check(aligned.validation, "no_fanout").planKind, "aggregate_then_align");
@@ -355,7 +353,6 @@ function salesQuery(metric: string) {
     time: absoluteTime(),
     sort: [],
     limit: 20,
-    parameters: {},
   };
 }
 

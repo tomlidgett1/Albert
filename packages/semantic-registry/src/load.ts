@@ -10,6 +10,7 @@ import {
 
 export {
   buildRegistry,
+  generateCanonicalSchemaDoc,
   generateRegistryDocumentation,
   parseRegistryDocument,
   registryDigest,

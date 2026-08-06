@@ -48,6 +48,9 @@ export type FactScopeBinding = Readonly<{
   whereText?: string;
   /** True when the scope joins only relations the registry fully vouches for. */
   staticallyClean: boolean;
+  /** True when the scope's FROM references a CTE or derived table, which the
+   * canary cannot re-execute out of context. */
+  referencesDerived: boolean;
 }>;
 
 export type SqlFirstLintResult = Readonly<{
@@ -55,8 +58,15 @@ export type SqlFirstLintResult = Readonly<{
   violations: readonly SqlLintViolation[];
   factScopes: readonly FactScopeBinding[];
   referencedFactIds: readonly string[];
+  /** Facts whose declared fields are summed anywhere in the statement. */
+  summedFactIds: readonly string[];
   /** Minimum evidence tier across every fact the statement touched. */
   minimumFactTier: number;
+  /** Ordering and limit written at the statement's outermost level. */
+  resultOrdering: Readonly<{
+    orderBy: readonly Readonly<{ column: string; direction: "asc" | "desc" }>[];
+    limit?: number;
+  }>;
 }>;
 
 type FactBinding = Readonly<{ fact: FactModel; alias: string }>;
@@ -89,6 +99,7 @@ export function lintSqlFirstStatement(
   const factScopes: FactScopeBinding[] = [];
   const snapshotAggregates: { factId: string; field: string; operation: string }[] = [];
   const aggregatedColumnsByFact = new Map<string, Set<string>>();
+  const summedFactIds = new Set<string>();
   const derivedScopeGroupKeys = new Map<string, readonly ColumnRef[]>();
 
   for (const scope of surface.scopes) {
@@ -99,6 +110,16 @@ export function lintSqlFirstStatement(
     lintScope(scope, bindings, registry, violations, joins, snapshotAggregates, aggregatedColumnsByFact, dimensionTables);
 
     for (const binding of bindings) {
+      for (const aggregate of scope.aggregates) {
+        if (aggregate.fn !== "sum") continue;
+        const byAlias = new Map(bindings.map((item) => [item.alias, item]));
+        for (const column of aggregate.columns) {
+          const owner = column.qualifier ? byAlias.get(column.qualifier) : (bindings.length === 1 ? binding : undefined);
+          if (owner?.fact.id === binding.fact.id && binding.fact.fields.includes(column.column)) {
+            summedFactIds.add(binding.fact.id);
+          }
+        }
+      }
       factScopes.push(Object.freeze({
         factId: binding.fact.id,
         table: binding.fact.table,
@@ -107,6 +128,7 @@ export function lintSqlFirstStatement(
         ...(scope.fromText !== undefined ? { fromText: scope.fromText } : {}),
         ...(scope.whereText !== undefined ? { whereText: scope.whereText } : {}),
         staticallyClean: scopeIsStaticallyClean(scope, bindings, factsByTable, dimensionTables),
+        referencesDerived: scope.relations.some((relation) => relation.derived),
       }));
     }
   }
@@ -147,6 +169,7 @@ export function lintSqlFirstStatement(
   const minimumFactTier = referencedFactIds.length === 0
     ? 0
     : Math.min(...referencedFactIds.map((factId) => registry.facts.get(factId)?.evidenceTier ?? 0));
+  const outerScope = surface.scopes.find((scope) => scope.name === "");
 
   return Object.freeze({
     evidence: Object.freeze({
@@ -159,7 +182,12 @@ export function lintSqlFirstStatement(
     violations: Object.freeze(violations),
     factScopes: Object.freeze(factScopes),
     referencedFactIds: Object.freeze(referencedFactIds),
+    summedFactIds: Object.freeze([...summedFactIds].sort()),
     minimumFactTier,
+    resultOrdering: Object.freeze({
+      orderBy: Object.freeze((outerScope?.orderBy ?? []).map((item) => Object.freeze({ ...item }))),
+      ...(outerScope?.limit !== undefined ? { limit: outerScope.limit } : {}),
+    }),
   });
 }
 

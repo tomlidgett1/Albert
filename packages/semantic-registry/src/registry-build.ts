@@ -61,6 +61,37 @@ export function generateRegistryDocumentation(document: RegistryDocument): strin
   return `# Semantic registry ${document.registryVersion}\n\nGenerated from the registry. Do not hand-edit counts.\n\n## Counts\n\n- Metrics: ${document.metrics.length}\n- Topics: ${document.topics.length}\n${counts}\n\n## Metrics\n\n${metrics}\n\n## Topics\n\n${topics}\n`;
 }
 
+/**
+ * The canonical model as the agent needs to see it before writing SQL: every
+ * queryable fact table with its measures, keys, time axes, snapshot warnings
+ * and contracted dimension joins. Generated into the agent package so the
+ * conversation runtime, which is deliberately registry-blind at runtime, can
+ * still teach the model the schema. Regenerate with `npm run registry:write`.
+ */
+export function generateCanonicalSchemaDoc(document: RegistryDocument): string {
+  const lines: string[] = [];
+  for (const fact of document.facts) {
+    const attributes = fact.fields.filter((field) =>
+      !fact.measures.includes(field) && field !== "tenant_id");
+    lines.push(`${fact.table} — grain key ${fact.grainKey}, time ${fact.timeFields.join("/")}`);
+    if (fact.measures.length > 0) lines.push(`  measures: ${fact.measures.join(", ")}`);
+    lines.push(`  attributes: ${attributes.join(", ")}`);
+    if (fact.snapshotFields.length > 0) {
+      lines.push(`  point-in-time levels (never SUM across dates): ${fact.snapshotFields.join(", ")}`);
+    }
+    if (fact.joins.length > 0) {
+      lines.push(`  joins: ${fact.joins.map((join) =>
+        `${join.table} ON ${join.table.split(".")[1]}.${join.dimensionKey} = ${join.factKey} (${join.dimension}: ${Object.values(join.fields).join(", ")})`,
+      ).join("; ")}`);
+    }
+    if (fact.fansOut.length > 0) {
+      lines.push("  never joined raw to another fact table: aggregate each side in its own subquery first, or use the aligned mart");
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
 export function validateRegistry(document: RegistryDocument): void {
   assertUnique(document.metrics.map((metric) => metric.id), "metric");
   assertUnique(document.topics.map((topic) => topic.id), "topic");

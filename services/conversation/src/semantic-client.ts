@@ -54,7 +54,7 @@ export class SemanticServiceClient {
       body,
       secret: this.signingSecret,
     });
-    const timeoutMs = name === "run_semantic_query" || name === "run_source_query"
+    const timeoutMs = name === "run_semantic_query" || name === "run_source_query" || name === "run_sql"
       ? 37_000
       : name === "search_catalogue" ? 14_000 : 10_000;
     const timeoutSignal=AbortSignal.timeout(timeoutMs);

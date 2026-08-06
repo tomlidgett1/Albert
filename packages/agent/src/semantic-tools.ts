@@ -22,6 +22,7 @@ export const REMOTE_SEMANTIC_AGENT_TOOL_NAMES = [
   "list_field_values",
   "run_semantic_query",
   "run_source_query",
+  "run_sql",
   "run_exploratory_sql",
   "get_data_health",
   "remember",
@@ -247,10 +248,39 @@ export const semanticToolInputSchemas = Object.freeze({
   run_semantic_query: semanticQueryToolInputSchema,
   run_source_query: sourceQuerySpecSchema,
   /**
-   * Model-authored read-only SQL, for questions no governed metric expresses.
-   * Safety does not rest on this schema: the statement runs READ ONLY as
-   * semantic_ro under row level security, so it can neither write nor see
-   * another tenant. See services/semantic-query/src/exploratory-sql.ts.
+   * The primary analytical instrument: model-authored SQL over the canonical
+   * model. Safety does not rest on this schema — the statement runs READ ONLY
+   * as semantic_ro under row level security, so it can neither write nor see
+   * another tenant (see services/semantic-query/src/exploratory-sql.ts).
+   * Correctness rests on what surrounds execution: the registry linter
+   * rejects known-fatal shapes before the statement runs, a runtime canary
+   * proves the join tree preserved fact grain, and each declared claim is
+   * attested against the governed metric contract it names. A claim that
+   * matches earns Verified; a divergent claim is Qualified with both numbers;
+   * no claims means the figures are Exploratory.
+   */
+  run_sql: z.object({
+    sql: z.string().trim().min(1).max(8_000),
+    purpose: z.string().trim().min(1).max(300),
+    /**
+     * Claims tie output columns to governed concepts, and are what makes a
+     * SQL answer certifiable. The window and filters scope the attestation
+     * re-statement, so they must describe the same population the SQL reads.
+     */
+    claims: z.array(z.object({
+      metricId: z.string().regex(/^[a-z_]+\.[a-z0-9_]+$/),
+      column: z.string().regex(/^[a-z_][a-z0-9_]*$/),
+    }).strict()).max(8).default([]),
+    time: z.object({
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }).strict().optional(),
+    filters: z.array(queryFilterSchema).max(10).default([]),
+    limit: z.number().int().min(1).max(500).default(200),
+  }).strict(),
+  /**
+   * Deprecated alias of run_sql without claims: read-only SQL whose result is
+   * always Exploratory. Retired once every caller declares claims.
    */
   run_exploratory_sql: z.object({
     sql: z.string().trim().min(1).max(8_000),
@@ -473,6 +503,10 @@ export type SemanticToolOutputMap = {
     state: "Exploratory";
     authorityWarning?: string;
     promotionCandidateId: string;
+  }>;
+  run_sql: GovernedResult & Readonly<{
+    /** Derived from attestation outcome and the evidence tier touched. */
+    state: "Verified" | "Qualified" | "Exploratory" | "Unavailable";
   }>;
   run_exploratory_sql: GovernedResult & Readonly<{
     state: "Exploratory";

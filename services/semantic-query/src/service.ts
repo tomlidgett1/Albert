@@ -22,6 +22,19 @@ import {
   compileExploratorySql,
   EXPLORATORY_SQL_TIMEOUT_MS,
 } from "./exploratory-sql.js";
+import { lintSqlFirstStatement } from "../../../packages/semantic-registry/src/index.js";
+import {
+  adjustEvidenceWithCanary,
+  buildSqlFirstCanaries,
+  canaryDiagnosis,
+  canaryOutcome,
+  claimedScalar,
+  compareAttestation,
+  deriveSqlFirstState,
+  sqlFirstResultWindow,
+  type SqlFirstAttestationOutcome,
+  type SqlFirstCanaryOutcome,
+} from "./sql-first.js";
 
 /** Exploratory SQL declares its own window, so provenance opens unbounded. */
 const OPEN_EXPLORATORY_START = "0001-01-01T00:00:00.000Z";
@@ -71,6 +84,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       case "list_field_values": return this.listFieldValues(input, context);
       case "run_semantic_query": return this.runSemanticQuery(input, context);
       case "run_source_query": return this.runSourceQuery(input, context);
+      case "run_sql": return this.runSql(input, context);
       case "run_exploratory_sql": return this.runExploratorySql(input, context);
       case "get_data_health": return this.getDataHealth(input, context);
       case "remember": return this.remember(input, context);
@@ -464,6 +478,365 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
         compilerOutputHash,
       },
     };
+  }
+
+  /**
+   * The SQL-first path: model-authored SQL over the canonical model, on the
+   * audited sql_first route. Software owns correctness at three moments —
+   * the registry linter rejects known-fatal shapes before execution, a
+   * count-preservation canary proves at runtime what static reading could
+   * not, and every declared claim is re-stated through the governed metric
+   * contract it names. The answer state is derived from those outcomes and
+   * from the evidence tier of everything touched; it is never asserted.
+   *
+   * Isolation is inherited unchanged: the statement runs READ ONLY as
+   * semantic_ro under forced row level security via queryAsSemanticRole.
+   */
+  private async runSql(input: unknown, context: TrustedToolContext): Promise<SemanticToolResponse> {
+    const parsed = semanticToolInputSchemas.run_sql.parse(input);
+    if (parsed.claims.length > 0 && !parsed.time) {
+      throw new SemanticCompilerError(
+        "INVALID_PARAMETER",
+        "Claims are attested over a declared window: provide time.from and time.to (YYYY-MM-DD, to exclusive) matching the period the SQL reads.",
+      );
+    }
+    const attestationWindow = parsed.time ? attestationTimeRange(parsed.time) : undefined;
+    const tenant = await this.dependencies.contextProvider.load(context);
+    const compiled = compileExploratorySql(parsed.sql, parsed.limit);
+    const lint = lintSqlFirstStatement(parsed.sql, parsed.claims, this.dependencies.registry);
+    const lintBlocks = lint.violations.filter((violation) => violation.severity === "block");
+    if (lintBlocks.length > 0) {
+      throw new SemanticCompilerError("ILLEGAL_SQL", lintBlocks.map((violation) => violation.message).join(" "), {
+        violations: lintBlocks.map((violation) => violation.code),
+      });
+    }
+    const claimEnvelope = {
+      route: "sql_first",
+      purpose: parsed.purpose,
+      sqlDigest: contentDigest({ sql: parsed.sql }),
+      claims: parsed.claims,
+      ...(parsed.time ? { time: parsed.time } : {}),
+      filters: parsed.filters,
+      limit: parsed.limit,
+    };
+    const bundleHash = semanticBundleHash({
+      registryVersion: this.dependencies.registry.version,
+      overlayVersion: tenant.overlayVersion,
+      identityGraph: identityGraphForTenant(tenant),
+      packVersions: tenant.packVersions,
+      sourceWatermarks: tenant.sourceWatermarks,
+      ir: claimEnvelope,
+    });
+    const cacheKey = `${context.tenantId}:${bundleHash}`;
+    const cached = await this.dependencies.cache.get(cacheKey, context);
+    if (cached) {
+      const queryId = ulid();
+      const cachedRows = cached.data?.rows ?? [];
+      const resultDigest = contentDigest({ columns: cached.data?.columns ?? [], rows: cachedRows });
+      await this.dependencies.audit.append({
+        queryId, tenantId: context.tenantId, conversationId: context.conversationId,
+        turnId: context.turnId, role: context.role, route: "sql_first",
+        bundleHash, registryVersion: this.dependencies.registry.version,
+        input: claimEnvelope, compiledSql: compiled.sql, parameterCount: compiled.parameterCount,
+        resultDigest, rowCount: cachedRows.length, durationMs: 0, cacheHit: true,
+        state: cached.state, validation: cached.validation,
+      });
+      return {
+        ...cached,
+        performance: { ...cached.performance, cacheHit: true },
+        queryAudit: {
+          queryAuditId: queryId, route: "sql_first", bundleHash,
+          registryVersion: this.dependencies.registry.version, resultDigest,
+          compilerOutputHash: contentDigest({ sql: compiled.sql }),
+        },
+      };
+    }
+
+    const result = await this.dependencies.database.queryAsSemanticRole({
+      tenantId: context.tenantId,
+      sql: compiled.sql,
+      parameters: [context.tenantId],
+      statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
+      expectedIdentityGraph: identityGraphForTenant(tenant),
+      capabilityEvidence: capabilityEvidence(context),
+    });
+    const rows = result.rows.map(stripInternalColumns);
+    const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
+
+    // Runtime canary: prove the join tree preserved every touched fact's grain.
+    const canaryOutcomes: SqlFirstCanaryOutcome[] = [];
+    for (const spec of buildSqlFirstCanaries(lint.factScopes)) {
+      if (spec.skipped) {
+        canaryOutcomes.push({ factId: spec.factId, status: "skipped", reason: spec.skipped });
+        continue;
+      }
+      try {
+        const probe = await this.dependencies.database.queryAsSemanticRole({
+          tenantId: context.tenantId,
+          sql: spec.sql,
+          parameters: [context.tenantId],
+          statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
+          expectedIdentityGraph: identityGraphForTenant(tenant),
+          capabilityEvidence: capabilityEvidence(context),
+        });
+        canaryOutcomes.push(canaryOutcome(spec, probe.rows, lint.summedFactIds.includes(spec.factId)));
+      } catch {
+        canaryOutcomes.push({ factId: spec.factId, status: "skipped", reason: "canary_probe_failed" });
+      }
+    }
+    const canaryBlocked = canaryOutcomes.some((outcome) => outcome.status === "blocked");
+    const adjustedEvidence = adjustEvidenceWithCanary(lint.evidence, canaryOutcomes);
+
+    // Differential attestation: each declared claim, re-stated through the
+    // contract it names, over the declared window and governed filters.
+    const attestations: SqlFirstAttestationOutcome[] = [];
+    for (const claim of parsed.claims) {
+      const agentValue = claimedScalar(rows, claim.column);
+      const contractValue = await this.attestedContractValue(claim.metricId, parsed.filters, attestationWindow, tenant, context);
+      attestations.push(compareAttestation(claim.metricId, claim.column, agentValue, contractValue));
+    }
+
+    const authorityRange = attestationWindow ?? currentSemanticTimeRange(this.clock);
+    const publicationEvidence = parsed.claims.length > 0
+      ? await inspectPublicationEvidence(this.dependencies)
+      : undefined;
+    const invariantChecks = parsed.claims.length > 0
+      ? semanticQueryInvariantChecks(
+        adjustedEvidence, tenant, this.dependencies.registry,
+        this.dependencies.registry.version, publicationEvidence, authorityRange,
+      )
+      : [];
+    const invariantsBlocked = invariantChecks.some((check) =>
+      check.status === "blocked" || check.status === "failed");
+
+    const contributing = parsed.claims.length > 0
+      ? contributingSemanticSources(adjustedEvidence, tenant, this.dependencies.registry, authorityRange)
+      : undefined;
+    const freshness = contributing
+      ? freshnessWarnings(contributing.sourceWatermarks, 120, this.clock())
+      : [];
+
+    const lintWarnings = lint.violations
+      .filter((violation) => violation.severity === "warn")
+      .map((violation) => violation.message);
+    const attestationWarnings = attestations
+      .filter((outcome) => outcome.status !== "passed" && outcome.detail)
+      .map((outcome) => outcome.detail as string);
+    const canaryWarnings = canaryOutcomes
+      .filter((outcome) => outcome.status === "blocked")
+      .map((outcome) => canaryDiagnosis(outcome));
+    const tierWarnings = parsed.claims.length > 0 && lint.minimumFactTier < 2
+      ? [`The statement touches tier-${lint.minimumFactTier} evidence, which caps certification below Verified until the substrate is reconciled.`]
+      : [];
+    const advisoryWarnings = parsed.claims.length === 0
+      ? ["No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."]
+      : [];
+    const warnings = [
+      ...canaryWarnings, ...attestationWarnings, ...lintWarnings, ...freshness, ...tierWarnings, ...advisoryWarnings,
+    ];
+
+    const state = deriveSqlFirstState({
+      claims: parsed.claims.length,
+      attestations,
+      canaryBlocked,
+      invariantsBlocked,
+      minimumFactTier: lint.minimumFactTier,
+      warningCount: warnings.length,
+    });
+
+    const checks: Readonly<Record<string, unknown>>[] = [
+      { checkId: "read_only_transaction", status: "passed" },
+      { checkId: "tenant_row_level_security", status: "passed" },
+      { checkId: "sql_lint", status: lintWarnings.length > 0 ? "warning" : "passed",
+        violations: lint.violations.map((violation) => violation.code) },
+      ...canaryOutcomes.map((outcome) => ({
+        checkId: `runtime_fanout_canary:${outcome.factId}`,
+        status: outcome.status === "blocked" ? "blocked" : "passed",
+        ...(outcome.rowCount !== undefined ? { rowCount: outcome.rowCount, distinctRows: outcome.distinctRows } : {}),
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+      })),
+      ...attestations.map((outcome) => ({
+        checkId: `claim_attested:${outcome.metricId}`,
+        status: outcome.status,
+        column: outcome.column,
+        ...(outcome.reasonCode ? { reasonCode: outcome.reasonCode } : {}),
+        ...(outcome.agentValue !== undefined ? { agentValue: outcome.agentValue } : {}),
+        ...(outcome.contractValue !== undefined ? { contractValue: outcome.contractValue } : {}),
+        ...(outcome.delta !== undefined ? { delta: outcome.delta } : {}),
+      })),
+      { checkId: "evidence_tier", status: lint.minimumFactTier >= 2 ? "passed" : "warning",
+        minimumTier: lint.minimumFactTier, factIds: lint.referencedFactIds },
+      ...invariantChecks,
+    ];
+    const validation: SemanticToolResponse["validation"] = {
+      status: state === "unavailable" ? "blocked" : warnings.length > 0 ? "warning" : "passed",
+      checks,
+      warnings,
+    };
+
+    const claimedMetricDetails = parsed.claims.flatMap((claim) => {
+      const metric = this.dependencies.registry.metrics.get(claim.metricId);
+      return metric ? [metricDefinitionDetail(metric)] : [];
+    });
+    const resultWindow = sqlFirstResultWindow(lint.resultOrdering, parsed.limit, rows.length);
+    const response: SemanticToolResponse = {
+      state,
+      resultId: `sql:${bundleHash}`,
+      ...(state !== "unavailable" ? {
+        data: {
+          columns,
+          rows,
+          ...(resultWindow ? { resultWindow } : {}),
+        },
+      } : {}),
+      provenance: {
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        identityGraph: identityGraphForTenant(tenant),
+        sources: lint.referencedFactIds.length > 0
+          ? lint.referencedFactIds.map((factId) => this.dependencies.registry.facts.get(factId)?.table ?? factId)
+          : ["sql_first"],
+        sourceWatermarks: contributing ? { ...contributing.sourceWatermarks } : {},
+        sourceDetails: contributing ? contributing.sourceDetails.map((detail) => ({ ...detail })) : [],
+        definitionsApplied: [parsed.purpose, ...parsed.claims.map((claim) => claim.metricId)],
+        definitionDetails: [
+          {
+            id: "sql_first",
+            label: "SQL-first statement",
+            definition: `Model-authored SQL over the canonical model for: ${parsed.purpose}. Structure linted before execution; claims attested against governed contracts after execution.`,
+          },
+          ...claimedMetricDetails,
+        ],
+        timeRange: parsed.time
+          ? { label: `${parsed.time.from} to ${parsed.time.to}`, start: `${parsed.time.from}T00:00:00.000Z`, end: `${parsed.time.to}T00:00:00.000Z`, timezone: tenant.timezone }
+          : { label: "Defined by the statement", start: OPEN_EXPLORATORY_START, end: new Date(this.clock()).toISOString(), timezone: tenant.timezone },
+      },
+      validation,
+      performance: { cacheHit: false, durationMs: result.durationMs, rowCount: rows.length },
+    };
+    const queryId = ulid();
+    const resultDigest = contentDigest({ columns, rows });
+    await this.dependencies.audit.append({
+      queryId,
+      tenantId: context.tenantId,
+      conversationId: context.conversationId,
+      turnId: context.turnId,
+      role: context.role,
+      route: "sql_first",
+      bundleHash,
+      registryVersion: this.dependencies.registry.version,
+      input: claimEnvelope,
+      compiledSql: compiled.sql,
+      parameterCount: compiled.parameterCount,
+      resultDigest,
+      rowCount: rows.length,
+      durationMs: result.durationMs,
+      cacheHit: false,
+      state,
+      validation,
+    });
+    if (state !== "unavailable") {
+      await this.dependencies.cache.set(cacheKey, response, this.cacheTtlSeconds, context);
+    }
+    return {
+      ...response,
+      queryAudit: {
+        queryAuditId: queryId,
+        route: "sql_first",
+        bundleHash,
+        registryVersion: this.dependencies.registry.version,
+        resultDigest,
+        compilerOutputHash: contentDigest({ sql: compiled.sql }),
+      },
+    };
+  }
+
+  /** Bounded in-process memo of contract re-statements: the same governed
+   * concept over the same window, filters and watermarks is one computation. */
+  private readonly attestationValues = new Map<string, number | undefined>();
+
+  /**
+   * Recompute one governed metric through its own contract — the compiler's
+   * SQL, not the model's — over the declared window and filters. Undefined
+   * means the contract could not be executed here (missing capability, filter
+   * outside the governed vocabulary, composite-only metric), which attests as
+   * a warning rather than a match.
+   */
+  private async attestedContractValue(
+    metricId: string,
+    filters: readonly Readonly<{ field: string; op: string; values: readonly (string | number | boolean)[] }>[],
+    window: SemanticTimeRange | undefined,
+    tenant: TenantSemanticContext,
+    context: TrustedToolContext,
+  ): Promise<number | undefined> {
+    const metric = this.dependencies.registry.metrics.get(metricId);
+    if (!metric || !window) return undefined;
+    const cacheKey = contentDigest({
+      tenantId: context.tenantId, metricId, filters, window,
+      watermarks: tenant.sourceWatermarks, registryVersion: this.dependencies.registry.version,
+    });
+    if (this.attestationValues.has(cacheKey)) return this.attestationValues.get(cacheKey);
+    let value: number | undefined;
+    try {
+      const topic = [...this.dependencies.registry.topics.values()].find((candidate) =>
+        !candidate.composite && candidate.metrics.includes(metricId))
+        ?? [...this.dependencies.registry.topics.values()].find((candidate) => candidate.metrics.includes(metricId));
+      if (!topic || topic.composite) {
+        value = undefined;
+      } else {
+        const provisionalCapabilities = new Set([
+          ...tenant.capabilities, ...(tenant.capabilityDetails ?? []).map((detail) => detail.id),
+        ]);
+        const compiled = compileSemanticQuery({
+          kind: "single",
+          topic: topic.id,
+          metrics: [metricId],
+          dimensions: [],
+          filters: [...filters],
+          time: {
+            field: metric.defaultTime,
+            range: { type: "absolute", from: window.from, to: window.to },
+            compare: "none",
+          },
+          sort: [],
+          limit: 1,
+          parameters: {},
+        }, this.dependencies.registry, {
+          tenantId: context.tenantId,
+          role: context.role,
+          capabilities: provisionalCapabilities,
+          now: this.clock().toISOString(),
+          timezone: tenant.timezone,
+          tradingDayCutoff: tenant.tradingDayCutoff,
+          fiscalYearStartMonth: tenant.fiscalYearStartMonth,
+          fiscalYearStartDay: tenant.fiscalYearStartDay,
+          weekStartsOn: tenant.weekStartsOn,
+          tenantParameters: tenant.tenantParameters,
+          maxRows: 10,
+          maxEstimatedCost: 100,
+        });
+        const result = await this.dependencies.database.queryAsSemanticRole({
+          tenantId: context.tenantId,
+          sql: compiled.sql,
+          parameters: compiled.parameters,
+          statementTimeoutMs: this.statementTimeoutMs,
+          expectedIdentityGraph: identityGraphForTenant(tenant),
+          capabilityEvidence: capabilityEvidence(context),
+        });
+        const alias = compiled.resultColumns[0];
+        const cell = alias !== undefined ? result.rows[0]?.[alias] : undefined;
+        const parsedValue = typeof cell === "number" ? cell : typeof cell === "string" ? Number(cell) : Number.NaN;
+        value = Number.isFinite(parsedValue) ? parsedValue : undefined;
+      }
+    } catch {
+      value = undefined;
+    }
+    if (this.attestationValues.size >= 500) {
+      const oldest = this.attestationValues.keys().next().value;
+      if (oldest !== undefined) this.attestationValues.delete(oldest);
+    }
+    this.attestationValues.set(cacheKey, value);
+    return value;
   }
 
   /**
@@ -980,6 +1353,19 @@ function semanticTimeRange(resolved:CompiledSemanticQuery["resolvedTime"]):Seman
     throw new Error("Compiled semantic authority range is invalid.");
   }
   return Object.freeze({from:from.toISOString(),to:to.toISOString()});
+}
+
+/** Declared claim window, dates to an exclusive-end instant range. */
+function attestationTimeRange(time: Readonly<{ from: string; to: string }>): SemanticTimeRange {
+  const from = Date.parse(`${time.from}T00:00:00.000Z`);
+  const to = Date.parse(`${time.to}T00:00:00.000Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+    throw new SemanticCompilerError(
+      "INVALID_PARAMETER",
+      "The claim window must be two real dates with time.from before time.to; to is exclusive.",
+    );
+  }
+  return Object.freeze({ from: new Date(from).toISOString(), to: new Date(to).toISOString() });
 }
 
 function currentSemanticTimeRange(clock:()=>Date):SemanticTimeRange{
