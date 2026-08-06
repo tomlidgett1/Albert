@@ -14,7 +14,9 @@ const directStorageBucketMutation = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+
 
 async function migration(id: string) {
   const sql = await readFile(new URL(id, migrationDirectory), "utf8");
-  const transaction = /^\s*BEGIN;\s*([\s\S]*?)\s*COMMIT;\s*$/iu.exec(sql);
+  // A comment prologue before BEGIN; is legal: scripts/migrate.ts strips it
+  // before asserting the single explicit transaction, and this must match.
+  const transaction = /^(?:\s*--[^\n]*\n)*\s*BEGIN;\s*([\s\S]*?)\s*COMMIT;\s*$/iu.exec(sql);
   assert.ok(transaction, `${id} must remain a single explicit transaction`);
   return Object.freeze({
     id,
