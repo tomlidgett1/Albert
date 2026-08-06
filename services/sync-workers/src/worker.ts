@@ -641,6 +641,12 @@ export class SyncJobProcessor {
               ? connector.incremental_sync(context, stream, nextCursor)
               : connector.initial_sync(context, stream, backfillJob.range, nextCursor),
           );
+          // The rejection stays unobserved until the post-landing await, which
+          // is macrotasks away; without a handler attached now, Node treats a
+          // fast prefetch failure as an unhandled rejection and exits the
+          // Machine, killing every in-flight lane. The real await still
+          // receives the original rejection.
+          prefetchPromise.catch(() => undefined);
         } else {
           prefetchPromise = null;
         }
@@ -871,6 +877,17 @@ export class SyncJobProcessor {
         await this.control.recordConnectionAuthHealth(claim, authHealth).catch(() => undefined);
       }
       const failure = syncFailure(error);
+      // sync_runs keeps only the mapped code; without this line the vendor's
+      // actual complaint (which endpoint, which relations, which HTTP status)
+      // exists nowhere an operator can read it.
+      console.error("Albert sync stream failure", {
+        stream: job.stream ?? null,
+        jobType: job.type,
+        code: failure.code,
+        message: error instanceof Error ? error.message : String(error),
+        details: (error as { details?: unknown })?.details ?? null,
+        status: (error as { status?: unknown })?.status ?? null,
+      });
       if (
         failure.code === "capability_unavailable" &&
         job.type === "ReconciliationSweep" &&

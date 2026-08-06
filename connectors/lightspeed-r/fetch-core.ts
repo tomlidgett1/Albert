@@ -155,6 +155,16 @@ export function resolvePath(record: unknown, path: string): unknown[] {
 }
 
 /**
+ * Relations the vendor legitimately omits from every record of a page when no
+ * related entity exists, observed live rather than assumed. CreditAccount:
+ * this account's credit accounts are all gift cards, and a bare `Contact`
+ * request (no nested paths, so no silent-drop ambiguity) still returned no
+ * Contact key on any record — gift cards simply have no contact person. A
+ * sparse member stages zero rows from that parent, which is the true state.
+ */
+const SPARSE_RELATIONS: ReadonlySet<string> = new Set(["CreditAccount.Contact"]);
+
+/**
  * Assert that every requested relation actually came back. Without this a
  * silent fallback to a relation-free request produces a successful walk and
  * empty child tables, which is far worse than a loud failure.
@@ -174,7 +184,8 @@ export function assertRelationsPresent(
     ...new Set(
       group.members
         .filter((m) => m.projection === "nested" && m.projectFrom)
-        .map((m) => m.projectFrom!.split(".")[0]),
+        .map((m) => m.projectFrom!.split(".")[0])
+        .filter((root) => !SPARSE_RELATIONS.has(`${group.resource}.${root}`)),
     ),
   ];
   if (required.length === 0) return;
