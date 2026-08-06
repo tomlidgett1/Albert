@@ -6,7 +6,7 @@ import {
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 
-const CONNECTOR_PROVIDERS = ["lightspeed-r", "xero", "deputy"] as const;
+const CONNECTOR_PROVIDERS = ["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const;
 export type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
 
 /**
@@ -52,6 +52,24 @@ export type SyncWorkerConfig = Readonly<{
   deputyClientId: string;
   deputyClientSecret: string;
   deputyRedirectUri: string;
+  squareClientId: string;
+  squareClientSecret: string;
+  squareRedirectUri: string;
+  shopifyClientId: string;
+  shopifyClientSecret: string;
+  shopifyRedirectUri: string;
+  stripeClientId: string;
+  stripeSecretKey: string;
+  stripeRedirectUri: string;
+  momenceClientId: string;
+  momenceClientSecret: string;
+  momenceRedirectUri: string;
+  metaAdsClientId: string;
+  metaAdsClientSecret: string;
+  metaAdsRedirectUri: string;
+  googleAdsClientId: string;
+  googleAdsClientSecret: string;
+  googleAdsRedirectUri: string;
   mappingVersion: string;
   workerId: string;
   workerConcurrency: number;
@@ -60,6 +78,10 @@ export type SyncWorkerConfig = Readonly<{
   port: number;
   metricsPort: number;
 }>;
+
+function optionalSecret(source: Readonly<Record<string, string | undefined>>, key: string): string {
+  return source[key]?.trim() ?? "";
+}
 
 function required(source: NodeJS.ProcessEnv, name: string): string {
   const value = source[name]?.trim();
@@ -121,7 +143,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   ) {
     throw new Error("ALBERT_PUBLIC_ORIGIN must be a clean public origin.");
   }
-  const redirectValues = ["lightspeed", "xero", "deputy"].map((provider) =>
+  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
     new URL(`/api/oauth/${provider}/callback`, publicOrigin).toString()
   );
   const port = Number(source.PORT ?? "8080");
@@ -195,6 +217,28 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     deputyClientId: required(source, "DEPUTY_CLIENT_ID"),
     deputyClientSecret: required(source, "DEPUTY_CLIENT_SECRET"),
     deputyRedirectUri: redirectValues[2]!,
+    // The authorization-only providers are optional at startup: a provider
+    // without credentials is simply not offered, and requesting it fails with
+    // a named error at the factory. Making these required would brick the
+    // whole sync fleet over connectors no tenant can use yet.
+    squareClientId: optionalSecret(source, "SQUARE_CLIENT_ID"),
+    squareClientSecret: optionalSecret(source, "SQUARE_CLIENT_SECRET"),
+    squareRedirectUri: redirectValues[3]!,
+    shopifyClientId: optionalSecret(source, "SHOPIFY_CLIENT_ID"),
+    shopifyClientSecret: optionalSecret(source, "SHOPIFY_CLIENT_SECRET"),
+    shopifyRedirectUri: redirectValues[4]!,
+    stripeClientId: optionalSecret(source, "STRIPE_CLIENT_ID"),
+    stripeSecretKey: optionalSecret(source, "STRIPE_SECRET_KEY"),
+    stripeRedirectUri: redirectValues[5]!,
+    momenceClientId: optionalSecret(source, "MOMENCE_CLIENT_ID"),
+    momenceClientSecret: optionalSecret(source, "MOMENCE_CLIENT_SECRET"),
+    momenceRedirectUri: redirectValues[6]!,
+    metaAdsClientId: optionalSecret(source, "META_ADS_CLIENT_ID"),
+    metaAdsClientSecret: optionalSecret(source, "META_ADS_CLIENT_SECRET"),
+    metaAdsRedirectUri: redirectValues[7]!,
+    googleAdsClientId: optionalSecret(source, "GOOGLE_ADS_CLIENT_ID"),
+    googleAdsClientSecret: optionalSecret(source, "GOOGLE_ADS_CLIENT_SECRET"),
+    googleAdsRedirectUri: redirectValues[8]!,
     mappingVersion,
     workerId,
     workerConcurrency,
