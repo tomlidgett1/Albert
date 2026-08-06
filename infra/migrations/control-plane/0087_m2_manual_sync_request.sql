@@ -1,3 +1,5 @@
+BEGIN;
+
 -- Manual sync request path.
 --
 -- Until now there was no way for an owner to ask for a sync: the Connections
@@ -53,7 +55,7 @@ BEGIN
     JOIN control_plane.user_active_tenants AS active
       ON active.tenant_id = membership.tenant_id
      AND active.user_id = membership.user_id
-   WHERE membership.user_id = auth.uid()
+   WHERE membership.user_id = extensions.albert_auth_uid()
      AND membership.status = 'active'
    LIMIT 1;
 
@@ -135,7 +137,7 @@ BEGIN
     action, resource_type, resource_id, audit_metadata
   )
   VALUES (
-    v_tenant_id, control_plane.generate_ulid(), auth.uid(), 'user',
+    v_tenant_id, control_plane.generate_ulid(), extensions.albert_auth_uid(), 'user',
     'connection.manual_sync_requested', 'connection', p_connection_id,
     jsonb_build_object('syncRunId', v_run_id, 'connectorKey', v_connection.connector_key)
   );
@@ -147,7 +149,9 @@ $$;
 REVOKE ALL ON FUNCTION public.albert_request_manual_sync(text) FROM PUBLIC;
 -- Supabase grants EXECUTE on public functions to `anon` by default and that
 -- survives REVOKE ... FROM PUBLIC, so it must be revoked by name. The function
--- declines an anonymous caller anyway (auth.uid() is null), but an
+-- declines an anonymous caller anyway (extensions.albert_auth_uid() is null), but an
 -- unauthenticated role should not reach a sync-enqueue path at all.
 REVOKE ALL ON FUNCTION public.albert_request_manual_sync(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.albert_request_manual_sync(text) TO authenticated;
+
+COMMIT;
