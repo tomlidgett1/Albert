@@ -193,6 +193,7 @@ Constitutional rules:
 - "This year", "year to date" and "YTD" are materially ambiguous for this tenant: the financial year opens 1 July and the calendar year 1 January. When a question turns on where the year starts — a year-to-date total, a full-year total, a year-so-far comparison — and the tenant has no confirmed calendar.year_basis in its defaults, ask calendar.financial_year / calendar.calendar_year with ask_user before running the query. Do not guess.
 - That fork does not apply when the question names its own period. A named month, quarter or date range is the same period on either basis: "July this year vs July last year" means July 2026 against July 2025 and needs no clarification. Words like "this year" that only locate a named month do not make a question year-scoped — run it.
 - Answer every part of a question you can, even when one part is impossible. A question with four asks and one unsupported metric is three answers and one honest gap, never a blank refusal. Run the governed queries for the supported parts first, then deal with the rest.
+- Degraded data health is a caveat, not a refusal. When get_data_health reports warnings or a blocked domain but a bounded window of data exists — a backfill in progress, history beyond a certain date still syncing — run the claimed query over the window that IS covered, give that figure, state the covered range plainly, and name what is still syncing. "Sales from 7 Jul to 6 Aug were $X (Qualified: history before 7 Jul is still syncing)" serves the owner; "I can't safely report a figure" when a month of clean data sits in the mart does not. Reserve Unavailable for when no bounded window can be answered at all.
 - If the data or capability is absent, return Unavailable and name exactly what would unlock the answer — but only after run_sql could not reach it either.
 - When no governed metric expresses what was asked — a median, a percentile, a distribution, a rank the registry has no metric for — run_sql still answers it: write the SELECT, and declare claims only for the output columns that do map to governed concepts. Figures carrying no attested claim are Exploratory, and the answer must say they came from an uncertified computation.
 - For inventory or coverage questions (what data we have, what is connected, what is ready), summarise catalogue Topics, capability gaps, connection health, and progressive coverage from tool results. Do not invent sales figures. Prefer Unavailable with a concrete unlock when no Topic is answerable yet.
@@ -359,7 +360,7 @@ export function planningStepLabel(contract: PromptRouteContract | undefined): st
     case "unavailable":
       return `Checking whether ${contract.missingObservation} is observed`;
     default:
-      return "Planning the governed analysis";
+      return "Reading the canonical model";
   }
 }
 
@@ -372,7 +373,7 @@ export function planningStepDetail(contract: PromptRouteContract | undefined): s
     case "unavailable":
       return `Unlocked by a ${sanitizeTraceText(contract.unlock, 160)}`;
     default:
-      return "Matching the question to governed Topics, then checking source capabilities and data health before querying";
+      return "Resolving the question against the canonical model and governed metric contracts, then writing SQL with claims";
   }
 }
 
@@ -437,8 +438,8 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
         type: "progress",
         status: "running",
         stage: "catalogue",
-        label: "Searching the governed catalogue",
-        detail: "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults",
+        label: "Finding the governed concepts this question touches",
+        detail: "Locating the metric contracts and confirmed defaults the SQL and its claims will be attested against",
       });
       const catalogue = requireCatalogue(await context.semantic.execute("search_catalogue", input, context));
       context.supportingEvidence.value += 1;
@@ -451,8 +452,8 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
         status: "complete",
         stage: "catalogue",
         label: named.length > 0
-          ? `Matched ${named.length} governed Topic${named.length === 1 ? "" : "s"}`
-          : "No governed Topic matched this question",
+          ? `Found ${named.length} governed concept${named.length === 1 ? "" : "s"} to attest against`
+          : "No governed concept covers this question yet",
         ...(named.length > 0
           ? { detail: `${traceList(named, 4)}${answerable.length === 0 ? " · none answerable yet" : ""}` }
           : {}),
