@@ -631,7 +631,22 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
         label: input.claims.length > 0 ? "Running SQL with governed claims" : "Running SQL",
         detail: sanitizeTraceText(input.purpose, 160),
       });
-      const response = await context.semantic.execute("run_sql", input, context);
+      let response;
+      try {
+        response = await context.semantic.execute("run_sql", input, context);
+      } catch (error) {
+        // The SDK hands a thrown tool error to the model and nothing else —
+        // no trace event, no service log, nothing an operator can read. The
+        // QA battery burned four cases on a failure class that was invisible
+        // precisely because of this gap. One line makes it diagnosable.
+        console.error("Albert run_sql tool failure", {
+          turnId: context.turnId,
+          purpose: sanitizeTraceText(input.purpose, 120),
+          claims: input.claims.length,
+          error: error instanceof Error ? error.message.slice(0, 400) : String(error).slice(0, 400),
+        });
+        throw error;
+      }
       if (response.state === "unavailable" || response.validation.status === "blocked" || !response.data) {
         context.evidence.push(response);
         if (response.queryAudit?.route === "sql_first") {
