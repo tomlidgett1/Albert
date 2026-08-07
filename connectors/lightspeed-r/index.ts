@@ -140,15 +140,14 @@ export class LightspeedRConnector implements OAuthConnectorPack {
         `Unsupported Lightspeed scope requested: ${unsupported.join(", ")}.`,
       );
     }
-    if (!request.codeChallenge) {
-      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed R-Series PKCE requires a code challenge.");
-    }
     return {
       url: buildLightspeedRAuthorizationUrl({
         clientId: this.config.clientId,
         state: request.state,
         redirectUri: request.redirectUri,
-        codeChallenge: request.codeChallenge,
+        // Confidential-client flow (bike-dashboard): omit PKCE unless a caller
+        // explicitly supplies a challenge.
+        ...(request.codeChallenge ? { codeChallenge: request.codeChallenge } : {}),
         scopes,
       }),
       expiresAt: new Date((this.config.now?.() ?? Date.now()) + 10 * 60_000).toISOString(),
@@ -158,26 +157,25 @@ export class LightspeedRConnector implements OAuthConnectorPack {
   async exchange_authorization_code(
     request: AuthorizationCodeExchange,
   ): Promise<OAuthExchangeResult> {
-    if (!request.codeVerifier) {
-      throw new ConnectorError("CONFIGURATION_INVALID", "Lightspeed R-Series PKCE requires the original code verifier.");
-    }
-    // Official R-Series examples post multipart form fields (`curl -F`). JSON is
-    // also documented, but live exchanges with redirect_uri + PKCE are pinned to
-    // the multipart shape from the Authorization Code Grant page.
-    const body = new FormData();
-    body.set("client_id", this.config.clientId);
-    body.set("client_secret", this.config.clientSecret);
-    body.set("grant_type", "authorization_code");
-    body.set("code", required(request.code, "Lightspeed authorization code"));
-    body.set("redirect_uri", required(request.redirectUri, "Lightspeed redirect URI"));
-    body.set("code_verifier", request.codeVerifier);
+    // Match bike-dashboard's live-working exchange: JSON body with redirect_uri,
+    // no PKCE verifier. Official docs also accept multipart; JSON is what Nest
+    // has used successfully for years against R-Series.
     const { value } = await requestJson<unknown>(
       this.fetcher,
       TOKEN_ENDPOINT,
       {
         method: "POST",
-        headers: { accept: "application/json" },
-        body,
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+          grant_type: "authorization_code",
+          code: required(request.code, "Lightspeed authorization code"),
+          redirect_uri: required(request.redirectUri, "Lightspeed redirect URI"),
+        }),
         signal: request.abortSignal,
       },
       this.config.retry,
@@ -514,13 +512,18 @@ export class LightspeedRConnector implements OAuthConnectorPack {
       } catch (error) {
         // A 404 on a stream's walk means the documented resource does not
         // exist for this account (plan-gated or absent) — observed live on
-        // reports, custom fields and currency denominations. That is an
-        // unavailable capability to record, not a transient vendor outage to
-        // retry every recovery sweep forever.
-        if (error instanceof ConnectorHttpError && error.status === 404) {
+        // reports, custom fields and currency denominations. A 403 is the
+        // same class: the endpoint exists but this account's grant does not
+        // reach it. Both are an unavailable capability to record — and a 403
+        // here must NOT be read as a credential failure, because the worker
+        // classifies connection-wide auth health from thrown HTTP statuses
+        // and one scope-gated endpoint kept flipping the whole connection to
+        // auth_health=error, which marks it authority-ineligible and blanks
+        // every commerce capability the agent can see.
+        if (error instanceof ConnectorHttpError && (error.status === 404 || error.status === 403)) {
           throw new ConnectorError(
             "CAPABILITY_UNAVAILABLE",
-            `The vendor endpoint ${path} does not exist for this account.`,
+            `The vendor endpoint ${path} is not available to this account (HTTP ${error.status}).`,
             { retryable: false, cause: error },
           );
         }
