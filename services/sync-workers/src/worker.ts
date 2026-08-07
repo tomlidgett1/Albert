@@ -25,7 +25,7 @@ import {
   type RawBatchRecord,
 } from "../../../packages/storage/src/index.js";
 import { AnalyticalLandingStore } from "./analytical-store.js";
-import type { ReconciliationTombstoneCandidate } from "./analytical-store.js";
+import type { LandingResult, ReconciliationTombstoneCandidate } from "./analytical-store.js";
 import {
   ControlPlaneStore,
   type PersistedConnectionAuthHealth,
@@ -654,38 +654,57 @@ export class SyncJobProcessor {
         operationSignal.throwIfAborted();
         // Kick raw upload, then await it before staging (upload overlaps the
         // prefetch started above on multipage backfills).
-        const rawUpload = this.rawWriter.write(
-          {
-            tenantId: pageJob.tenantId,
-            connectionId: pageJob.connectionId,
-            syncRunId: pageJob.syncRunId,
-            batchId: pageJob.batchId,
-            connectorKey: pageJob.connectorId,
-            connectorVersion: connector.version,
-            apiVersion: connector.apiVersion,
-            externalAccountReference: pageJob.externalAccountReference,
-            stream: stream.id,
-            extractedAt,
-            cursorStart: ("cursor" in pageJob ? pageJob.cursor : null) as JsonValue | null,
-            cursorEnd: currentPage.nextCursor as JsonValue | null,
-          },
-          currentPage.records.map(rawRecord),
-          { permitId: writePermitId!, workerId: claim.workerId },
-        );
-        const manifest = await rawUpload;
-        if (manifest.syncRunId !== pageJob.syncRunId) {
-          throw new Error("raw_batch_sync_run_lineage_mismatch");
+        //
+        // A mid-walk page that yields zero rows for this stream has nothing to
+        // make immutable and nothing to stage: the group leader's raw batches
+        // already retain the shared payloads. Skipping the manifest, landing
+        // and quality round-trips matters at scale — a sibling walk over 400
+        // empty pages paid ~15 minutes of pure bookkeeping for zero staged
+        // rows. The FINAL page always takes the full path (its quality row
+        // carries cursorComplete/backfillComplete evidence, FK-bound to a real
+        // manifest), and reconciliation phases land every page because their
+        // snapshots count empty pages as evidence.
+        const skippableEmptyPage = currentPage.records.length === 0 &&
+          currentPage.hasMore && job.type === "InitialBackfill";
+        let landing: LandingResult;
+        let batchObjectKey: string | null = null;
+        if (skippableEmptyPage) {
+          landing = Object.freeze({ stagedRecordCount: 0, quarantined: [], resolved: [] });
+        } else {
+          const rawUpload = this.rawWriter.write(
+            {
+              tenantId: pageJob.tenantId,
+              connectionId: pageJob.connectionId,
+              syncRunId: pageJob.syncRunId,
+              batchId: pageJob.batchId,
+              connectorKey: pageJob.connectorId,
+              connectorVersion: connector.version,
+              apiVersion: connector.apiVersion,
+              externalAccountReference: pageJob.externalAccountReference,
+              stream: stream.id,
+              extractedAt,
+              cursorStart: ("cursor" in pageJob ? pageJob.cursor : null) as JsonValue | null,
+              cursorEnd: currentPage.nextCursor as JsonValue | null,
+            },
+            currentPage.records.map(rawRecord),
+            { permitId: writePermitId!, workerId: claim.workerId },
+          );
+          const manifest = await rawUpload;
+          if (manifest.syncRunId !== pageJob.syncRunId) {
+            throw new Error("raw_batch_sync_run_lineage_mismatch");
+          }
+          if (manifest.batchId !== pageJob.batchId) {
+            // A crash-replayed page in this exact sync run resolved to its
+            // originally registered immutable batch. Rebind only the batch ID;
+            // cross-run reuse is forbidden by the manifest repository.
+            pageJob = Object.freeze({ ...pageJob, batchId: manifest.batchId });
+          }
+          await this.control.markLandingStarted(pageJob.tenantId, pageJob.batchId);
+          operationSignal.throwIfAborted();
+          batchObjectKey = manifest.objectKeys[0] ?? null;
+          landing = await withWriteFence((capability) =>
+            this.analytical.land(pageJob, manifest, currentPage.records, capability));
         }
-        if (manifest.batchId !== pageJob.batchId) {
-          // A crash-replayed page in this exact sync run resolved to its
-          // originally registered immutable batch. Rebind only the batch ID;
-          // cross-run reuse is forbidden by the manifest repository.
-          pageJob = Object.freeze({ ...pageJob, batchId: manifest.batchId });
-        }
-        await this.control.markLandingStarted(pageJob.tenantId, pageJob.batchId);
-        operationSignal.throwIfAborted();
-        const landing = await withWriteFence((capability) =>
-          this.analytical.land(pageJob, manifest, currentPage.records, capability));
         if (landing.resolved.length > 0) {
           await this.control.resolveQuarantineIndex({
             claim,
@@ -724,13 +743,15 @@ export class SyncJobProcessor {
               job, candidates: reconciliationCandidates,
             }, capability));
         }
-        await withWriteFence((capability) => this.analytical.recordConnectorStreamPage({
-          job: pageJob, stream: stream.id, records: currentPage.records, landing,
-          hasMore: currentPage.hasMore,
-          nextCursorPresent: currentPage.nextCursor !== null, backfillComplete,
-          coverage: completion.coverage,
-          ...(currentPage.sourceTotal === undefined ? {} : { sourceTotal: currentPage.sourceTotal }),
-        }, capability));
+        if (!skippableEmptyPage) {
+          await withWriteFence((capability) => this.analytical.recordConnectorStreamPage({
+            job: pageJob, stream: stream.id, records: currentPage.records, landing,
+            hasMore: currentPage.hasMore,
+            nextCursorPresent: currentPage.nextCursor !== null, backfillComplete,
+            coverage: completion.coverage,
+            ...(currentPage.sourceTotal === undefined ? {} : { sourceTotal: currentPage.sourceTotal }),
+          }, capability));
+        }
         if (capabilityObservationsForClaim === null) {
           capabilityObservationsForClaim = (await this.connectorOperation(
             operationSignal,
@@ -760,10 +781,11 @@ export class SyncJobProcessor {
           }),
         }, capability));
         if (landing.quarantined.length > 0) {
+          if (batchObjectKey === null) throw new Error("quarantine_requires_landed_batch");
           await this.control.recordQuarantineIndex({
             job: pageJob,
             stream: stream.id,
-            batchObjectKey: manifest.objectKeys[0],
+            batchObjectKey,
             records: landing.quarantined,
           });
         }

@@ -99,23 +99,31 @@ export function resolveStreamScan(stream: LightspeedStream): StreamScan {
   // The relation that carries this stream's rows, plus anything its own columns
   // resolve through. A leader needs none of the group's child relations.
   //
-  // Live-fire verdict on the union alternative: requesting the group's full
-  // relation union on every member (to make pages byte-identical for the page
-  // cache) pushed the vendor into its documented memory-exhaustion failure —
-  // Sale.json 500d under fifteen relations and Item.json started dropping
-  // relations silently, which the relation-presence guard rightly rejected.
-  // Narrowed requests are the correct trade: the page cache still serves
-  // retries and reconciliation re-walks, and the HTTP count stays inside the
-  // drip budget because each walk is small enough to actually succeed.
-  const own = new Set<string>();
-  if (member.projectFrom) own.add(member.projectFrom.split(".")[0] as string);
-  for (const relation of member.table.loadRelations) {
-    const root = relation.split(".")[0] as string;
-    // Keep a relation only when it hangs off the record this stream reads.
-    if (!member.projectFrom || relation.startsWith(`${member.projectFrom.split(".")[0]}.`)) {
-      own.add(relation);
-    } else if (!member.projectFrom) {
-      own.add(root);
+  // Every member of a group sends the IDENTICAL relation list: the union of
+  // each member's own needs. Byte-identical requests are what let sibling
+  // walks hit the page cache instead of the vendor — live fire showed each
+  // member independently re-walking the full parent history (400 Sale pages
+  // fetched to stage zero signature rows), a ~6x request multiplier on the
+  // biggest resources.
+  //
+  // This is NOT the fifteen-relation nested union that 500d Sale.json and made
+  // Item.json drop relations silently: that union carried every member's
+  // deep enrichment paths (Item, TaxClass, InventorySales expansions per
+  // line). The member-need union stays at bare projection roots plus the
+  // leader's own enrichments — for Sale exactly the Customer + SaleLines +
+  // SalePayments trio the 13-stream pack walked in production for months.
+  // The relation-presence guard still rejects any page where a requested
+  // root silently vanishes.
+  const shared = new Set<string>();
+  for (const sibling of group.members) {
+    if (sibling.projectFrom) shared.add(sibling.projectFrom.split(".")[0] as string);
+    for (const relation of sibling.table.loadRelations) {
+      // Keep a relation only when it hangs off the record that sibling reads.
+      if (!sibling.projectFrom) {
+        shared.add(relation);
+      } else if (relation.startsWith(`${sibling.projectFrom.split(".")[0]}.`)) {
+        shared.add(relation);
+      }
     }
   }
   // Parent-context columns resolve from the walked record itself and need no
@@ -125,7 +133,7 @@ export function resolveStreamScan(stream: LightspeedStream): StreamScan {
     table: member.table,
     fanOut: null,
     projectFrom: member.projectFrom,
-    relations: collapseRelations([...own]),
+    relations: collapseRelations([...shared]),
     extraParamSets: group.extraParamSets,
   };
 }

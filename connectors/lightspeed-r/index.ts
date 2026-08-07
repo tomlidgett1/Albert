@@ -464,9 +464,16 @@ export class LightspeedRConnector implements OAuthConnectorPack {
    * which is what keeps the widened manifest inside the one-drip-per-second
    * budget. Incremental walks carry per-stream watermarks in their filters,
    * so the cache pays off on backfill and reconciliation, where the volume is.
+   *
+   * The bounds must span one full group pass or the cache is decorative: the
+   * live account's Sale history is ~400 pages over ~17 minutes, and sibling
+   * walks run sequentially behind the leader. 40 entries with a 10-minute TTL
+   * meant every sibling missed and re-fetched the entire history from the
+   * vendor — the observed ~6x request multiplier. 600 entries at ~60KB of
+   * payload each is ~35MB, well inside the Machine's memory.
    */
-  private static readonly PAGE_CACHE_TTL_MS = 10 * 60 * 1000;
-  private static readonly PAGE_CACHE_MAX_ENTRIES = 40;
+  private static readonly PAGE_CACHE_TTL_MS = 60 * 60 * 1000;
+  private static readonly PAGE_CACHE_MAX_ENTRIES = 600;
   private readonly pageCache = new Map<string, { at: number; body: unknown }>();
 
   private async sync(
