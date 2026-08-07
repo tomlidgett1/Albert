@@ -201,6 +201,27 @@ const healthResponses = Object.freeze({
   }),
 });
 
+const rosterSql =
+  "SELECT w.worker_name AS worker, SUM(m.rostered_hours) AS rostered_hours FROM mart.workforce_day_worker_location m JOIN core.worker w ON w.worker_id = m.worker_id WHERE m.business_date = '2026-08-03' GROUP BY w.worker_name ORDER BY rostered_hours DESC";
+const performanceSql =
+  "SELECT a.worker_name AS worker, SUM(a.net_sales_ex_gst) AS net_sales_ex_gst, SUM(a.worked_hours) AS worked_hours, SUM(a.net_sales_ex_gst) / NULLIF(SUM(a.worked_hours), 0) AS sales_per_labour_hour FROM mart.workforce_sales_aligned a WHERE a.business_date >= '2026-02-03' AND a.business_date < '2026-08-04' GROUP BY a.worker_name ORDER BY net_sales_ex_gst DESC";
+const rosterSqlArgs = Object.freeze({
+  sql: rosterSql,
+  purpose: "Rostered hours by worker for today",
+  claims: [{ metricId: "workforce.rostered_hours", column: "rostered_hours" }],
+  time: { from: "2026-08-03", to: "2026-08-04" },
+  filters: [],
+  limit: 50,
+});
+const performanceSqlArgs = Object.freeze({
+  sql: performanceSql,
+  purpose: "Net sales and worked hours by worker over the confirmed period",
+  claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
+  time: { from: "2026-02-03", to: "2026-08-04" },
+  filters: [],
+  limit: 50,
+});
+
 const rosterQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
   kind: "single",
   topic: "workforce_labour",
@@ -341,7 +362,7 @@ const rosterResponse = response({
   },
   queryAudit: {
     queryAuditId: rosterQueryAuditId,
-    route: "semantic",
+    route: "sql_first",
     bundleHash,
     registryVersion: "2026-08-03.1",
     resultDigest: "c".repeat(64),
@@ -412,7 +433,7 @@ const performanceResponse = response({
   },
   queryAudit: {
     queryAuditId: performanceQueryAuditId,
-    route: "semantic",
+    route: "sql_first",
     bundleHash,
     registryVersion: "2026-08-03.1",
     resultDigest: "e".repeat(64),
@@ -543,14 +564,14 @@ function semanticClient(calls: SemanticCall[]) {
         if (domain === "workforce") return healthResponses.workforce;
         if (domain === "sales") return healthResponses.sales;
       }
-      if (name === "run_semantic_query") {
-        const parsed = semanticQueryIrSchema.parse(input);
-        if (parsed.kind === "single" && parsed.topic === "workforce_labour") {
-          assert.deepEqual(parsed, rosterQuery);
+      if (name === "run_sql") {
+        const sql = String(Reflect.get(input as object, "sql"));
+        if (sql.includes("workforce_day_worker_location")) {
+          assert.deepEqual(input, rosterSqlArgs);
           return rosterResponse;
         }
-        if (parsed.kind === "composite" && parsed.topic === "workforce_sales") {
-          assert.deepEqual(parsed, performanceQuery);
+        if (sql.includes("workforce_sales_aligned")) {
+          assert.deepEqual(input, performanceSqlArgs);
           return performanceResponse;
         }
       }
@@ -630,7 +651,7 @@ test("the flagship employee question clarifies once, then runs the governed comp
     toolStep("answer", 3, "get_capabilities", { topic: "workforce_sales" }),
     toolStep("answer", 4, "get_data_health", { domain: "workforce" }),
     toolStep("answer", 5, "get_data_health", { domain: "sales" }),
-    toolStep("answer", 6, "run_semantic_query", toolShapedQuery(rosterQuery)),
+    toolStep("answer", 6, "run_sql", rosterSqlArgs),
     toolStep("answer", 7, "publish_observation", {
       claim: {
         statement: "Worker Sam had Rostered hours of 8.0000.",
@@ -642,7 +663,7 @@ test("the flagship employee question clarifies once, then runs the governed comp
       },
       nextStep: "check_labour",
     }),
-    toolStep("answer", 8, "run_semantic_query", toolShapedQuery(performanceQuery)),
+    toolStep("answer", 8, "run_sql", performanceSqlArgs),
     toolStep("answer", 9, "publish_observation", {
       claim: {
         statement: "Worker Sam had the highest Net sales at 15000.0000.",
@@ -712,7 +733,7 @@ test("the flagship employee question clarifies once, then runs the governed comp
   const rosterTableIndex = eventIndex((event) => event.type === "table" && event.resultId === rosterResultId);
   const rosterValidationIndex = followUpEvents.findIndex((event, index) => index > rosterTableIndex && event.type === "validation");
   const rosterObservationIndex = followUpEvents.findIndex((event, index) => index > rosterValidationIndex && event.type === "narrative" && event.text.includes("Rostered hours"));
-  const compositeQueryIndex = followUpEvents.findIndex((event, index) => index > rosterObservationIndex && event.type === "query" && event.topic === "workforce_sales");
+  const compositeQueryIndex = followUpEvents.findIndex((event, index) => index > rosterObservationIndex && event.type === "query" && event.topic === "sql_first");
   const performanceTableIndex = eventIndex((event) => event.type === "table" && event.resultId === performanceResultId);
   const performanceValidationIndex = followUpEvents.findIndex((event, index) => index > performanceTableIndex && event.type === "validation");
   const performanceObservationIndex = followUpEvents.findIndex((event, index) => index > performanceValidationIndex && event.type === "narrative" && event.text.includes("highest Net sales"));
@@ -738,9 +759,9 @@ test("the flagship employee question clarifies once, then runs the governed comp
   assert.deepEqual(answer.provenance.sources.map(({ connector }) => connector), ["lightspeed", "deputy"]);
   assert.equal(answer.provenance.identityGraph.version, 11);
 
-  const queryCalls = followUpCalls.filter(({ name }) => name === "run_semantic_query");
+  const queryCalls = followUpCalls.filter(({ name }) => name === "run_sql");
   assert.equal(queryCalls.length, 2);
-  assert.deepEqual(queryCalls.map(({ input }) => semanticQueryIrSchema.parse(input)), [rosterQuery, performanceQuery]);
+  assert.deepEqual(queryCalls.map(({ input }) => input), [rosterSqlArgs, performanceSqlArgs]);
   assert.ok(queryCalls.every(({ context }) =>
     context.confirmedPreference === "employee.performance_default"
       && context.confirmedValue === "commerce.net_sales_ex_gst"));
@@ -792,8 +813,8 @@ test("the flagship employee question clarifies once, then runs the governed comp
       "get_capabilities",
       "get_data_health",
       "get_data_health",
-      "run_semantic_query",
-      "run_semantic_query",
+      "run_sql",
+      "run_sql",
     ],
   );
 });
@@ -805,7 +826,7 @@ test("a claims-empty final cannot swap a governed value onto another row label",
     toolStep("swapped", 3, "get_capabilities", { topic: "workforce_sales" }),
     toolStep("swapped", 4, "get_data_health", { domain: "workforce" }),
     toolStep("swapped", 5, "get_data_health", { domain: "sales" }),
-    toolStep("swapped", 6, "run_semantic_query", rosterQuery),
+    toolStep("swapped", 6, "run_sql", rosterSqlArgs),
     toolStep("swapped", 7, "publish_observation", {
       claim: {
         statement: "Worker Sam had Rostered hours of 8.0000.",
@@ -817,7 +838,7 @@ test("a claims-empty final cannot swap a governed value onto another row label",
       },
       nextStep: "check_margin",
     }),
-    toolStep("swapped", 8, "run_semantic_query", performanceQuery),
+    toolStep("swapped", 8, "run_sql", performanceSqlArgs),
     toolStep("swapped", 9, "publish_observation", {
       claim: {
         statement: "Worker Sam had Net sales of 15000.0000.",

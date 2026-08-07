@@ -25,12 +25,17 @@ const resultId = "result_category";
 const locationResultId = "result_location";
 const bundleHash = "a".repeat(64);
 
+const categorySql =
+  "SELECT c.category_name AS product_category, SUM(f.signed_net_amount_ex_tax) AS net_sales_ex_gst FROM mart.commerce_sales_event f JOIN core.product_category c ON c.category_id = f.rollup_category_id WHERE f.business_date >= '2026-07-27' AND f.business_date < '2026-08-03' GROUP BY c.category_name ORDER BY net_sales_ex_gst DESC";
+const locationSql =
+  "SELECT l.location_name, SUM(f.signed_net_amount_ex_tax) AS net_sales_ex_gst FROM mart.commerce_sales_event f JOIN core.location l ON l.location_id = f.location_id WHERE f.business_date >= '2026-07-27' AND f.business_date < '2026-08-03' GROUP BY l.location_name ORDER BY net_sales_ex_gst DESC";
+
 const provenance = Object.freeze({
   bundleHash,
   registryVersion: "2026-08-03.1",
   identityGraph: Object.freeze({ version: 7, hash: "b".repeat(32) }),
-  sources: Object.freeze(["commerce_sales_line"]),
-  sourceWatermarks: Object.freeze({ commerce_sales_line: "2026-08-02T23:59:59.000Z" }),
+  sources: Object.freeze(["commerce_sales_event"]),
+  sourceWatermarks: Object.freeze({ commerce_sales_event: "2026-08-02T23:59:59.000Z" }),
   sourceDetails: Object.freeze([{
     connectorId: "lightspeed-r",
     connectionId: "conn_lightspeed",
@@ -63,6 +68,9 @@ function response(
 }
 
 const semanticResponses = Object.freeze({
+  // The preferences lookup: confirmed defaults and dossier only. The
+  // topic-matching choreography is retired with the typed plan; the model
+  // writes SQL from the canonical schema in its instructions.
   search_catalogue: response({
     catalogue: {
       topics: [{ id: "sales_performance", label: "Sales performance", description: "Governed retail sales performance.", answerable: true }],
@@ -72,37 +80,7 @@ const semanticResponses = Object.freeze({
       tenantContext: { defaults: { "sales.default_metric": "commerce.net_sales_ex_gst" }, dossier: {} },
     },
   }),
-  get_capabilities: response({
-    capabilities: {
-      topic: "sales_performance",
-      answerable: true,
-      required: ["commerce.sales"],
-      available: ["commerce.sales"],
-      missing: [],
-      details: [{
-        id: "commerce.sales",
-        requiredForTopic: true,
-        available: true,
-        support: "full",
-        observations: [{
-          connectorId: "lightspeed-r",
-          connectionId: "conn_lightspeed",
-          support: "full",
-          coverage: { streams: ["sales", "sale_lines", "products"] },
-        }],
-      }],
-    },
-  }),
-  get_data_health: response({
-    dataHealth: {
-      domain: "sales",
-      status: "passed",
-      dataThrough: "2026-08-02T23:59:59.000Z",
-      checks: [{ checkId: "freshness", status: "passed" }],
-      warnings: [],
-    },
-  }),
-  run_semantic_query: response({
+  run_sql: response({
     resultId,
     data: {
       columns: ["product_category", "net_sales_ex_gst"],
@@ -115,7 +93,7 @@ const semanticResponses = Object.freeze({
     },
     queryAudit: {
       queryAuditId,
-      route: "semantic",
+      route: "sql_first",
       bundleHash,
       registryVersion: "2026-08-03.1",
       resultDigest: "c".repeat(64),
@@ -124,7 +102,7 @@ const semanticResponses = Object.freeze({
     validation: {
       status: "passed",
       checks: [
-        { checkId: "line_maths", status: "passed" },
+        { checkId: "claim_attested:commerce.net_sales_ex_gst", status: "passed" },
         { checkId: "slice_single_currency:net_sales_ex_gst", status: "passed", currencies: ["AUD"] },
       ],
       warnings: [],
@@ -159,7 +137,7 @@ const locationQueryResponse = response({
   },
   queryAudit: {
     queryAuditId: locationQueryAuditId,
-    route: "semantic",
+    route: "sql_first",
     bundleHash,
     registryVersion: "2026-08-03.1",
     resultDigest: "e".repeat(64),
@@ -168,7 +146,7 @@ const locationQueryResponse = response({
   validation: {
     status: "passed",
     checks: [
-      { checkId: "line_maths", status: "passed" },
+      { checkId: "claim_attested:commerce.net_sales_ex_gst", status: "passed" },
       { checkId: "slice_single_currency:net_sales_ex_gst", status: "passed", currencies: ["AUD"] },
     ],
     warnings: [],
@@ -199,27 +177,15 @@ class ScriptedAnalyticsModel implements Model {
   private cursor = 0;
   private readonly steps: readonly ScriptStep[] = Object.freeze([
     toolStep(1, "search_catalogue", { question }),
-    toolStep(2, "get_capabilities", { topic: "sales_performance" }),
-    toolStep(3, "get_data_health", { domain: "sales" }),
-    toolStep(4, "run_semantic_query", {
-      kind: "single",
-      topic: "sales_performance",
-      metrics: ["net_sales_ex_gst"],
-      dimensions: ["product_category"],
+    toolStep(2, "run_sql", {
+      sql: categorySql,
+      purpose: "Net sales by product category for last week",
+      claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
+      time: { from: "2026-07-27", to: "2026-08-03" },
       filters: [],
-      time: {
-        field: "business_date",
-        range: {
-          type: "absolute",
-          from: "2026-07-27T00:00:00.000Z",
-          to: "2026-08-03T00:00:00.000Z",
-        },
-        compare: "none",
-      },
-      sort: [{ metric: "net_sales_ex_gst", dir: "desc" }],
       limit: 10,
     }),
-    toolStep(5, "publish_observation", {
+    toolStep(3, "publish_observation", {
       claim: {
         statement: "Product Category Bikes had Net sales of 1200.0000.",
         assertion: "value",
@@ -230,25 +196,15 @@ class ScriptedAnalyticsModel implements Model {
       },
       nextStep: "break_down_by_location",
     }),
-    toolStep(6, "run_semantic_query", {
-      kind: "single",
-      topic: "sales_performance",
-      metrics: ["net_sales_ex_gst"],
-      dimensions: ["location_name"],
+    toolStep(4, "run_sql", {
+      sql: locationSql,
+      purpose: "Net sales by location for last week",
+      claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
+      time: { from: "2026-07-27", to: "2026-08-03" },
       filters: [],
-      time: {
-        field: "business_date",
-        range: {
-          type: "absolute",
-          from: "2026-07-27T00:00:00.000Z",
-          to: "2026-08-03T00:00:00.000Z",
-        },
-        compare: "none",
-      },
-      sort: [{ metric: "net_sales_ex_gst", dir: "desc" }],
       limit: 10,
     }),
-    toolStep(7, "publish_observation", {
+    toolStep(5, "publish_observation", {
       claim: {
         statement: "Location Melbourne had Net sales of 800.0000.",
         assertion: "value",
@@ -259,14 +215,14 @@ class ScriptedAnalyticsModel implements Model {
       },
       nextStep: "visualise_result",
     }),
-    toolStep(8, "make_chart", {
+    toolStep(6, "make_chart", {
       dataRef: locationResultId,
       chartType: "bar",
       xKey: "location_name",
       yKey: "net_sales_ex_gst",
     }),
     Object.freeze({
-      responseId: "resp_9",
+      responseId: "resp_7",
       output: Object.freeze({
         type: "message",
         role: "assistant",
@@ -316,7 +272,7 @@ class ScriptedAnalyticsModel implements Model {
   }
 }
 
-test("the real Agents SDK loop executes governed tools and emits a sequential analytical trace", async () => {
+test("the real Agents SDK loop executes SQL-first tools and emits a sequential analytical trace", async () => {
   const model = new ScriptedAnalyticsModel();
   const provider: ModelProvider = { getModel: () => model };
   const semanticCalls: RemoteSemanticAgentToolName[] = [];
@@ -325,11 +281,10 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
   const semanticClient = {
     async execute(name: RemoteSemanticAgentToolName, input: unknown): Promise<SemanticToolResponse> {
       semanticCalls.push(name);
-      if (name === "run_semantic_query"
+      if (name === "run_sql"
         && typeof input === "object"
         && input !== null
-        && Array.isArray(Reflect.get(input, "dimensions"))
-        && Reflect.get(input, "dimensions").includes("location_name")) {
+        && String(Reflect.get(input, "sql")).includes("location_name")) {
         return locationQueryResponse;
       }
       const result = semanticResponses[name as keyof typeof semanticResponses];
@@ -361,14 +316,14 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
     emit,
   });
 
+  // The typed-plan IR never runs: the model writes SQL and the service attests
+  // its claims. The catalogue call survives only as the preferences lookup.
   assert.deepEqual(semanticCalls, [
     "search_catalogue",
-    "get_capabilities",
-    "get_data_health",
-    "run_semantic_query",
-    "run_semantic_query",
+    "run_sql",
+    "run_sql",
   ]);
-  assert.equal(model.requests.length, 9);
+  assert.equal(model.requests.length, 7);
   assert.equal(model.requests[0]?.modelSettings.providerData?.service_tier, "fast");
   assert.equal(model.requests[0]?.modelSettings.reasoning?.effort, "high");
   assert.equal(model.requests[0]?.modelSettings.store, false);
@@ -376,10 +331,6 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
   // Every governed tool opens and settles its own progress step so the browser
   // can show the exact work in flight instead of a generic placeholder.
   assert.deepEqual(events.map(({ type }) => type), [
-    "progress",
-    "progress",
-    "progress",
-    "progress",
     "progress",
     "progress",
     "progress",
@@ -405,22 +356,15 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
     "planning",
     "catalogue",
     "catalogue",
-    "capabilities",
-    "capabilities",
-    "data_health",
-    "data_health",
     "query",
     "query",
   ]);
   const queryStep = progressSteps.find(({ stage }) => stage === "query");
-  assert.equal(queryStep?.label, "Querying sales performance");
+  assert.equal(queryStep?.label, "Running SQL with governed claims");
+  assert.equal(queryStep?.detail, "Net sales by product category for last week");
   assert.equal(
-    queryStep?.detail,
-    "net sales ex GST · by product category · 27 July 2026 – 3 Aug 2026",
-  );
-  assert.equal(
-    progressSteps.find(({ stage }) => stage === "capabilities")?.label,
-    "Checking source support for sales performance",
+    progressSteps.find(({ stage }) => stage === "catalogue")?.label,
+    "Loading confirmed preferences",
   );
   assert.ok(progressSteps.every(({ label }) => label.length > 0 && label !== "Understanding the question"));
   const tables = events.filter((event): event is Extract<TraceEvent, { type: "table" }> => event.type === "table");
@@ -444,11 +388,11 @@ test("the real Agents SDK loop executes governed tools and emits a sequential an
     "The governed result is ready.\n\nFigures cover Last week from Lightspeed Retail, current to 2026-08-02.",
   );
   assert.equal(answer.claims?.[0]?.refs.length, 2);
-  assert.equal(result.lastResponseId, "resp_9");
+  assert.equal(result.lastResponseId, "resp_7");
   assert.equal(result.answerState, "Verified");
   assert.match(result.resultDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.deepEqual(result.queryAuditIds, [queryAuditId, locationQueryAuditId]);
-  assert.equal(result.usage.requests, 9);
+  assert.equal(result.usage.requests, 7);
   assert.equal(usages.length, 1);
-  assert.equal(usages[0]?.requests, 9);
+  assert.equal(usages[0]?.requests, 7);
 });

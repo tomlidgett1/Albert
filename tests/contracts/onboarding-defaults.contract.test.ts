@@ -136,6 +136,6 @@ test("the workspace renders only the UI projection and uses contract prerequisit
 test("operative defaults continue into the governed semantic context", () => {
   assert.match(semanticContext, /FROM control_plane\.dossiers AS dossier/u);
   assert.match(semanticContext, /copyAllowlistedDefault/u);
-  assert.match(liveAgent, /confirmed defaults and bounded business dossier/u);
+  assert.match(liveAgent, /confirmed preference defaults .*and bounded business dossier/u);
   assert.match(liveAgent, /Apply a relevant confirmed default/u);
 });
