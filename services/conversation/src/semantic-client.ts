@@ -71,13 +71,26 @@ export class SemanticServiceClient {
       signal,
     });
     const payload = await response.json().catch(() => null) as
-      | { result?: unknown; error?: { code?: string; message?: string } | string }
+      | { result?: unknown; error?: { code?: string; message?: string; details?: unknown } | string }
       | null;
     if (!response.ok) {
       const error = payload?.error;
       const message = typeof error === "string" ? error : error?.message;
       const code = typeof error === "object" ? error?.code : undefined;
-      throw new SemanticServiceError(message || "The governed query service rejected the request.", response.status, code);
+      // A 400 carries the exact zod issues; without them the model is told
+      // "input is invalid" with no field named and cannot self-correct — a
+      // whole QA failure class hid behind that one generic sentence.
+      const issues = typeof error === "object" && Array.isArray((error as { details?: unknown }).details)
+        ? ((error as { details: readonly { path?: readonly (string | number)[]; message?: string }[] }).details)
+            .slice(0, 5)
+            .map((issue) => `${(issue.path ?? []).join(".")}: ${issue.message ?? "invalid"}`)
+            .join("; ")
+        : "";
+      throw new SemanticServiceError(
+        `${message || "The governed query service rejected the request."}${issues ? ` (${issues})` : ""}`,
+        response.status,
+        code,
+      );
     }
     const result = payload && "result" in payload ? payload.result : payload;
     return semanticToolResponseSchema.parse(result);
