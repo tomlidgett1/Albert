@@ -616,6 +616,17 @@ function createTools(): readonly Tool<LiveAgentContext>[] {
     description: "The primary analytical instrument: one read-only SELECT over the canonical model, linted before execution and canaried at runtime. Declare claims tying output columns to governed metrics with the window and filters the SQL reads — a matching attestation earns Verified, a divergence is disclosed and Qualified, and no claims means Exploratory.",
     parameters: semanticToolInputSchemas.run_sql,
     strict: true,
+    // Parameter-parse failures happen inside the SDK, before execute — a
+    // whole QA failure class was invisible because nothing logged them and
+    // the model got a raw zod dump it rarely recovered from. Log the truth,
+    // return teachable guidance.
+    errorFunction: (_context, error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Albert run_sql tool failure", { error: message.slice(0, 400) });
+      return `run_sql failed before execution: ${message.slice(0, 300)}. ` +
+        "Check the call shape: claims[].metricId must be the namespaced governed metric id (for example commerce.net_sales_ex_gst, not a column name), " +
+        "time.from/time.to must be YYYY-MM-DD with to exclusive, and the statement must be a single SELECT. Fix the call and run it again.";
+    },
     timeoutMs: 120_000,
     execute: async (input, runContext) => {
       const context = contextOf(runContext);
