@@ -94,17 +94,30 @@ function isLookupOnly(table: SpecTable): boolean {
 const OBSERVED_LIVE_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   ls_catalog_vendor_items: ["catalogMasterID", "timeStamp"],
   ls_categories: ["Category"],
+  // Second-wave census (2026-08-07): the Sale-child and Contact walks only
+  // became walkable after the relation-guard fix, so their live shapes were
+  // first observed a day after the 18-stream census. surchargeAmount and
+  // cashRoundingDelta are financially meaningful (card surcharges, AU cash
+  // rounding) — promotion into the canonical payment model is future work;
+  // unsupported keeps the rows staging with the raw payload retaining them.
+  ls_contacts: ["Addresses", "custom", "Emails", "Phones", "Websites"],
   ls_credit_accounts: ["Contact", "creditLimit", "giftCardUuid", "WithdrawalPayments"],
   ls_customers: ["Tags"],
   ls_discounts: ["createTime"],
   ls_images: ["baseImageURL", "createTime", "Item", "originalFilename", "size", "timeStamp"],
   ls_item_attribute_sets: ["archived", "system"],
   ls_item_matrices: ["attribute1Values", "attribute2Values", "attribute3Values", "Category", "ItemAttributeSet", "Manufacturer", "Prices"],
+  ls_item_shops: ["onWorkorder"],
+  ls_item_vendor_nums: ["b2bCatalogUUID"],
   ls_items: ["Prices"],
   ls_purchase_order_lines: ["OrderLine"],
   ls_purchase_orders: ["subTotalCost", "totalCost"],
+  ls_receipt_setups: ["hasLogo"],
+  ls_register_counts: ["RegisterCountAmounts"],
   ls_register_withdraws: ["PaymentType"],
   ls_registers: ["archived", "ccTerminalID"],
+  ls_sale_lines: ["SaleLineWorkOrder"],
+  ls_sale_payments: ["cashRoundingDelta", "surchargeAmount"],
   ls_sales: ["calcItemFees", "calcSurcharges", "displayableSubtotal", "isTaxInclusive", "receiptPreference", "taxTotal", "ticketNumber", "tippableAmount", "updateTime"],
   ls_shops: ["companyRegistrationNumber", "gatewayConfigID", "timeStamp", "vatNumber", "zebraBrowserPrint"],
   ls_tags: ["readOnly"],
