@@ -162,7 +162,20 @@ export function resolvePath(record: unknown, path: string): unknown[] {
  * Contact key on any record — gift cards simply have no contact person. A
  * sparse member stages zero rows from that parent, which is the true state.
  */
-const SPARSE_RELATIONS: ReadonlySet<string> = new Set(["CreditAccount.Contact"]);
+const SPARSE_RELATIONS: ReadonlySet<string> = new Set([
+  "CreditAccount.Contact",
+  // A full page of customers where none carries a note is the expected shape
+  // of a real account (observed live: the walk staged 1436 rows, then died on
+  // the first all-noteless page). Same per-record-optional structure for item
+  // enrichments: components exist only on assemblies, fees and vendor numbers
+  // only where configured. The trade: a true silent drop of one of these
+  // roots would stage zero rows unnoticed — accepted for optional enrichment
+  // tables whose absence never distorts the core economics.
+  "Customer.Note",
+  "Item.ItemComponents",
+  "Item.ItemFees",
+  "Item.ItemVendorNums",
+]);
 
 /**
  * Assert that every requested relation actually came back. Without this a
