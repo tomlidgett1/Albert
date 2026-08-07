@@ -89,6 +89,24 @@ export function generateCanonicalSchemaDoc(document: RegistryDocument): string {
     }
     lines.push("");
   }
+  // Dimension tables get their own explicit section: live fire showed models
+  // guessing join keys (worker.worker_id, product_category.category_name)
+  // from the compressed join notation above, burning teach-fix round trips on
+  // names this doc already knew. State the exact columns once.
+  const dimensions = new Map<string, Set<string>>();
+  for (const fact of document.facts) {
+    for (const join of fact.joins) {
+      const entry = dimensions.get(join.table) ?? new Set<string>([join.dimensionKey]);
+      for (const field of Object.values(join.fields)) entry.add(field);
+      dimensions.set(join.table, entry);
+    }
+  }
+  if (dimensions.size > 0) {
+    lines.push("dimension tables — join on their `id` column; the exact label columns are:");
+    for (const [table, columns] of [...dimensions.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      lines.push(`  ${table}: ${[...columns].join(", ")}`);
+    }
+  }
   return lines.join("\n").trimEnd();
 }
 
