@@ -552,14 +552,34 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       };
     }
 
-    const result = await this.dependencies.database.queryAsSemanticRole({
-      tenantId: context.tenantId,
-      sql: compiled.sql,
-      parameters: [context.tenantId],
-      statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
-      expectedIdentityGraph: identityGraphForTenant(tenant),
-      capabilityEvidence: capabilityEvidence(context),
-    });
+    let result;
+    try {
+      result = await this.dependencies.database.queryAsSemanticRole({
+        tenantId: context.tenantId,
+        sql: compiled.sql,
+        parameters: [context.tenantId],
+        statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
+        expectedIdentityGraph: identityGraphForTenant(tenant),
+        capabilityEvidence: capabilityEvidence(context),
+      });
+    } catch (error) {
+      // A defect in the model-authored statement (an undefined column, a type
+      // mismatch, a bad cast) is a teaching moment, not an outage: the model
+      // wrote the SQL, so echoing the database's complaint back is safe and is
+      // the only thing that lets it fix the statement and run again. Live
+      // fire: models guessed dimension join keys (worker.worker_id for
+      // worker.id), got an opaque 500, and gave the owner a refusal instead
+      // of a corrected query. Anything without a SQLSTATE stays a real error.
+      const sqlState = (error as { code?: unknown })?.code;
+      if (typeof sqlState === "string" && /^[0-9A-Z]{5}$/u.test(sqlState)) {
+        throw new SemanticCompilerError(
+          "ILLEGAL_SQL",
+          `The statement failed to execute: ${error instanceof Error ? error.message : String(error)}. ` +
+            "Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.",
+        );
+      }
+      throw error;
+    }
     const rows = result.rows.map(stripInternalColumns);
     const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
 
@@ -862,14 +882,34 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       sourceWatermarks: {},
       ir: { route: "source_exploration", kind: "exploratory_sql", sql: compiled.sql, purpose: parsed.purpose },
     });
-    const result = await this.dependencies.database.queryAsSemanticRole({
-      tenantId: context.tenantId,
-      sql: compiled.sql,
-      parameters: [context.tenantId],
-      statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
-      expectedIdentityGraph: identityGraphForTenant(tenant),
-      capabilityEvidence: capabilityEvidence(context),
-    });
+    let result;
+    try {
+      result = await this.dependencies.database.queryAsSemanticRole({
+        tenantId: context.tenantId,
+        sql: compiled.sql,
+        parameters: [context.tenantId],
+        statementTimeoutMs: Math.min(this.statementTimeoutMs, EXPLORATORY_SQL_TIMEOUT_MS),
+        expectedIdentityGraph: identityGraphForTenant(tenant),
+        capabilityEvidence: capabilityEvidence(context),
+      });
+    } catch (error) {
+      // A defect in the model-authored statement (an undefined column, a type
+      // mismatch, a bad cast) is a teaching moment, not an outage: the model
+      // wrote the SQL, so echoing the database's complaint back is safe and is
+      // the only thing that lets it fix the statement and run again. Live
+      // fire: models guessed dimension join keys (worker.worker_id for
+      // worker.id), got an opaque 500, and gave the owner a refusal instead
+      // of a corrected query. Anything without a SQLSTATE stays a real error.
+      const sqlState = (error as { code?: unknown })?.code;
+      if (typeof sqlState === "string" && /^[0-9A-Z]{5}$/u.test(sqlState)) {
+        throw new SemanticCompilerError(
+          "ILLEGAL_SQL",
+          `The statement failed to execute: ${error instanceof Error ? error.message : String(error)}. ` +
+            "Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.",
+        );
+      }
+      throw error;
+    }
     const rows = result.rows.map(stripInternalColumns);
     const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
     const warnings = [

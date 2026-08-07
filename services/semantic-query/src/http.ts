@@ -73,7 +73,7 @@ export function createSemanticHttpHandler(executor:SemanticToolExecutor,options:
     }catch(error){
       if(error instanceof SemanticCompilerError)return json({error:error.toJSON()},compilerStatus(error),correlationId);
       if(error instanceof z.ZodError)return json({error:{code:"INVALID_REQUEST",message:"Request body or tool input is invalid.",details:error.issues}},400,correlationId);
-      logger.error(finalizationRequest?"answer_artifact_finalization_failed":usageCheckpointRequest?"model_usage_checkpoint_failed":"tool_request_failed",{...(toolName?{tool:toolName}:{}),...safeErrorEvidence(error)},correlationId);
+      logger.error(finalizationRequest?"answer_artifact_finalization_failed":usageCheckpointRequest?"model_usage_checkpoint_failed":"tool_request_failed",{...(toolName?{tool:toolName}:{}),...safeErrorEvidence(error),...(process.env.ALBERT_DEBUG_ERRORS==='1'?{debugMessage:error instanceof Error?error.message.slice(0,300):String(error).slice(0,300),debugStack:error instanceof Error?(error.stack??'').split('\n').slice(0,5).join(' | '):''}:{})},correlationId);
       return json({error:{code:"SEMANTIC_TOOL_ERROR",message:"The governed query service could not complete this request."}},503,correlationId);
     }
   };
