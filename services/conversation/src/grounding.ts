@@ -80,14 +80,6 @@ const magnitudeScales: Readonly<Record<string, number>> = Object.freeze({
   bn: 1_000_000_000,
 });
 
-function normalizeNumericToken(value: string): string {
-  const parsed = parseNumericToken(value);
-  if (parsed) return String(parsed.value * parsed.scale);
-  const stripped = value.replace(/[$,%+\s]/g, "");
-  const numeric = Number(stripped);
-  return Number.isFinite(numeric) ? String(numeric) : stripped;
-}
-
 /** Splits a written figure into its value, its precision, and its magnitude. */
 function parseNumericToken(token: string): NumericToken | null {
   const trimmed = token.trim();
@@ -184,15 +176,27 @@ function parseNumberWords(value: string): number | null {
   return sawNumber && Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+/**
+ * Typography-tolerant form for label comparison: writers (and models) render a
+ * stored "31-60 days" as "31–60 days" — same label, different dash. Grounding
+ * must compare content, not glyph choice.
+ */
+function comparableLabelText(value: string): string {
+  return value
+    .toLocaleLowerCase("en-AU")
+    .replace(/[‐-―−]/gu, "-")
+    .replace(/\s+/gu, " ");
+}
+
 function copiedSourceLabel(
   narrative: string,
   token: string,
   labels: readonly string[],
 ): boolean {
-  const normalizedNarrative = narrative.toLocaleLowerCase("en-AU");
-  const normalizedToken = token.toLocaleLowerCase("en-AU");
+  const normalizedNarrative = comparableLabelText(narrative);
+  const normalizedToken = comparableLabelText(token);
   return labels.some((label) => {
-    const normalizedLabel = label.toLocaleLowerCase("en-AU");
+    const normalizedLabel = comparableLabelText(label);
     return normalizedLabel.includes(normalizedToken) && normalizedNarrative.includes(normalizedLabel);
   });
 }
@@ -279,7 +283,18 @@ export function groundingEvidenceFromRows(
       }
       const dateParts = dateCellComponents(value);
       if (dateParts.length) values.push(...dateParts);
-      if (typeof value === "string" && value.trim()) labels.push(value.trim());
+      if (typeof value === "string" && value.trim()) {
+        labels.push(value.trim());
+        // Numbers embedded in string cells are data the row supplied — an age
+        // band "31-60 days" states 31 and 60 as surely as a numeric cell would.
+        // Without this, restating a label with different typography (an en dash
+        // for the stored hyphen) reads as an invented figure and the redactor
+        // silently deletes a correct row from the answer.
+        for (const embedded of value.matchAll(/\d[\d,]*(?:\.\d+)?/gu)) {
+          const parsed = Number(embedded[0].replaceAll(",", ""));
+          if (Number.isFinite(parsed)) values.push(parsed);
+        }
+      }
     }
   }
   return Object.freeze({ values: Object.freeze(values), labels: Object.freeze(labels) });

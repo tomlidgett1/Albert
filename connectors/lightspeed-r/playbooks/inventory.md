@@ -26,6 +26,19 @@ unfiltered — always bound by `item_id`, `shop_id` or a `create_time` range.
 
 ## Inventory traps
 
+- **Movement dates cluster on system events, so age alone cannot rank items.**
+  Verified live: 360 on-hand items share a last movement of 29 September 2025 and
+  another 306 share 30 June 2026 — bulk imports and stocktakes, not sales. Sorting
+  stale stock by days-since-movement produces mass ties broken arbitrarily, which
+  surfaces $4 tubes ahead of $5,000 bikes. Rank stale stock by **value tied up**
+  (`qoh * unit_cost DESC` within the stale window); days-since-movement is a
+  column in the output, not the sort key. A cluster of identical dates in a result
+  is a system event — say so rather than presenting it as real activity.
+- **Zero-cost rows are missing data, not free stock.** A `COALESCE(avg_cost,
+  default_cost)` of 0 usually means the cost was never recorded. Keep such items
+  out of value rankings (they sort as $0 anyway) and mention them separately when
+  they are old — an uncosted stale item is still a stale item.
+
 - **`ls_item_shops.shop_id = 0` is an all-shops rollup, not a shop.** Verified: 17,005
   rollup rows and 17,005 real shop rows. Whole business → `shop_id = 0`. Per shop →
   `shop_id > 0`. Never both in one aggregate.
