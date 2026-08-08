@@ -2331,10 +2331,11 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
       const streamed = await runner.run(sqlAgent, modelInput, {
         context,
         stream: true as const,
-        // Chart/simple ranking turns should finish in a few tool calls. A high
-        // ceiling previously let max-reasoning models burn the lease on
-        // diagnostic SELECT 1 / pack probes without ever charting.
-        maxTurns: 12,
+        // High enough for a layered report (dimension-guide opens plus several
+        // complementary cuts — a real WTD business update used 12 tool calls),
+        // low enough that a diagnostic spiral still dies. The probe rejections
+        // are what stop SELECT 1 loops, not this ceiling.
+        maxTurns: 20,
         signal: options.abortSignal,
         toolNotFoundBehavior: "raise_error",
       });
@@ -2536,7 +2537,10 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
   );
   // The answer is rendered markdown, so its line breaks are load-bearing: a
   // table, a list and a paragraph break all survive only if the newlines do.
-  let answerText = sanitizeAnswerText(output.text, 4_000);
+  // 12k chars covers a layered multi-table report; the finalization gate
+  // bounds the persisted narrative at 16k (0096 migration), and the gap is
+  // headroom for the server-appended disclosures below.
+  let answerText = sanitizeAnswerText(output.text, 12_000);
   // Model instructions used to equate SQL failure with an empty shop. Rewrite
   // that apology whenever we know the statement never produced a result table.
   if (
@@ -2620,8 +2624,8 @@ export async function runLiveAlbertTurn(options: RunLiveAlbertTurnOptions): Prom
     // skipped them. No trail events — the fixed answer is what the owner sees.
     answerText = ensureAnswerCitesResults(answerText, resultList);
     answerText = ensureAnswerIncludesTable(answerText, resultList);
-    if (answerText.length > 4_000) {
-      answerText = sanitizeAnswerText(answerText, 8_000);
+    if (answerText.length > 12_000) {
+      answerText = sanitizeAnswerText(answerText, 14_000);
     }
 
     const unresolvedScope = unresolvedScopeReason(output.scope, appliedFilters, queriedDimensions);

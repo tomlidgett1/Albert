@@ -66,7 +66,9 @@ test("prose containing a pipe is not mistaken for a table", () => {
 });
 
 test("the runtime sanitizes the answer as prose and asks for a table when the data is tabular", () => {
-  assert.match(liveRuntime, /let answerText = sanitizeAnswerText\(output\.text, 4_000\)/u);
+  // 12k allows a layered multi-table report; the finalization gate bounds the
+  // persisted narrative at 16k (control-plane migration 0096).
+  assert.match(liveRuntime, /let answerText = sanitizeAnswerText\(output\.text, 12_000\)/u);
   assert.doesNotMatch(liveRuntime, /answerText = sanitizeTraceText\(output\.text/u);
   assert.match(liveRuntime, /The answer is rendered markdown/u);
   assert.match(liveRuntime, /markdown pipe table/u);

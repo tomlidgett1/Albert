@@ -63,7 +63,7 @@ test("SQL evidence instructions ban diagnose spirals and cap turns", () => {
   assert.match(liveAgent, /chart questions are one aggregate then the chart, never row samples first/u);
   assert.match(liveAgent, /window that honestly tells the story/u);
   assert.match(liveAgent, /not an arbitrary handful of rows/u);
-  assert.match(liveAgent, /maxTurns: 12/u);
+  assert.match(liveAgent, /maxTurns: 20/u);
   assert.match(liveAgent, /sqlProbeRejection/u);
   assert.match(liveAgent, /isOwnerTrailValidation/u);
   assert.match(liveAgent, /const tools = \[resolveNamedEntity, runSql, askUser, remember, makeChart, openDimensionGuide\]/u);
