@@ -108,12 +108,17 @@ DISPOSITION RULES
 - unavailable: the connected sources cannot observe what was asked (or a known caseId)
 - directory: pure employee name list, no analysis
 
-DEFAULTS (do not plan a clarification for these)
+DEFAULTS (methodology belongs to the analyst — never plan a methodology clarification)
+- When a measure could be defined several ways, pick the defensible operational default, name it in a plan step ("Age stock by its last movement"), and let the answer disclose it. The evidence agent's playbooks carry the standard readings.
 - Informal product/service shorthand ("gen services", "gens"): plan resolve + count; do not plan "confirm what gen services means"
-- "How busy is the workshop / workshop atm": plan open jobs and/or recent workorder sales; do not plan "confirm what busyness means"
+- Open "how is X going" questions: plan the standard operational reading; do not plan "confirm what you mean by going"
 - Weekly / monthly series with no stated window: plan a useful history (about 26 weeks / 24 months), not a tiny LIMIT 10 sample
-- "Aged inventory" / stock ageing: default to days since each item's latest ls_inventory_logs.create_time, bands 0-30 / 31-60 / 61-90 / 91-180 / 180+, on-hand qoh <> 0 at shop_id = 0, valued at avg_cost. Do not ask how to measure age.
-- "Active customers" / average spend per customer: default to customers with a completed non-voided sale in the stated window (or last 365 days), average = net sales / distinct customers. Do not ask what "active" means.
+- Clarification is ONLY for a known caseId contract, or two genuinely forked readings where the playbook default does not exist
+
+REPORTS AND ANALYSES (any request for a "report", "analysis", "breakdown", "review", or an open-ended health check)
+- Plan a layered deliverable, not one number. The layers of a good report: (1) the headline summary cut, (2) the ranked detail that names real things — top/bottom items, people, categories, with quantities and values, (3) when it adds insight, one more split or a trend over time.
+- planSteps must name those cuts individually; tables must cover all of them.
+- A report plan with a single lookup step is under-planned.
 
 PLAN RULES
 - summary: one short owner-facing sentence for the progress shimmer (no SQL jargon)
@@ -227,59 +232,31 @@ export async function resolveIntentPlanWithAgent(
   });
 }
 
-/** Server-owned defaults the planner must not override with a clarification. */
-export function applyIntentPlanDefaults(message: string, plan: IntentPlan): IntentPlan {
-  const text = message.trim().toLowerCase();
-  if (plan.disposition === "unavailable" || plan.disposition === "directory") {
-    return plan;
-  }
-
-  const agedInventory = /\baged inventory\b|\binventory age|\bageing band|\bstock age/u.test(text);
-  if (agedInventory) {
-    return intentPlanSchema.parse({
-      ...plan,
-      disposition: "answer",
-      caseId: null,
-      domain: plan.domain === "other" ? "inventory" : plan.domain,
-      grain: "stock_snapshot",
-      tables: plan.tables.length > 0
-        ? plan.tables
-        : ["source_lightspeed.ls_item_shops", "source_lightspeed.ls_inventory_logs"],
-      planSteps: plan.planSteps.length > 0
-        ? plan.planSteps
-        : [
-          "Find items currently in stock",
-          "Age each item by its latest inventory movement",
-          "Group stock into ageing bands with quantities and values",
-        ],
-      summary: plan.disposition === "clarification"
-        ? "I’ll prepare an aged report for the inventory currently on hand."
-        : plan.summary,
-      clarification: null,
-    });
-  }
-
-  const activeCustomers = /\bactive customers?\b|\baverage (?:spend|customer value)\b/u.test(text);
-  if (activeCustomers && plan.disposition === "clarification") {
-    return intentPlanSchema.parse({
-      ...plan,
-      disposition: "answer",
-      caseId: null,
-      domain: plan.domain === "other" ? "customers" : plan.domain,
-      grain: plan.grain === "unknown" || plan.grain === "directory" ? "ticket" : plan.grain,
-      tables: plan.tables.length > 0
-        ? plan.tables
-        : ["source_lightspeed.ls_sales", "source_lightspeed.ls_customers"],
-      planSteps: plan.planSteps.length > 0
-        ? plan.planSteps
-        : [
-          "Count customers with a completed sale in the period",
-          "Divide net sales by that customer count",
-        ],
-      summary: "I’ll measure active customers as those with a completed sale in the period.",
-      clarification: null,
-    });
-  }
-
-  return plan;
+/**
+ * A clarification the server never contracted for must not block the turn.
+ *
+ * This used to be a list of per-question keyword overrides (stock ageing,
+ * customer-activity phrasings, …) — every new phrasing needed another hardcode, and any
+ * phrasing not on the list stalled on a methodology question. The general
+ * rule those cases were instances of: methodology belongs to the analyst, not
+ * to a pre-emptive question. When a measure could honestly be defined several
+ * ways, the evidence agent picks the defensible operational default from the
+ * playbooks and the answer discloses it — and the evidence agent still has
+ * ask_user for the rare genuinely-forked reading. Only server route contracts
+ * (caseId set) may stop a turn at the planning stage.
+ */
+export function applyIntentPlanDefaults(_message: string, plan: IntentPlan): IntentPlan {
+  if (plan.disposition !== "clarification" || plan.caseId) return plan;
+  return intentPlanSchema.parse({
+    ...plan,
+    disposition: "answer",
+    clarification: null,
+    planSteps: plan.planSteps.length > 0
+      ? plan.planSteps
+      : [
+        "Choose the standard reading of the question",
+        "Look up the matching figures",
+        "Present them clearly, naming the reading used",
+      ],
+  });
 }

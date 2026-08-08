@@ -128,6 +128,39 @@ the documented `data.Type` and `data.Status`. Contacts and Invoices retain the
 base event schema. Subscription events are valid at the app endpoint but are
 not routed into an Albert accounting stream.
 
+## Observed on a live tenant (2026-08-08)
+
+Facts from a full backfill of a real organisation, recorded because two of them
+contradict the vendor documentation and all four change how a backfill is
+planned:
+
+- **The daily allowance did not reset at midnight UTC.** Xero documents a
+  midnight-UTC reset; `X-DayLimit-Remaining` was observed decrementing straight
+  through 00:00 UTC without refilling, so it behaves as a rolling window. Plan a
+  backfill against a budget that refills gradually, not one that returns in full
+  at a known hour, and probe before spending.
+- **The daily allowance is 1,000, not 5,000.** This is the uncertified-app tier.
+  A complete pull is therefore budget-bound, not latency-bound: walking each of
+  the 197 streams separately would spend ~800 calls on page verification alone
+  and still not finish. `scripts/xero-full-ingest.mts` walks each endpoint once
+  and projects every table from that payload — the scan plan's whole purpose.
+- **Four endpoints answer 401, not 403, when the scope is absent.** `Journals`
+  (Advanced tier), `ExpenseClaims`, `Receipts` and `PaymentServices` all need
+  scopes Xero refuses to granular-scope apps. Classify 401 alongside 403/404 as
+  an unavailable capability; treating it as a failure retries something that can
+  never succeed without a change to the app registration itself.
+- **History costs one call per document and has no "do I have any" flag.** For a
+  tenant with ~35,600 documents that is roughly five weeks of the entire daily
+  allowance, so it is opt-in (`--include-history`). Attachments are gated on
+  `HasAttachments` and cost almost nothing by comparison — two documents in that
+  whole organisation had one.
+
+Payroll region matters at the transport layer: UK and NZ share
+`/payroll.xro/2.0`, so a driver that walks payroll endpoints without first
+reading the organisation's `CountryCode` will stage one region's payroll into
+all three regions' tables. The connector gates on region before any payroll
+request; any other driver must do the same.
+
 Xero contractually restricts using API data for AI training. This connector
 inherits Albert's mandatory platform-wide no-training policy.
 

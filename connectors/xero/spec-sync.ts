@@ -306,6 +306,14 @@ export function resolveColumnValue(input: {
     const value = resolveSegments(level.value, segments);
     if (value !== undefined) return normalizeXeroValue(value);
   }
+  // The citation may name an ENCLOSING object and then descend into it
+  // (`Allocation.Overpayment.OverpaymentID` read from an allocation row).
+  // Dropping the root loses that; retry the whole path against each level so
+  // an upward reference resolves instead of staging a null key.
+  for (const level of levels) {
+    const value = resolveSegments(level.value, [root!, ...segments]);
+    if (value !== undefined) return normalizeXeroValue(value);
+  }
   return undefined;
 }
 
@@ -376,14 +384,17 @@ export function projectStreamRows(input: {
   const explode = table.source.explodePath;
   const rows: RawSourceRecord[] = [];
 
-  for (const record of records) {
+  for (const [recordIndex, record] of records.entries()) {
     if (record === null || typeof record !== "object") continue;
     const parentId = fanOutParent
       ? readIdentifier(fanOutParent.record as JsonRecord, leaderIdField(fanOutParent.table))
       : readIdentifier(record as JsonRecord, leaderIdField(leaderTable));
+    // A record's own position in the response is part of its position. Without
+    // it every id-less row of one parent keys as `<parentId>:0`, so a whole
+    // sub-response collapses into a single identity.
     const exploded: readonly ExplodedRow[] = explode
       ? explodeRows(record, explode.split(".").slice(1))
-      : [{ element: record, ancestors: [], ordinal: 0, path: [0] }];
+      : [{ element: record, ancestors: [], ordinal: recordIndex, path: [recordIndex] }];
 
     for (const row of exploded) {
       if (row.element === null || typeof row.element === "undefined") continue;
@@ -406,8 +417,15 @@ export function projectStreamRows(input: {
       // plus the index at every level, so a re-run of the same window produces
       // identical keys and two balances of different lines never collide.
       const positionKey = row.path.join(".");
+      // Position is the last resort, and a bare page index is not stable: Xero
+      // gives no ordering guarantee, so a re-run would hand row 3's identity to
+      // whatever now sits third. Prefer any declared key part that resolved,
+      // then the element's content, and only then position.
+      const declaredKey = partialKey(table, fields);
       const sourceRecordId = ownId
-        ?? (parentId ? `${parentId}:${positionKey}` : `${table.id}:${rows.length}`);
+        ?? (parentId ? `${parentId}:${declaredKey ?? positionKey}` : null)
+        ?? (declaredKey ? `${table.id}:${declaredKey}` : null)
+        ?? `${table.id}:${hashPayload(row.element).slice(0, 32)}`;
       const modifiedField = table.source.modifiedField ?? "";
       const updatedAt = timestampOf(fields[modifiedField] ?? undefined)
         ?? timestampOf(
@@ -474,6 +492,28 @@ function compositeKey(
     parts.push(text);
   }
   return parts.join("|");
+}
+
+
+/**
+ * As much of the declared key as actually resolved, for a row with no vendor
+ * id. `compositeKey` requires every part; this accepts what is present so a
+ * natural key (an entitlement's Name) is used ahead of an unstable position.
+ */
+function partialKey(
+  table: XeroSpecTable,
+  fields: Readonly<Record<string, unknown>>,
+): string | null {
+  const parts: string[] = [];
+  for (const columnName of table.primaryKey) {
+    const column = table.columns.find((candidate) => candidate.name === columnName);
+    if (!column) continue;
+    const value = fields[xeroSourceField(column)];
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text.length > 0) parts.push(text);
+  }
+  return parts.length > 0 ? parts.join("|") : null;
 }
 
 function leaderIdField(leader: XeroSpecTable): string {
@@ -667,6 +707,50 @@ export const XERO_HISTORY_PARENTS: readonly XeroTemplatedParent[] = [
   { endpointOp: "GET /Receipts", pathTemplate: "/Receipts/{ReceiptID}/History", idParam: "ReceiptID" },
   { endpointOp: "GET /RepeatingInvoices", pathTemplate: "/RepeatingInvoices/{RepeatingInvoiceID}/History", idParam: "RepeatingInvoiceID" },
 ];
+
+
+/**
+ * Every id a parent record can supply for a fan-out parameter.
+ *
+ * Xero does not always name the id the way the sub-resource path does — a pay
+ * run carries its payslips as stubs, and some parents name their key after the
+ * object rather than the parameter. The fallback chain is: the parameter itself,
+ * then the parent's declared record id, then id-bearing stubs one array level
+ * down. Both drivers resolve through this, so a parent is never skipped in one
+ * path while a contract test exercises another.
+ */
+export function resolveFanOutIds(
+  param: string,
+  parentRecord: unknown,
+  parentTable: XeroSpecTable | null,
+): readonly string[] {
+  if (!param || parentRecord === null || typeof parentRecord !== "object") return [];
+  const record = parentRecord as JsonRecord;
+  const text = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null;
+    const out = String(value).trim();
+    return out.length > 0 ? out : null;
+  };
+
+  const direct = text(record[param]);
+  if (direct) return [direct];
+
+  const viaRecordId = parentTable?.recordIdField ? text(record[parentTable.recordIdField]) : null;
+  if (viaRecordId && parentTable?.recordIdField === param) return [viaRecordId];
+
+  const stubs: string[] = [];
+  for (const value of Object.values(record)) {
+    if (!Array.isArray(value)) continue;
+    for (const entry of value) {
+      if (entry === null || typeof entry !== "object") continue;
+      const id = text((entry as JsonRecord)[param]);
+      if (id) stubs.push(id);
+    }
+  }
+  if (stubs.length > 0) return [...new Set(stubs)];
+
+  return viaRecordId ? [viaRecordId] : [];
+}
 
 /**
  * Fill a sub-resource path from the ancestor records that produced it.

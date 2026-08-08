@@ -80,8 +80,11 @@ test("owner trail validations keep failures and invented-number blocks only", as
   assert.equal(isOwnerTrailValidation({ name: "answer_scope_guard", outcome: "failed" }), true);
 });
 
-test("aged inventory never stays a clarification disposition", async () => {
+test("an uncontracted methodology clarification never blocks the turn", async () => {
   const { applyIntentPlanDefaults } = await import("../../services/conversation/src/intent-plan.js");
+  // "Aged inventory" is one example, not a special case — any methodology
+  // question the server did not contract for flips to answer, and the analyst
+  // defaults + ask_user carry the rest.
   const forced = applyIntentPlanDefaults("give me an aged inventory report", {
     disposition: "clarification",
     caseId: null,
@@ -96,8 +99,39 @@ test("aged inventory never stays a clarification disposition", async () => {
   });
   assert.equal(forced.disposition, "answer");
   assert.equal(forced.clarification, null);
-  assert.equal(forced.grain, "stock_snapshot");
-  assert.match(forced.summary, /aged report/iu);
+  assert.equal(forced.planSteps.length > 0, true);
+});
+
+test("a contracted clarification is preserved for the route", async () => {
+  const { applyIntentPlanDefaults } = await import("../../services/conversation/src/intent-plan.js");
+  const kept = applyIntentPlanDefaults("who is my best employee", {
+    disposition: "clarification",
+    caseId: "workforce-best",
+    domain: "employees",
+    grain: "ticket",
+    namedEntities: [],
+    tables: [],
+    planSteps: ["Ask which lens defines best"],
+    summary: "Confirming how to measure best",
+    clarification: { question: "By net sales, gross margin, or gross profit per labour hour?" },
+    unavailableReason: null,
+  });
+  assert.equal(kept.disposition, "clarification");
+  assert.equal(kept.caseId, "workforce-best");
+});
+
+test("intent planning teaches layered reports, not per-question hardcodes", () => {
+  const intentPlanSource = readFileSync(
+    new URL("../../services/conversation/src/intent-plan.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(intentPlanSource, /REPORTS AND ANALYSES/u);
+  assert.match(intentPlanSource, /layered deliverable/u);
+  // The per-question keyword overrides must not creep back in.
+  assert.doesNotMatch(intentPlanSource, /\baged inventory\b/iu);
+  assert.doesNotMatch(intentPlanSource, /\bactive customers\b/iu);
+  assert.match(liveAgent, /REPORTS AND ANALYSES/u);
+  assert.match(liveAgent, /REPORT COMPOSITION/u);
 });
 
 test("SQL failure answers do not pretend the shop is empty", async () => {

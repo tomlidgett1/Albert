@@ -50,6 +50,7 @@ import {
   fanOutSkippable,
   fillFanOutPath,
   projectStreamRows,
+  resolveFanOutIds,
   scanGroupFor,
   specTableFor,
   templatedParents,
@@ -1149,13 +1150,21 @@ export class XeroConnector implements OAuthConnectorPack {
         if (fanOutSkippable(fanOut, parent) && child.id === fanOut.table.id) continue;
 
         const template = endpointPath(child);
-        const { path, missing } = fillFanOutPath(template, stack);
+        const param = child.source.fanOutParam ?? "";
+        // Resolve the sub-resource id through the shared chain: a pay run
+        // carries its payslip ids as stubs, not as a top-level field, and an
+        // exact-name lookup skips those parents entirely.
+        const [resolvedId] = resolveFanOutIds(param, parent, ancestry[level - 1] ?? rootTable);
+        const { path, missing } = fillFanOutPath(
+          template,
+          resolvedId ? [...stack, { [param]: resolvedId }] : stack,
+        );
         if (missing.length > 0) continue; // this parent cannot address the sub-resource
         const subUrl = new URL(path, ACCOUNTING_ORIGIN);
-        if (!template.includes(`{${child.source.fanOutParam}}`) && child.source.fanOutParam) {
-          const id = readFanOutParam(stack, child.source.fanOutParam);
+        if (!template.includes(`{${param}}`) && param) {
+          const id = resolvedId ?? readFanOutParam(stack, param);
           if (!id) continue;
-          subUrl.searchParams.set(child.source.fanOutParam, id);
+          subUrl.searchParams.set(param, id);
         }
 
         issued += 1;

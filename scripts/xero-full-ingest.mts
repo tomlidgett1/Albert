@@ -60,6 +60,7 @@ import {
   fanOutAncestry,
   fillFanOutPath,
   projectStreamRows,
+  resolveFanOutIds,
   templatedParents,
   unwrapEnvelope,
   XERO_ATTACHMENT_PARENTS,
@@ -251,8 +252,18 @@ async function stageRecords(
         values: typed.values,
       });
     }
-    await upsertTypedStagingRecords(queryClient, prepared, { fastConflict: "overwrite" });
-    return { staged: prepared.length, quarantined, ...(issue ? { issue } : {}) };
+    // Postgres refuses an ON CONFLICT DO UPDATE that touches one row twice, so a
+    // single duplicated key would abort the entire batch and stage nothing —
+    // which is exactly how the history fan-out lost all 1,162 of its rows. Keep
+    // the last write per identity and record that it happened.
+    const byIdentity = new Map<string, TypedStagingRecord>();
+    for (const record of prepared) byIdentity.set(record.namespacedSourceKey, record);
+    const deduped = [...byIdentity.values()];
+    const collapsed = prepared.length - deduped.length;
+    if (collapsed > 0) issue ??= `${collapsed} rows shared an identity within one batch`;
+
+    await upsertTypedStagingRecords(queryClient, deduped, { fastConflict: "overwrite" });
+    return { staged: deduped.length, quarantined, ...(issue ? { issue } : {}) };
   } finally {
     client.release();
   }
@@ -275,24 +286,58 @@ type StreamOutcome = Readonly<{
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const env = loadEnv();
-  const onlyArg = argv.find((a) => a.startsWith("--only="))?.slice("--only=".length);
+  const flag = (name: string): string | undefined => {
+    const prefix = `${name}=`;
+    return argv.find((a) => a.startsWith(prefix))?.slice(prefix.length);
+  };
+  const positive = (raw: string | undefined, fallback: number, name: string): number => {
+    if (raw === undefined) return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`${name} must be a positive number, got "${raw}"`);
+    }
+    return value;
+  };
+  const KNOWN = ["--ingest", "--report", "--skip-fanouts", "--include-history"];
+  const unknown = argv.filter((a) => !KNOWN.includes(a) && !/^--(only|reserve|max-per-fanout|min-budget)=/u.test(a));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown option(s): ${unknown.join(", ")}. A typo must never be read as "ingest everything".`);
+  }
+  if (!argv.includes("--ingest") && !argv.includes("--report")) {
+    throw new Error("Specify --ingest to pull, or --report for a read-only summary.");
+  }
+  const onlyArg = flag("--only");
   const only = onlyArg ? new Set(onlyArg.split(",").map((s) => s.trim())) : null;
   const skipFanOuts = argv.includes("--skip-fanouts");
+  const reportOnly = argv.includes("--report") && !argv.includes("--ingest");
   // Leave headroom so the account keeps a working API budget after the run.
-  const reserve = Number(argv.find((a) => a.startsWith("--reserve="))?.slice(10) ?? 40);
+  const reserve = positive(flag("--reserve"), 40, "--reserve");
   // History has no "do I have any" flag, so it costs one request per parent.
   // Without a per-family cap the first family eats the whole day and every
   // later one reports nothing — a cap spreads the budget across all of them.
-  const maxPerFanOut = Number(argv.find((a) => a.startsWith("--max-per-fanout="))?.slice(18) ?? 120);
+  const maxPerFanOut = positive(flag("--max-per-fanout"), 120, "--max-per-fanout");
   // A retry against an unrefilled budget should cost one call and stop, not
   // crawl every stream discovering the same exhaustion 197 times.
-  const minBudget = Number(argv.find((a) => a.startsWith("--min-budget="))?.slice(13) ?? 0);
+  const minBudget = positive(flag("--min-budget"), 1, "--min-budget") - 1;
   // History costs one call per document — 35,593 of them for this tenant, or
   // roughly five weeks of the account's entire API allowance, during which no
   // other sync could run. It is an audit trail (who changed what, when), not
   // accounting substance, so it is opt-in rather than a default that quietly
   // consumes the budget forever.
   const includeHistory = argv.includes("--include-history");
+
+  if (reportOnly) {
+    // Read-only by construction: no vendor call, no staging write. The previous
+    // build documented --report but never parsed it, so it performed a full
+    // live pull of the account instead.
+    try {
+      const state = JSON.parse(readFileSync(STATE_FILE, "utf8")) as Record<string, unknown>;
+      progress({ event: "report", ...state, outcomes: undefined });
+    } catch {
+      progress({ event: "report", detail: "no run state recorded yet" });
+    }
+    return;
+  }
 
   const controlUrl = cleanUrl(required(env, "CONTROL_PLANE_ADMIN_DATABASE_URL"));
   const analyticalUrl = cleanUrl(required(env, "ANALYTICAL_ADMIN_DATABASE_URL"));
@@ -574,12 +619,23 @@ async function main(): Promise<void> {
       if (targets.length === 0) continue;
       const rowsByTable = new Map<string, RawSourceRecord[]>();
       let requests = 0;
+      let skipped = 0;
       let status: StreamOutcome["status"] = "complete";
       let detail: string | undefined;
 
       try {
         const allJobs = fanOutJobs(fanOut, parentCache);
-        const jobs = allJobs.slice(0, maxPerFanOut);
+        // Cap PER FAMILY. Slicing the concatenated list means the first family
+        // consumes the whole allowance and later families are never requested
+        // at all, while the report still claims the fan-out was covered.
+        const perFamily = new Map<string, FanOutJob[]>();
+        for (const job of allJobs) {
+          const key = job.path.split("/").slice(0, 4).join("/");
+          const bucket = perFamily.get(key) ?? [];
+          if (bucket.length < maxPerFanOut) bucket.push(job);
+          perFamily.set(key, bucket);
+        }
+        const jobs = [...perFamily.values()].flat();
         if (allJobs.length === 0) { status = "unavailable"; detail = "no reachable parents"; }
         if (jobs.length < allJobs.length) {
           status = "partial";
@@ -593,7 +649,7 @@ async function main(): Promise<void> {
             requests += 1;
           } catch (error) {
             const httpStatus = (error as { status?: number }).status;
-            if (httpStatus === 403 || httpStatus === 404) continue;
+            if (httpStatus === 403 || httpStatus === 404) { skipped += 1; continue; }
             throw error;
           }
           for (const table of targets) {
@@ -621,6 +677,12 @@ async function main(): Promise<void> {
         detail = error instanceof Error ? error.message.slice(0, 180) : String(error);
       }
 
+      if (skipped > 0 && requests > 0 && skipped === requests) {
+        status = "unavailable";
+        detail = `every one of ${skipped} parent sub-requests was refused (403/404)`;
+      } else if (skipped > 0) {
+        detail = `${detail ? `${detail}; ` : ""}${skipped} of ${requests} parent sub-requests refused`;
+      }
       for (const table of targets) {
         const rows = rowsByTable.get(table.id) ?? [];
         let staged = 0, quarantined = 0;
@@ -732,27 +794,23 @@ function fanOutJobs(
   if (!rootTable || ancestry.length < 2) return jobs;
   const parents = cache.get(`${rootTable.source.api} ${rootTable.source.endpointOp}`) ?? [];
   const template = endpointPath(fanOut.table);
+  const param = fanOut.fanOutParam;
+  const usesPathParam = template.includes(`{${param}}`);
   for (const parent of parents) {
     if (parent === null || typeof parent !== "object") continue;
-    const { path, missing } = fillFanOutPath(template, [parent]);
-    const param = fanOut.fanOutParam;
-    const record = parent as Record<string, unknown>;
-    if (missing.length > 0) {
-      // Query-parameter fan-outs address the sub-resource without a path id.
-      const id = record[param];
-      const text = id === null || id === undefined ? "" : String(id).trim();
-      if (!text || template.includes(`{${param}}`)) continue;
-      jobs.push({ path: template, params: { [param]: text }, parent, parentTable: rootTable, parentId: text });
-      continue;
+    // Resolve through the shared chain so a parent that names its id
+    // differently is fetched rather than silently skipped.
+    for (const id of resolveFanOutIds(param, parent, rootTable)) {
+      jobs.push(
+        usesPathParam
+          ? {
+              path: template.replace(`{${param}}`, encodeURIComponent(id)),
+              params: {},
+              parent, parentTable: rootTable, parentId: id,
+            }
+          : { path: template, params: { [param]: id }, parent, parentTable: rootTable, parentId: id },
+      );
     }
-    const id = record[param];
-    jobs.push({
-      path,
-      params: {},
-      parent,
-      parentTable: rootTable,
-      parentId: id === null || id === undefined ? "" : String(id),
-    });
   }
   return jobs;
 }

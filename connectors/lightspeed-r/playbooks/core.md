@@ -73,13 +73,19 @@ keep it.
 | "who sold the most" | who rang the ticket | `ls_sales.employee_id` |
 | "what did we make on it" | margin | `calc_total - calc_tax1 - calc_tax2 - calc_fifo_cost` |
 
-Two habits worth keeping:
+Three habits worth keeping:
 
 - **Decide the grain before you resolve the name.** "Any glasses sold" is a category
   question; "how did the Lupo go" is a SKU question. Resolving first and then letting
   the top match choose the grain is how a plural question gets a single-SKU answer.
 - **A plural noun is a hint, not proof.** "Helmets" is a category. "The helmet I
   ordered in" is one item. Read the sentence, not the ending.
+- **A "report" is layered.** Whatever the subject, a report request means: the
+  headline summary cut, then the ranked detail that names real items, people or
+  categories with quantities and dollar values, then — when it adds insight — one more
+  split or trend. One summary table answers a question; it does not constitute a
+  report. Methodology is yours to choose from these pages and disclose, never to ask
+  about.
 
 ---
 

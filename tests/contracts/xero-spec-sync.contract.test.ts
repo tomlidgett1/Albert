@@ -9,6 +9,7 @@ import {
   normalizeXeroValue,
   projectRowFields,
   projectStreamRows,
+  resolveFanOutIds,
   templatedParents,
   unwrapEnvelope,
 } from "../../connectors/xero/spec-sync.js";
@@ -228,4 +229,106 @@ test("parent-root columns resolve against the walked record, not the element", (
   assert.equal(fields.CreditNoteID, "cn-1");
   assert.equal(fields.Amount, "50.0000");
   assert.equal(fields.Invoice_InvoiceID, "inv-7", "one-hop nested provenance flattens with the path-joined field name");
+});
+
+/* ------------------------------------------------------------------ */
+/* Regressions found by auditing a live tenant's ingested data.        */
+/* ------------------------------------------------------------------ */
+
+test("id-less rows of one sub-response get distinct identities", () => {
+  // Every history event of a document used to key as `<parentId>:0`, so a
+  // 1,162-row fan-out staged nothing: the batch aborted on duplicate keys, and
+  // on the worker path the rows silently overwrote each other.
+  const history = tableOf({
+    id: "xero_history_records",
+    recordIdField: null,
+    sourceObjects: ["accounting:HistoryRecord"],
+    source: { ...tableOf({ id: "x" }).source, endpointOp: "GET /{Endpoint}/{Guid}/History", fanOutParam: "Guid", pagination: "parent", arrayKey: "HistoryRecords" },
+    columns: [column("changes", "accounting:HistoryRecord.Changes"), column("details", "accounting:HistoryRecord.Details")],
+  });
+  const parent = tableOf({ id: "xero_invoices", recordIdField: "InvoiceID" });
+  const rows = projectStreamRows({
+    table: history,
+    leaderTable: history,
+    resource: "HistoryRecords",
+    records: [
+      { Changes: "Created", Details: "first" },
+      { Changes: "Edited", Details: "second" },
+      { Changes: "Approved", Details: "third" },
+    ],
+    recordIdField: "",
+    fanOutParent: { record: { InvoiceID: "inv-1" }, table: parent },
+  });
+  assert.equal(rows.length, 3);
+  assert.equal(new Set(rows.map((row) => row.sourceRecordId)).size, 3,
+    "three history events of one invoice must be three records, not one");
+});
+
+test("a citation that walks upward into an enclosing object resolves", () => {
+  // `Allocation.Overpayment.OverpaymentID` on an allocation row: the root names
+  // the allocation, then descends into the overpayment it came off. Discarding
+  // the root left every overpayment allocation with a null parent key.
+  const allocations = tableOf({
+    id: "xero_overpayment_allocations",
+    sourceObjects: ["accounting:Allocation"],
+    source: { ...tableOf({ id: "x" }).source, explodePath: "Overpayment.Allocations", parentTable: "xero_overpayments", pagination: "parent" },
+    columns: [
+      column("overpayment_overpayment_id", "accounting:Allocation.Overpayment.OverpaymentID"),
+      column("amount", "accounting:Allocation.Amount", "numeric"),
+    ],
+  });
+  const fields = projectRowFields(
+    allocations,
+    {
+      element: { Amount: "1039.96", Overpayment: { OverpaymentID: "op-1" } },
+      ancestors: [{ OverpaymentID: "op-1" }],
+      ordinal: 0,
+      path: [0],
+    },
+    { OverpaymentID: "op-1" },
+    null,
+  );
+  assert.equal(fields.Overpayment_OverpaymentID, "op-1",
+    "an allocation must stay attributable to the overpayment it came off");
+});
+
+test("fan-out ids resolve by parameter, by stub, and by the parent's own id", () => {
+  const payRun = tableOf({ id: "xero_payroll_au_pay_runs", recordIdField: "PayRunID" });
+  // Named exactly.
+  assert.deepEqual(resolveFanOutIds("PayslipID", { PayslipID: "ps-1" }, payRun), ["ps-1"]);
+  // Carried as stubs one array level down — the AU payslip case, which both
+  // drivers previously skipped while reporting "no reachable parents".
+  assert.deepEqual(
+    resolveFanOutIds("PayslipID", { PayRunID: "pr-1", Payslips: [{ PayslipID: "a" }, { PayslipID: "b" }] }, payRun),
+    ["a", "b"],
+  );
+  // The parent's own declared id, when that is what the parameter names.
+  assert.deepEqual(resolveFanOutIds("PayRunID", { PayRunID: "pr-9" }, payRun), ["pr-9"]);
+  assert.deepEqual(resolveFanOutIds("PayslipID", { PayRunID: "pr-9" }, payRun), ["pr-9"],
+    "a parent with no better answer still addresses the sub-resource");
+  assert.deepEqual(resolveFanOutIds("", { PayRunID: "pr-9" }, payRun), []);
+});
+
+test("a row with no vendor id prefers its declared key over its position", () => {
+  // Organisation entitlements have a natural key (Name) that was staged and
+  // ignored, so a reordered response reassigned every row's meaning.
+  const actions = tableOf({
+    id: "xero_organisation_actions",
+    recordIdField: null,
+    sourceObjects: ["accounting:Action"],
+    primaryKey: ["name"],
+    columns: [column("name", "accounting:Action.Name"), column("status", "accounting:Action.Status")],
+  });
+  const rows = projectStreamRows({
+    table: actions,
+    leaderTable: actions,
+    resource: "Actions",
+    records: [
+      { Name: "ViewAccounts", Status: "ALLOWED" },
+      { Name: "DeleteDraftBill", Status: "ALLOWED" },
+    ],
+    recordIdField: "",
+  });
+  assert.ok(rows[0]!.sourceRecordId.includes("ViewAccounts"));
+  assert.ok(rows[1]!.sourceRecordId.includes("DeleteDraftBill"));
 });

@@ -8,9 +8,16 @@ Primary tables: `ls_item_shops` (snapshot) · `ls_inventory_logs` (ledger) ·
 
 **Stock snapshot — `ls_item_shops`.** What is on the shelf **right now**. Overwritten in
 place; there is no as-at date and no history. "How much stock did we hold in March" is
-unanswerable from it. Key columns: `item_id`, `shop_id`, `qoh`, `avg_cost`,
-`archived` (not `item_archived`), `description`, `time_stamp`. Whole-business stock uses
+unanswerable from it. Key columns: `item_id`, `shop_id`, `qoh`,
+`archived` (not `item_archived`), `time_stamp`. Whole-business stock uses
 `shop_id = 0`; never sum `shop_id = 0` with per-shop rows.
+
+**Names and costs are NOT on the stock row at this shop.** Verified live:
+`ls_item_shops.description` and `ls_item_shops.avg_cost` are NULL on every row.
+Always join `ls_items` on `item_id` for the name (`i.description`) and the cost
+(`COALESCE(i.avg_cost, i.default_cost)`) — valuing stock from the snapshot's own
+`avg_cost` prices the whole shop at $0 and the report looks plausible but says
+nothing.
 
 **Movement — `ls_inventory_logs`.** The only dated stock ledger (~127k rows). Reach for
 it for "where did the stock go", shrinkage, receiving history, and **aged inventory**
@@ -22,7 +29,8 @@ unfiltered — always bound by `item_id`, `shop_id` or a `create_time` range.
 - **`ls_item_shops.shop_id = 0` is an all-shops rollup, not a shop.** Verified: 17,005
   rollup rows and 17,005 real shop rows. Whole business → `shop_id = 0`. Per shop →
   `shop_id > 0`. Never both in one aggregate.
-- **Stock value** is `qoh * avg_cost` (cost basis). There is no staged selling price
+- **Stock value** is `qoh * COALESCE(i.avg_cost, i.default_cost)` (cost basis, from
+  the joined `ls_items` row — see above). There is no staged selling price
   (`ls_item_prices` and `ls_items.amount_where_use_type_default` / `_msrp` are empty),
   so retail-value questions can only use historical charged prices from
   `ls_sale_lines.unit_price`, disclosed as such.
@@ -41,8 +49,9 @@ unfiltered — always bound by `item_id`, `shop_id` or a `create_time` range.
 ## Worked shape
 
 "Give me an aged inventory report" — on-hand stock aged by last movement. Use
-`ls_item_shops.archived` (never `item_archived`), `shop_id = 0` for the whole shop, and
-`ls_inventory_logs.create_time` for age (never `created_at`):
+`ls_item_shops.archived` (never `item_archived`), `shop_id = 0` for the whole shop,
+`ls_inventory_logs.create_time` for age (never `created_at`), and join `ls_items`
+for names and costs:
 
 ```sql
 WITH pack AS (
@@ -50,8 +59,11 @@ WITH pack AS (
   GROUP BY 1 ORDER BY max(ingested_at) DESC LIMIT 1
 ),
 on_hand AS (
-  SELECT s.item_id, s.description, s.qoh, s.avg_cost
+  SELECT s.item_id, i.description, s.qoh,
+         COALESCE(i.avg_cost, i.default_cost, 0) AS unit_cost
   FROM source_lightspeed.ls_item_shops s
+  JOIN source_lightspeed.ls_items i ON i.item_id = s.item_id
+    AND i.mapping_version = (SELECT mv FROM pack) AND NOT i.tombstone
   WHERE s.mapping_version = (SELECT mv FROM pack)
     AND NOT s.tombstone
     AND s.shop_id = 0
@@ -76,12 +88,27 @@ SELECT
   END AS age_band,
   count(*) AS skus,
   sum(o.qoh) AS units,
-  sum(o.qoh * coalesce(o.avg_cost, 0)) AS stock_value
+  sum(o.qoh * o.unit_cost) AS stock_value
 FROM on_hand o
 LEFT JOIN last_move m ON m.item_id = o.item_id
 GROUP BY 1
 ORDER BY min(coalesce(m.last_moved_at, '1970-01-01'::timestamptz));
 ```
 
-Then answer with a markdown table of the age bands. Optional follow-up: top SKUs in
-the 180+ band.
+The bands alone are half a report. Follow with the detail cut in the same turn —
+the stalest stock ranked by value tied up, so the owner knows *which* items are the
+problem (reuse the same `pack`, `on_hand`, `last_move` CTEs):
+
+```sql
+SELECT o.description, o.qoh, o.unit_cost,
+       o.qoh * o.unit_cost AS stock_value,
+       m.last_moved_at::date AS last_movement
+FROM on_hand o
+LEFT JOIN last_move m ON m.item_id = o.item_id
+WHERE m.last_moved_at IS NULL OR m.last_moved_at < now() - interval '90 days'
+ORDER BY o.qoh * o.unit_cost DESC
+LIMIT 25
+```
+
+Then answer as a report: headline (how much stock value is sitting in the stale
+bands), the band table, the stalest-items table, and what stands out.
