@@ -16,7 +16,26 @@ import {
   createTraceEmitter,
   runLiveAlbertTurn,
 } from "../../services/conversation/src/live.js";
+import { intentPlanSchema } from "../../services/conversation/src/intent-plan.js";
 import type { TraceEvent } from "../../packages/shared/src/index.js";
+
+const answerIntentPlan = intentPlanSchema.parse({
+  disposition: "answer",
+  caseId: null,
+  domain: "sales",
+  grain: "line",
+  namedEntities: [],
+  tables: ["source_lightspeed.ls_sale_lines", "source_lightspeed.ls_sales"],
+  planSteps: [
+    "Load confirmed preferences",
+    "Look up net sales by category",
+    "Break the result down by location",
+    "Present the figures in a table",
+  ],
+  summary: "Planning how to look up net sales by category",
+  clarification: null,
+  unavailableReason: null,
+});
 
 const question = "What were net sales by product category last week, then break the result down by location and show a chart?";
 const queryAuditId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -68,18 +87,6 @@ function response(
 }
 
 const semanticResponses = Object.freeze({
-  // The preferences lookup: confirmed defaults and dossier only. The
-  // topic-matching choreography is retired with the typed plan; the model
-  // writes SQL from the canonical schema in its instructions.
-  search_catalogue: response({
-    catalogue: {
-      topics: [{ id: "sales_performance", label: "Sales performance", description: "Governed retail sales performance.", answerable: true }],
-      metrics: [{ id: "net_sales_ex_gst", label: "Net sales", description: "Sales excluding GST.", unit: "AUD" }],
-      dimensions: [{ id: "product_category", label: "Product Category", topics: ["sales_performance"] }],
-      fields: [],
-      tenantContext: { defaults: { "sales.default_metric": "commerce.net_sales_ex_gst" }, dossier: {} },
-    },
-  }),
   run_sql: response({
     resultId,
     data: {
@@ -176,8 +183,7 @@ class ScriptedAnalyticsModel implements Model {
   readonly requests: ModelRequest[] = [];
   private cursor = 0;
   private readonly steps: readonly ScriptStep[] = Object.freeze([
-    toolStep(1, "search_catalogue", { question }),
-    toolStep(2, "run_sql", {
+    toolStep(1, "run_sql", {
       sql: categorySql,
       purpose: "Net sales by product category for last week",
       claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
@@ -185,18 +191,7 @@ class ScriptedAnalyticsModel implements Model {
       filters: [],
       limit: 10,
     }),
-    toolStep(3, "publish_observation", {
-      claim: {
-        statement: "Product Category Bikes had Net sales of 1200.0000.",
-        assertion: "value",
-        refs: [
-          { resultId, rowIndex: 0, columnKey: "net_sales_ex_gst" },
-          { resultId, rowIndex: 0, columnKey: "product_category" },
-        ],
-      },
-      nextStep: "break_down_by_location",
-    }),
-    toolStep(4, "run_sql", {
+    toolStep(2, "run_sql", {
       sql: locationSql,
       purpose: "Net sales by location for last week",
       claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
@@ -204,25 +199,30 @@ class ScriptedAnalyticsModel implements Model {
       filters: [],
       limit: 10,
     }),
-    toolStep(5, "publish_observation", {
-      claim: {
-        statement: "Location Melbourne had Net sales of 800.0000.",
-        assertion: "value",
-        refs: [
-          { resultId: locationResultId, rowIndex: 0, columnKey: "net_sales_ex_gst" },
-          { resultId: locationResultId, rowIndex: 0, columnKey: "location_name" },
-        ],
-      },
-      nextStep: "visualise_result",
-    }),
-    toolStep(6, "make_chart", {
+    toolStep(3, "make_chart", {
       dataRef: locationResultId,
       chartType: "bar",
       xKey: "location_name",
       yKey: "net_sales_ex_gst",
     }),
     Object.freeze({
-      responseId: "resp_7",
+      responseId: "resp_4",
+      output: Object.freeze({
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{
+          type: "output_text",
+          text: JSON.stringify({
+            status: "ready",
+            notes: "Category and location sales gathered.",
+            usedResultIds: [resultId, locationResultId],
+          }),
+        }],
+      }),
+    }),
+    Object.freeze({
+      responseId: "resp_5",
       output: Object.freeze({
         type: "message",
         role: "assistant",
@@ -231,7 +231,7 @@ class ScriptedAnalyticsModel implements Model {
           type: "output_text",
           text: JSON.stringify({
             state: "Verified",
-            text: "The governed result is ready.",
+            text: "Melbourne led location sales last week.\n\n| Location | Net sales |\n| --- | --- |\n| Melbourne | $800.00 |",
             claims: [{
               statement: "Location Melbourne had Net sales of 800.0000.",
               assertion: "value",
@@ -240,7 +240,7 @@ class ScriptedAnalyticsModel implements Model {
                 { resultId: locationResultId, rowIndex: 0, columnKey: "location_name" },
               ],
             }],
-            followUps: ["Would you like the same governed view by store?"],
+            followUps: ["Would you like the same view by store?"],
           }),
         }],
       }),
@@ -312,87 +312,77 @@ test("the real Agents SDK loop executes SQL-first tools and emits a sequential a
     safetyIdentifier: "safety_test",
     modelProvider: provider,
     semanticClient,
+    resolveIntentPlan: async () => answerIntentPlan,
     onProviderUsage: async (usage) => { usages.push(usage); },
     emit,
   });
 
-  // The typed-plan IR never runs: the model writes SQL and the service attests
-  // its claims. The catalogue call survives only as the preferences lookup.
+  // Intent+Plan → SQL evidence → answer agent. No preference/catalogue lookup.
   assert.deepEqual(semanticCalls, [
-    "search_catalogue",
     "run_sql",
     "run_sql",
   ]);
-  assert.equal(model.requests.length, 7);
+  assert.equal(model.requests.length, 5);
   assert.equal(model.requests[0]?.modelSettings.providerData?.service_tier, "fast");
   assert.equal(model.requests[0]?.modelSettings.reasoning?.effort, "high");
   assert.equal(model.requests[0]?.modelSettings.store, false);
   assert.deepEqual(events.map(({ sequence }) => sequence), events.map((_, index) => index + 1));
-  // Every governed tool opens and settles its own progress step so the browser
-  // can show the exact work in flight instead of a generic placeholder.
   assert.deepEqual(events.map(({ type }) => type), [
     "progress",
     "progress",
     "progress",
+    "query",
+    "table",
     "progress",
     "query",
     "table",
-    "validation",
-    "validation",
-    "narrative",
-    "progress",
-    "query",
-    "table",
-    "validation",
-    "validation",
-    "narrative",
     "chart",
+    "progress",
     "answer",
   ]);
+  // Passed lint / claim checks stay off the owner trail.
+  assert.equal(events.some((event) => event.type === "validation"), false);
   const progressSteps = events
     .filter((event): event is Extract<TraceEvent, { type: "progress" }> => event.type === "progress")
     .map(({ stage, label, detail }) => ({ stage, label, detail }));
   assert.deepEqual(progressSteps.map(({ stage }) => stage), [
     "planning",
-    "catalogue",
-    "catalogue",
+    "planning",
     "query",
     "query",
+    "planning",
   ]);
   const queryStep = progressSteps.find(({ stage }) => stage === "query");
-  assert.equal(queryStep?.label, "Running SQL with governed claims");
-  assert.equal(queryStep?.detail, "Net sales by product category for last week");
-  assert.equal(
-    progressSteps.find(({ stage }) => stage === "catalogue")?.label,
-    "Loading confirmed preferences",
-  );
-  assert.ok(progressSteps.every(({ label }) => label.length > 0 && label !== "Understanding the question"));
+  assert.equal(queryStep?.label, "Net sales by product category for last week");
+  assert.equal(queryStep?.detail, "");
+  assert.equal(progressSteps.some(({ stage }) => stage === "catalogue"), false);
+  assert.equal(progressSteps[0]?.label, "Working out what you need");
+  assert.equal(progressSteps[1]?.label, "Planning how to look up net sales by category");
+  assert.equal(progressSteps.at(-1)?.label, "Writing your answer");
   const tables = events.filter((event): event is Extract<TraceEvent, { type: "table" }> => event.type === "table");
   assert.equal(tables.length, 2);
   assert.equal(tables[0]?.resultId, resultId);
   assert.equal(tables[0]?.rows[0]?.net_sales_ex_gst, "1200.0000");
   assert.equal(tables[1]?.resultId, locationResultId);
   assert.equal(tables[1]?.rows[0]?.net_sales_ex_gst, "800.0000");
-  const firstObservationIndex = events.findIndex((event) => event.type === "narrative" && event.text.includes("AUD 1,200"));
-  const secondQueryIndex = events.findIndex((event, index) => index > firstObservationIndex && event.type === "query");
+  const firstQueryIndex = events.findIndex((event) => event.type === "query");
+  const secondQueryIndex = events.findIndex((event, index) => index > firstQueryIndex && event.type === "query");
   const secondTableIndex = events.findIndex((event) => event.type === "table" && event.resultId === locationResultId);
-  assert.ok(firstObservationIndex > 0 && secondQueryIndex > firstObservationIndex && secondTableIndex > secondQueryIndex);
+  assert.ok(firstQueryIndex > 0 && secondQueryIndex > firstQueryIndex && secondTableIndex > secondQueryIndex);
   const answer = events.at(-1);
   assert.ok(answer && answer.type === "answer");
   assert.equal(answer.state, "Verified");
-  // The narrative the model wrote is what the user reads, once every figure in
-  // it has been proved against a governed cell. The server-canonical rendering
-  // remains the fallback when that proof fails, and claims stay the lineage.
-  assert.equal(
-    answer.text,
-    "The governed result is ready.\n\nFigures cover Last week from Lightspeed Retail, current to 2026-08-02.",
-  );
+  assert.match(answer.text, /Melbourne/u);
+  assert.match(answer.text, /\$800\.00/u);
+  assert.match(answer.text, /\|/u);
+  // Period may be in the lead sentence ("last week") or the disclosure line.
+  assert.match(answer.text, /last week|These figures cover Last week from Lightspeed Retail/iu);
   assert.equal(answer.claims?.[0]?.refs.length, 2);
-  assert.equal(result.lastResponseId, "resp_7");
+  assert.equal(result.lastResponseId, "resp_5");
   assert.equal(result.answerState, "Verified");
   assert.match(result.resultDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.deepEqual(result.queryAuditIds, [queryAuditId, locationQueryAuditId]);
-  assert.equal(result.usage.requests, 7);
+  assert.equal(result.usage.requests, 5);
   assert.equal(usages.length, 1);
-  assert.equal(usages[0]?.requests, 7);
+  assert.equal(usages[0]?.requests, 5);
 });

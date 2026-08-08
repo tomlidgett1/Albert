@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useId,
   useEffect,
   useMemo,
@@ -35,8 +36,30 @@ export const AUTH_HEALTH_STATES = [
 ] as const;
 export type AuthHealthState = (typeof AUTH_HEALTH_STATES)[number];
 
-export type ConnectionProviderId = "lightspeed" | "xero" | "deputy";
+export type ConnectionProviderId =
+  | "lightspeed"
+  | "xero"
+  | "deputy"
+  | "shopify"
+  | "employment_hero"
+  | "stripe"
+  | "square"
+  | "myob"
+  | "momence"
+  | "google_ads"
+  | "meta_ads"
+  | "tiktok_ads"
+  | "google_analytics"
+  | "paypal"
+  | "afterpay"
+  | "tyro"
+  | "klaviyo"
+  | "woocommerce"
+  | "servicem8";
 export type MatchDecision = "proposed" | "accepted" | "rejected";
+export type ConnectableProviderId =
+  | "lightspeed" | "xero" | "deputy" | "square"
+  | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
 
 export interface ConnectionAuthHealth {
   state: AuthHealthState;
@@ -71,6 +94,7 @@ export interface ConnectionProviderData {
   logo: string;
   connectDetail: string;
   additionalConnectionLabel?: string;
+  comingSoon?: boolean;
   connections: readonly ConnectionAccountData[];
 }
 
@@ -153,7 +177,7 @@ export interface ConnectionsWorkspaceProps {
     detail?: string;
   }> | null;
   canManage?: boolean;
-  onConnect?: (providerId: ConnectionProviderId) => void;
+  onConnect?: (providerId: ConnectionProviderId, shopDomain?: string) => void;
   onManage?: (connectionId: string) => void;
   onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
   onDisconnect?: (connectionId: string) => void;
@@ -171,6 +195,152 @@ export const readinessStateLabels: Record<ReadinessState, string> = {
   blocked: "Blocked",
 };
 
+export const COMING_SOON_PROVIDERS: readonly ConnectionProviderData[] = Object.freeze([
+  Object.freeze({
+    id: "shopify" as const,
+    name: "Shopify",
+    description: "Online storefronts, orders, and ecommerce activity.",
+    logo: "/logos/shopify.svg",
+    connectDetail: "Shopify support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "employment_hero" as const,
+    name: "Employment Hero",
+    description: "HR, payroll, and people operations.",
+    logo: "/logos/employment-hero.png",
+    connectDetail: "Employment Hero support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "stripe" as const,
+    name: "Stripe",
+    description: "Payments, payouts, and online commerce activity.",
+    logo: "/logos/stripe.svg",
+    connectDetail: "Stripe support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "square" as const,
+    name: "Square",
+    description: "In-person payments, orders, and catalogue activity.",
+    logo: "/logos/square.svg",
+    connectDetail: "Square support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "myob" as const,
+    name: "MYOB",
+    description: "Accounting, invoices, and Australian business books.",
+    logo: "/logos/myob.svg",
+    connectDetail: "MYOB support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "momence" as const,
+    name: "Momence",
+    description: "Yoga studio bookings, memberships, and class schedules.",
+    logo: "/logos/momence.svg",
+    connectDetail: "Momence support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "google_ads" as const,
+    name: "Google Ads",
+    description: "Search and shopping campaign spend, clicks, and conversions.",
+    logo: "/logos/google-ads.svg",
+    connectDetail: "Google Ads support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "meta_ads" as const,
+    name: "Meta Ads",
+    description: "Facebook and Instagram campaign spend and performance.",
+    logo: "/logos/meta.svg",
+    connectDetail: "Meta Ads support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "tiktok_ads" as const,
+    name: "TikTok Ads",
+    description: "Short-form video campaign spend and attribution.",
+    logo: "/logos/tiktok.svg",
+    connectDetail: "TikTok Ads support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "google_analytics" as const,
+    name: "Google Analytics",
+    description: "Website traffic, conversion paths, and storefront funnels.",
+    logo: "/logos/google-analytics.svg",
+    connectDetail: "Google Analytics support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "paypal" as const,
+    name: "PayPal",
+    description: "Checkout payments, invoices, and payout activity.",
+    logo: "/logos/paypal.svg",
+    connectDetail: "PayPal support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "afterpay" as const,
+    name: "Afterpay",
+    description: "Buy now, pay later orders and settlement activity.",
+    logo: "/logos/afterpay.svg",
+    connectDetail: "Afterpay support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "tyro" as const,
+    name: "Tyro",
+    description: "Australian EFTPOS, in-person payments, and settlements.",
+    logo: "/logos/tyro.png",
+    connectDetail: "Tyro support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "klaviyo" as const,
+    name: "Klaviyo",
+    description: "Email and SMS campaigns, flows, and attributed revenue.",
+    logo: "/logos/klaviyo.png",
+    connectDetail: "Klaviyo support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "woocommerce" as const,
+    name: "WooCommerce",
+    description: "WordPress storefront orders, products, and customers.",
+    logo: "/logos/woocommerce.svg",
+    connectDetail: "WooCommerce support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "servicem8" as const,
+    name: "ServiceM8",
+    description: "Tradie jobs, scheduling, quotes, and field invoices.",
+    logo: "/logos/servicem8.png",
+    connectDetail: "ServiceM8 support is coming soon.",
+    comingSoon: true,
+    connections: Object.freeze([]),
+  }),
+]);
 
 /** Truthful zero state used before the authenticated control plane responds. */
 export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze({
@@ -195,7 +365,6 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
       description: "Accounting, invoices, journals, and bank activity.",
       logo: "/logos/xero.svg",
       connectDetail: "Connect a Xero organisation.",
-      additionalConnectionLabel: "Add another Xero organisation",
       connections: Object.freeze([]),
     }),
     Object.freeze({
@@ -206,6 +375,7 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
       connectDetail: "Connect a Deputy installation.",
       connections: Object.freeze([]),
     }),
+    ...COMING_SOON_PROVIDERS,
   ]),
   dossier: Object.freeze([]),
   blockingQuestions: Object.freeze([]),
@@ -522,7 +692,21 @@ function ConnectionsWorkspaceStateful({
 }: ConnectionsWorkspaceProps) {
   const componentId = useId().replaceAll(":", "");
   const [managedConnectionId, setManagedConnectionId] = useState<string | null>(null);
+  // Shopify alone needs an account identity before the redirect: its authorize
+  // endpoint lives on the merchant's own shop, not on a central vendor host.
+  const [shopifyShopDomain, setShopifyShopDomain] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  /**
+   * Manual sync state. The button reports only what the request ledger actually
+   * accepted: a decline (already running, reconnect needed) is surfaced as such
+   * rather than shown as a success the backend never enqueued.
+   */
+  const [syncState, setSyncState] = useState<
+    | { status: "idle" }
+    | { status: "requesting" }
+    | { status: "accepted"; syncRunId: string }
+    | { status: "declined"; message: string }
+  >({ status: "idle" });
   const manageDialogRef = useRef<HTMLElement>(null);
   const managePreviousFocusRef = useRef<HTMLElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement>(null);
@@ -534,6 +718,36 @@ function ConnectionsWorkspaceStateful({
     }
     return undefined;
   }, [data.providers, managedConnectionId]);
+
+  const requestManualSync = useCallback(async (connectionId: string) => {
+    setSyncState({ status: "requesting" });
+    try {
+      const response = await fetch("/api/connections/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        accepted?: boolean;
+        syncRunId?: string;
+        message?: string;
+        error?: string;
+      };
+      if (response.ok && payload.accepted && payload.syncRunId) {
+        setSyncState({ status: "accepted", syncRunId: payload.syncRunId });
+        return;
+      }
+      setSyncState({
+        status: "declined",
+        message: payload.message ?? payload.error ?? "Could not start the sync.",
+      });
+    } catch {
+      setSyncState({ status: "declined", message: "Could not reach the server." });
+    }
+  }, []);
+
+  // A newly opened connection must not inherit the previous one's sync result.
+  useEffect(() => { setSyncState({ status: "idle" }); }, [managedConnectionId]);
 
   const mutationsEnabled = canManage && status.kind === "ready";
   const disabledActionTitle = !canManage
@@ -586,6 +800,166 @@ function ConnectionsWorkspaceStateful({
     return () => window.cancelAnimationFrame(focusFrame);
   }, [confirmDisconnect, managedConnectionId]);
 
+  const connectedProviders = data.providers.filter((provider) => provider.connections.length > 0);
+  const notConnectedProviders = data.providers.filter((provider) => provider.connections.length === 0);
+
+  const renderProviderGroup = (provider: ConnectionProviderData) => {
+    const comingSoon = Boolean(provider.comingSoon);
+    const selectionInProgress = !comingSoon && (data.oauthSelections?.some(
+      (selection) => selection.provider === provider.id,
+    ) ?? false);
+
+    return (
+      <section
+        className={styles.connectionsProviderGroup}
+        key={provider.id}
+        role="listitem"
+        aria-label={`${provider.name} connections`}
+      >
+        <div role="list" aria-label={`${provider.name} accounts`}>
+          {provider.connections.length === 0 ? (
+            <article
+              className={styles.connectionsProviderRow}
+              role="listitem"
+              data-coming-soon={comingSoon || undefined}
+            >
+              <div className={styles.connectionsProviderMain}>
+                <div className={styles.connectionsProviderIdentity}>
+                  <ProviderLogo provider={provider} />
+                  <div className={styles.connectionsProviderCopy}>
+                    <div className={styles.connectionsProviderTitleRow}>
+                      <h3>{provider.name}</h3>
+                      <span
+                        className={styles.connectionsAuthStatus}
+                        data-auth-state={comingSoon ? "coming_soon" : "not_connected"}
+                      >
+                        <i aria-hidden="true" />
+                        {comingSoon ? "Coming soon" : "Not connected"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className={styles.connectionsProviderActions}>
+                  {provider.id === "shopify" && !comingSoon ? (
+                    <input
+                      className={styles.connectionsShopDomainInput}
+                      type="text"
+                      inputMode="url"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="your-store.myshopify.com"
+                      aria-label="Shopify store domain"
+                      value={shopifyShopDomain}
+                      disabled={!mutationsEnabled || !onConnect}
+                      onChange={(event) => setShopifyShopDomain(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || !shopifyShopDomain.trim()) return;
+                        event.preventDefault();
+                        onConnect?.(provider.id, shopifyShopDomain);
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    className={styles.connectionsProviderActionPrimary}
+                    type="button"
+                    aria-busy={selectionInProgress}
+                    disabled={
+                      comingSoon
+                      || selectionInProgress
+                      || !mutationsEnabled
+                      || !onConnect
+                      // Shopify cannot start without a shop; disabling beats a
+                      // redirect that only fails once it reaches the worker.
+                      || (provider.id === "shopify" && !shopifyShopDomain.trim())
+                    }
+                    title={
+                      comingSoon
+                        ? `${provider.name} support is coming soon.`
+                        : provider.id === "shopify" && !shopifyShopDomain.trim()
+                          ? "Enter your myshopify.com store domain first."
+                          : disabledActionTitle
+                    }
+                    onClick={() => {
+                      if (comingSoon) return;
+                      onConnect?.(
+                        provider.id,
+                        provider.id === "shopify" ? shopifyShopDomain : undefined,
+                      );
+                    }}
+                  >
+                    {comingSoon
+                      ? "Coming soon"
+                      : selectionInProgress
+                        ? "Choosing account…"
+                        : "Connect"}
+                  </button>
+                </div>
+              </div>
+            </article>
+          ) : (
+            provider.connections.map((connection) => {
+              const authorizing = connection.auth.state === "authorizing";
+              const accountLabel = connection.auth.accountName || provider.name;
+              return (
+                <article
+                  className={styles.connectionsProviderRow}
+                  key={connection.connectionId}
+                  role="listitem"
+                  data-connection-id={connection.connectionId}
+                  data-has-sync={connection.domains.length > 0 || authorizing || undefined}
+                >
+                  <div className={styles.connectionsProviderMain}>
+                    <div className={styles.connectionsProviderIdentity}>
+                      <ProviderLogo provider={provider} />
+                      <div className={styles.connectionsProviderCopy}>
+                        <div className={styles.connectionsProviderTitleRow}>
+                          <h3>{provider.name}</h3>
+                          <span
+                            className={styles.connectionsAuthStatus}
+                            data-auth-state={connection.auth.state}
+                          >
+                            <i aria-hidden="true" />
+                            {connection.auth.label}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <ConnectionSyncProgress
+                      accountLabel={accountLabel}
+                      domains={connection.domains}
+                    />
+                    <div className={styles.connectionsProviderActions}>
+                      <button
+                        className={styles.connectionsProviderActionSecondary}
+                        type="button"
+                        aria-busy={authorizing}
+                        disabled={
+                          authorizing ||
+                          !mutationsEnabled ||
+                          (!onManage && !onConnect && !onDisconnect)
+                        }
+                        title={disabledActionTitle}
+                        onClick={() => {
+                          if (onManage) onManage(connection.connectionId);
+                          else {
+                            setManagedConnectionId(connection.connectionId);
+                            setConfirmDisconnect(false);
+                          }
+                        }}
+                      >
+                        {authorizing ? "Authorizing…" : "Manage"}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+    );
+  };
+
   return (
     <section className={styles.connectionsDataWorkspace} aria-labelledby={`${componentId}-title`}>
       <div className={styles.connectionsDataHeader}>
@@ -595,14 +969,14 @@ function ConnectionsWorkspaceStateful({
         </div>
       </div>
 
-      {status.kind !== "ready" ? (
-        <div className={styles.connectionsNotice} data-kind={status.kind === "error" ? "error" : "info"} role="status">
+      {status.kind === "error" ? (
+        <div className={styles.connectionsNotice} data-kind="error" role="status">
           <span aria-hidden="true">✦</span>
           <p>
-            <strong>{status.kind === "loading" ? "Loading your connections" : "Connection status unavailable"}</strong>
+            <strong>Connection status unavailable</strong>
             {status.message ? ` · ${status.message}` : ""}
           </p>
-          {status.kind === "error" && onRetry ? (
+          {onRetry ? (
             <button type="button" onClick={onRetry}>Try again</button>
           ) : null}
         </div>
@@ -652,126 +1026,43 @@ function ConnectionsWorkspaceStateful({
             </section>
           ))}
 
-          <div className={styles.connectionsProviderList} role="list" aria-label="Connected apps">
-            {data.providers.map((provider) => {
-              const selectionInProgress = data.oauthSelections?.some(
-                (selection) => selection.provider === provider.id,
-              ) ?? false;
+          {connectedProviders.length > 0 ? (
+            <section
+              className={styles.connectionsAppsSection}
+              aria-labelledby={`${componentId}-connected-title`}
+            >
+              <h3
+                className={styles.connectionsAppsSectionTitle}
+                id={`${componentId}-connected-title`}
+              >
+                Connected
+              </h3>
+              <div className={styles.connectionsProviderList} role="list" aria-label="Connected apps">
+                {connectedProviders.map(renderProviderGroup)}
+              </div>
+            </section>
+          ) : null}
 
-              return (
-                <section
-                  className={styles.connectionsProviderGroup}
-                  key={provider.id}
-                  role="listitem"
-                  aria-label={`${provider.name} connections`}
-                >
-                  <div role="list" aria-label={`${provider.name} accounts`}>
-                    {provider.connections.length === 0 ? (
-                      <article className={styles.connectionsProviderRow} role="listitem">
-                        <div className={styles.connectionsProviderMain}>
-                          <div className={styles.connectionsProviderIdentity}>
-                            <ProviderLogo provider={provider} />
-                            <div className={styles.connectionsProviderCopy}>
-                              <div className={styles.connectionsProviderTitleRow}>
-                                <h3>{provider.name}</h3>
-                                <span className={styles.connectionsAuthStatus} data-auth-state="not_connected">
-                                  <i aria-hidden="true" />
-                                  Not connected
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className={styles.connectionsProviderActions}>
-                            <button
-                              className={styles.connectionsProviderActionPrimary}
-                              type="button"
-                              aria-busy={selectionInProgress}
-                              disabled={selectionInProgress || !mutationsEnabled || !onConnect}
-                              title={disabledActionTitle}
-                              onClick={() => onConnect?.(provider.id)}
-                            >
-                              {selectionInProgress ? "Choosing account…" : "Connect"}
-                            </button>
-                          </div>
-                        </div>
-                      </article>
-                    ) : (
-                      provider.connections.map((connection) => {
-                        const authorizing = connection.auth.state === "authorizing";
-                        const accountLabel = connection.auth.accountName || provider.name;
-                        return (
-                          <article
-                            className={styles.connectionsProviderRow}
-                            key={connection.connectionId}
-                            role="listitem"
-                            data-connection-id={connection.connectionId}
-                            data-has-sync={connection.domains.length > 0 || authorizing || undefined}
-                          >
-                            <div className={styles.connectionsProviderMain}>
-                              <div className={styles.connectionsProviderIdentity}>
-                                <ProviderLogo provider={provider} />
-                                <div className={styles.connectionsProviderCopy}>
-                                  <div className={styles.connectionsProviderTitleRow}>
-                                    <h3>{provider.name}</h3>
-                                    <span
-                                      className={styles.connectionsAuthStatus}
-                                      data-auth-state={connection.auth.state}
-                                    >
-                                      <i aria-hidden="true" />
-                                      {connection.auth.label}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              <ConnectionSyncProgress
-                                accountLabel={accountLabel}
-                                domains={connection.domains}
-                              />
-                              <div className={styles.connectionsProviderActions}>
-                                <button
-                                  className={styles.connectionsProviderActionSecondary}
-                                  type="button"
-                                  aria-busy={authorizing}
-                                  disabled={
-                                    authorizing ||
-                                    !mutationsEnabled ||
-                                    (!onManage && !onConnect && !onDisconnect)
-                                  }
-                                  title={disabledActionTitle}
-                                  onClick={() => {
-                                    if (onManage) onManage(connection.connectionId);
-                                    else {
-                                      setManagedConnectionId(connection.connectionId);
-                                      setConfirmDisconnect(false);
-                                    }
-                                  }}
-                                >
-                                  {authorizing ? "Authorizing…" : "Manage"}
-                                </button>
-                              </div>
-                            </div>
-                          </article>
-                        );
-                      })
-                    )}
-                  </div>
-                  {provider.additionalConnectionLabel && provider.connections.length > 0 ? (
-                    <button
-                      className={styles.connectionsProviderAddAction}
-                      type="button"
-                      aria-busy={selectionInProgress}
-                      disabled={selectionInProgress || !mutationsEnabled || !onConnect}
-                      title={disabledActionTitle}
-                      onClick={() => onConnect?.(provider.id)}
-                    >
-                      <span aria-hidden="true">+</span>
-                      {provider.additionalConnectionLabel}
-                    </button>
-                  ) : null}
-                </section>
-              );
-            })}
-          </div>
+          {notConnectedProviders.length > 0 ? (
+            <section
+              className={styles.connectionsAppsSection}
+              aria-labelledby={`${componentId}-not-connected-title`}
+            >
+              <h3
+                className={styles.connectionsAppsSectionTitle}
+                id={`${componentId}-not-connected-title`}
+              >
+                Not connected
+              </h3>
+              <div
+                className={styles.connectionsProviderList}
+                role="list"
+                aria-label="Available apps"
+              >
+                {notConnectedProviders.map(renderProviderGroup)}
+              </div>
+            </section>
+          ) : null}
       </div>
 
       {managedConnection ? (
@@ -845,6 +1136,31 @@ function ConnectionsWorkspaceStateful({
               </div>
             ) : (
               <div className={styles.connectionsManageActions}>
+                {/* Placeholder: renders the affordance only. Deliberately inert
+                    A sync is enqueued server-side; the button reports only what the
+                    request ledger accepted, never an optimistic success. */}
+                <button
+                  className={styles.connectionsProviderActionPrimary}
+                  type="button"
+                  disabled={!mutationsEnabled || syncState.status === "requesting"}
+                  aria-busy={syncState.status === "requesting"}
+                  title={
+                    syncState.status === "requesting"
+                      ? "Starting the sync."
+                      : "Fetch the latest data from this integration."
+                  }
+                  onClick={() => void requestManualSync(managedConnection.connection.connectionId)}
+                >
+                  {syncState.status === "requesting" ? "Starting…" : "Sync now"}
+                </button>
+                {syncState.status === "accepted" ? (
+                  <small role="status">
+                    Sync queued. Data appears as each domain becomes ready.
+                  </small>
+                ) : null}
+                {syncState.status === "declined" ? (
+                  <small role="alert">{syncState.message}</small>
+                ) : null}
                 <button
                   className={styles.connectionsProviderActionSecondary}
                   type="button"

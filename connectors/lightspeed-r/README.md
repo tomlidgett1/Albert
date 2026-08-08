@@ -39,13 +39,13 @@ discovery is the variant check; X-Series uses different identity and API hosts.
 The merchant still needs to confirm the open product decision that their live
 shop is R-Series before M3 live-account acceptance can pass.
 
-Albert only issues GET requests to the R-Series data API. Albert requests the
-narrowest documented employee scopes that cover every V1 extraction domain; the
-absence of write methods remains enforced in code. The authorization-code
-flow is state-bound and uses S256 PKCE. Authorize requests include the registered
-redirect URI plus PKCE. Token exchange uses documented JSON with `client_id`,
-`client_secret`, `grant_type`, the short-lived code, and the one-use PKCE
-verifier (no `redirect_uri` field on the token request).
+Albert only issues GET requests to the R-Series data API. Consent requests
+`employee:all` (same as Nest/bike-dashboard) so one grant covers every
+extraction domain; the absence of write methods remains enforced in code. The
+authorization-code flow is state-bound for a confidential server client:
+authorize sends `response_type`, `client_id`, `scope`, `state`, and the
+registered `redirect_uri` with no PKCE. Token exchange uses JSON with
+`client_id`, `client_secret`, `grant_type`, `code`, and `redirect_uri`.
 Refresh tokens rotate and the new pair is committed with compare-and-swap before use;
 disconnect calls the documented
 `/auth/oauth/revoke` endpoint with the current refresh token and
@@ -53,10 +53,6 @@ destroys the local encrypted credential even if the remote call fails. R-Series
 does not publish a webhook contract, so
 scheduled incremental polling and nightly reconciliation recover changes and
 deletes.
-
-Connections created with an earlier `employee:all` consent continue to be
-evaluated as covering every granular capability. New connections request the
-granular V1 scope set above.
 
 Every paged response follows vendor-provided `next` URLs after validating the
 origin and account path. Timestamp-sortable resources use inclusive watermarks;

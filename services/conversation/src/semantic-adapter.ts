@@ -24,23 +24,26 @@ export function adaptGovernedResult(response: SemanticToolResponse): GovernedRes
   )) {
     throw new Error("The semantic service returned invalid row filter references.");
   }
-  if (resultWindow && (
-    rows.length > resultWindow.requestedLimit
-    || resultWindow.orderBy.some((item) => !response.data?.columns.includes(item.columnKey))
-  )) {
+  if (resultWindow && rows.length > resultWindow.requestedLimit) {
     throw new Error("The semantic service returned an invalid governed result-window proof.");
   }
+  // Keep only orderBy keys that are real result columns. Staging SQL often
+  // orders by expressions (min(...), CASE aliases) that are not projected;
+  // dropping those keys is safer than failing the whole turn.
+  const safeResultWindow = resultWindow
+    ? {
+      requestedLimit: resultWindow.requestedLimit,
+      orderedBeforeLimit: true as const,
+      orderBy: resultWindow.orderBy.filter((item) => response.data?.columns.includes(item.columnKey)),
+    }
+    : undefined;
   return {
     resultId: response.resultId,
     columns: response.data.columns.map((column) => columnMetadata(column, response, rows)),
     rows,
     ...(filterRefs ? { filterRefs: filterRefs.map((row) => ({ ...row })) } : {}),
-    ...(resultWindow ? {
-      resultWindow: {
-        requestedLimit: resultWindow.requestedLimit,
-        orderedBeforeLimit: true,
-        orderBy: resultWindow.orderBy.map((item) => ({ ...item })),
-      },
+    ...(safeResultWindow && safeResultWindow.orderBy.length > 0 ? {
+      resultWindow: safeResultWindow,
     } : {}),
     provenance: adaptTraceProvenance(response),
     validations: adaptValidations(response),

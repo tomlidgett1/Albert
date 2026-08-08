@@ -209,7 +209,7 @@ test("documented Xero payment and Deputy leave variants have explicit typed cove
 
   const xeroPaymentCoverage = Object.fromEntries(
     xeroManifest.fieldCoverage
-      .filter((field) => field.stream === "payments")
+      .filter((field) => field.stream === "xero_payments")
       .map((field) => [field.field, field]),
   );
   const deputyLeaveCoverage = Object.fromEntries(
@@ -444,7 +444,7 @@ test("canonical mapping isolates malformed Xero and Lightspeed records from vali
     },
     {
       connectorId: "xero" as const,
-      stream: "invoices",
+      stream: "xero_invoices",
       mapper: mapXeroCanonical,
       valid: () => fixtureRow("xero", "xero_invoices"),
       invalid(base:CanonicalStagingRow):CanonicalStagingRow {

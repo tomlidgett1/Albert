@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const vendorProviderSchema = z.enum(["lightspeed-r", "xero", "deputy"]);
+export const vendorProviderSchema = z.enum(["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]);
 export type VendorProvider = z.infer<typeof vendorProviderSchema>;
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);

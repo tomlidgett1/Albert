@@ -105,7 +105,7 @@ function capability(connectionId:string,available:boolean){
     id:"finance.journals",connectorId:"xero",connectionId,available,
     support:(available?"full":"unavailable") as "full"|"unavailable",
     ...(available?{}:{reasonCode:"organisation_not_queryable"}),
-    coverage:{stream:"journals"},
+    coverage:{stream:"xero_journals"},
   };
 }
 

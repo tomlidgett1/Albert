@@ -124,6 +124,8 @@ export type TenantSessionState = z.infer<typeof tenantSessionStateSchema>;
 
 export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "conversation.turn": Object.freeze({ limit: 20, windowSeconds: 60 }),
+  // Cheap nano titles; keep separate so sidebar backfill cannot starve turns.
+  "conversation.title": Object.freeze({ limit: 40, windowSeconds: 60 }),
   "oauth.start": Object.freeze({ limit: 5, windowSeconds: 600 }),
   "oauth.callback": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.select": Object.freeze({ limit: 10, windowSeconds: 600 }),

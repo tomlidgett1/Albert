@@ -68,6 +68,8 @@ test("prose containing a pipe is not mistaken for a table", () => {
 test("the runtime sanitizes the answer as prose and asks for a table when the data is tabular", () => {
   assert.match(liveRuntime, /let answerText = sanitizeAnswerText\(output\.text, 4_000\)/u);
   assert.doesNotMatch(liveRuntime, /answerText = sanitizeTraceText\(output\.text/u);
-  assert.match(liveRuntime, /The text field is rendered as markdown/u);
-  assert.match(liveRuntime, /write a markdown table/u);
+  assert.match(liveRuntime, /The answer is rendered markdown/u);
+  assert.match(liveRuntime, /markdown pipe table/u);
+  assert.match(liveRuntime, /ensureAnswerIncludesTable/u);
+  assert.match(liveRuntime, /isOwnerTrailValidation/u);
 });

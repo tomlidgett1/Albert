@@ -81,72 +81,14 @@ export const CRITICAL_PROMPT_ROUTE_CONTRACTS = Object.freeze([
   employeeDirectoryContract,
 ] as const);
 
-function normalizedPrompt(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLocaleLowerCase("en-AU")
-    .replace(/[’']/gu, "")
-    .replace(/[^a-z0-9]+/gu, " ")
-    .trim();
-}
+export type CriticalPromptRouteCaseId = PromptRouteContract["caseId"];
 
-/**
- * Fail-closed routing for the V1 intents whose answer must never depend on the
- * model inventing either a metric or a clarification vocabulary. The model
- * still performs the turn, but trusted code constrains and verifies its route.
- */
-export function criticalPromptRouteContract(message: string): PromptRouteContract | undefined {
-  const prompt = normalizedPrompt(message);
-  if (!prompt) return undefined;
-
-  const mentionsWorker = /\b(?:employee|employees|staff|worker|workers)\b/u.test(prompt);
-  const mentionsCurrentWork = /\b(?:working|rostered|scheduled)\b/u.test(prompt)
-    && /\b(?:today|current shift)\b/u.test(prompt);
-  const mentionsBest = /\b(?:best|performed best|top performer|top performing)\b/u.test(prompt);
-  const mentionsSixMonths = /\b(?:six|6) months?\b/u.test(prompt);
-  if (mentionsWorker && mentionsCurrentWork && mentionsBest && mentionsSixMonths) {
-    return workforceBestContract;
-  }
-
-  // The directory route answers "who works here" from the allowlisted worker
-  // dimension and runs no query at all. It must therefore fire only on a pure
-  // roster lookup: any analytical predicate ("which staff member discounts
-  // most", "rank my staff by sales") is a real question that a list of names
-  // silently answers wrongly, which is worse than declining it.
-  const asksForWorkerDirectory =
-    /\b(?:who (?:are|works|work)|list|show(?: me)?|names? of|directory of|tell me who)\b/u.test(prompt)
-    || /\b(?:employees|staff|workers) (?:we have|do we have|are there)\b/u.test(prompt);
-  const mentionsAnalyticalPredicate =
-    /\b(?:sales|sold|selling|revenue|takings|margin|profit|discount|discounts|discounting|refund|refunds|transactions|units|average|aov|basket|target|performance|performing|productivity|hours|worked|roster|rostered|cost|wage|wages|per hour|compare|comparison|versus|vs|rank|ranked|ranking|most|least|highest|lowest|top|bottom|best|worst|trend|growth)\b/u.test(prompt)
-    || /\b(?:last|past|previous|this|next) (?:week|month|quarter|year|\d+ (?:days?|weeks?|months?))\b/u.test(prompt)
-    || /\b(?:how much|how many|why|quantify)\b/u.test(prompt);
-  if (
-    mentionsWorker
-    && asksForWorkerDirectory
-    && !mentionsAnalyticalPredicate
-    && !mentionsBest
-    && !mentionsCurrentWork
-  ) {
-    return employeeDirectoryContract;
-  }
-
-  if (/\bovertime\b/u.test(prompt)
-    && /\b(?:fortnight|last 14 days|past 14 days|two weeks|2 weeks)\b/u.test(prompt)) {
-    return workforceOvertimeContract;
-  }
-
-  const explicitProfitLens = /\b(?:gross profit|net profit|gross margin|operational margin|accounting profit)\b/u.test(prompt);
-  if (!explicitProfitLens
-    && /\bprofit\b/u.test(prompt)
-    && /\b(?:last month|previous month|prior month)\b/u.test(prompt)) {
-    return financeProfitContract;
-  }
-
-  const footTraffic = /\b(?:foot traffic|footfall|store visits|visitor traffic)\b/u.test(prompt);
-  const decline = /\b(?:decline|declined|declining|drop|dropped|fall|fell|down)\b/u.test(prompt);
-  if (footTraffic && decline) return footfallContract;
-
-  return undefined;
+/** Resolve a frozen fail-closed contract by case id (set by the Intent+Plan LLM). */
+export function promptRouteContractByCaseId(
+  caseId: string | null | undefined,
+): PromptRouteContract | undefined {
+  if (!caseId) return undefined;
+  return CRITICAL_PROMPT_ROUTE_CONTRACTS.find((contract) => contract.caseId === caseId);
 }
 
 export function promptRouteInstruction(contract: PromptRouteContract | undefined): string {
@@ -221,7 +163,7 @@ export function serverOwnedDirectoryAnswer(
 ): string | undefined {
   if (!contract || contract.route !== "directory") return undefined;
   if (values.length === 0) {
-    return "I can’t list your employees yet because the connected POS worker directory has no allowlisted worker names. Finish the employee backfill and transform so the governed worker dimension is populated.";
+    return "I can’t list your employees yet because the connected POS worker directory has no names loaded. Finish the employee backfill and transform so the worker directory is populated.";
   }
   const names = values.map((entry) => entry.value.trim()).filter(Boolean);
   return `Here are the ${names.length} workers currently in your connected POS directory:\n${names.map((name) => `- ${name}`).join("\n")}`;

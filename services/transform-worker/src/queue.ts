@@ -7,7 +7,7 @@ import type {
 } from "./types.js";
 
 const ULID=/^[0-9A-HJKMNP-TV-Z]{26}$/;
-const CONNECTORS=new Set(["lightspeed-r","xero","deputy"]);
+const CONNECTORS=new Set(["lightspeed-r","xero","deputy","square","shopify","stripe","momence","meta-ads","google-ads"]);
 const STATUSES=new Set(["queued","running","retry_wait","succeeded","failed"]);
 
 async function withTransformControlRole<T>(
@@ -64,7 +64,7 @@ function claimFromRow(row:ClaimRow,workerId:string):ClaimedCanonicalTransformJob
   if(!Array.isArray(row.domains)||!row.domains.length||row.domains.some((domain)=>!/^[a-z][a-z0-9_]*$/.test(domain))){
     throw new Error("canonical_queue_invalid_domains");
   }
-  const connectorId=row.connector_id as "lightspeed-r"|"xero"|"deputy";
+  const connectorId=row.connector_id as "lightspeed-r"|"xero"|"deputy"|"square"|"shopify"|"stripe"|"momence"|"meta-ads"|"google-ads";
   return Object.freeze({
     workerId,
     leaseToken:row.lease_token,

@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 import { isConnectorPackVersion } from "../packages/connector-sdk/src/contract.js";
 
-type ConnectorId="lightspeed-r"|"xero"|"deputy";
+type ConnectorId="lightspeed-r"|"xero"|"deputy"|"square"|"shopify"|"stripe"|"momence"|"meta-ads"|"google-ads";
 type RetirementReason="disconnected"|"tenant_deleting";
 
 export type ConnectorPackConnectionRetirementInput=Readonly<{
@@ -248,8 +248,8 @@ export function loadConnectorPackConnectionRetirementInput(
     throw new Error("Tenant and connection ids must be ULIDs.");
   }
   const connector=required(values,"connector");
-  if(connector!=="lightspeed-r"&&connector!=="xero"&&connector!=="deputy"){
-    throw new Error("--connector must be lightspeed-r, xero, or deputy.");
+  if(connector!=="lightspeed-r"&&connector!=="xero"&&connector!=="deputy"&&connector!=="square"&&connector!=="shopify"&&connector!=="stripe"&&connector!=="momence"&&connector!=="meta-ads"&&connector!=="google-ads"){
+    throw new Error("--connector must be one of: lightspeed-r, xero, deputy, square, shopify, stripe, momence, meta-ads, google-ads.");
   }
   const candidatePackVersion=required(values,"candidate");
   const expectedActivePackVersion=required(values,"expected-active");

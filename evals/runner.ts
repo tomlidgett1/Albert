@@ -41,7 +41,7 @@ import {
   type GoldenState,
 } from "./golden/questions.js";
 import { evaluateSourceFixtureQuery } from "./source-fixture-engine.js";
-import { criticalPromptRouteContract } from "../services/conversation/src/prompt-routing.js";
+import { promptRouteContractByCaseId } from "../services/conversation/src/prompt-routing.js";
 
 export type GoldenCaseResult = Readonly<{
   id: string;
@@ -127,12 +127,12 @@ async function runQuestion(
 export function evaluateCriticalPromptRouteQuestion(
   question: GoldenQuestion,
 ): GoldenCaseResult {
-  const contract = criticalPromptRouteContract(question.question);
+  const contract = promptRouteContractByCaseId(question.id);
   if (!contract) {
-    throw new Error(`${question.id} prompt did not activate a trusted critical route contract.`);
+    throw new Error(`${question.id} is not a trusted critical route case id.`);
   }
   if (contract.caseId !== question.id) {
-    throw new Error(`${question.id} prompt activated substituted route contract ${contract.caseId}.`);
+    throw new Error(`${question.id} activated substituted route contract ${contract.caseId}.`);
   }
   if (contract.route !== question.expectedRoute) {
     throw new Error(`${question.id} expected ${question.expectedRoute} but prompt routing produced ${contract.route}.`);

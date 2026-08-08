@@ -5,17 +5,14 @@ import { LIGHTSPEED_R_DOCUMENTATION_BUILD } from "./documented-fields.js";
 import { LIGHTSPEED_FIELD_COVERAGE } from "./field-coverage.js";
 import { LIGHTSPEED_STREAMS } from "./streams.js";
 
+/**
+ * Match the proven bike-dashboard consent: one `employee:all` grant.
+ * Granular scopes + PKCE still hit Lightspeed's merchantos OIDC redirect loop
+ * in Safari for this API client; bike-dashboard's confidential-client shape
+ * (`employee:all`, no PKCE, JSON token exchange) is the live-working path.
+ */
 export const LIGHTSPEED_R_DEFAULT_SCOPES = [
-  "employee:register_read",
-  "employee:inventory_read",
-  "employee:customers_read",
-  "employee:product_cost",
-  "employee:admin_employees",
-  "employee:admin_shops",
-  "employee:categories",
-  "employee:vendors",
-  "employee:purchase_orders",
-  "employee:admin_purchases",
+  "employee:all",
 ] as const;
 
 export const lightspeedRManifest: ConnectorManifest = {

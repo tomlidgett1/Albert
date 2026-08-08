@@ -10,9 +10,6 @@ import {
   encodeCursor,
   fetchWithRetry,
   hashPayload,
-  normalizeDecimal,
-  normalizeTimestamp,
-  projectSourceRecord,
   requestJson,
   splitOAuthScopes,
   withVendorRateBudget,
@@ -42,7 +39,25 @@ import {
 } from "../../packages/connector-sdk/src";
 import { XERO_ALLOWED_SCOPES, XERO_DEFAULT_SCOPES, xeroManifest } from "./manifest";
 import { buildXeroAuthorizationUrl } from "./oauth-public";
-import { xeroSchemas, type XeroStreamId } from "./schemas";
+import { xeroEnvelopeSchemas, xeroSchemas, type XeroStreamId } from "./schemas";
+import {
+  XERO_API_PROFILES,
+  baseParams,
+  endpointPath,
+  extraParamPasses,
+  fanOutAncestry,
+  fanOutCarrying,
+  fanOutSkippable,
+  fillFanOutPath,
+  projectStreamRows,
+  scanGroupFor,
+  specTableFor,
+  templatedParents,
+  unwrapEnvelope,
+  type XeroTemplatedParent,
+} from "./spec-sync.js";
+import { xeroSourceField, type XeroSpecTable } from "./scan-plan.js";
+import { XERO_STREAMS, type XeroStream } from "./streams.js";
 
 const TOKEN_ENDPOINT = "https://identity.xero.com/connect/token";
 const REVOCATION_ENDPOINT = "https://identity.xero.com/connect/revocation";
@@ -97,27 +112,40 @@ export type XeroConnectorConfig = Readonly<{
   now?: () => number;
 }>;
 
-const streamPriority: Readonly<Record<XeroStreamId, number>> = {
-  organisation: 10,
-  accounts: 20,
-  contacts: 60,
-  invoices: 40,
-  credit_notes: 41,
-  payments: 42,
-  bank_transactions: 50,
-  manual_journals: 51,
-  journals: 52,
-  tax_rates: 30,
-  tracking_categories: 31,
-};
+/**
+ * Scan ordering: reference configuration first, then document walks, then
+ * derived and fan-out streams behind whatever they ride. Computed from the
+ * spec so a new stream can never be silently unordered.
+ */
+const streamPriority: Readonly<Record<string, number>> = (() => {
+  const priorities: Record<string, number> = {};
+  const CORE_FIRST = [
+    "xero_organisations", "xero_connections", "xero_accounts", "xero_tax_rates",
+    "xero_currencies", "xero_tracking_categories", "xero_branding_themes", "xero_items",
+    "xero_contacts",
+  ];
+  CORE_FIRST.forEach((id, index) => { priorities[id] = 10 + index; });
+  let next = 40;
+  for (const stream of XERO_STREAMS) {
+    if (priorities[stream.id] !== undefined) continue;
+    if (stream.isScanLeader) priorities[stream.id] = next++;
+  }
+  for (const stream of XERO_STREAMS) {
+    if (priorities[stream.id] !== undefined) continue;
+    const anchor = stream.dependencies[0];
+    priorities[stream.id] = (anchor !== undefined ? (priorities[anchor] ?? next) : next) + 200;
+  }
+  return priorities;
+})();
 
-const eventDateField: Partial<Record<XeroStreamId, string>> = {
-  invoices: "Date",
-  credit_notes: "Date",
-  payments: "Date",
-  bank_transactions: "Date",
-  manual_journals: "Date",
-};
+/**
+ * Business-date field used to slice deep initial history into windows, for
+ * every time-windowed stream (the spec guarantees a `Date` column on them).
+ */
+const eventDateField: Readonly<Record<string, string>> = Object.fromEntries(
+  XERO_STREAMS.filter((stream) => stream.backfillStrategy === "time_windowed")
+    .map((stream) => [stream.id, "Date"]),
+);
 
 function required(value: string | undefined, name: string): string {
   if (!value || value.trim().length === 0) {
@@ -171,6 +199,24 @@ function extendXeroScanDigest(
     }
   }
   return hash.digest("hex");
+}
+
+/**
+ * The value of a fan-out parameter, taken from the nearest ancestor record that
+ * carries it. Sub-resources are addressed by ids that may live several links up
+ * the chain (a working week is reached through its pattern and its employee).
+ */
+function readFanOutParam(ancestors: readonly unknown[], param: string): string | null {
+  if (!param) return null;
+  for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+    const record = ancestors[index];
+    if (record === null || record === undefined || typeof record !== "object") continue;
+    const value = (record as Record<string, unknown>)[param];
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text.length > 0) return text;
+  }
+  return null;
 }
 
 function basicAuth(clientId: string, clientSecret = ""): string {
@@ -481,10 +527,10 @@ export class XeroConnector implements OAuthConnectorPack {
       };
     }
     const categoryToStream: Readonly<Record<string, XeroStreamId | undefined>> = {
-      CONTACT: "contacts",
-      INVOICE: "invoices",
-      CREDITNOTE: "credit_notes",
-      "CREDIT NOTE": "credit_notes",
+      CONTACT: "xero_contacts",
+      INVOICE: "xero_invoices",
+      CREDITNOTE: "xero_credit_notes",
+      "CREDIT NOTE": "xero_credit_notes",
     };
     const streams = [...new Set(parsed.data.events
       .map((item) => categoryToStream[item.eventCategory.toUpperCase()])
@@ -549,7 +595,7 @@ export class XeroConnector implements OAuthConnectorPack {
     const credential = await this.readCredential(context);
     const scopes = new Set(credential.secret.scopes);
     const has = (...requiredScopes: string[]) => requiredScopes.every((scope) => scopes.has(scope));
-    const ledgerKey = `${context.connectionId}:journals`;
+    const ledgerKey = `${context.connectionId}:xero_journals`;
     return [
       capability("finance.settings", has("accounting.settings.read"), ["accounting.settings.read"]),
       capability("finance.invoices", has("accounting.invoices.read"), ["accounting.invoices.read"]),
@@ -591,111 +637,232 @@ export class XeroConnector implements OAuthConnectorPack {
     range?: SyncRange,
     reconciliationPhase?: ReconciliationRequest["phase"],
   ): Promise<SyncPage> {
-    const contract = this.manifest.streams.find((candidate) => candidate.id === stream.id);
+    const contract = XERO_STREAMS.find((candidate) => candidate.id === stream.id);
     if (!contract || !(contract.id in xeroSchemas)) {
       throw new ConnectorError("CONFIGURATION_INVALID", `Unknown Xero stream: ${stream.id}.`);
     }
-    const streamId = contract.id as XeroStreamId;
-    const account = await this.discover_account(context);
-    const state = cursor ? decodeCursor(cursor, { connector: this.id, stream: stream.id }) : undefined;
+    const table = specTableFor(contract);
+    await this.assertRegionAvailable(context, table);
+    const fanOut = fanOutCarrying(table);
+    if (fanOut) return this.syncFanOut(context, contract, table, fanOut, mode, cursor, range);
+    return this.syncWalk(context, contract, table, mode, cursor, range, reconciliationPhase);
+  }
+
+  /**
+   * UK and NZ payroll share one base path and are told apart only by the
+   * organisation's region, so a mismatched walk would stage another region's
+   * records into the wrong tables. The organisation's country is fetched once
+   * per connection and every payroll stream is gated on it.
+   */
+  private readonly orgCountryByConnection = new Map<string, Promise<string | null>>();
+
+  private async assertRegionAvailable(context: ConnectorContext, table: XeroSpecTable): Promise<void> {
+    const api = table.source.api;
+    if (!api.startsWith("payroll_")) return;
+    let pending = this.orgCountryByConnection.get(context.connectionId);
+    if (!pending) {
+      pending = (async () => {
+        const account = await this.discover_account(context);
+        const url = new URL("/api.xro/2.0/Organisation", ACCOUNTING_ORIGIN);
+        const { value } = await this.accountingJson<Record<string, unknown>>(context, url, {
+          accept: "application/json",
+          "xero-tenant-id": account.externalAccountId,
+        });
+        const organisations = Array.isArray(value.Organisations) ? value.Organisations : [];
+        const first = organisations[0];
+        const country = first && typeof first === "object"
+          ? (first as Record<string, unknown>).CountryCode
+          : null;
+        return typeof country === "string" ? country.toUpperCase() : null;
+      })().catch((error) => {
+        this.orgCountryByConnection.delete(context.connectionId);
+        throw error;
+      });
+      this.orgCountryByConnection.set(context.connectionId, pending);
+    }
+    const country = await pending;
+    const wanted = api === "payroll_au" ? "AU" : api === "payroll_nz" ? "NZ" : "GB";
+    if (country !== wanted) {
+      throw new ConnectorError(
+        "CAPABILITY_UNAVAILABLE",
+        `Xero ${wanted} payroll is not available for this organisation (region ${country ?? "unknown"}).`,
+        { details: { stream: table.id, region: country ?? "unknown" } },
+      );
+    }
+  }
+
+  /** Continuation state for walk streams; a plain number remains a bare page. */
+  private decodeWalkContinuation(continuation: unknown): { page: number; pass: number } {
+    if (typeof continuation === "number") return { page: continuation, pass: 0 };
+    if (typeof continuation === "string") {
+      try {
+        const parsed = JSON.parse(continuation) as { page?: unknown; pass?: unknown };
+        const page = typeof parsed.page === "number" && Number.isSafeInteger(parsed.page) ? parsed.page : 1;
+        const pass = typeof parsed.pass === "number" && Number.isSafeInteger(parsed.pass) ? parsed.pass : 0;
+        return { page, pass };
+      } catch {
+        throw new ConnectorError("CURSOR_INVALID", "The Xero walk continuation is invalid.");
+      }
+    }
+    return { page: 1, pass: 0 };
+  }
+
+  private async syncWalk(
+    context: ConnectorContext,
+    contract: XeroStream,
+    table: XeroSpecTable,
+    mode: "initial" | "incremental" | "reconciliation",
+    cursor?: SyncCursor,
+    range?: SyncRange,
+    reconciliationPhase?: ReconciliationRequest["phase"],
+  ): Promise<SyncPage> {
+    const group = scanGroupFor(table);
+    if (!group) {
+      throw new ConnectorError("CONFIGURATION_INVALID", `Stream ${contract.id} has no scan group.`);
+    }
+    const leader = group.leader;
+    const profile = XERO_API_PROFILES[leader.source.api];
+    const state = cursor ? decodeCursor(cursor, { connector: this.id, stream: contract.id }) : undefined;
     const currentSecond = new Date(
       Math.floor((this.config.now?.() ?? Date.now()) / 1_000) * 1_000,
     ).toISOString();
     const scanUpperBound = mode === "reconciliation" && reconciliationPhase === "late_edits"
       ? range?.to ?? currentSecond
       : state?.scanUpperBound ?? currentSecond;
-    const url = new URL(`/api.xro/2.0/${contract.endpoint}`, ACCOUNTING_ORIGIN);
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      "xero-tenant-id": account.externalAccountId,
-    };
+
+    const isIdentity = leader.source.api === "identity";
+    const url = new URL(endpointPath(leader), ACCOUNTING_ORIGIN);
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (!isIdentity) {
+      const account = await this.discover_account(context);
+      headers["xero-tenant-id"] = account.externalAccountId;
+    }
+
+    const passes = extraParamPasses(leader, currentSecond);
+    const walk = this.decodeWalkContinuation(state?.continuation);
     let page = 1;
     let offset = 0;
-    if (contract.pagination === "page") {
-      page = typeof state?.continuation === "number" ? state.continuation : 1;
-      url.searchParams.set("page", String(page));
-      url.searchParams.set("pageSize", String(PAGE_SIZE));
-      if (contract.modifiedField) {
-        // The pinned Accounting OpenAPI exposes `order` on every paged V1
-        // stream. A total source-time/native-ID order plus an immutable
-        // run-start upper bound prevents mutable page membership from skipping
-        // records while an incremental scan is in flight.
-        url.searchParams.set(
-          "order",
-          `${contract.modifiedField} ASC,${contract.recordIdField} ASC`,
-        );
+    if (group.pagination === "page" && profile.pageParam) {
+      page = walk.page;
+      url.searchParams.set(profile.pageParam, String(page));
+      if (profile.pageSizeParam) url.searchParams.set(profile.pageSizeParam, String(profile.pageSize));
+      if (profile.supportsOrder && group.modifiedField && leader.recordIdField) {
+        // A total source-time/native-ID order plus an immutable run-start upper
+        // bound prevents mutable page membership from skipping records.
+        url.searchParams.set("order", `${group.modifiedField} ASC,${leader.recordIdField} ASC`);
       }
-    } else if (contract.pagination === "offset") {
+    } else if (group.pagination === "offset") {
       offset = typeof state?.continuation === "number" ? state.continuation : 0;
       url.searchParams.set("offset", String(offset));
     }
-    // Archived contacts are part of deletion/merge truth and must remain in
-    // both initial and incremental extraction. Without this documented flag,
-    // Albert can retain a contact that the source has already archived.
-    if (streamId === "contacts") url.searchParams.set("includeArchived", "true");
+    for (const [key, value] of Object.entries(baseParams(leader))) url.searchParams.set(key, value);
+    if (passes.length > 0) {
+      const pass = passes[Math.min(walk.pass, passes.length - 1)];
+      for (const [key, value] of Object.entries(pass)) url.searchParams.set(key, value);
+    }
+
+    const modifiedField = group.modifiedField;
     if (
-      streamId !== "journals" &&
+      group.pagination !== "offset" &&
+      profile.supportsIfModifiedSince &&
+      modifiedField &&
       (
         (mode === "incremental" && state?.watermark) ||
         (mode === "reconciliation" && reconciliationPhase === "late_edits" &&
           contract.lateEditStrategy === "modified_field" && range)
       )
     ) {
-      // Reconciliation deliberately uses source modification time even for
-      // invoice/payment streams whose initial history is sliced by business date.
       headers["if-modified-since"] = new Date(
         mode === "incremental" ? state!.watermark! : range!.from,
       ).toUTCString();
-      if (!contract.modifiedField || !scanUpperBound) {
-        throw new ConnectorError(
-          "CONFIGURATION_INVALID",
-          "Xero modified-time sync requires a fixed upper bound and source field.",
-        );
+      if (profile.supportsWhere && group.whereFilterable) {
+        url.searchParams.set("where", `${modifiedField}<${xeroDateTime(scanUpperBound)}`);
       }
+    } else if (
+      mode === "initial" && range && eventDateField[contract.id] &&
+      profile.supportsWhere && group.whereFilterable
+    ) {
+      const field = eventDateField[contract.id];
       url.searchParams.set(
         "where",
-        `${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`,
-      );
-    } else if (mode === "initial" && range && eventDateField[streamId]) {
-      const field = eventDateField[streamId];
-      url.searchParams.set(
-        "where",
-        `${field}>=${xeroDateTime(range.from)}&&${field}<${xeroDateTime(range.to)}`+
-          (contract.pagination === "page" && contract.modifiedField
-            ? `&&${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`
+        `${field}>=${xeroDateTime(range.from)}&&${field}<${xeroDateTime(range.to)}` +
+          (group.pagination === "page" && modifiedField
+            ? `&&${modifiedField}<${xeroDateTime(scanUpperBound)}`
             : ""),
       );
     } else if (
-      mode === "initial" && contract.pagination === "page" && contract.modifiedField
+      mode === "initial" && group.pagination === "page" && modifiedField &&
+      profile.supportsWhere && group.whereFilterable
     ) {
-      url.searchParams.set(
-        "where",
-        `${contract.modifiedField}<${xeroDateTime(scanUpperBound)}`,
-      );
+      url.searchParams.set("where", `${modifiedField}<${xeroDateTime(scanUpperBound)}`);
     }
 
-    let value: Record<string, unknown>;
+    let value: unknown;
     try {
-      ({ value } = await this.accountingJson<Record<string, unknown>>(context, url, headers));
+      ({ value } = await this.accountingJson<unknown>(context, url, headers));
     } catch (error) {
       if (error instanceof ConnectorHttpError && error.status === 304) {
-        value = { [contract.resource]: [] };
+        value = {};
       } else if (
-        streamId === "journals" &&
         error instanceof ConnectorHttpError &&
-        error.status === 403
+        (error.status === 403 || error.status === 404) &&
+        (contract.availability ?? "required") === "optional"
       ) {
         throw new ConnectorError(
           "CAPABILITY_UNAVAILABLE",
-          "Xero general-ledger access is unavailable. The app needs Advanced tier, certification, and accounting.journals.read.",
-          { details: { stream: "journals", requiredScope: "accounting.journals.read" } },
+          `Xero ${contract.id} is unavailable for this organisation (${error.status}).`,
+          { details: { stream: contract.id, status: error.status } },
         );
       } else {
         throw error;
       }
     }
-    const rawRecords = Array.isArray(value[contract.resource]) ? value[contract.resource] as unknown[] : [];
-    const records = rawRecords.map((raw) => this.toRawRecord(streamId, raw));
+
+    const rawRecords = unwrapEnvelope(value, leader);
+    // Leader records failing the founding envelope validation are quarantined
+    // as schema_invalid on the leader stream; members project from valid ones.
+    const envelopeSchema = leader.source.api === "accounting"
+      ? xeroEnvelopeSchemas[group.resource]
+      : undefined;
+    const invalidRecords: RawSourceRecord[] = [];
+    const validRaw: unknown[] = [];
+    for (const raw of rawRecords) {
+      const parsed = envelopeSchema?.safeParse(raw);
+      if (parsed && !parsed.success) {
+        if (contract.isScanLeader) {
+          const payloadHash = hashPayload(raw);
+          const candidate = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+          invalidRecords.push({
+            sourceObjectType: group.resource,
+            sourceRecordId: candidate[contract.recordIdField] != null
+              ? String(candidate[contract.recordIdField])
+              : `invalid:${payloadHash}`,
+            payload: raw,
+            payloadHash,
+            validationIssues: parsed.error.issues.map((issue) => ({
+              code: "schema_invalid" as const,
+              path: issue.path.join("."),
+              message: issue.message,
+            })),
+          });
+        }
+        continue;
+      }
+      validRaw.push(raw);
+    }
+
+    const projected = projectStreamRows({
+      table,
+      leaderTable: leader,
+      resource: group.resource,
+      records: validRaw,
+      recordIdField: contract.recordIdField,
+    });
+    const drifted = contract.isScanLeader
+      ? projected.map((record) => this.withDrift(table, record))
+      : projected;
+    const records = [...invalidRecords, ...drifted];
+
     const observedWatermark = latestTimestamp(
       records.map((record) => record.sourceUpdatedAt),
       state?.observedWatermark ?? state?.watermark,
@@ -705,13 +872,14 @@ export class XeroConnector implements OAuthConnectorPack {
     let hasMore = false;
     let vendorHasMore = false;
     let verificationRestart = false;
-    let continuation: number | undefined;
+    let continuation: number | string | undefined;
     let paginationBlock: SyncPage["paginationBlock"];
     let scanDigest: string | undefined;
     let scanCount: number | undefined;
     let verificationDigest: string | undefined;
     let verificationCount: number | undefined;
-    if (contract.pagination === "page") {
+
+    if (group.pagination === "page") {
       if (
         (state?.scanDigest !== undefined && !/^[0-9a-f]{64}$/u.test(state.scanDigest)) ||
         (state?.verificationDigest !== undefined && !/^[0-9a-f]{64}$/u.test(state.verificationDigest)) ||
@@ -722,34 +890,46 @@ export class XeroConnector implements OAuthConnectorPack {
         throw new ConnectorError("CURSOR_INVALID", "The Xero page verification cursor is invalid.");
       }
       // Xero recommends requesting pages until an empty page is observed.
-      vendorHasMore = records.length > 0;
-      scanDigest = extendXeroScanDigest(state?.scanDigest,records);
-      scanCount = (state?.scanCount ?? 0)+records.length;
-      verificationDigest=state?.verificationDigest;
-      verificationCount=state?.verificationCount;
-      if (!vendorHasMore && (scanCount>0 || verificationDigest!==undefined)) {
-        const consecutivePassMatches = verificationDigest!==undefined &&
-          verificationCount===scanCount && verificationDigest===scanDigest;
-        if (!consecutivePassMatches) {
-          // Page-number result sets are mutable even under a stable order: a
-          // record changed after page one can leave the bounded set and shift a
-          // later row behind the current offset. Require two identical ordered
-          // passes before advancing the lower watermark. The restart cursor is
-          // durable, so a worker crash cannot skip the verification pass.
-          verificationRestart=true;
-          verificationDigest=scanDigest;
-          verificationCount=scanCount;
+      const pageExhausted = rawRecords.length === 0;
+      const morePasses = walk.pass + 1 < passes.length;
+      vendorHasMore = !pageExhausted;
+
+      if (passes.length > 0) {
+        // Hidden-population passes are bounded snapshot sets; each pass pages
+        // to exhaustion, then the walk moves to the next pass.
+        hasMore = vendorHasMore || morePasses;
+        continuation = vendorHasMore
+          ? JSON.stringify({ page: page + 1, pass: walk.pass })
+          : morePasses
+            ? JSON.stringify({ page: 1, pass: walk.pass + 1 })
+            : undefined;
+      } else {
+        scanDigest = extendXeroScanDigest(state?.scanDigest, records);
+        scanCount = (state?.scanCount ?? 0) + records.length;
+        verificationDigest = state?.verificationDigest;
+        verificationCount = state?.verificationCount;
+        if (!vendorHasMore && (scanCount > 0 || verificationDigest !== undefined)) {
+          const consecutivePassMatches = verificationDigest !== undefined &&
+            verificationCount === scanCount && verificationDigest === scanDigest;
+          if (!consecutivePassMatches) {
+            // Page-number result sets are mutable even under a stable order.
+            // Require two identical ordered passes before advancing the lower
+            // watermark; the restart cursor is durable across worker crashes.
+            verificationRestart = true;
+            verificationDigest = scanDigest;
+            verificationCount = scanCount;
+          }
         }
+        hasMore = vendorHasMore || verificationRestart;
+        continuation = vendorHasMore ? page + 1 : undefined;
       }
-      hasMore=vendorHasMore||verificationRestart;
-      continuation=vendorHasMore?page+1:undefined;
-    } else if (contract.pagination === "offset") {
-      const journalNumbers = rawRecords
+    } else if (group.pagination === "offset") {
+      const journalNumbers = validRaw
         .map((raw) => raw && typeof raw === "object" ? Number((raw as Record<string, unknown>).JournalNumber) : Number.NaN)
-        .filter((value) => Number.isSafeInteger(value) && value >= 0);
+        .filter((candidate) => Number.isSafeInteger(candidate) && candidate >= 0);
       const maxJournal = journalNumbers.length > 0 ? Math.max(...journalNumbers) : undefined;
       // Xero explicitly warns that a partial Journals page is not an end signal.
-      hasMore = records.length > 0;
+      hasMore = rawRecords.length > 0;
       if (hasMore && maxJournal === undefined) {
         paginationBlock = {
           code: "pagination_identity_invalid",
@@ -764,15 +944,16 @@ export class XeroConnector implements OAuthConnectorPack {
         // Persist the high journal number even on the last page for the next incremental.
         continuation = maxJournal ?? offset;
       }
-      vendorHasMore=hasMore;
+      vendorHasMore = hasMore;
     }
-    if (!paginationBlock) this.successfulStreams.add(`${context.connectionId}:${streamId}`);
+
+    if (!paginationBlock) this.successfulStreams.add(`${context.connectionId}:${contract.id}`);
     return {
       records,
       nextCursor: paginationBlock ? null : encodeCursor({
         v: 1,
         connector: this.id,
-        stream: stream.id,
+        stream: contract.id,
         mode: mode === "reconciliation" ? "reconciliation" : mode,
         watermark: hasMore
           ? state?.watermark
@@ -782,25 +963,13 @@ export class XeroConnector implements OAuthConnectorPack {
         observedWatermark: hasMore ? observedWatermark : undefined,
         oldestObservedAt,
         continuation,
-        scanUpperBound: hasMore && contract.pagination === "page"
-          ? scanUpperBound
-          : undefined,
-        scanDigest: contract.pagination === "page" && vendorHasMore
-          ? scanDigest
-          : undefined,
-        scanCount: contract.pagination === "page" && vendorHasMore
-          ? scanCount
-          : undefined,
-        verificationDigest: contract.pagination === "page" && hasMore
-          ? verificationDigest
-          : undefined,
-        verificationCount: contract.pagination === "page" && hasMore
-          ? verificationCount
-          : undefined,
+        scanUpperBound: hasMore && group.pagination === "page" ? scanUpperBound : undefined,
+        scanDigest: group.pagination === "page" && vendorHasMore ? scanDigest : undefined,
+        scanCount: group.pagination === "page" && vendorHasMore ? scanCount : undefined,
+        verificationDigest: group.pagination === "page" && hasMore ? verificationDigest : undefined,
+        verificationCount: group.pagination === "page" && hasMore ? verificationCount : undefined,
         rangeFrom: range?.from ?? state?.rangeFrom,
-        rangeTo: mode === "incremental"
-          ? undefined
-          : range?.to ?? state?.rangeTo,
+        rangeTo: mode === "incremental" ? undefined : range?.to ?? state?.rangeTo,
       }),
       hasMore,
       ...(paginationBlock ? { paginationBlock } : {}),
@@ -827,84 +996,411 @@ export class XeroConnector implements OAuthConnectorPack {
     };
   }
 
-  private toRawRecord(stream: XeroStreamId, raw: unknown): RawSourceRecord {
-    const payloadHash = hashPayload(raw);
-    const schema = xeroSchemas[stream];
-    const parsed = schema.safeParse(raw);
-    const contract = this.manifest.streams.find((item) => item.id === stream);
-    if (!contract) throw new ConnectorError("CONFIGURATION_INVALID", `Unknown Xero stream ${stream}.`);
-    if (!parsed.success) {
-      const candidate = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-      return {
-        sourceObjectType: contract.resource,
-        sourceRecordId: candidate[contract.recordIdField] != null
-          ? String(candidate[contract.recordIdField])
-          : `invalid:${payloadHash}`,
-        payload: raw,
-        payloadHash,
-        validationIssues: parsed.error.issues.map((issue) => ({
-          code: "schema_invalid" as const,
-          path: issue.path.join("."),
-          message: issue.message,
-        })),
-      };
+  /** Vendor fields on a leader payload with no spec column anywhere in its group. */
+  private withDrift(table: XeroSpecTable, record: RawSourceRecord): RawSourceRecord {
+    const payload = record.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return record;
+    const known = new Set<string>();
+    const group = scanGroupFor(table);
+    for (const member of group?.members ?? []) {
+      for (const column of member.table.columns) {
+        const api = column.api;
+        if (api.startsWith("synthetic:")) continue;
+        const body = api.slice(api.indexOf(":") + 1).replace(/\[\]( index)?$/u, "");
+        const segments = body.split(".");
+        if (segments.length > 1) known.add(segments[1]);
+      }
+      if (member.projectFrom) known.add(member.projectFrom.split(".")[0]);
     }
-    const fields = parsed.data as Record<string, unknown>;
-    const coverage = this.manifest.fieldCoverage.filter((item) => item.stream === stream);
-    const known = new Set(coverage.map((item) => item.field));
-    const allowed = new Set(
-      coverage.filter((item) => item.disposition !== "unsupported").map((item) => item.field),
-    );
-    const drift = Object.keys(fields).filter((field) => !known.has(field));
-    const approvedFields = Object.fromEntries(
-      Object.entries(fields).filter(([field]) => allowed.has(field)),
-    );
-    const moneyFields: Record<string, readonly [unknown, unknown?]> = {};
-    for (const field of [
-      "SubTotal", "TotalTax", "Total", "AmountDue", "AmountPaid", "RemainingCredit",
-      "Amount", "BankAmount", "CurrencyRate", "DisplayTaxRate", "EffectiveRate",
-    ]) {
-      if (field in fields) moneyFields[field] = [fields[field], fields.CurrencyCode];
-    }
-    const normalizationIssues = Object.entries(moneyFields)
-      .filter(([, [value, currency]]) => value != null && normalizeDecimal(value, currency).exact === null)
-      .map(([field]) => ({
-        code: "normalization_invalid" as const,
-        path: field,
-        message: "The Xero amount is not a valid exact decimal.",
-      }));
-    const issues = [
-      ...drift.map((field) => ({
-        code: "schema_drift" as const,
-        path: field,
-        message: "The vendor returned a field without an approved coverage disposition.",
-      })),
-      ...normalizationIssues,
-    ];
-    const updatedRaw = fields.UpdatedDateUTCString ?? fields[contract.modifiedField ?? ""];
-    const updated = normalizeTimestamp(updatedRaw);
-    const statusValue = fields.Status ?? fields.ContactStatus;
-    const status = typeof statusValue === "string" ? statusValue.toUpperCase() : "";
+    const drift = Object.keys(payload as Record<string, unknown>).filter((key) => !known.has(key));
+    if (drift.length === 0) return record;
     return {
-      sourceObjectType: contract.resource,
-      sourceRecordId: String(fields[contract.recordIdField]),
-      sourceUpdatedAt: updated.utc ?? undefined,
-      payload: raw,
-      payloadHash,
-      normalized: normalizationIssues.length === 0
-        ? projectSourceRecord({
-            schemaVersion: this.version,
-            fields: approvedFields,
-            money: moneyFields,
-            timestamps: {
-              source_updated_at: [updatedRaw, undefined],
-              event_date: [fields.Date ?? fields.JournalDate, undefined],
-            },
-            tombstone: status === "ARCHIVED" || status === "DELETED",
-          })
-        : undefined,
-      validationIssues: issues.length > 0 ? issues : undefined,
+      ...record,
+      validationIssues: [
+        ...(record.validationIssues ?? []),
+        ...drift.map((field) => ({
+          code: "schema_drift" as const,
+          path: field,
+          message: "The vendor returned a field without an approved coverage disposition.",
+        })),
+      ],
     };
+  }
+
+  /**
+   * One page of a parent-scoped stream: page the parent endpoint, then issue a
+   * bounded number of sub-requests under the org's budget. The cursor carries
+   * the parent page and the index of the next unprocessed parent, so a crash
+   * resumes mid-page instead of replaying every sub-request.
+   */
+  /**
+   * One page of a parent-scoped stream.
+   *
+   * The chain can be more than one link deep — working weeks hang off a working
+   * pattern, which hangs off an employee — so the walk descends the whole
+   * ancestry, spending a bounded number of sub-requests per claim and recording
+   * exactly where it stopped. The cursor carries the root page plus the index
+   * at every level, so a crash resumes at the next unvisited parent instead of
+   * replaying the traversal (which, under a 1,000/day org budget, would mean
+   * never finishing).
+   */
+  private async syncFanOut(
+    context: ConnectorContext,
+    contract: XeroStream,
+    table: XeroSpecTable,
+    fanOut: NonNullable<ReturnType<typeof fanOutCarrying>>,
+    mode: "initial" | "incremental" | "reconciliation",
+    cursor?: SyncCursor,
+    range?: SyncRange,
+  ): Promise<SyncPage> {
+    const SUB_REQUESTS_PER_PAGE = 25;
+    const templated = templatedParents(fanOut);
+    if (templated) {
+      return this.syncTemplatedFanOut(context, contract, table, fanOut, templated, mode, cursor, range);
+    }
+
+    const ancestry = fanOutAncestry(fanOut);
+    const rootTable = ancestry[0];
+    if (!rootTable || rootTable.source.fanOutParam) {
+      throw new ConnectorError("CONFIGURATION_INVALID", `Fan-out ${contract.id} has no walkable root.`);
+    }
+    const rootGroup = scanGroupFor(rootTable);
+    if (!rootGroup) {
+      throw new ConnectorError("CONFIGURATION_INVALID", `Fan-out ${contract.id} root has no scan group.`);
+    }
+    const rootProfile = XERO_API_PROFILES[rootGroup.leader.source.api];
+    const account = await this.discover_account(context);
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      "xero-tenant-id": account.externalAccountId,
+    };
+
+    const state = cursor ? decodeCursor(cursor, { connector: this.id, stream: contract.id }) : undefined;
+    let rootPage = 1;
+    let resume: number[] = [];
+    if (typeof state?.continuation === "string") {
+      try {
+        const parsed = JSON.parse(state.continuation) as { page?: unknown; at?: unknown };
+        if (typeof parsed.page === "number" && Number.isSafeInteger(parsed.page)) rootPage = parsed.page;
+        if (Array.isArray(parsed.at) && parsed.at.every((value) => Number.isSafeInteger(value))) {
+          resume = parsed.at as number[];
+        }
+      } catch {
+        throw new ConnectorError("CURSOR_INVALID", "The Xero fan-out continuation is invalid.");
+      }
+    }
+
+    const rootUrl = new URL(endpointPath(rootGroup.leader), ACCOUNTING_ORIGIN);
+    if (rootGroup.pagination === "page" && rootProfile.pageParam) {
+      rootUrl.searchParams.set(rootProfile.pageParam, String(rootPage));
+      if (rootProfile.pageSizeParam) {
+        rootUrl.searchParams.set(rootProfile.pageSizeParam, String(rootProfile.pageSize));
+      }
+    }
+    for (const [key, value] of Object.entries(baseParams(rootGroup.leader))) {
+      rootUrl.searchParams.set(key, value);
+    }
+
+    let rootBody: unknown = {};
+    try {
+      ({ value: rootBody } = await this.accountingJson<unknown>(context, rootUrl, headers));
+    } catch (error) {
+      if (error instanceof ConnectorHttpError && (error.status === 403 || error.status === 404)) {
+        throw new ConnectorError(
+          "CAPABILITY_UNAVAILABLE",
+          `Xero ${contract.id} parent walk is unavailable for this organisation (${error.status}).`,
+          { details: { stream: contract.id, status: error.status } },
+        );
+      }
+      throw error;
+    }
+    const rootRecords = unwrapEnvelope(rootBody, rootGroup.leader);
+
+    const rows: RawSourceRecord[] = [];
+    let issued = 0;
+    let stoppedAt: number[] | null = null;
+
+    /**
+     * Descend one link of the ancestry. `position` is the index path taken so
+     * far; `resumePath` is where the previous claim stopped, so earlier
+     * siblings are skipped without re-requesting them.
+     */
+    const descend = async (
+      level: number,
+      parents: readonly unknown[],
+      ancestors: readonly unknown[],
+      position: readonly number[],
+      resumePath: readonly number[],
+    ): Promise<void> => {
+      const startIndex = resumePath[position.length] ?? 0;
+      for (let index = startIndex; index < parents.length; index += 1) {
+        if (stoppedAt) return;
+        const parent = parents[index];
+        if (parent === null || typeof parent !== "object") continue;
+        const here = [...position, index];
+        const stack = [...ancestors, parent];
+        const child = ancestry[level];
+        if (!child) continue;
+
+        if (issued >= SUB_REQUESTS_PER_PAGE) {
+          stoppedAt = here;
+          return;
+        }
+        if (fanOutSkippable(fanOut, parent) && child.id === fanOut.table.id) continue;
+
+        const template = endpointPath(child);
+        const { path, missing } = fillFanOutPath(template, stack);
+        if (missing.length > 0) continue; // this parent cannot address the sub-resource
+        const subUrl = new URL(path, ACCOUNTING_ORIGIN);
+        if (!template.includes(`{${child.source.fanOutParam}}`) && child.source.fanOutParam) {
+          const id = readFanOutParam(stack, child.source.fanOutParam);
+          if (!id) continue;
+          subUrl.searchParams.set(child.source.fanOutParam, id);
+        }
+
+        issued += 1;
+        let subBody: unknown;
+        try {
+          ({ value: subBody } = await this.accountingJson<unknown>(context, subUrl, headers));
+        } catch (error) {
+          if (error instanceof ConnectorHttpError && (error.status === 403 || error.status === 404)) {
+            // An absent sub-resource for one parent is normal, not capability
+            // evidence: the next parent may well have one.
+            continue;
+          }
+          throw error;
+        }
+        const subRecords = unwrapEnvelope(subBody, child);
+
+        if (level === ancestry.length - 1) {
+          const projected = projectStreamRows({
+            table,
+            leaderTable: child,
+            resource: contract.resource,
+            records: subRecords,
+            recordIdField: contract.recordIdField,
+            fanOutParent: { record: parent, table: ancestry[level - 1] ?? rootTable },
+          });
+          const parentId = readFanOutParam(stack, child.source.fanOutParam ?? "") ?? here.join(".");
+          for (const row of projected) {
+            rows.push(this.withFanOutKeys(row, table, rootGroup.resource, parentId, rows.length));
+          }
+        } else {
+          await descend(level + 1, subRecords, stack, here, resumePath);
+        }
+      }
+    };
+
+    await descend(1, rootRecords, [], [], resume);
+
+    const pageExhausted = stoppedAt === null;
+    const moreRootPages = rootGroup.pagination === "page" && rootRecords.length > 0 && pageExhausted;
+    const nextContinuation = stoppedAt !== null
+      ? JSON.stringify({ page: rootPage, at: stoppedAt })
+      : moreRootPages
+        ? JSON.stringify({ page: rootPage + 1, at: [] })
+        : undefined;
+
+    this.successfulStreams.add(`${context.connectionId}:${contract.id}`);
+    return {
+      records: rows,
+      nextCursor: encodeCursor({
+        v: 1,
+        connector: this.id,
+        stream: contract.id,
+        mode: mode === "reconciliation" ? "reconciliation" : mode,
+        watermark: nextContinuation ? state?.watermark : range?.to ?? state?.watermark,
+        continuation: nextContinuation,
+        rangeFrom: range?.from ?? state?.rangeFrom,
+        rangeTo: mode === "incremental" ? undefined : range?.to ?? state?.rangeTo,
+      }),
+      hasMore: nextContinuation !== undefined,
+      ...(mode === "initial" && nextContinuation === undefined && range
+        ? {
+            coverage: {
+              boundaryKind: rows.length > 0 ? ("verified_oldest" as const) : ("verified_empty" as const),
+              lowerBound: range.from,
+              verification: "exhaustive_vendor_scan" as const,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Cross-parent fan-out (attachments, history): iterate the spec-derived
+   * parent endpoint set, page each parent walk, and issue bounded
+   * sub-requests. The cursor carries the parent-set index, parent page and
+   * mid-page position, so the whole traversal is resumable at any point.
+   */
+  private async syncTemplatedFanOut(
+    context: ConnectorContext,
+    contract: XeroStream,
+    table: XeroSpecTable,
+    fanOut: NonNullable<ReturnType<typeof fanOutCarrying>>,
+    parents: readonly XeroTemplatedParent[],
+    mode: "initial" | "incremental" | "reconciliation",
+    cursor?: SyncCursor,
+    range?: SyncRange,
+  ): Promise<SyncPage> {
+    const SUB_REQUESTS_PER_PAGE = 25;
+    const isAttachments = /\/Attachments$/u.test(fanOut.endpointOp);
+    const account = await this.discover_account(context);
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      "xero-tenant-id": account.externalAccountId,
+    };
+    const state = cursor ? decodeCursor(cursor, { connector: this.id, stream: contract.id }) : undefined;
+    let parentIndex = 0;
+    let parentPage = 1;
+    let startIndex = 0;
+    if (typeof state?.continuation === "string") {
+      try {
+        const parsed = JSON.parse(state.continuation) as { pi?: unknown; page?: unknown; idx?: unknown };
+        if (typeof parsed.pi === "number" && Number.isSafeInteger(parsed.pi)) parentIndex = parsed.pi;
+        if (typeof parsed.page === "number" && Number.isSafeInteger(parsed.page)) parentPage = parsed.page;
+        if (typeof parsed.idx === "number" && Number.isSafeInteger(parsed.idx)) startIndex = parsed.idx;
+      } catch {
+        throw new ConnectorError("CURSOR_INVALID", "The Xero templated fan-out continuation is invalid.");
+      }
+    }
+    if (parentIndex >= parents.length) parentIndex = parents.length - 1;
+    const parentDef = parents[parentIndex];
+    const parentStream = XERO_STREAMS.find((candidate) =>
+      candidate.endpointOp === parentDef.endpointOp &&
+      candidate.isScanLeader &&
+      specTableFor(candidate).source.api === "accounting");
+    const parentSpec = parentStream ? specTableFor(parentStream) : null;
+    if (!parentStream || !parentSpec) {
+      throw new ConnectorError("CONFIGURATION_INVALID", `Templated fan-out ${contract.id} has no leader for ${parentDef.endpointOp}.`);
+    }
+    const parentGroup = scanGroupFor(parentSpec)!;
+    const parentProfile = XERO_API_PROFILES[parentGroup.leader.source.api];
+
+    const parentUrl = new URL(endpointPath(parentGroup.leader), ACCOUNTING_ORIGIN);
+    if (parentGroup.pagination === "page" && parentProfile.pageParam) {
+      parentUrl.searchParams.set(parentProfile.pageParam, String(parentPage));
+      if (parentProfile.pageSizeParam) {
+        parentUrl.searchParams.set(parentProfile.pageSizeParam, String(parentProfile.pageSize));
+      }
+    }
+    for (const [key, value] of Object.entries(baseParams(parentGroup.leader))) {
+      parentUrl.searchParams.set(key, value);
+    }
+
+    let parentBody: unknown = {};
+    let parentUnavailable = false;
+    try {
+      ({ value: parentBody } = await this.accountingJson<unknown>(context, parentUrl, headers));
+    } catch (error) {
+      if (error instanceof ConnectorHttpError && (error.status === 403 || error.status === 404)) {
+        // This parent family is not reachable for the org (scope tier); the
+        // remaining families still are.
+        parentUnavailable = true;
+      } else {
+        throw error;
+      }
+    }
+    const parentRecords = parentUnavailable ? [] : unwrapEnvelope(parentBody, parentGroup.leader);
+
+    const rows: RawSourceRecord[] = [];
+    let consumed = 0;
+    let issued = 0;
+    for (let index = startIndex; index < parentRecords.length; index += 1) {
+      if (issued >= SUB_REQUESTS_PER_PAGE) break;
+      const parent = parentRecords[index];
+      consumed += 1;
+      if (parent === null || typeof parent !== "object") continue;
+      if (isAttachments && (parent as Record<string, unknown>).HasAttachments === false) continue;
+      const parentId = (parent as Record<string, unknown>)[parentDef.idParam];
+      const id = parentId === null || parentId === undefined ? "" : String(parentId).trim();
+      if (!id) continue;
+      issued += 1;
+      const subUrl = new URL(
+        `/api.xro/2.0${parentDef.pathTemplate.replace(`{${parentDef.idParam}}`, encodeURIComponent(id))}`,
+        ACCOUNTING_ORIGIN,
+      );
+      let subBody: unknown;
+      try {
+        ({ value: subBody } = await this.accountingJson<unknown>(context, subUrl, headers));
+      } catch (error) {
+        if (error instanceof ConnectorHttpError && (error.status === 403 || error.status === 404)) continue;
+        throw error;
+      }
+      const subRecords = unwrapEnvelope(subBody, fanOut.table);
+      const projected = projectStreamRows({
+        table,
+        leaderTable: table.id === fanOut.table.id ? parentSpec : fanOut.table,
+        resource: contract.resource,
+        records: subRecords,
+        recordIdField: contract.recordIdField,
+        fanOutParent: { record: parent, table: parentSpec },
+      });
+      for (const row of projected) {
+        rows.push(this.withFanOutKeys(row, table, parentGroup.resource, id, rows.length));
+      }
+    }
+
+    const pageExhausted = startIndex + consumed >= parentRecords.length;
+    const moreParentPages = !parentUnavailable && parentGroup.pagination === "page" && parentRecords.length > 0;
+    const moreFamilies = parentIndex + 1 < parents.length;
+    const nextContinuation = !pageExhausted
+      ? JSON.stringify({ pi: parentIndex, page: parentPage, idx: startIndex + consumed })
+      : moreParentPages
+        ? JSON.stringify({ pi: parentIndex, page: parentPage + 1, idx: 0 })
+        : moreFamilies
+          ? JSON.stringify({ pi: parentIndex + 1, page: 1, idx: 0 })
+          : undefined;
+
+    this.successfulStreams.add(`${context.connectionId}:${contract.id}`);
+    return {
+      records: rows,
+      nextCursor: encodeCursor({
+        v: 1,
+        connector: this.id,
+        stream: contract.id,
+        mode: mode === "reconciliation" ? "reconciliation" : mode,
+        watermark: nextContinuation ? state?.watermark : range?.to ?? state?.watermark,
+        continuation: nextContinuation,
+        rangeFrom: range?.from ?? state?.rangeFrom,
+        rangeTo: mode === "incremental" ? undefined : range?.to ?? state?.rangeTo,
+      }),
+      hasMore: nextContinuation !== undefined,
+      ...(mode === "initial" && nextContinuation === undefined && range
+        ? {
+            coverage: {
+              boundaryKind: rows.length > 0 ? ("verified_oldest" as const) : ("verified_empty" as const),
+              lowerBound: range.from,
+              verification: "exhaustive_vendor_scan" as const,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /** Fill synthetic parent-linkage columns on fan-out rows from the request. */
+  private withFanOutKeys(
+    row: RawSourceRecord,
+    table: XeroSpecTable,
+    parentResource: string,
+    parentId: string,
+    ordinal: number,
+  ): RawSourceRecord {
+    const normalized = row.normalized;
+    if (!normalized) return row;
+    const fields = { ...normalized.fields } as Record<string, unknown>;
+    for (const column of table.columns) {
+      if (!column.api.startsWith("synthetic:")) continue;
+      const field = xeroSourceField(column);
+      if (fields[field] !== undefined) continue;
+      if (/parent_endpoint|parent_type|parent_resource/u.test(column.name)) fields[field] = parentResource;
+      else if (/parent(_record)?_id/u.test(column.name)) fields[field] = parentId;
+      else if (/(_index|_ordinal|position)$/u.test(column.name)) fields[field] = ordinal;
+    }
+    const sourceRecordId = row.sourceRecordId.startsWith(`${table.id}:`)
+      ? `${parentId}:${row.sourceRecordId.slice(table.id.length + 1)}`
+      : row.sourceRecordId;
+    return { ...row, sourceRecordId, normalized: { ...normalized, fields } };
   }
 
   private async accountingJson<T>(

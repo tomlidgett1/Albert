@@ -25,7 +25,7 @@ const financeField = field({
   connectorId: "xero",
   connectionId: "connection-xero",
   sourceSchema: "source_xero",
-  sourceTable: "bank_transactions",
+  sourceTable: "xero_bank_transactions",
   sourceField: "reference",
   authorityConcept: "cash_settlement",
 });
@@ -33,7 +33,7 @@ const financeTimestampField = field({
   connectorId: "xero",
   connectionId: "connection-xero",
   sourceSchema: "source_xero",
-  sourceTable: "bank_transactions",
+  sourceTable: "xero_bank_transactions",
   sourceField: "updated_at",
   fieldType: "timestamp",
   authorityConcept: "cash_settlement",
@@ -148,7 +148,7 @@ test("a wrong or omitted model authority cannot suppress the non-authoritative w
   });
   const response = await service.execute("run_source_query", {
     connectionId: "connection-xero",
-    sourceTable: "bank_transactions",
+    sourceTable: "xero_bank_transactions",
     fields: ["reference"],
     aggregates: [],
     groupBy: [],
@@ -202,19 +202,19 @@ test("source exploration fails closed when the selected connection watermark is 
 });
 
 test("connector stream authority mapping is explicit and rejects drift", () => {
-  assert.equal(sourceAuthorityForField("xero", "xero_bank_transactions", "source_xero.bank_transactions.reference"), "cash_settlement");
-  assert.equal(sourceAuthorityForField("xero", "xero_journals", "source_xero.journals.source_type"), "statutory_finance");
+  assert.equal(sourceAuthorityForField("xero", "xero_bank_transactions", "source_xero.xero_bank_transactions.reference"), "cash_settlement");
+  assert.equal(sourceAuthorityForField("xero", "xero_journals", "source_xero.xero_journals.source_type"), "statutory_finance");
   assert.equal(sourceAuthorityForField("deputy", "rosters", "source_deputy.rosters.open"), "planned_shifts");
   assert.equal(sourceAuthorityForField("deputy", "timesheets", "source_deputy.timesheets.exported"), "worked_hours");
   assert.equal(sourceAuthorityForField("lightspeed-r", "ls_customers", "source_lightspeed.ls_customers.credit_limit"), "customer_master");
   assert.equal(sourceAuthorityForField("lightspeed-r", "ls_item_shops", "source_lightspeed.ls_item_shops.reorder_point"), "stock");
   assert.equal(sourceAuthorityForField("lightspeed-r", "ls_vendors", "source_lightspeed.ls_vendors.account_number"), "stock");
   assert.throws(() => sourceAuthorityForField("xero", "unknown", "source_xero.unknown.value"), /source_authority_unmapped/u);
-  assert.throws(() => sourceAuthorityForField("xero", "journals", "source_deputy.journals.value"), /target_mismatch/u);
+  assert.throws(() => sourceAuthorityForField("xero", "xero_journals", "source_deputy.xero_journals.value"), /target_mismatch/u);
 });
 
 function query(fields: readonly string[]) {
-  return { connectionId: fields.includes("reference") ? "connection-xero" : "connection-lightspeed", sourceTable: fields.includes("reference") ? "bank_transactions" : "ls_items", fields, aggregates: [], groupBy: [], filters: [], limit: 10 };
+  return { connectionId: fields.includes("reference") ? "connection-xero" : "connection-lightspeed", sourceTable: fields.includes("reference") ? "xero_bank_transactions" : "ls_items", fields, aggregates: [], groupBy: [], filters: [], limit: 10 };
 }
 
 function field(overrides: Partial<SourceField>): SourceField {

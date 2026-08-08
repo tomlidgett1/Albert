@@ -136,6 +136,11 @@ test("the workspace renders only the UI projection and uses contract prerequisit
 test("operative defaults continue into the governed semantic context", () => {
   assert.match(semanticContext, /FROM control_plane\.dossiers AS dossier/u);
   assert.match(semanticContext, /copyAllowlistedDefault/u);
-  assert.match(liveAgent, /confirmed preference defaults .*and bounded business dossier/u);
-  assert.match(liveAgent, /Apply a relevant confirmed default/u);
+  // SQL-first turns do not open preferences/catalogue/field-value lookup tools,
+  // and must not burn the turn on diagnostic preflight SQL.
+  assert.doesNotMatch(liveAgent, /Checking your saved preferences/u);
+  assert.match(liveAgent, /Do not look up saved preferences/u);
+  assert.match(liveAgent, /Never preflight with SELECT 1/u);
+  assert.match(liveAgent, /const tools = \[resolveNamedEntity, runSql, askUser, remember, makeChart, openDimensionGuide\]/u);
+  assert.match(liveAgent, /last 26 calendar weeks/u);
 });

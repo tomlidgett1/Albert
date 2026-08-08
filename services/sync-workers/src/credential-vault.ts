@@ -305,7 +305,7 @@ export function parseOAuthCredentialSecret(value: unknown): OAuthCredentialSecre
   }
   const candidate = value as Partial<OAuthCredentialSecret>;
   if (
-    !["lightspeed-r", "xero", "deputy"].includes(String(candidate.provider)) ||
+    !["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].includes(String(candidate.provider)) ||
     typeof candidate.accessToken !== "string" || !candidate.accessToken ||
     Buffer.byteLength(candidate.accessToken, "utf8") > 65_536 ||
     (candidate.refreshToken !== undefined &&

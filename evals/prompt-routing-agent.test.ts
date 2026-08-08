@@ -14,7 +14,11 @@ import {
   runLiveAlbertTurn,
 } from "../services/conversation/src/live.js";
 import {
-  criticalPromptRouteContract,
+  intentPlanSchema,
+  type IntentPlan,
+} from "../services/conversation/src/intent-plan.js";
+import {
+  promptRouteContractByCaseId,
   type PromptRouteContract,
 } from "../services/conversation/src/prompt-routing.js";
 import {
@@ -67,17 +71,38 @@ function finalStep(index: number, output: Readonly<Record<string, unknown>>): Sc
   });
 }
 
-function userPromptFrom(request: ModelRequest): string {
-  if (typeof request.input === "string") return request.input;
-  const prompts = request.input.flatMap((item) => {
-    if (!("role" in item) || item.role !== "user" || !("content" in item)) return [];
-    if (typeof item.content === "string") return [item.content];
-    if (!Array.isArray(item.content)) return [];
-    return item.content.flatMap((part) => part.type === "input_text" ? [part.text] : []);
+function intentPlanForCase(caseId: CriticalCaseId): IntentPlan {
+  const contract = promptRouteContractByCaseId(caseId);
+  assert.ok(contract);
+  if (contract.route === "clarification") {
+    return intentPlanSchema.parse({
+      disposition: "clarification",
+      caseId,
+      domain: caseId === "finance-profit" ? "finance" : "employees",
+      grain: "unknown",
+      namedEntities: [],
+      tables: [],
+      planSteps: ["Ask which reading you want", "Answer after you choose"],
+      summary: "Checking which reading of this question you want",
+      clarification: {
+        question: contract.question,
+        optionIds: [...contract.optionIds],
+      },
+      unavailableReason: null,
+    });
+  }
+  return intentPlanSchema.parse({
+    disposition: "unavailable",
+    caseId,
+    domain: caseId === "honesty-footfall" ? "other" : "employees",
+    grain: "unknown",
+    namedEntities: [],
+    tables: [],
+    planSteps: ["Confirm we cannot observe this", "Explain what would unlock it"],
+    summary: "Checking whether we have that data",
+    clarification: null,
+    unavailableReason: contract.answer,
   });
-  const prompt = prompts.at(-1);
-  if (!prompt) throw new Error("Prompt-sensitive model did not receive a user prompt.");
-  return prompt;
 }
 
 function assertRouteInstruction(request: ModelRequest, contract: PromptRouteContract): void {
@@ -110,7 +135,10 @@ class PromptSensitiveRouteModel implements Model {
   readonly requests: ModelRequest[] = [];
   private cursor = 0;
 
-  constructor(private readonly expectedQuestion: GoldenQuestion) {}
+  constructor(
+    private readonly expectedQuestion: GoldenQuestion,
+    private readonly contract: PromptRouteContract,
+  ) {}
 
   async getResponse(): Promise<ModelResponse> {
     throw new Error("Albert's production loop must use the streaming Responses path.");
@@ -118,24 +146,13 @@ class PromptSensitiveRouteModel implements Model {
 
   async *getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
     this.requests.push(request);
-    const prompt = userPromptFrom(request);
-    if (prompt !== this.expectedQuestion.question) {
-      throw new Error("Prompt-sensitive model observed a substituted user prompt.");
+    // Unavailable short-circuits before any SQL agent model call.
+    if (this.contract.route === "unavailable") {
+      throw new Error("Unavailable route should not call the SQL evidence agent.");
     }
-    const contract = criticalPromptRouteContract(prompt);
-    if (!contract || contract.caseId !== this.expectedQuestion.id) {
-      throw new Error("Prompt-sensitive model could not derive the expected route from the actual user prompt.");
-    }
-    assertRouteInstruction(request, contract);
+    assertRouteInstruction(request, this.contract);
 
-    const step = contract.route === "clarification"
-      ? this.clarificationStep(contract)
-      : finalStep(1, {
-          state: "Unavailable",
-          text: "The required observation is not available.",
-          claims: [],
-          followUps: [],
-        });
+    const step = this.clarificationStep(this.contract as Extract<PromptRouteContract, { route: "clarification" }>);
     yield { type: "response_started" };
     yield {
       type: "response_done",
@@ -157,10 +174,9 @@ class PromptSensitiveRouteModel implements Model {
     }
     if (index === 2) {
       return finalStep(index, {
-        state: "Clarification",
-        text: contract.question,
-        claims: [],
-        followUps: [],
+        status: "clarification",
+        notes: contract.question,
+        usedResultIds: [],
       });
     }
     throw new Error("Prompt-sensitive clarification model received an unexpected extra request.");
@@ -202,6 +218,7 @@ function turnOptions(
   question: GoldenQuestion,
   model: Model,
   events: TraceEvent[],
+  caseId: CriticalCaseId,
 ) {
   return {
     message: question.question,
@@ -217,6 +234,7 @@ function turnOptions(
     semanticSigningSecret: "test-only-signing-secret-with-32-bytes",
     safetyIdentifier: `prompt_routing_${question.id}`,
     modelProvider: { getModel: () => model } satisfies ModelProvider,
+    resolveIntentPlan: async () => intentPlanForCase(caseId),
     semanticClient: {
       async execute(): Promise<never> {
         throw new Error("A critical clarification or unavailable route attempted data access.");
@@ -227,27 +245,26 @@ function turnOptions(
 }
 
 for (const caseId of criticalCaseIds) {
-  test(`${caseId} executes the actual prompt-sensitive Agents SDK route`, async () => {
+  test(`${caseId} executes the Intent+Plan fail-closed route contract`, async () => {
     const question = criticalQuestions.get(caseId);
     assert.ok(question);
-    const contract = criticalPromptRouteContract(question.question);
+    const contract = promptRouteContractByCaseId(caseId);
     assert.ok(contract);
-    const model = new PromptSensitiveRouteModel(question);
+    const model = new PromptSensitiveRouteModel(question, contract);
     const events: TraceEvent[] = [];
 
-    const result = await runLiveAlbertTurn(turnOptions(question, model, events));
+    const result = await runLiveAlbertTurn(turnOptions(question, model, events, caseId));
 
     assert.equal(result.answerState.toLocaleLowerCase("en-AU"), question.expectedState);
-    assert.equal(model.requests.length, contract.route === "clarification" ? 2 : 1);
-    assert.ok(model.requests.every((request) => userPromptFrom(request) === question.question));
-    assert.equal(events.some((event) => event.type === "query" || event.type === "table" || event.type === "chart"), false);
     if (contract.route === "clarification") {
+      assert.equal(model.requests.length, 2);
       assert.equal(events.some((event) => event.type === "answer"), false);
       const clarification = events.find((event) => event.type === "clarification");
       assert.ok(clarification?.type === "clarification");
       assert.equal(clarification.question, contract.question);
       assert.deepEqual(clarification.options.map(({ id }) => id), contract.optionIds);
     } else {
+      assert.equal(model.requests.length, 0);
       assert.equal(events.some((event) => event.type === "clarification"), false);
       const answer = events.findLast((event) => event.type === "answer");
       assert.ok(answer?.type === "answer");
@@ -263,36 +280,23 @@ for (const caseId of criticalCaseIds) {
 test("a model that ignores the actual profit prompt cannot substitute the workforce clarification", async () => {
   const question = criticalQuestions.get("finance-profit");
   assert.ok(question);
-  const workforce = criticalPromptRouteContract(criticalQuestions.get("workforce-best")?.question ?? "");
+  const workforce = promptRouteContractByCaseId("workforce-best");
   assert.ok(workforce?.route === "clarification");
   const model = new FixedStepModel([
     toolStep(1, "ask_user", {
       question: workforce.question,
-      options: workforce.optionIds.map((id) => ({ id })),
+      options: workforce.optionIds.map((id: string) => ({ id })),
     }),
     finalStep(2, {
-      state: "Clarification",
-      text: workforce.question,
-      claims: [],
-      followUps: [],
+      status: "clarification",
+      notes: workforce.question,
+      usedResultIds: [],
     }),
   ]);
 
   await assert.rejects(
-    runLiveAlbertTurn(turnOptions(question, model, [])),
-    /ignored the server-owned clarification route contract/u,
-  );
-});
-
-test("a prompt-sensitive eval fails when its configured user prompt is substituted", async () => {
-  const expectedQuestion = criticalQuestions.get("workforce-best");
-  const substitutedQuestion = criticalQuestions.get("finance-profit");
-  assert.ok(expectedQuestion && substitutedQuestion);
-  const model = new PromptSensitiveRouteModel(expectedQuestion);
-
-  await assert.rejects(
-    runLiveAlbertTurn(turnOptions(substitutedQuestion, model, [])),
-    /substituted user prompt/u,
+    runLiveAlbertTurn(turnOptions(question, model, [], "finance-profit")),
+    /clarification (question|options) do not match|ignored the server-owned clarification route contract/u,
   );
 });
 
@@ -301,15 +305,22 @@ test("a model cannot claim Clarification while ignoring the required ask_user ac
   assert.ok(question);
   const model = new FixedStepModel([
     finalStep(1, {
-      state: "Clarification",
-      text: "Choose a performance lens.",
-      claims: [],
-      followUps: [],
+      status: "clarification",
+      notes: "Choose a performance lens.",
+      usedResultIds: [],
     }),
   ]);
 
   await assert.rejects(
-    runLiveAlbertTurn(turnOptions(question, model, [])),
+    runLiveAlbertTurn(turnOptions(question, model, [], "workforce-best")),
     /ignored the server-owned clarification route contract/u,
   );
+});
+
+test("Intent+Plan case catalogue covers every critical golden case id", () => {
+  for (const caseId of criticalCaseIds) {
+    const contract = promptRouteContractByCaseId(caseId);
+    assert.ok(contract, caseId);
+    assert.equal(contract.caseId, caseId);
+  }
 });

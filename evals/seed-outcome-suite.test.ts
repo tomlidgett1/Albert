@@ -12,7 +12,7 @@ import {
 } from "./golden/seed-outcome-suite.mjs";
 import { seedGoldenQuestions } from "./golden/questions.js";
 import { evaluateCriticalPromptRouteQuestion } from "./runner.js";
-import { criticalPromptRouteContract } from "../services/conversation/src/prompt-routing.js";
+import { promptRouteContractByCaseId } from "../services/conversation/src/prompt-routing.js";
 
 type SeedOutcomeCase = Readonly<{
   caseId: string;
@@ -74,7 +74,7 @@ test("the four prompt-sensitive manifest outcomes exactly match production route
     expectedRoute === "clarification" || expectedRoute === "unavailable");
   assert.equal(criticalCases.length, 4);
   for (const item of criticalCases) {
-    const contract = criticalPromptRouteContract(item.prompt);
+    const contract = promptRouteContractByCaseId(item.caseId);
     assert.ok(contract);
     assert.equal(contract.caseId, item.caseId);
     assert.equal(contract.route, item.expectedRoute);
@@ -176,15 +176,23 @@ test("substituted prompts, order, outcomes and pass flags fail the protected evi
   );
 });
 
-test("the deterministic runner rejects a substituted prompt even when its case id is retained", () => {
+test("the deterministic runner binds critical routes by case id, not prompt regex", () => {
   const workforce = seedGoldenQuestions.find(({ id }) => id === "workforce-best");
   const finance = seedGoldenQuestions.find(({ id }) => id === "finance-profit");
   assert.ok(workforce && finance);
+  // Intent+Plan selects caseId; the eval harness trusts the golden case id.
+  // A swapped prompt with the workforce-best id still resolves that contract.
+  const result = evaluateCriticalPromptRouteQuestion({
+    ...workforce,
+    question: finance.question,
+  });
+  assert.equal(result.outcome, "passed");
+  assert.equal(result.route, "clarification");
   assert.throws(
     () => evaluateCriticalPromptRouteQuestion({
       ...workforce,
-      question: finance.question,
+      id: "not-a-critical-case",
     }),
-    /activated substituted route contract finance-profit/u,
+    /not a trusted critical route case id/u,
   );
 });

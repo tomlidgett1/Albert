@@ -235,7 +235,9 @@ export function sqlFirstResultWindow(
   orderBy: { columnKey: string; direction: "asc" | "desc" }[];
 } | undefined {
   if (ordering.orderBy.length === 0) return undefined;
-  const orderBy = ordering.orderBy.map((item) => ({ columnKey: item.column, direction: item.direction }));
+  const orderBy = ordering.orderBy
+    .slice(0, 12)
+    .map((item) => ({ columnKey: item.column, direction: item.direction }));
   if (ordering.limit !== undefined && ordering.limit <= serviceBound) {
     return { requestedLimit: ordering.limit, orderedBeforeLimit: true, orderBy };
   }

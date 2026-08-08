@@ -116,10 +116,28 @@ export async function runOAuthOnlyWorker(): Promise<void> {
     deputyClientId: required("DEPUTY_CLIENT_ID"),
     deputyClientSecret: required("DEPUTY_CLIENT_SECRET"),
     deputyRedirectUri: new URL("/api/oauth/deputy/callback", origin).toString(),
+    squareClientId: required("SQUARE_CLIENT_ID"),
+    squareClientSecret: required("SQUARE_CLIENT_SECRET"),
+    squareRedirectUri: new URL("/api/oauth/square/callback", origin).toString(),
+    shopifyClientId: required("SHOPIFY_CLIENT_ID"),
+    shopifyClientSecret: required("SHOPIFY_CLIENT_SECRET"),
+    shopifyRedirectUri: new URL("/api/oauth/shopify/callback", origin).toString(),
+    stripeClientId: required("STRIPE_CLIENT_ID"),
+    stripeSecretKey: required("STRIPE_SECRET_KEY"),
+    stripeRedirectUri: new URL("/api/oauth/stripe/callback", origin).toString(),
+    momenceClientId: required("MOMENCE_CLIENT_ID"),
+    momenceClientSecret: required("MOMENCE_CLIENT_SECRET"),
+    momenceRedirectUri: new URL("/api/oauth/momence/callback", origin).toString(),
+    metaAdsClientId: required("META_ADS_CLIENT_ID"),
+    metaAdsClientSecret: required("META_ADS_CLIENT_SECRET"),
+    metaAdsRedirectUri: new URL("/api/oauth/meta-ads/callback", origin).toString(),
+    googleAdsClientId: required("GOOGLE_ADS_CLIENT_ID"),
+    googleAdsClientSecret: required("GOOGLE_ADS_CLIENT_SECRET"),
+    googleAdsRedirectUri: new URL("/api/oauth/google-ads/callback", origin).toString(),
   });
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
-    allowedRedirectUris: new Set(["lightspeed", "xero", "deputy"].map((provider) =>
+    allowedRedirectUris: new Set(["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
       new URL(`/api/oauth/${provider}/callback`, origin).toString()
     )),
     sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper), {

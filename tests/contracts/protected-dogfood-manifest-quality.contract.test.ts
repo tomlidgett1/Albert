@@ -10,6 +10,15 @@ const migrationUrl = new URL(
   "infra/migrations/control-plane/0091_m3_spec_driven_stream_expectations.sql",
   root,
 );
+/**
+ * 0091 is applied and therefore immutable, so Xero pack 2.0.0 re-seeded the
+ * stream inventory in its own migration. The gate's structure is still asserted
+ * against 0091; only the seeded rows moved.
+ */
+const streamSeedUrl = new URL(
+  "infra/migrations/control-plane/0095_m3_xero_pack_2_stream_expectations.sql",
+  root,
+);
 
 type StreamExpectation = Readonly<{
   connectorKey: string;
@@ -36,8 +45,11 @@ function sortStreams(streams: readonly StreamExpectation[]): readonly StreamExpe
 }
 
 test("the protected M3 inventory is exactly the three reviewed connector manifests", async () => {
-  const sql = await readFile(migrationUrl, "utf8");
-  const insert = sql.match(
+  const [sql, seedSql] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(streamSeedUrl, "utf8"),
+  ]);
+  const insert = seedSql.match(
     /INSERT INTO control_plane\.protected_dogfood_stream_expectation\([\s\S]*?\) VALUES([\s\S]*?)ON CONFLICT/iu,
   )?.[1];
   assert.ok(insert, "protected dogfood stream expectation seed is missing");

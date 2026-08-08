@@ -33,10 +33,29 @@ const COMMON_STAGING_COLUMNS = new Set([
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
+/**
+ * Founding mappers, keyed by the spec-driven streams that succeeded the
+ * original 11. The mapper bodies read the same staging columns as before —
+ * the spec guarantees every column they touch exists on the successor table.
+ */
+const SPEC_STREAM_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  xero_organisations: "organisation",
+  xero_accounts: "accounts",
+  xero_contacts: "contacts",
+  xero_invoices: "invoices",
+  xero_credit_notes: "credit_notes",
+  xero_payments: "payments",
+  xero_bank_transactions: "bank_transactions",
+  xero_manual_journals: "manual_journals",
+  xero_journals: "journals",
+  xero_tax_rates: "tax_rates",
+  xero_tracking_categories: "tracking_categories",
+});
+
 /** Pure, fail-closed Xero typed-staging to source-neutral canonical projection. */
 export const mapXeroCanonical: CanonicalStreamMapper = (stream, row, context) => {
   assertStagingRow(stream, row);
-  switch (stream) {
+  switch (SPEC_STREAM_ALIASES[stream] ?? stream) {
     case "organisation": return mapOrganisation(row, context);
     case "accounts": return mapAccount(row);
     case "contacts": return mapContact(row);
@@ -48,9 +67,25 @@ export const mapXeroCanonical: CanonicalStreamMapper = (stream, row, context) =>
     case "journals": return mapJournal(row, context);
     case "tax_rates": return mapTaxRate(row);
     case "tracking_categories": return mapTrackingCategory(row, context);
-    default: throw new Error(`xero_canonical_stream_unsupported:${stream}`);
+    default: {
+      // Spec streams without a dedicated mapper emit a governed metadata
+      // observation: staged, queryable through the source catalogue, and
+      // linked to their source identity — never fabricated canonical facts.
+      if (stream.startsWith("xero_")) return mapSpecMetadata(stream, row);
+      throw new Error(`xero_canonical_stream_unsupported:${stream}`);
+    }
   }
 };
+
+function mapSpecMetadata(stream: string, row: CanonicalStagingRow): readonly CanonicalProjectionCommand[] {
+  const id = requiredIdentifier(row.source_record_id, `${stream}.source_record_id`);
+  return [{
+    kind: "metadata",
+    sourceObjectType: String(row.source_object_type ?? stream),
+    sourceRecordId: id,
+    classification: "lookup_only",
+  }];
+}
 
 function mapOrganisation(row: CanonicalStagingRow, context: CanonicalMappingContext): readonly CanonicalProjectionCommand[] {
   const id = requiredIdentifier(row.organisation_id, "organisation.organisation_id");
@@ -523,8 +558,20 @@ function assertStagingRow(stream: string, row: CanonicalStagingRow): void {
   const allowed = new Set([...COMMON_STAGING_COLUMNS, ...coverage.map((field) => stagingColumnName(field.field))]);
   const drift = Object.keys(row).filter((column) => !allowed.has(column));
   if (drift.length > 0) throw new Error(`xero_canonical_staging_drift:${stream}:${drift.sort().join(",")}`);
-  const stagedId = requiredIdentifier(row[stagingColumnName(contract.recordIdField)], `${stream}.record_id`);
-  if (stagedId !== row.source_record_id) {
+  // A stream that stages its own vendor id must carry it and it must match the
+  // landed identity. A nested explode whose elements have no id of their own
+  // stages no such column at all, and its identity is the parent id plus the
+  // element's position — asserting a missing column there would reject every
+  // legitimate line-item row.
+  const idColumn = stagingColumnName(contract.recordIdField);
+  const stagesOwnId = coverage.some((field) => stagingColumnName(field.field) === idColumn);
+  const stagedId = optionalIdentifier(row[idColumn]);
+  if (stagesOwnId) {
+    const required = requiredIdentifier(row[idColumn], `${stream}.record_id`);
+    if (required !== row.source_record_id) {
+      throw new Error(`xero_canonical_source_id_mismatch:${stream}:${required}:${row.source_record_id}`);
+    }
+  } else if (stagedId && stagedId !== row.source_record_id) {
     throw new Error(`xero_canonical_source_id_mismatch:${stream}:${stagedId}:${row.source_record_id}`);
   }
 }

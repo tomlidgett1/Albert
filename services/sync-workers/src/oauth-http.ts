@@ -8,10 +8,14 @@ import {
 } from "../../../packages/connector-sdk/src/index.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 
-type Provider = "lightspeed-r" | "xero" | "deputy";
+type Provider = "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
 
 export interface OAuthConnectorFactory {
-  create(provider: Provider, vault: WorkerCredentialVault): OAuthConnectorPack;
+  create(
+    provider: Provider,
+    vault: WorkerCredentialVault,
+    options?: Readonly<{ vendorAccountHint?: string | null }>,
+  ): OAuthConnectorPack;
   scopes(provider: Provider): readonly string[];
 }
 
@@ -38,9 +42,31 @@ function codeVerifier(input: Record<string, unknown>): string {
   return value;
 }
 
+/**
+ * Shopify hosts its authorize and token endpoints on the merchant's own shop,
+ * so this value becomes part of a URL the worker calls. It is validated here,
+ * at the trust boundary, rather than relied on to be safe further in.
+ */
+function vendorAccountHint(
+  input: Record<string, unknown>,
+  selectedProvider: Provider,
+): string | undefined {
+  const raw = input.vendorAccountHint;
+  if (raw === undefined || raw === null) {
+    if (selectedProvider === "shopify") throw new Error("oauth_shop_domain_required");
+    return undefined;
+  }
+  if (selectedProvider !== "shopify") throw new Error("oauth_account_hint_not_supported");
+  const value = requiredString(input, "vendorAccountHint", 100).trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{0,58}[a-z0-9]\.myshopify\.com$/u.test(value)) {
+    throw new Error("oauth_shop_domain_invalid");
+  }
+  return value;
+}
+
 function provider(input: Record<string, unknown>): Provider {
   const value = requiredString(input, "provider", 40);
-  if (!(["lightspeed-r", "xero", "deputy"] as const).includes(value as Provider)) {
+  if (!(["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const).includes(value as Provider)) {
     throw new Error("invalid_provider");
   }
   return value as Provider;
@@ -173,6 +199,7 @@ export class OAuthWorkerHttpHandler {
       tenantId,
       initiatedBy: userId,
       provider: selectedProvider,
+      vendorAccountHint: vendorAccountHint(input, selectedProvider),
       redirectUri,
       requestedScopes: scopes,
       stateNonceHash: stateNonceHash(input),
@@ -220,7 +247,9 @@ export class OAuthWorkerHttpHandler {
       throw new Error("oauth_redirect_mismatch");
     }
     const vault = this.dependencies.sessions.credentialVault(context);
-    const connector = this.dependencies.connectors.create(context.provider, vault);
+    const connector = this.dependencies.connectors.create(context.provider, vault, {
+      vendorAccountHint: context.vendorAccountHint,
+    });
     let credentialRef: string;
     try {
       credentialRef = await this.dependencies.sessions.provisionalCredentialReference(context);
@@ -286,6 +315,7 @@ export class OAuthWorkerHttpHandler {
     const connector = this.dependencies.connectors.create(
       context.provider,
       this.dependencies.sessions.credentialVault(context),
+      { vendorAccountHint: context.vendorAccountHint },
     );
     const discovery = await connector.select_account({
       tenantId: context.tenantId,

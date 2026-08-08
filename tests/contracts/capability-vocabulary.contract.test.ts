@@ -94,7 +94,7 @@ test("live capability evidence is monotonic across replicas for one pack version
 });
 
 test("source allowlist publication atomically retires removed and newly sensitive fields", async () => {
-  const accounts = buildStagingContracts([xeroManifest]).find((contract)=>contract.stream==="accounts");
+  const accounts = buildStagingContracts([xeroManifest]).find((contract)=>contract.stream==="xero_accounts");
   assert.ok(accounts);
   const job = {
     tenantId:"01J00000000000000000000001",batchId:"01J00000000000000000000002",

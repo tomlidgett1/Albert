@@ -15,12 +15,15 @@ import {
   createTraceEmitter,
   appendCurrentUserMessage,
   DurableModelUsageLifecycle,
+  generateConversationTitle,
   runLiveAlbertTurn,
   SemanticServiceClient,
 } from "@/services/conversation/src";
 import {
   appendConversationEvent,
+  assignConversationTitle,
   beginConversationTurn,
+  conversationNeedsTitle,
   failConversationTurn,
   loadConversationModelContext,
   renewConversationTurnLease,
@@ -359,7 +362,8 @@ export async function POST(request: Request) {
     conversationId: begun.conversationId,
     turnId,
     signal: request.signal,
-    run: async (deliver, streamSignal) => {
+    run: async (stream, streamSignal) => {
+      const deliver = stream.emit;
       const timeoutSignal=turnTimeoutMs===undefined?undefined:AbortSignal.timeout(turnTimeoutMs);
       const agentSignal=timeoutSignal===undefined
         ? streamSignal
@@ -370,6 +374,32 @@ export async function POST(request: Request) {
       const leaseRenewal=setInterval(()=>{
         void renewConversationTurnLease({supabase,turnId}).catch(()=>undefined);
       },LEASE_RENEWAL_INTERVAL_MS);
+      // Title generation is intentionally off the analytical critical path:
+      // cheapest nano model, fire-and-forget, first title wins in the DB.
+      void (async () => {
+        try {
+          if (!await conversationNeedsTitle(begun.conversationId, supabase)) return;
+          const title = await generateConversationTitle({
+            question: parsed.data.message,
+            apiKey: configuration.openaiApiKey!,
+            baseUrl: configuration.openaiBaseUrl!,
+            signal: streamSignal,
+          });
+          if (!title || streamSignal.aborted) return;
+          const assignment = await assignConversationTitle({
+            conversationId: begun.conversationId,
+            title,
+            supabase,
+          });
+          if (assignment.assigned) stream.emitConversationTitle(assignment.title);
+        } catch (error) {
+          logger.warn("conversation.title_generation_failed", {
+            conversationId: begun.conversationId,
+            turnId,
+            ...safeErrorEvidence(error),
+          }, correlationId);
+        }
+      })();
       const semanticClient = new SemanticServiceClient(
         configuration.semanticServiceUrl!,
         configuration.semanticSigningSecret!,
@@ -583,8 +613,8 @@ export async function POST(request: Request) {
                 type: "error",
                 status: "error",
                 message: timedOut
-                  ? "Albert reached the safe analysis time limit. The partial trace was recorded and the turn can be retried."
-                  : "Albert could not complete the governed analysis. The failed step was recorded and can be retried safely.",
+                  ? "Albert reached the analysis time limit. The partial trace was recorded and the turn can be retried."
+                  : "Sorry, Albert could not finish that answer. The failed step was recorded and can be retried safely.",
                 recoverable: true,
               });
             } catch {
@@ -595,8 +625,8 @@ export async function POST(request: Request) {
                 status: "error",
                 occurredAt: new Date().toISOString(),
                 message: timedOut
-                  ? "Albert reached the safe analysis time limit. The partial trace was recorded and the turn can be retried."
-                  : (error instanceof Error ? error.message.slice(0, 400) : "Albert could not complete the governed analysis."),
+                  ? "Albert reached the analysis time limit. The partial trace was recorded and the turn can be retried."
+                  : (error instanceof Error ? error.message.slice(0, 400) : "Sorry, Albert could not finish that answer."),
                 recoverable: true,
               });
             }

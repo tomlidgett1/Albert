@@ -1,5 +1,61 @@
 # Xero connector
 
+## The semantic spec
+
+`tables.json` is the pack's governing artifact: the complete Xero semantic
+dictionary — **197 tables, 2,035 columns** — generated from the official
+XeroAPI/Xero-OpenAPI specifications at immutable revision
+`45ab7e8ceccbbbfb41a0487a47f9d1d00cbb4a0f`, covering accounting, assets,
+projects, files, payroll AU/UK/NZ and identity.
+
+Coverage is computed, never claimed. `field-census.json` records the
+denominator — every one of the **1,802 read-reachable fields** across those
+eight specifications, extracted mechanically and committed so the proof runs
+offline — and `coverage.ts` recomputes the numerator from `tables.json` on
+every test run:
+
+| | fields | how it is accounted for |
+|---|---:|---|
+| mapped | 1,739 | a typed staging column citing `api:Object.field`, or a jsonb column declaring it in `coversNested` |
+| excluded | 62 | the artifact's `exclusions` ledger, with a reason (rendered-report cells behind the vendor-refused `accounting.reports.read` scope; transport envelopes; RFC 7807 error payloads) |
+| unaccounted | 1 | the artifact's `unaccounted` ledger, with a reason (a container array whose contents are materialised by a dedicated scan) |
+| **missing** | **0** | — a missing field fails the build |
+
+`tests/contracts/xero-coverage.contract.test.ts` asserts missing is empty, that
+no column invents provenance the specification does not document, and that a
+gutted artifact would fail — a proof that cannot pass vacuously.
+
+Everything else is derived from that one artifact so nothing can drift from the
+dictionary: the scan planner (`scan-plan.ts`), stream contracts (`streams.ts`),
+field coverage (`field-coverage.ts`), Zod schemas (`schemas.ts`), the analytical
+staging DDL, the sanitized fixtures and the sync engine (`spec-sync.ts` +
+`index.ts`). `curated-coverage.ts` is the one hand-reviewed input: the exact
+canonical targets and PII classifications of the eleven founding streams, which
+no payload shape can imply.
+
+Streams walk each endpoint once per stream: leaders project records 1:1, nested
+streams explode declared array paths from the same walk, and fan-out streams
+(attachments, history, online invoices, per-employee payroll sub-resources, AU
+payslips) iterate parent ids under the org's budget with resumable mid-page
+cursors. Explode paths may descend through several arrays —
+`Budget.BudgetLines.BudgetBalances` — and each row keeps its enclosing objects
+reachable, because a budget balance is meaningless without the AccountID that
+lives on its line. Fan-out chains may be more than one link deep (a working
+week hangs off a working pattern, which hangs off an employee) and the cursor
+records the index at every level, so a claim that exhausts its request budget
+resumes at the next unvisited parent rather than replaying the traversal.
+
+UK/NZ payroll share one base path and are gated on the organisation's region
+before any request is issued; assets walk one pass per required status filter;
+the granted TenNinetyNine report walks one pass per amendable filing year;
+contacts include archived records and bank transfers include deleted legs, so
+merge and deletion truth is never lost.
+
+`tests/contracts/xero-full-backfill.contract.test.ts` drives all 197 streams
+through the real engine against the sanitized recording and fails on any stream
+that walks its endpoint and projects nothing — the failure mode where a
+connector reports success while a staging table stays empty forever.
+
 Pinned against official Xero documentation retrieved **2026-08-03**:
 
 - [PKCE flow](https://developer.xero.com/documentation/guides/oauth2/pkce-flow)
@@ -25,10 +81,22 @@ connection ID (without surprising the user by revoking unrelated tenants) and
 then destroys Albert's local credential.
 
 Xero introduced granular Accounting API scopes in March 2026. Albert requests
-only read scopes plus `offline_access`. The general-ledger Journals endpoint is
+every read scope the app is entitled to plus `offline_access`, and no write
+scope at any tier — the pack contains no source write method, so a write grant
+could only exceed what the code can use. The set is deliberately wider than V1
+extraction (payroll, files, assets, projects, budgets, attachments and 1099
+reports have no declared stream yet) so that widening ingestion later never
+forces customers back through a re-consent. Verified against the live authorize
+endpoint on 2026-08-06: Xero refuses `accounting.transactions[.read]`,
+`bankfeeds` and `finance.*` for granular-scope apps, so requesting any of them
+would fail the whole authorization. `accounting.reports.read` is refused on the
+same Advanced-tier basis as Journals and is omitted until Xero grants it.
+
+The general-ledger Journals endpoint is
 an Advanced-tier feature requiring initial and annual security assessment plus
 use-case approval. Its scope is omitted by default and is requested only when
-`XERO_ENABLE_ADVANCED_JOURNALS=true`. Merely having other finance streams is not
+`XERO_ENABLE_ADVANCED_JOURNALS=true`; until that approval exists Xero rejects
+the authorization outright, so the flag must stay `false`. Merely having other finance streams is not
 treated as ledger coverage: `finance.general_ledger` remains Unknown until a
 live Journals request succeeds, and is Unavailable if its scope is absent or the
 endpoint returns 403. This must map to an Unavailable or explicitly Qualified

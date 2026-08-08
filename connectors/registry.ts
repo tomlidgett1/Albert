@@ -4,6 +4,12 @@ import type {
 } from "../packages/connector-sdk/src/index.js";
 import { deputyManifest } from "./deputy/manifest.js";
 import { lightspeedRManifest } from "./lightspeed-r/manifest.js";
+import { googleAdsManifest } from "./google-ads/manifest.js";
+import { metaAdsManifest } from "./meta-ads/manifest.js";
+import { momenceManifest } from "./momence/manifest.js";
+import { shopifyManifest } from "./shopify/manifest.js";
+import { squareManifest } from "./square/manifest.js";
+import { stripeManifest } from "./stripe/manifest.js";
 import { xeroManifest } from "./xero/manifest.js";
 
 /**
@@ -14,6 +20,12 @@ export const connectorManifests = Object.freeze([
   lightspeedRManifest,
   xeroManifest,
   deputyManifest,
+  squareManifest,
+  shopifyManifest,
+  stripeManifest,
+  momenceManifest,
+  metaAdsManifest,
+  googleAdsManifest,
 ] as const satisfies readonly ConnectorManifest[]);
 
 const manifestById = new Map<ConnectorId, ConnectorManifest>(

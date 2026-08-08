@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { redactUngroundedProse } from "../../services/conversation/src/grounding.js";
+import { findUngroundedNumbers, redactUngroundedProse } from "../../services/conversation/src/grounding.js";
 import {
+  answerContainsMarkdownTable,
+  answerMentionsResultFigures,
+  ensureAnswerCitesResults,
+  ensureAnswerIncludesTable,
+  ensureAssumptionDisclosed,
   evidenceCarriesBlockingReason,
   enforceEvidenceBoundAnswerState,
+  humanisePeriodLabel,
+  periodDisclosure,
+  periodGroundingValues,
+  pickAnswerResult,
+  priorAssistantFigures,
   readableCheckName,
+  stripOwnerFacingJargon,
   supersededBlockDisclosure,
+  synthesizeAnswerFromResults,
   unavailableEvidenceExplanation,
   governedQuerySignature,
   blockedQueryGuidance,
@@ -19,6 +31,166 @@ import { searchTokens } from "../../services/semantic-query/src/service.js";
  * groups across the same month in consecutive years and received a stub. Four
  * independent defects chained; each is pinned separately here.
  */
+
+test("claimless SQL answers may state dataThrough dates without being redacted", () => {
+  // Regression: "all time" returned 302 sales, then grounding stripped 7 and
+  // 2026 from "through 7 August 2026", leaving only certification waffle.
+  const provenance = {
+    sources: [{ connector: "lightspeed", label: "Lightspeed", dataThrough: "2026-08-07T09:12:16.609Z" }],
+    timeRange: {
+      label: "Defined by the statement",
+      start: "0001-01-01T00:00:00.000Z",
+      end: "2026-08-07T09:12:16.609Z",
+      timezone: "Australia/Melbourne",
+    },
+    definitions: [],
+    semanticBundleHash: "x",
+    identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+  };
+  const periodValues = periodGroundingValues([{ provenance }]);
+  assert.ok(periodValues.includes(2026));
+  assert.ok(periodValues.includes(8));
+  assert.ok(periodValues.includes(7));
+  const draft = "There were 302 sales transactions across all available history through 7 August 2026.";
+  assert.deepEqual(findUngroundedNumbers(draft, [{ total_sales: "302" }], periodValues), []);
+  assert.equal(
+    periodDisclosure(provenance),
+    "Figures from Lightspeed (updated through 7 August 2026).",
+  );
+});
+
+test("a min/max summary without a table gets the monthly rows appended", () => {
+  const result = {
+    resultId: "sql:jack-gp",
+    columns: [
+      { key: "month", label: "Month", type: "string" as const },
+      { key: "employee_name", label: "Employee Name", type: "string" as const },
+      { key: "gross_profit_ex_gst", label: "Gross Profit Ex Gst", type: "currency" as const },
+      { key: "net_sales_ex_gst", label: "Net Sales Ex Gst", type: "currency" as const },
+      { key: "cost_used", label: "Cost Used", type: "currency" as const },
+      { key: "transactions", label: "Transactions", type: "number" as const },
+      { key: "units", label: "Units", type: "number" as const },
+    ],
+    rows: [
+      {
+        month: "2024-09-01T00:00:00.000Z",
+        employee_name: "Jack Lidgett",
+        gross_profit_ex_gst: "8054.7600",
+        net_sales_ex_gst: "11978.0100",
+        cost_used: "3923.2500",
+        transactions: "127",
+        units: "427.0000",
+      },
+      {
+        month: "2024-10-01T00:00:00.000Z",
+        employee_name: "Jack Lidgett",
+        gross_profit_ex_gst: "12947.4600",
+        net_sales_ex_gst: "19228.7800",
+        cost_used: "6281.3200",
+        transactions: "188",
+        units: "567.0000",
+      },
+      {
+        month: "2026-08-01T00:00:00.000Z",
+        employee_name: "Jack Lidgett",
+        gross_profit_ex_gst: "1831.0100",
+        net_sales_ex_gst: "2753.3500",
+        cost_used: "922.3400",
+        transactions: "17",
+        units: "58.0000",
+      },
+    ],
+    provenance: {
+      sources: [],
+      timeRange: {
+        label: "Defined by the statement",
+        start: "0001-01-01T00:00:00.000Z",
+        end: "2026-08-07T00:00:00.000Z",
+        timezone: "Australia/Melbourne",
+      },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const summary =
+    "Jack Lidgett’s gross profit was tracked monthly over the 24 months from September 2024 to August 2026, ranging from $1,831.01 to $14,377.22.";
+  assert.equal(answerContainsMarkdownTable(summary), false);
+  const withTable = ensureAnswerIncludesTable(summary, [result]);
+  assert.equal(answerContainsMarkdownTable(withTable), true);
+  assert.match(withTable, /September 2024/u);
+  assert.match(withTable, /October 2024/u);
+  assert.match(withTable, /August 2026/u);
+  assert.match(withTable, /\$8,054\.76/u);
+  assert.match(withTable, /Gross Profit Ex GST|Gross Profit/u);
+  // Constant employee name column is dropped so the series stays readable.
+  assert.doesNotMatch(withTable, /^\| Employee Name \|/mu);
+  assert.equal(
+    ensureAnswerIncludesTable(`${summary}\n\n| Month | GP |\n| --- | --- |\n| September 2024 | $8,054.76 |`, [result]),
+    `${summary}\n\n| Month | GP |\n| --- | --- |\n| September 2024 | $8,054.76 |`,
+  );
+});
+
+test("a redacted draft that lost every result figure synthesises from the table", () => {
+  const result = {
+    resultId: "r1",
+    columns: [{ key: "total_sales", label: "Total Sales", type: "currency" as const }],
+    rows: [{ total_sales: "302" }],
+    provenance: {
+      sources: [],
+      timeRange: { label: "x", start: "2026-01-01T00:00:00.000Z", end: "2026-08-07T00:00:00.000Z", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const waffle = "The count is exploratory because the sales metric isn’t governed for certification.";
+  assert.equal(answerMentionsResultFigures(waffle, [result]), false);
+  assert.equal(synthesizeAnswerFromResults([result]), "Total Sales came to $302.00.");
+});
+
+test("a method preamble with a populated ranking table is rebuilt from the rows", () => {
+  // Regression: "best items sold this week in terms of GP?" returned a 10-row
+  // table, then answered with only the GP method and period, no item figures.
+  const result = {
+    resultId: "r1",
+    columns: [
+      { key: "item_name", label: "Item Name", type: "string" as const },
+      { key: "gross_profit", label: "Gross Profit", type: "currency" as const },
+      { key: "units_sold", label: "Units Sold", type: "number" as const },
+    ],
+    rows: [
+      { item_name: "Service - General Service", gross_profit: "709.02000000", units_sold: "6.0000" },
+      { item_name: "Schwalbe Marathon Plus", gross_profit: "194.60520000", units_sold: "4.0000" },
+    ],
+    provenance: {
+      sources: [],
+      timeRange: {
+        label: "2026-08-03 to 2026-08-10",
+        start: "2026-08-03T00:00:00.000Z",
+        end: "2026-08-10T00:00:00.000Z",
+        timezone: "Australia/Melbourne",
+      },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const preamble =
+    "Top items by estimated gross profit this week, based on completed Lightspeed sales. Gross profit is calculated as sales subtotal less average cost multiplied by units sold.";
+  assert.equal(answerMentionsResultFigures(preamble, [result]), false);
+  const rebuilt = ensureAnswerCitesResults(preamble, [result]);
+  assert.match(rebuilt, /Service - General Service/u);
+  assert.match(rebuilt, /\$709\.02/u);
+  assert.match(rebuilt, /Schwalbe Marathon Plus/u);
+  assert.equal(
+    ensureAnswerCitesResults("Service - General Service led on GP at $709.02.", [result]),
+    "Service - General Service led on GP at $709.02.",
+  );
+});
 
 test("an unsupported figure costs its own sentence, not the whole answer", () => {
   const narrative = [
@@ -147,8 +319,10 @@ test("a superseded block can never be reported as Verified", () => {
 
 test("carrying on past a block discloses what could not run", () => {
   const disclosure = supersededBlockDisclosure([goodResult, blockedAttempt]);
-  assert.match(disclosure, /could not run/u);
-  assert.match(disclosure, /deeper history is still backfilling/u);
+  assert.match(disclosure, /could not be completed/u);
+  assert.match(disclosure, /4 July 2026/u);
+  assert.match(disclosure, /still loading/u);
+  assert.ok(!disclosure.includes("inventory.balances"));
   assert.equal(supersededBlockDisclosure([goodResult]), "");
 });
 
@@ -163,7 +337,11 @@ test("an internal connection id never reaches the answer", () => {
 });
 
 test("a blocked explanation says what the reader can act on", () => {
-  assert.match(unavailableEvidenceExplanation([blockedAttempt]), /deeper history is still backfilling/u);
+  const explanation = unavailableEvidenceExplanation([blockedAttempt]);
+  assert.match(explanation, /4 July 2026/u);
+  assert.match(explanation, /still loading/u);
+  assert.ok(!explanation.includes("governed"));
+  assert.ok(!explanation.includes("01KZ54B1PCKM1MHSNHY4XT6DEX"));
 });
 
 
@@ -209,4 +387,183 @@ test("a block with no coverage window still says what to change", () => {
 
 test("the blocked-query budget is small enough to end a turn", () => {
   assert.ok(BLOCKED_QUERY_BUDGET >= 2 && BLOCKED_QUERY_BUDGET <= 6);
+});
+
+test("ISO period labels become owner-readable months and weeks", () => {
+  assert.equal(
+    humanisePeriodLabel({
+      label: "2026-08-01 to 2026-09-01",
+      start: "2026-08-01T00:00:00.000Z",
+      end: "2026-09-01T00:00:00.000Z",
+      timezone: "Australia/Melbourne",
+    }),
+    "August 2026",
+  );
+  assert.equal(
+    humanisePeriodLabel({
+      label: "2026-08-03 to 2026-08-10",
+      start: "2026-08-03T00:00:00.000Z",
+      end: "2026-08-10T00:00:00.000Z",
+      timezone: "Australia/Melbourne",
+    }),
+    "3–9 August 2026",
+  );
+  assert.equal(
+    humanisePeriodLabel({
+      label: "Last week",
+      start: "2026-08-03T00:00:00.000Z",
+      end: "2026-08-10T00:00:00.000Z",
+      timezone: "Australia/Melbourne",
+    }),
+    "Last week",
+  );
+});
+
+test("ranking synthesis leads with the winner in plain English", () => {
+  const result = {
+    resultId: "r1",
+    columns: [
+      { key: "item_name", label: "Item Name", type: "string" as const },
+      { key: "gross_profit", label: "Gross Profit", type: "currency" as const },
+      { key: "units_sold", label: "Units Sold", type: "number" as const },
+    ],
+    rows: [
+      { item_name: "Service - General Service", gross_profit: "709.02000000", units_sold: "6.0000" },
+      { item_name: "Schwalbe Marathon Plus", gross_profit: "194.60520000", units_sold: "4.0000" },
+    ],
+    provenance: {
+      sources: [],
+      timeRange: {
+        label: "2026-08-03 to 2026-08-10",
+        start: "2026-08-03T00:00:00.000Z",
+        end: "2026-08-10T00:00:00.000Z",
+        timezone: "Australia/Melbourne",
+      },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const text = synthesizeAnswerFromResults([result]);
+  assert.match(text, /led by Service - General Service/u);
+  assert.match(text, /\$709\.02/u);
+  assert.match(text, /\|/u);
+  assert.match(text, /Units Sold/u);
+  assert.match(text, /\|\s*6\s*\|/u);
+});
+
+test("owner-facing polish strips attestation jargon but keeps the figure", () => {
+  const cleaned = stripOwnerFacingJargon(
+    "You sold 42 units. This is exploratory because commerce.units_sold could not be attested.",
+  );
+  assert.match(cleaned, /42 units/u);
+  assert.ok(!/attest|commerce\.units_sold|exploratory/iu.test(cleaned));
+});
+
+test("server-owned name assumptions are disclosed when the draft omits them", () => {
+  const disclosed = ensureAssumptionDisclosed(
+    "You sold 42 this month.",
+    [{ phrase: "gen services", itemName: "Service - General Service" }],
+  );
+  assert.match(disclosed, /Treating “gen services” as Service - General Service/u);
+  assert.equal(
+    ensureAssumptionDisclosed(
+      "Treating “gen services” as Service - General Service. You sold 42.",
+      [{ phrase: "gen services", itemName: "Service - General Service" }],
+    ),
+    "Treating “gen services” as Service - General Service. You sold 42.",
+  );
+});
+
+test("answer synthesis prefers named product rows over a trailing bare row_count", () => {
+  // Regression: "what products have no categories" ended on an ls_items
+  // source-exploration row_count (17138) and answered "The total is 17138".
+  const products = {
+    resultId: "sql:products",
+    columns: [
+      { key: "item_name", label: "Item Name", type: "string" as const },
+      { key: "item_id", label: "Item Id", type: "number" as const },
+    ],
+    rows: [
+      { item_name: "Orphan Tube", item_id: "1" },
+      { item_name: "Mystery Cable", item_id: "2" },
+    ],
+    provenance: {
+      sources: [],
+      timeRange: { label: "x", start: "2026-01-01T00:00:00.000Z", end: "2026-08-07T00:00:00.000Z", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const bareCount = {
+    resultId: "source:count",
+    columns: [{ key: "row_count", label: "Row Count", type: "number" as const }],
+    rows: [{ row_count: "17138" }],
+    provenance: products.provenance,
+    validations: [],
+  };
+  assert.equal(pickAnswerResult([products, bareCount])?.resultId, "sql:products");
+  const rebuilt = synthesizeAnswerFromResults([products, bareCount]);
+  assert.match(rebuilt, /Orphan Tube/u);
+  assert.ok(!/17138/u.test(rebuilt));
+  // Exploration-only evidence must not become "The total is 17138".
+  assert.equal(pickAnswerResult([bareCount]), undefined);
+  const explorationOnly = synthesizeAnswerFromResults([bareCount]);
+  assert.ok(!/17138/u.test(explorationOnly));
+  assert.match(explorationOnly, /couldn't turn the lookups/iu);
+});
+
+test("no_fanout blocked guidance tells the model to pin mapping_version", () => {
+  const guidance = blockedQueryGuidance({
+    state: "unavailable",
+    validation: {
+      status: "failed",
+      checks: [{
+        checkId: "no_fanout",
+        status: "failed",
+        reasonCode: "no_fanout",
+        detail: "No Fanout: blocked.",
+      }],
+      warnings: [],
+    },
+    capabilities: { missing: [] },
+  } as never);
+  assert.match(guidance, /mapping_version/iu);
+  assert.match(guidance, /claims empty|leave claims/iu);
+});
+
+test("format follow-ups may restate figures from the prior assistant answer", () => {
+  // Regression: "put in table" after a real answer had no SQL this turn, so
+  // grounding stripped $175,672.36 and the state guard said Unavailable.
+  const prior = [
+    { role: "user", text: "sales this year?" },
+    {
+      role: "assistant",
+      text: "Sales were $175,672.36 from 1 July 2025 through 7 August 2026.",
+    },
+    { role: "user", text: "put in table" },
+  ];
+  const figures = priorAssistantFigures(prior);
+  assert.ok(figures.includes(175672.36));
+  assert.ok(figures.includes(2026));
+  assert.ok(figures.includes(2025));
+  assert.ok(figures.includes(7));
+  assert.ok(figures.includes(1));
+  const tableDraft = [
+    "| Period | Sales |",
+    "| --- | --- |",
+    "| 1 July 2025 – 7 August 2026 | $175,672.36 |",
+  ].join("\n");
+  assert.deepEqual(findUngroundedNumbers(tableDraft, [], figures), []);
+  assert.equal(
+    enforceEvidenceBoundAnswerState("Exploratory", [], false, 0, true),
+    "Exploratory",
+  );
+  assert.equal(
+    enforceEvidenceBoundAnswerState("Exploratory", [], false, 0, false),
+    "Unavailable",
+  );
 });

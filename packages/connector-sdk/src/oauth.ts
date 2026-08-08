@@ -8,7 +8,14 @@ export type OAuthCredentialSecret = Readonly<{
   provider: string;
   accessToken: string;
   refreshToken?: string;
-  tokenType: "Bearer";
+  /**
+   * `StripeAccount` marks a credential whose `accessToken` is an account
+   * identifier rather than a bearer token: Stripe deprecated per-connection
+   * tokens in favour of the platform key plus a `Stripe-Account` header. It is
+   * distinguished from `Bearer` so no caller can put it in an Authorization
+   * header and expect it to authenticate.
+   */
+  tokenType: "Bearer" | "StripeAccount";
   expiresAt: string;
   scopes: readonly string[];
   metadata: Readonly<Record<string, string | number | boolean | null>>;

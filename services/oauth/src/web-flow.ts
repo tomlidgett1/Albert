@@ -1,6 +1,14 @@
 import { cookies } from "next/headers";
 import { buildDeputyAuthorizationUrl } from "../../../connectors/deputy/oauth-public.js";
+import { LIGHTSPEED_R_DEFAULT_SCOPES } from "../../../connectors/lightspeed-r/manifest.js";
 import { buildLightspeedRAuthorizationUrl } from "../../../connectors/lightspeed-r/oauth-public.js";
+import { buildGoogleAdsAuthorizationUrl } from "../../../connectors/google-ads/oauth-public.js";
+import { buildMetaAdsAuthorizationUrl } from "../../../connectors/meta-ads/oauth-public.js";
+import { buildMomenceAuthorizationUrl } from "../../../connectors/momence/oauth-public.js";
+import { normalizeShopifyShopDomain } from "../../../connectors/shopify/manifest.js";
+import { buildShopifyAuthorizationUrl } from "../../../connectors/shopify/oauth-public.js";
+import { buildSquareAuthorizationUrl } from "../../../connectors/square/oauth-public.js";
+import { buildStripeAuthorizationUrl } from "../../../connectors/stripe/oauth-public.js";
 import { buildXeroAuthorizationUrl } from "../../../connectors/xero/oauth-public.js";
 import {
   createNonce,
@@ -10,7 +18,10 @@ import {
   bytesToBase64Url,
 } from "../../../packages/security/src/index.js";
 
-export const oauthProviders = ["lightspeed", "xero", "deputy"] as const;
+export const oauthProviders = [
+  "lightspeed", "xero", "deputy", "square",
+  "shopify", "stripe", "momence", "meta-ads", "google-ads",
+] as const;
 export type OAuthWebProvider = (typeof oauthProviders)[number];
 
 type OAuthState = Readonly<{
@@ -35,6 +46,12 @@ const providerToConnector = {
   lightspeed: "lightspeed-r",
   xero: "xero",
   deputy: "deputy",
+  square: "square",
+  shopify: "shopify",
+  stripe: "stripe",
+  momence: "momence",
+  "meta-ads": "meta-ads",
+  "google-ads": "google-ads",
 } as const;
 
 export function isOAuthWebProvider(value: string): value is OAuthWebProvider {
@@ -120,6 +137,8 @@ export async function beginOAuthFlow(input: Readonly<{
   tenantId: string;
   userId: string;
   requestOrigin?: string;
+  /** Required for Shopify, whose authorize host is the merchant's own shop. */
+  shopDomain?: string;
 }>): Promise<string> {
   const now = Date.now();
   const expiresAt = now + 10 * 60_000;
@@ -130,11 +149,26 @@ export async function beginOAuthFlow(input: Readonly<{
     publicOrigin(input.requestOrigin),
   ).toString();
   const connector = providerToConnector[input.provider];
+  // Normalised before it leaves the browser boundary so an invalid shop fails
+  // here with a clear message rather than as an opaque worker rejection. The
+  // worker re-validates: this is convenience, not the trust boundary.
+  let vendorAccountHint: string | undefined;
+  if (input.provider === "shopify") {
+    if (!input.shopDomain?.trim()) {
+      throw new OAuthFlowError("Enter your myshopify.com store domain to connect Shopify.", 400);
+    }
+    try {
+      vendorAccountHint = normalizeShopifyShopDomain(input.shopDomain);
+    } catch {
+      throw new OAuthFlowError("That does not look like a myshopify.com store domain.", 400);
+    }
+  }
   const result = await callWorker<{ oauthSessionId: string; scopes: string[] }>("/v1/oauth/start", {
     tenantId: input.tenantId,
     userId: input.userId,
     provider: connector,
     redirectUri,
+    ...(vendorAccountHint ? { vendorAccountHint } : {}),
     stateNonceHash: await sha256(nonce),
     codeVerifier,
     expiresAt: new Date(expiresAt).toISOString(),
@@ -178,12 +212,16 @@ export async function beginOAuthFlow(input: Readonly<{
   });
 
   if (input.provider === "lightspeed") {
+    // Confidential server client: omit PKCE and request employee:all to match
+    // bike-dashboard's working Lightspeed authorize URL. Scope comes from the
+    // local pack default so a lagged OAuth worker cannot reintroduce the
+    // granular+PKCE shape that loops on merchantos.com in Safari.
+    void result.scopes;
     return buildLightspeedRAuthorizationUrl({
       clientId: requiredEnvironment("LIGHTSPEED_CLIENT_ID"),
       state,
       redirectUri,
-      codeChallenge: await pkceChallenge(codeVerifier),
-      scopes: result.scopes,
+      scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
     });
   }
   if (input.provider === "xero") {
@@ -195,6 +233,58 @@ export async function beginOAuthFlow(input: Readonly<{
       // The credential-owning worker is the source of truth for optional
       // connector capabilities. This prevents a Sites/Fly configuration drift
       // from authorising scopes the worker did not record for the session.
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "square") {
+    return buildSquareAuthorizationUrl({
+      clientId: requiredEnvironment("SQUARE_CLIENT_ID"),
+      state,
+      redirectUri,
+      // The credential-owning worker is the source of truth for the permission
+      // set, exactly as for Xero. Square's confidential code flow carries no
+      // code_challenge; the application secret authenticates the exchange.
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "shopify") {
+    return buildShopifyAuthorizationUrl({
+      clientId: requiredEnvironment("SHOPIFY_CLIENT_ID"),
+      state,
+      redirectUri,
+      shopDomain: vendorAccountHint!,
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "stripe") {
+    return buildStripeAuthorizationUrl({
+      clientId: requiredEnvironment("STRIPE_CLIENT_ID"),
+      state,
+      redirectUri,
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "momence") {
+    return buildMomenceAuthorizationUrl({
+      clientId: requiredEnvironment("MOMENCE_CLIENT_ID"),
+      state,
+      redirectUri,
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "meta-ads") {
+    return buildMetaAdsAuthorizationUrl({
+      clientId: requiredEnvironment("META_ADS_CLIENT_ID"),
+      state,
+      redirectUri,
+      scopes: result.scopes,
+    });
+  }
+  if (input.provider === "google-ads") {
+    return buildGoogleAdsAuthorizationUrl({
+      clientId: requiredEnvironment("GOOGLE_ADS_CLIENT_ID"),
+      state,
+      redirectUri,
       scopes: result.scopes,
     });
   }

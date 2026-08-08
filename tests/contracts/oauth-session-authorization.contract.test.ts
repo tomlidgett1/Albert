@@ -52,6 +52,7 @@ test("multi-account selection receives a fresh bounded window for the authentica
     status: "pending" as const,
     expiresAt: new Date(Date.now() + 5_000).toISOString(),
     codeVerifier: "v".repeat(64),
+    vendorAccountHint: null,
     choices: [],
     selectedAccountReference: null,
   };
@@ -284,15 +285,17 @@ test("OAuth callbacks never fall back to an insecure production redirect origin"
   assert.doesNotMatch(webFlow, /XERO_ENABLE_ADVANCED_JOURNALS/u);
 });
 
-test("Lightspeed browser authorization binds the sealed verifier as S256 PKCE", () => {
+test("Lightspeed browser authorization uses the confidential-client shape without PKCE", () => {
   const source = readFileSync("services/oauth/src/web-flow.ts", "utf8");
   const lightspeedStart = source.indexOf('if (input.provider === "lightspeed")');
   const xeroStart = source.indexOf('if (input.provider === "xero")', lightspeedStart);
   const lightspeedBlock = source.slice(lightspeedStart, xeroStart);
   assert.match(
     lightspeedBlock,
-    /buildLightspeedRAuthorizationUrl\(\{[\s\S]*redirectUri[\s\S]*codeChallenge:\s*await pkceChallenge\(codeVerifier\)/u,
+    /buildLightspeedRAuthorizationUrl\(\{[\s\S]*redirectUri[\s\S]*scopes:\s*LIGHTSPEED_R_DEFAULT_SCOPES/u,
   );
+  // bike-dashboard's working Lightspeed flow omits PKCE on authorize.
+  assert.doesNotMatch(lightspeedBlock, /codeChallenge:\s*await pkceChallenge\(codeVerifier\)/u);
 });
 
 test("OAuth browser state survives a transient callback-worker failure but is consumed on success", () => {

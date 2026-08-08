@@ -20,7 +20,6 @@ import { lightspeedRManifest } from "../../../connectors/lightspeed-r/manifest.j
 import { xeroManifest } from "../../../connectors/xero/manifest.js";
 import { deputyManifest } from "../../../connectors/deputy/manifest.js";
 import { SemanticServiceClient } from "./semantic-client.js";
-import { criticalPromptRouteContract, promptRouteInstruction } from "./prompt-routing.js";
 
 export type PlanPreviewRoute = "governed" | "exploratory" | "clarification" | "unavailable";
 
@@ -532,7 +531,6 @@ export async function runPlanPreviewTurn(options: Readonly<{
   const registry = loadPlanPreviewRegistry(options.registrySource);
   const sourceFieldIndex = loadSourceFieldIndex();
   const preferences = normalizeAgentPreferences(options.preferences);
-  const promptRoute = criticalPromptRouteContract(options.question);
   const runConfig = buildOpenAIAgentRunConfig(preferences);
   const usedLiveSemantic = { value: false };
   const context: PlanPreviewContext = {
@@ -556,7 +554,7 @@ export async function runPlanPreviewTurn(options: Readonly<{
 
   const agent = new Agent<PlanPreviewContext, typeof planOutputSchema>({
     name: "AlbertPlanPreview",
-    instructions: `${planInstructions}${promptRouteInstruction(promptRoute)}`,
+    instructions: planInstructions,
     model: runConfig.model,
     modelSettings: {
       reasoning: { ...runConfig.modelSettings.reasoning },

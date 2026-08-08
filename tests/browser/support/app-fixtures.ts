@@ -24,7 +24,6 @@ export const fixtureWorkspace = Object.freeze({
       description: "Accounting, invoices, journals, and bank activity.",
       logo: "/logos/xero.svg",
       connectDetail: "Connect a Xero organisation.",
-      additionalConnectionLabel: "Add another Xero organisation",
       connections: Object.freeze([
         Object.freeze({
           connectionId: "01J00000000000000000000XR1",

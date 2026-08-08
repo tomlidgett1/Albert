@@ -49,8 +49,8 @@ export type AgentRunPreferences = Readonly<{
 }>;
 
 export const DEFAULT_AGENT_PREFERENCES: AgentRunPreferences = Object.freeze({
-  model: "gpt-5.6-sol",
-  reasoningEffort: "medium",
+  model: "gpt-5.6-luna",
+  reasoningEffort: "max",
   fastMode: false,
 });
 
@@ -113,7 +113,7 @@ export type TraceTimeRange = Readonly<{
 
 export type TraceProvenance = Readonly<{
   sources: readonly Readonly<{
-    connector: "lightspeed" | "xero" | "deputy";
+    connector: "lightspeed" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
     label: string;
     dataThrough: string;
   }>[];

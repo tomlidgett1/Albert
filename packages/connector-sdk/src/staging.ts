@@ -50,7 +50,9 @@ export type GovernedSourceCatalogueField = Readonly<{
   vendorAliases: readonly string[];
 }>;
 
-const moneyFields: Readonly<Record<ConnectorId, ReadonlySet<string>>> = {
+// Partial by design: authorization-only packs stage no field, so requiring an
+// empty entry per connector would be ceremony that silently rots.
+const moneyFields: Readonly<Partial<Record<ConnectorId, ReadonlySet<string>>>> = {
   "lightspeed-r": new Set([
     "defaultCost", "avgCost", "qoh", "sellable", "backorder", "componentQoh",
     "componentBackorder", "reorderPoint", "reorderLevel", "onLayaway", "onSpecialOrder",
@@ -88,7 +90,7 @@ const timestampFields = new Set([
   "DateString", "Start", "End",
 ]);
 
-const jsonFields: Readonly<Record<ConnectorId, ReadonlySet<string>>> = {
+const jsonFields: Readonly<Partial<Record<ConnectorId, ReadonlySet<string>>>> = {
   "lightspeed-r": new Set([
     "Contact", "SaleLines", "SalePayments", "OrderLines", "Parent", "Category", "TaxClass",
     "Department", "ItemAttributes", "Manufacturer", "Note", "Season", "ItemShops",
@@ -127,10 +129,10 @@ export function inferStagingType(
   field: string,
   target?: string,
 ): StagingFieldType {
-  if (moneyFields[connectorId].has(field)) return "numeric";
+  if (moneyFields[connectorId]?.has(field)) return "numeric";
   if (dateFields.has(field) || /(?:\.business_date|\.valid_from|\.valid_to)$/u.test(target ?? "")) return "date";
   if (timestampFields.has(field) || /(?:_at)$/u.test(target ?? "")) return "timestamptz";
-  if (jsonFields[connectorId].has(field) || /(?:observations|source_options|components)$/u.test(target ?? "")) return "jsonb";
+  if (jsonFields[connectorId]?.has(field) || /(?:observations|source_options|components)$/u.test(target ?? "")) return "jsonb";
   if (booleanFields.has(field) || /\.(?:active|voided|approved|discarded|published|is_[a-z_]+)$/u.test(target ?? "")) return "boolean";
   if (numericFields.has(field)) return "numeric";
   return "text";
@@ -139,7 +141,11 @@ export function inferStagingType(
 export function stagingSchema(connectorId: ConnectorId): StagingStreamContract["schema"] {
   if (connectorId === "lightspeed-r") return "source_lightspeed";
   if (connectorId === "xero") return "source_xero";
-  return "source_deputy";
+  if (connectorId === "deputy") return "source_deputy";
+  // Authorization-only packs own no staging schema. Failing closed keeps a
+  // future stream from silently projecting into another connector's schema,
+  // which a trailing `return "source_deputy"` would have done.
+  throw new Error(`${connectorId} declares no staging schema.`);
 }
 
 export function stagingColumnName(sourceField: string): string {
@@ -418,7 +424,7 @@ export function renderTypedStagingMigration(
   for (const schema of ["source_lightspeed", "source_xero", "source_deputy"] as const) {
     sql.push(
       `GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ${quoteIdentifier(schema)} TO ingest_rw;`,
-      `GRANT SELECT ON ALL TABLES IN SCHEMA ${quoteIdentifier(schema)} TO transform_rw, diagnostic_ro;`,
+      `GRANT SELECT ON ALL TABLES IN SCHEMA ${quoteIdentifier(schema)} TO transform_rw, diagnostic_ro, semantic_ro;`,
     );
   }
   sql.push("", "COMMIT;", "");

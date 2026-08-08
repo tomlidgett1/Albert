@@ -1,25 +1,50 @@
-import {
-  inferStagingType,
-  stagingColumnName,
-  type ConnectorManifest,
-  type FieldCoverage,
-} from "../../packages/connector-sdk/src/index.js";
-import {
-  XERO_ACCOUNTING_OPENAPI_REVISION,
-  XERO_DOCUMENTED_FIELDS,
-  type XeroDocumentedStream,
-} from "./documented-fields.js";
+import { type ConnectorManifest } from "../../packages/connector-sdk/src/index.js";
+import { XERO_ACCOUNTING_OPENAPI_REVISION } from "./documented-fields.js";
+import { XERO_FIELD_COVERAGE } from "./field-coverage.js";
+import { XERO_SPEC_TABLES } from "./scan-plan.js";
+import { XERO_STREAMS } from "./streams.js";
 
+/**
+ * Every read scope the Xero app is entitled to, requested up front so widening
+ * ingestion later never forces customers back through a re-consent. Verified
+ * against the live authorize endpoint on 2026-08-06: Xero accepts this exact
+ * set and refuses `accounting.transactions[.read]`, `bankfeeds` and `finance.*`
+ * for granular-scope apps. No write scope is listed; the pack contains no
+ * source write method, so a write grant could only ever exceed what the code
+ * can use.
+ */
 export const XERO_DEFAULT_SCOPES = [
   "offline_access",
+  "openid",
+  "profile",
+  "email",
   "accounting.settings.read",
   "accounting.contacts.read",
   "accounting.invoices.read",
   "accounting.payments.read",
   "accounting.banktransactions.read",
   "accounting.manualjournals.read",
+  "accounting.budgets.read",
+  "accounting.attachments.read",
+  "accounting.reports.tenninetynine.read",
+  "payroll.employees.read",
+  "payroll.payruns.read",
+  "payroll.payslip.read",
+  "payroll.timesheets.read",
+  "payroll.settings.read",
+  "files.read",
+  "assets.read",
+  "projects.read",
 ] as const;
 
+/**
+ * Approval-gated at the vendor, not by Albert. The live authorize endpoint
+ * refuses `accounting.journals.read` until Xero grants Advanced-tier use-case
+ * approval, so it stays behind XERO_ENABLE_ADVANCED_JOURNALS rather than
+ * breaking every authorization for apps that do not have it.
+ * `accounting.reports.read` is refused on the same basis and is omitted
+ * entirely until that approval exists.
+ */
 export const XERO_ADVANCED_SCOPES = ["accounting.journals.read"] as const;
 export const XERO_ALLOWED_SCOPES = [...XERO_DEFAULT_SCOPES, ...XERO_ADVANCED_SCOPES] as const;
 
@@ -27,64 +52,12 @@ export function xeroRequestedScopes(includeAdvancedJournals: boolean): readonly 
   return includeAdvancedJournals ? XERO_ALLOWED_SCOPES : XERO_DEFAULT_SCOPES;
 }
 
-const coverage = (
-  stream: XeroDocumentedStream,
-  canonical: Readonly<Record<string, string>>,
-  extensions: readonly string[] = [],
-  pii: Readonly<Record<string, FieldCoverage["pii"]>> = {},
-): readonly FieldCoverage[] => {
-  const explicitlyDispositioned = new Set([...Object.keys(canonical), ...extensions]);
-  return [
-    ...Object.entries(canonical).map(([field, target]) => ({
-    stream,
-    field,
-    disposition: "canonical" as const,
-    stagingType: inferStagingType("xero", field, target),
-    target,
-    pii: pii[field] ?? ("none" as const),
-    })),
-    ...extensions.map((field) => ({
-    stream,
-    field,
-    disposition: "governed_extension" as const,
-    stagingType: inferStagingType("xero", field),
-    target: `source_xero.${stream}.${stagingColumnName(field)}`,
-    pii: pii[field] ?? ("none" as const),
-    })),
-    ...XERO_DOCUMENTED_FIELDS[stream]
-      .filter((field) => !explicitlyDispositioned.has(field))
-      .map((field) => ({
-        stream,
-        field,
-        disposition: "unsupported" as const,
-        stagingType: inferStagingType("xero", field),
-        reason: "Documented by the pinned Xero Accounting OpenAPI but outside Albert V1 canonical and governed source-extension scope; retained only in immutable encrypted raw storage.",
-        pii: pii[field] ?? unsupportedPii(stream, field),
-      })),
-  ];
-};
-
-function unsupportedPii(
-  stream: XeroDocumentedStream,
-  field: string,
-): FieldCoverage["pii"] {
-  if (/ValidationErrors|Warnings|Attachments|Reference|Particulars|Details|Url/u.test(field)) {
-    return "free_text_untrusted";
-  }
-  if (/Contact|Address|Phone|Email|BankAccount|TaxNumber|Website|CompanyNumber|AccountNumber/u.test(field)) {
-    return stream === "contacts" || stream === "invoices" || stream === "credit_notes"
-      ? "customer_contact"
-      : "business_contact";
-  }
-  return "none";
-}
-
 export const xeroManifest: ConnectorManifest = {
   id: "xero",
   displayName: "Xero Accounting",
-  packVersion: "1.0.0",
-  apiVersion: `Accounting API 2.0; OpenAPI ${XERO_ACCOUNTING_OPENAPI_REVISION}; granular OAuth scopes (March 2026)`,
-  releasedAt: "2026-08-03",
+  packVersion: "2.0.0",
+  apiVersion: `Accounting API 2.0 + Assets 1.0 + Projects 2.0 + Files 1.0 + Payroll AU/UK/NZ; OpenAPI ${XERO_ACCOUNTING_OPENAPI_REVISION}; granular OAuth scopes (March 2026); ${XERO_SPEC_TABLES.length}-table semantic spec`,
+  releasedAt: "2026-08-06",
   documentation: [
     "https://developer.xero.com/documentation/guides/oauth2/pkce-flow",
     "https://developer.xero.com/documentation/guides/oauth2/scopes/",
@@ -95,29 +68,27 @@ export const xeroManifest: ConnectorManifest = {
     "https://developer.xero.com/changelog",
     "https://xeroapi.github.io/xero-node/accounting/index.html",
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero_accounting.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero_assets.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-projects.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero_files.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-au.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-uk.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-nz.yaml`,
+    `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-identity.yaml`,
   ],
   oauth: {
     scopes: XERO_DEFAULT_SCOPES,
-    leastPrivilegeNotes: [],
+    leastPrivilegeNotes: [
+      "Albert requests every read scope the Xero app is entitled to. The full spec surface behind those scopes — accounting, budgets, attachments, 1099 reports, payroll (AU/UK/NZ), files, assets and projects — is declared as streams, so the grant and the extraction surface now match; it stays strictly read-only because the pack contains no source write method.",
+      "openid, profile and email identify the authorising user only. Albert stores no Xero profile record from them and they carry no accounting-data access.",
+    ],
     refreshTokenRotation: true,
     remoteRevocation: "supported",
   },
-  streams: [
-    { id: "organisation", resource: "Organisations", endpoint: "Organisation", recordIdField: "OrganisationID", modifiedField: "UpdatedDateUTC", pagination: "none", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["accounting"], canonicalTargets: ["legal_entity"], authorityConcept: "statutory_finance" },
-    { id: "accounts", resource: "Accounts", endpoint: "Accounts", recordIdField: "AccountID", modifiedField: "UpdatedDateUTC", pagination: "none", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation"], productDomains: ["accounting"], canonicalTargets: ["gl_account"], authorityConcept: "statutory_finance" },
-    { id: "contacts", resource: "Contacts", endpoint: "Contacts", recordIdField: "ContactID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation"], productDomains: ["accounting"], canonicalTargets: ["person", "customer_account", "supplier", "identity_hint", "metadata"], authorityConcept: "statutory_finance" },
-    { id: "invoices", resource: "Invoices", endpoint: "Invoices", recordIdField: "InvoiceID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation", "accounts", "contacts", "tax_rates", "tracking_categories"], productDomains: ["accounting"], canonicalTargets: ["finance_invoice_line"], authorityConcept: "statutory_finance" },
-    { id: "credit_notes", resource: "CreditNotes", endpoint: "CreditNotes", recordIdField: "CreditNoteID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation", "accounts", "contacts", "tax_rates", "tracking_categories"], productDomains: ["accounting"], canonicalTargets: ["finance_invoice_line", "event_link"], authorityConcept: "statutory_finance" },
-    { id: "payments", resource: "Payments", endpoint: "Payments", recordIdField: "PaymentID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation", "accounts", "contacts"], productDomains: ["accounting"], canonicalTargets: ["event_link", "metadata"], authorityConcept: "cash_settlement" },
-    { id: "bank_transactions", resource: "BankTransactions", endpoint: "BankTransactions", recordIdField: "BankTransactionID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation", "accounts", "tax_rates", "tracking_categories"], productDomains: ["accounting"], canonicalTargets: ["finance_bank_transaction"], authorityConcept: "cash_settlement" },
-    { id: "manual_journals", resource: "ManualJournals", endpoint: "ManualJournals", recordIdField: "ManualJournalID", modifiedField: "UpdatedDateUTC", pagination: "page", backfillStrategy: "time_windowed", lateEditStrategy: "modified_field", deletionStrategy: "soft_delete", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation", "accounts", "tax_rates", "tracking_categories"], productDomains: ["accounting"], canonicalTargets: ["finance_journal_line", "metadata"], authorityConcept: "statutory_finance" },
-    { id: "journals", resource: "Journals", endpoint: "Journals", recordIdField: "JournalID", modifiedField: "CreatedDateUTC", pagination: "offset", backfillStrategy: "exhaustive_offset", lateEditStrategy: "append_only", deletionStrategy: "immutable_append_only", sourceTotalStrategy: "count_distinct_complete_scan", availability: "optional", dependencies: ["organisation", "accounts", "tax_rates", "tracking_categories"], productDomains: ["accounting"], canonicalTargets: ["finance_journal_line", "event_link", "metadata"], authorityConcept: "statutory_finance" },
-    { id: "tax_rates", resource: "TaxRates", endpoint: "TaxRates", recordIdField: "TaxType", pagination: "none", backfillStrategy: "snapshot", lateEditStrategy: "full_snapshot", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: [], productDomains: ["accounting"], canonicalTargets: ["tax_code"], authorityConcept: "statutory_finance" },
-    { id: "tracking_categories", resource: "TrackingCategories", endpoint: "TrackingCategories", recordIdField: "TrackingCategoryID", modifiedField: "UpdatedDateUTC", pagination: "none", backfillStrategy: "snapshot", lateEditStrategy: "modified_field", deletionStrategy: "authoritative_identity_scan", sourceTotalStrategy: "count_distinct_complete_scan", dependencies: ["organisation"], productDomains: ["accounting"], canonicalTargets: ["location", "identity_hint", "metadata"], authorityConcept: "statutory_finance" },
-  ],
+  streams: XERO_STREAMS,
   sourceAuthority: {
     defaults: [{
-      concepts: ["statutory_finance", "cash_settlement"],
+      concepts: ["statutory_finance", "cash_settlement", "worked_hours"],
       scope: { kind: "canonical_dimension", table: "legal_entity", scopeType: "legal_entity" },
     }],
   },
@@ -157,27 +128,27 @@ export const xeroManifest: ConnectorManifest = {
   },
   capabilities: {
     "finance.settings": {
-      support: "full", streams: ["organisation", "accounts", "tax_rates"],
+      support: "full", streams: ["xero_organisations", "xero_accounts", "xero_tax_rates"],
       reason: "Organisation, Accounts and TaxRates provide the accounting configuration used by the dossier and semantic model.",
     },
     "finance.invoices": {
-      support: "full", streams: ["invoices", "credit_notes"],
+      support: "full", streams: ["xero_invoices", "xero_credit_notes"],
       reason: "Invoices and CreditNotes map to canonical finance invoice lines.",
     },
     "finance.payments": {
-      support: "full", streams: ["payments"],
+      support: "full", streams: ["xero_payments"],
       reason: "Payments provide source-native settlement allocation evidence.",
     },
     "finance.bank_transactions": {
-      support: "full", streams: ["bank_transactions"],
+      support: "full", streams: ["xero_bank_transactions"],
       reason: "BankTransactions map to canonical bank transaction facts.",
     },
     "finance.journals": {
-      support: "unknown", streams: ["journals"],
+      support: "unknown", streams: ["xero_journals"],
       reason: "Posted Journals require the Advanced accounting.journals.read grant and a successful live endpoint probe.",
     },
     "finance.journals.tax": {
-      support: "unknown", streams: ["journals"], coverageFields: ["JournalLines"],
+      support: "unknown", streams: ["xero_journals"], coverageFields: ["JournalLines"],
       reason: "Journal tax analysis is confirmed with the Advanced Journals stream and its line tax fields.",
     },
     "source.webhooks.contacts": {
@@ -197,52 +168,16 @@ export const xeroManifest: ConnectorManifest = {
     "Contact email is a deterministic cross-source suggestion only; an owner confirms ambiguous customer matches.",
     "Contact TaxNumber/ABN may deterministically link suppliers within the tenant when present and exact.",
     "Tracking categories are source-native dimensions until explicitly mapped by a tenant overlay.",
+    "Payroll employees are region-scoped identities; they never merge across payroll regions because a tenant has exactly one payroll region.",
   ],
   topology: [
     "Journals are authoritative statutory ledger observations, including POS summary journals.",
     "BankTransactions and Payments ground cash settlement and reconciliation independently of POS tenders.",
     "Invoices and CreditNotes map into one source-neutral finance invoice-line domain with reversal semantics.",
+    "Payroll pay runs, payslips and their typed line families are statutory payroll records; timesheets and leave are worked-hours observations.",
+    "Attachments and history records are budget-priced fan-out evidence attached to their parent documents.",
   ],
-  fieldCoverage: [
-    ...coverage("organisation", { OrganisationID: "legal_entity.source_id", Name: "legal_entity.name", LegalName: "legal_entity.legal_name", BaseCurrency: "legal_entity.currency", SalesTaxBasis: "dossier.tax_basis", FinancialYearEndDay: "dossier.financial_year_end_day", FinancialYearEndMonth: "dossier.financial_year_end_month", TaxNumber: "legal_entity.tax_number", UpdatedDateUTC: "legal_entity.source_updated_at" }, ["OrganisationStatus", "Version", "CountryCode", "ShortCode"]),
-    ...coverage("accounts", { AccountID: "gl_account.source_id", Code: "gl_account.code", Name: "gl_account.name", Type: "gl_account.type", TaxType: "tax_code.source_id", Status: "gl_account.status", UpdatedDateUTC: "gl_account.source_updated_at" }, ["Class", "SystemAccount", "EnablePaymentsToAccount", "BankAccountNumber", "CurrencyCode"], { BankAccountNumber: "business_contact" }),
-    ...coverage("contacts", { ContactID: "customer_account.source_id", Name: "customer_account.name", FirstName: "person.first_name", LastName: "person.last_name", EmailAddress: "entity_source_link.email", ContactStatus: "customer_account.status", IsSupplier: "supplier.is_supplier", IsCustomer: "customer_account.is_customer", UpdatedDateUTC: "customer_account.source_updated_at" }, ["TaxNumber", "ContactNumber", "Addresses", "Phones", "BankAccountDetails", "DefaultCurrency"], { Name: "customer_contact", FirstName: "customer_contact", LastName: "customer_contact", EmailAddress: "customer_contact", Addresses: "customer_contact", Phones: "customer_contact", BankAccountDetails: "customer_contact" }),
-    ...coverage("invoices", { InvoiceID: "finance_invoice_line.invoice_source_id", InvoiceNumber: "finance_invoice_line.invoice_number", Type: "finance_invoice_line.invoice_type", Contact: "customer_account.source_observation", Date: "finance_invoice_line.posted_at", DueDate: "finance_invoice_line.due_at", Status: "finance_invoice_line.status", LineAmountTypes: "finance_invoice_line.tax_basis", SubTotal: "finance_invoice_line.net_amount_ex_tax", TotalTax: "finance_invoice_line.tax_amount", Total: "finance_invoice_line.net_amount_inc_tax", AmountDue: "finance_invoice_line.amount_due", AmountPaid: "finance_invoice_line.amount_paid", CurrencyCode: "finance_invoice_line.currency", UpdatedDateUTC: "finance_invoice_line.source_updated_at", LineItems: "finance_invoice_line.observations" }, ["UpdatedDateUTCString", "Reference", "CurrencyRate", "FullyPaidOnDate", "HasAttachments"], { Reference: "free_text_untrusted" }),
-    ...coverage("credit_notes", { CreditNoteID: "finance_invoice_line.invoice_source_id", CreditNoteNumber: "finance_invoice_line.invoice_number", Type: "finance_invoice_line.invoice_type", Contact: "customer_account.source_observation", Date: "finance_invoice_line.posted_at", Status: "finance_invoice_line.status", LineAmountTypes: "finance_invoice_line.tax_basis", SubTotal: "finance_invoice_line.net_amount_ex_tax", TotalTax: "finance_invoice_line.tax_amount", Total: "finance_invoice_line.net_amount_inc_tax", RemainingCredit: "finance_invoice_line.amount_due", CurrencyCode: "finance_invoice_line.currency", UpdatedDateUTC: "finance_invoice_line.source_updated_at", LineItems: "finance_invoice_line.observations" }, ["UpdatedDateUTCString", "Reference", "CurrencyRate", "Allocations"], { Reference: "free_text_untrusted" }),
-    ...coverage("payments", {
-      PaymentID: "event_link.from.source_record_id",
-      Date: "event_link.evidence.paid_date",
-      Amount: "event_link.evidence.amount",
-      BankAmount: "event_link.evidence.bank_amount",
-      PaymentType: "event_link.evidence.payment_type",
-      Status: "event_link.evidence.status",
-      Invoice: "event_link.to.source_record_id",
-      CreditNote: "event_link.to.source_record_id",
-      Prepayment: "event_link.to.source_record_id",
-      Overpayment: "event_link.to.source_record_id",
-      Account: "event_link.evidence.bank_account_id",
-      BatchPaymentID: "event_link.to.source_record_id",
-      BatchPayment: "event_link.to.source_record_id",
-      Reference: "event_link.evidence.reference",
-      IsReconciled: "event_link.evidence.reconciled",
-    }, [
-      "UpdatedDateUTC", "UpdatedDateUTCString", "DateString", "CurrencyRate",
-      "HasAccount", "HasValidationErrors",
-    ], {
-      Reference: "free_text_untrusted",
-      Invoice: "customer_contact",
-      CreditNote: "customer_contact",
-      Prepayment: "customer_contact",
-      Overpayment: "customer_contact",
-      BatchPayment: "business_contact",
-      Account: "business_contact",
-    }),
-    ...coverage("bank_transactions", { BankTransactionID: "finance_bank_transaction.source_id", Type: "finance_bank_transaction.type", Contact: "customer_account.source_observation", Date: "finance_bank_transaction.posted_at", Status: "finance_bank_transaction.status", LineAmountTypes: "finance_bank_transaction.tax_basis", SubTotal: "finance_bank_transaction.net_amount_ex_tax", TotalTax: "finance_bank_transaction.tax_amount", Total: "finance_bank_transaction.net_amount_inc_tax", CurrencyCode: "finance_bank_transaction.currency", UpdatedDateUTC: "finance_bank_transaction.source_updated_at", LineItems: "finance_bank_transaction.line_observations" }, ["UpdatedDateUTCString", "Reference", "CurrencyRate", "BankAccount", "IsReconciled"], { Reference: "free_text_untrusted" }),
-    ...coverage("manual_journals", { ManualJournalID: "finance_journal_line.journal_source_id", Date: "finance_journal_line.posted_at", Status: "finance_journal_line.status", LineAmountTypes: "finance_journal_line.tax_basis", Narration: "finance_journal_line.narration", JournalLines: "finance_journal_line.observations", UpdatedDateUTC: "finance_journal_line.source_updated_at" }, ["UpdatedDateUTCString", "ShowOnCashBasisReports", "Url"], { Narration: "free_text_untrusted" }),
-    ...coverage("journals", { JournalID: "finance_journal_line.journal_source_id", JournalNumber: "finance_journal_line.journal_number", JournalDate: "finance_journal_line.posted_at", CreatedDateUTC: "finance_journal_line.source_updated_at", SourceID: "finance_journal_line.source_document_id", SourceType: "finance_journal_line.source_document_type", JournalLines: "finance_journal_line.observations" }),
-    ...coverage("tax_rates", { TaxType: "tax_code.source_id", Name: "tax_code.name", Status: "tax_code.status", DisplayTaxRate: "tax_code.display_rate", EffectiveRate: "tax_code.effective_rate", TaxComponents: "tax_code.components" }, ["CanApplyToAssets", "CanApplyToEquity", "CanApplyToExpenses", "CanApplyToLiabilities", "CanApplyToRevenue"]),
-    ...coverage("tracking_categories", { TrackingCategoryID: "location.source_id", Name: "location.name", Status: "location.status", Options: "location.source_options", UpdatedDateUTC: "location.source_updated_at" }),
-  ],
+  fieldCoverage: XERO_FIELD_COVERAGE,
   qualityAssertions: [
     "cursor_completeness",
     "scope_available",
@@ -256,6 +191,9 @@ export const xeroManifest: ConnectorManifest = {
   ],
   limitations: [
     "The Journals endpoint and accounting.journals.read scope require an Advanced-tier app, initial and annual security assessment, and use-case approval. Albert omits that scope unless XERO_ENABLE_ADVANCED_JOURNALS=true; ledger-backed answers remain Unavailable until approval and a live endpoint probe both succeed.",
+    "Rendered report endpoints (P&L, Balance Sheet, Trial Balance, aged summaries) sit behind accounting.reports.read, which Xero refuses for granular-scope apps; the same numbers resolve from the journals and account tables instead. The granted TenNinetyNine report is the only report surface ingested.",
+    "Payroll is region-exclusive: AU, UK and NZ streams are gated on the organisation's region and the other regions report capability_unavailable rather than staging empty tables.",
+    "Attachment and history fan-out streams are budget-priced against Xero's 60/minute and 1,000-5,000/day org limits; they are declared optional and fill opportunistically after core backfill.",
     "Daily request allowance is tier dependent (1,000 Starter; 5,000 higher tiers), so the worker records response budgets and replays immutable raw data instead of re-pulling.",
     "Webhooks accelerate Contacts, Invoices and Credit Notes only; all streams continue to poll and reconcile.",
     "Xero API data must never be used to train AI models. Albert applies its platform-wide no-training policy to all providers.",

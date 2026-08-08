@@ -1,5 +1,8 @@
 /** Stable IDs for the first connector set. Connector-specific logic stays in its pack. */
-export const CONNECTOR_IDS = ["lightspeed-r", "xero", "deputy"] as const;
+export const CONNECTOR_IDS = [
+  "lightspeed-r", "xero", "deputy", "square",
+  "shopify", "stripe", "momence", "meta-ads", "google-ads",
+] as const;
 
 export type ConnectorId = (typeof CONNECTOR_IDS)[number];
 
@@ -280,4 +283,5 @@ export * from "./errors.js";
 export * from "./http.js";
 export * from "./normalization.js";
 export * from "./oauth.js";
+export * from "./authorization-only.js";
 export * from "./staging.js";

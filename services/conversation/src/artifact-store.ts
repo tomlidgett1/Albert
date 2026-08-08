@@ -41,6 +41,11 @@ export type BegunConversationTurn = Readonly<{
   }>;
 }>;
 
+export type ConversationTitleAssignment = Readonly<{
+  title: string;
+  assigned: boolean;
+}>;
+
 export type ConversationModelMessage = Readonly<{
   role: "user" | "assistant";
   text: string;
@@ -103,6 +108,92 @@ export async function renewConversationTurnLease(input: Readonly<{
   });
   if (error) return false;
   return singleton(data) !== null && singleton(data) !== undefined;
+}
+
+export async function conversationNeedsTitle(
+  conversationId: string,
+  supabaseClient?: ConversationSupabase,
+): Promise<boolean> {
+  const supabase = await resolveSupabase(supabaseClient);
+  const { data, error } = await supabase.rpc("albert_conversation_needs_title", {
+    p_conversation_id: conversationId,
+  });
+  if (error) {
+    throw new ControlPlaneError(
+      `Conversation title state could not be loaded: ${error.message}`,
+      503,
+    );
+  }
+  return data === true;
+}
+
+export async function assignConversationTitle(input: Readonly<{
+  conversationId: string;
+  title: string;
+  supabase?: ConversationSupabase;
+}>): Promise<ConversationTitleAssignment> {
+  const supabase = await resolveSupabase(input.supabase);
+  const { data, error } = await supabase.rpc("albert_assign_conversation_title", {
+    p_conversation_id: input.conversationId,
+    p_title: input.title,
+  });
+  if (error) {
+    throw new ControlPlaneError(
+      `The conversation title could not be saved: ${error.message}`,
+      503,
+    );
+  }
+  const parsed = z.object({
+    title: z.string().trim().min(1).max(120),
+    assigned: z.boolean(),
+  }).safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Conversation title returned invalid state.", 503);
+  return Object.freeze(parsed.data);
+}
+
+export type ConversationRewindResult = Readonly<{
+  conversationId: string;
+  fromTurnId: string;
+  fromTurnNumber: number;
+  hiddenTurnCount: number;
+  failedRunningCount: number;
+}>;
+
+export async function rewindConversationFromTurn(input: Readonly<{
+  conversationId: string;
+  fromTurnId: string;
+  supabase?: ConversationSupabase;
+}>): Promise<ConversationRewindResult> {
+  const supabase = await resolveSupabase(input.supabase);
+  const { data, error } = await supabase.rpc("albert_rewind_conversation_from_turn", {
+    p_conversation_id: input.conversationId,
+    p_from_turn_id: input.fromTurnId,
+  });
+  if (error) {
+    throw new ControlPlaneError(
+      error.code === "P0002"
+        ? "The conversation turn could not be found."
+        : "The conversation could not be rewound.",
+      error.code === "P0002" ? 404 : 503,
+    );
+  }
+  const parsed = z.object({
+    conversation_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    from_turn_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    from_turn_number: z.number().int().positive(),
+    hidden_turn_count: z.number().int().nonnegative(),
+    failed_running_count: z.number().int().nonnegative(),
+  }).safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("Conversation rewind returned invalid state.", 503);
+  }
+  return Object.freeze({
+    conversationId: parsed.data.conversation_id,
+    fromTurnId: parsed.data.from_turn_id,
+    fromTurnNumber: parsed.data.from_turn_number,
+    hiddenTurnCount: parsed.data.hidden_turn_count,
+    failedRunningCount: parsed.data.failed_running_count,
+  });
 }
 
 export async function loadConversationModelContext(

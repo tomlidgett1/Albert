@@ -97,7 +97,7 @@ test("the workspace preserves every current Xero organisation as a connection-bo
     xero.connections.map(({ auth }) => auth.accountName),
     ["Albert Retail Australia Pty Ltd", "Albert Retail New Zealand Limited"],
   );
-  assert.equal(xero.additionalConnectionLabel, "Add another Xero organisation");
+  assert.equal(xero.additionalConnectionLabel, undefined);
   assert.equal(lightspeed?.connections.length, 1);
   assert.equal(lightspeed?.additionalConnectionLabel, undefined);
   assert.equal(
@@ -149,7 +149,7 @@ test("a pending OAuth session with no discovered accounts keeps connection contr
   );
 });
 
-test("the Connections component exposes per-account manage, sync progress, disconnect, and add-another actions", () => {
+test("the Connections component exposes per-account manage, sync progress, and disconnect actions", () => {
   assert.match(connectionsComponent, /provider\.connections\.map\(\(connection\)/u);
   assert.match(connectionsComponent, /if \(onManage\) onManage\(connection\.connectionId\)/u);
   assert.match(
@@ -157,14 +157,29 @@ test("the Connections component exposes per-account manage, sync progress, disco
     /onDisconnect\?\.\(managedConnection\.connection\.connectionId\)/u,
   );
   assert.match(connectionsComponent, /Disconnect \{managedConnection\.connection\.auth\.accountName \|\| managedConnection\.provider\.name\}\?/u);
-  assert.match(connectionsComponent, /provider\.additionalConnectionLabel/u);
-  assert.match(connectionsComponent, /onClick=\{\(\) => onConnect\?\.\(provider\.id\)\}/u);
+  assert.doesNotMatch(connectionsComponent, /provider\.additionalConnectionLabel/u);
+  assert.doesNotMatch(connectionsComponent, /Add another Xero organisation/u);
+  // Connect now carries the shop domain for Shopify, whose authorize host is
+  // the merchant's own store, and nothing extra for every other provider.
+  assert.match(connectionsComponent, /onConnect\?\.\(\s*provider\.id,/u);
+  assert.match(
+    connectionsComponent,
+    /provider\.id === "shopify" \? shopifyShopDomain : undefined/u,
+  );
+  // The Connect control stays disabled until a shop is entered, so Shopify can
+  // never start a flow the worker is bound to reject.
+  assert.match(
+    connectionsComponent,
+    /provider\.id === "shopify" && !shopifyShopDomain\.trim\(\)/u,
+  );
   assert.match(connectionsComponent, /data-connection-id=\{connection\.connectionId\}/u);
   assert.match(connectionsComponent, /ConnectionSyncProgress/u);
   assert.match(connectionsComponent, /CONNECTION_VIEWS = \["apps"\]/u);
   assert.doesNotMatch(connectionsComponent, /activeView === "review"/u);
   assert.doesNotMatch(connectionsComponent, /activeView === "readiness"/u);
-  assert.match(dashPage, /window\.location\.assign\(`\/api\/oauth\/\$\{providerId\}\/start`\)/u);
+  assert.match(dashPage, /new URL\(`\/api\/oauth\/\$\{providerId\}\/start`, window\.location\.origin\)/u);
+  assert.match(dashPage, /start\.searchParams\.set\("shop", shop\)/u);
+  assert.match(dashPage, /window\.location\.assign\(start\.toString\(\)\)/u);
 });
 
 test("app cards use fat animated blue progress bars with a domain hover popup", () => {

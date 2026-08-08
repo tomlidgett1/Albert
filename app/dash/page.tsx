@@ -16,13 +16,15 @@ import AdminWorkspace from "./components/AdminWorkspace";
 import ConnectionsWorkspace, {
   buildSidebarSyncCommentary,
   collectWorkspaceSyncDomains,
+  COMING_SOON_PROVIDERS,
   connectionSyncSummary,
   ConnectionSyncProgress,
   emptyConnectionsWorkspace,
   readinessStateLabels,
   workspaceSyncIsActive,
-  type ConnectionsWorkspaceData,
+  type ConnectableProviderId,
   type ConnectionProviderId,
+  type ConnectionsWorkspaceData,
 } from "./components/ConnectionsWorkspace";
 import { ModelRunControls } from "./components/ModelRunControls";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
@@ -48,6 +50,7 @@ type IconName =
   | "chat"
   | "connections"
   | "logs"
+  | "spec"
   | "organization"
   | "logout"
   | "chevron"
@@ -154,6 +157,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
       return <svg {...shared}><path d="m5 7 2-2h10l2 2" /><path d="m5 12 2-2h10l2 2" /><path d="m5 17 2-2h10l2 2" /></svg>;
+    case "spec":
+      return <svg {...shared}><path d="M6 3.5h7.5L19 9v11.5H6Z" /><path d="M13.5 3.5V9H19" /><path d="M9 13h7M9 16.5h5" /></svg>;
     case "organization":
       return <svg {...shared}><path d="M4 20V8.5l5-3v14.5M9 20h11M15 20V4h5v16" /><path d="M6.5 11h.1M6.5 14.5h.1M17.5 8h.1M17.5 11.5h.1M17.5 15h.1" /></svg>;
     case "logout":
@@ -281,6 +286,8 @@ function isValidAuMobile(raw: string): boolean {
 type ConversationSummary = Readonly<{
   conversationId: string;
   title: string;
+  /** True when the control-plane has not stored an AI title yet. */
+  titlePending: boolean;
   status: string;
   updatedAt: string;
   lastMessage: string;
@@ -293,17 +300,41 @@ type OAuthNotice = Readonly<{
   detail?: string;
 }>;
 
-const oauthProviderLabels: Readonly<Record<ConnectionProviderId, string>> = Object.freeze({
+const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Object.freeze({
   lightspeed: "Lightspeed",
   xero: "Xero",
   deputy: "Deputy",
+  square: "Square",
+  shopify: "Shopify",
+  stripe: "Stripe",
+  momence: "Momence",
+  "meta-ads": "Meta Ads",
+  "google-ads": "Google Ads",
 });
+
+function isConnectableProviderId(value: string | null | undefined): value is ConnectableProviderId {
+  return typeof value === "string" &&
+    ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
+      .includes(value);
+}
+
+function withComingSoonProviders(
+  workspace: ConnectionsWorkspaceData,
+): ConnectionsWorkspaceData {
+  const existing = new Set(workspace.providers.map((provider) => provider.id));
+  const missing = COMING_SOON_PROVIDERS.filter((provider) => !existing.has(provider.id));
+  if (missing.length === 0) return workspace;
+  return {
+    ...workspace,
+    providers: [...workspace.providers, ...missing],
+  };
+}
 
 function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
   const status = searchParams.get("oauth");
   if (!status) return null;
   const rawProvider = searchParams.get("provider");
-  const provider = rawProvider === "lightspeed" || rawProvider === "xero" || rawProvider === "deputy"
+  const provider = isConnectableProviderId(rawProvider)
     ? oauthProviderLabels[rawProvider]
     : "This source";
   const detail = searchParams.get("oauth_detail")?.trim() || undefined;
@@ -405,9 +436,11 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
     const lastTurnStatus = lastTurnRecord && typeof lastTurnRecord.status === "string"
       ? lastTurnRecord.status
       : undefined;
+    const storedTitle = typeof candidate.title === "string" ? candidate.title.trim() : "";
     summaries.push({
       conversationId: candidate.conversation_id,
-      title: formatConversationTitle(candidate.title?.toString().trim() || lastMessage),
+      title: formatConversationTitle(storedTitle || lastMessage),
+      titlePending: !storedTitle,
       status: candidate.status,
       updatedAt: candidate.updated_at,
       lastMessage,
@@ -617,6 +650,16 @@ export default function DashPage() {
   const [editDraft, setEditDraft] = useState("");
   const [editPanelOpen, setEditPanelOpen] = useState(false);
   const editCloseTimerRef = useRef<number | undefined>(undefined);
+  const [editResendConfirm, setEditResendConfirm] = useState<null | {
+    messageId: number;
+    messageIndex: number;
+    text: string;
+    conversationId?: string;
+    fromTurnId?: string;
+  }>(null);
+  const [editResendConfirmClosing, setEditResendConfirmClosing] = useState(false);
+  const [editResendBusy, setEditResendBusy] = useState(false);
+  const editResendConfirmCloseTimerRef = useRef<number | undefined>(undefined);
   const [collapsedConversationGroups, setCollapsedConversationGroups] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -894,9 +937,12 @@ export default function DashPage() {
       setSidebarNavRevealed(true);
       return;
     }
-    // Wait for sidebar width (200ms) so copy fades in at full width.
-    const timer = window.setTimeout(() => setSidebarNavRevealed(true), 200);
-    return () => window.clearTimeout(timer);
+    // Reveal on the next frame so opacity/transform animate in parallel with
+    // the width open (same pattern as Key Insights).
+    const frame = window.requestAnimationFrame(() => {
+      setSidebarNavRevealed(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [collapsed, reduceMotion]);
 
   const loadConnections = useCallback(async (options?: { silent?: boolean }) => {
@@ -973,7 +1019,7 @@ export default function DashPage() {
       if (!response.ok) throw new Error(payload.error || "Connection status could not be loaded.");
       const parsed = parseConnectionsWorkspace(payload.workspace);
       if (!parsed) throw new Error("The connection service returned an invalid response.");
-      setConnectionsData(parsed);
+      setConnectionsData(withComingSoonProviders(parsed));
       setConnectionsStatus({ kind: "ready" });
     } catch (error) {
       if (options?.silent) return;
@@ -1039,8 +1085,24 @@ export default function DashPage() {
     return () => window.clearInterval(interval);
   }, [sidebarSyncActive, sidebarSyncCommentary]);
 
-  const connectProvider = (providerId: ConnectionProviderId) => {
-    window.location.assign(`/api/oauth/${providerId}/start`);
+  const connectProvider = (providerId: ConnectionProviderId, shopDomain?: string) => {
+    if (!isConnectableProviderId(providerId)) return;
+    // Shopify hosts its authorize endpoint on the merchant's own shop, so the
+    // domain travels with the start request. Every other provider has a
+    // central authorize host and sends nothing extra.
+    const start = new URL(`/api/oauth/${providerId}/start`, window.location.origin);
+    if (providerId === "shopify") {
+      const shop = shopDomain?.trim();
+      if (!shop) {
+        setConnectionsStatus({
+          kind: "error",
+          message: "Enter your myshopify.com store domain to connect Shopify.",
+        });
+        return;
+      }
+      start.searchParams.set("shop", shop);
+    }
+    window.location.assign(start.toString());
   };
 
   const selectOAuthAccount = async (oauthSessionId: string, externalAccountId: string) => {
@@ -1090,6 +1152,35 @@ export default function DashPage() {
       }
       setConversationSummaries(parsed);
       setConversationHistoryStatus({ kind: "ready" });
+      // Backfill missing AI titles for existing threads (cheap nano model).
+      const pending = parsed.filter((item) => item.titlePending).slice(0, 8);
+      void (async () => {
+        for (const item of pending) {
+          try {
+            const titleResponse = await fetch(
+              `/api/conversations/${encodeURIComponent(item.conversationId)}/title`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: "{}",
+              },
+            );
+            if (!titleResponse.ok) continue;
+            const titlePayload = await titleResponse.json().catch(() => null) as {
+              title?: unknown;
+            } | null;
+            if (typeof titlePayload?.title !== "string" || !titlePayload.title.trim()) continue;
+            const nextTitle = formatConversationTitle(titlePayload.title);
+            setConversationSummaries((current) => current.map((entry) => (
+              entry.conversationId === item.conversationId
+                ? { ...entry, title: nextTitle, titlePending: false }
+                : entry
+            )));
+          } catch {
+            // Best-effort backfill; the next turn can still assign a title.
+          }
+        }
+      })();
     } catch (error) {
       setConversationSummaries([]);
       setConversationHistoryStatus({
@@ -1753,7 +1844,16 @@ export default function DashPage() {
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
     if (!text) return;
-    if (isChatResponding && !options?.allowWhileResponding) return;
+    // Allow a typed / chip follow-up while a turn is still streaming: abort the
+    // in-flight turn on this conversation and start the next question. Blocking
+    // Enter silently made follow-ups feel broken on long inventory/SQL turns.
+    if (
+      isChatResponding
+      && !options?.allowWhileResponding
+      && !(activeConversationId || (options && "conversationId" in options))
+    ) {
+      return;
+    }
 
     const requestConversationId = options && "conversationId" in options
       ? (options.conversationId ?? undefined)
@@ -1986,6 +2086,7 @@ export default function DashPage() {
           const nextItem: ConversationSummary = {
             conversationId: responseConversationId,
             title: existingSummary?.title || formatConversationTitle(text),
+            titlePending: existingSummary?.titlePending ?? true,
             status: existingSummary?.status || "active",
             updatedAt: now,
             lastMessage: text,
@@ -2018,13 +2119,42 @@ export default function DashPage() {
       const acceptBlock = (block: string) => {
         if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
         debug.frame(block);
-        const data = block
-          .split("\n")
+        const lines = block.split("\n");
+        const eventName = lines
+          .find((line) => line.startsWith("event:"))
+          ?.slice(6)
+          .trim() || "message";
+        const data = lines
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart())
           .join("\n");
         if (!data) {
           debug.dropped("no data lines", block);
+          return;
+        }
+
+        if (eventName === "conversation_title") {
+          try {
+            const payload = JSON.parse(data) as {
+              conversationId?: unknown;
+              title?: unknown;
+            };
+            if (
+              typeof payload.conversationId === "string"
+              && ulidPattern.test(payload.conversationId)
+              && typeof payload.title === "string"
+              && payload.title.trim()
+            ) {
+              const nextTitle = formatConversationTitle(payload.title);
+              setConversationSummaries((current) => current.map((item) => (
+                item.conversationId === payload.conversationId
+                  ? { ...item, title: nextTitle, titlePending: false }
+                  : item
+              )));
+            }
+          } catch {
+            debug.dropped("rejected conversation title payload", data);
+          }
           return;
         }
 
@@ -2248,32 +2378,127 @@ export default function DashPage() {
     }, 300);
   };
 
+  const resolveTurnIdForUserMessage = (messageIndex: number): string | undefined => {
+    const following = chatMessages[messageIndex + 1];
+    if (
+      following?.role === "assistant"
+      && typeof following.turnId === "string"
+      && ulidPattern.test(following.turnId)
+    ) {
+      return following.turnId;
+    }
+    return undefined;
+  };
+
+  const closeEditResendConfirm = useCallback(() => {
+    if (!editResendConfirm || editResendConfirmClosing || editResendBusy) return;
+    if (reduceMotion) {
+      setEditResendConfirm(null);
+      setEditResendConfirmClosing(false);
+      return;
+    }
+    setEditResendConfirmClosing(true);
+    window.clearTimeout(editResendConfirmCloseTimerRef.current);
+    editResendConfirmCloseTimerRef.current = window.setTimeout(() => {
+      setEditResendConfirm(null);
+      setEditResendConfirmClosing(false);
+    }, 180);
+  }, [editResendBusy, editResendConfirm, editResendConfirmClosing, reduceMotion]);
+
+  const executeEditedMessageResend = async (pending: Readonly<{
+    messageId: number;
+    messageIndex: number;
+    text: string;
+    conversationId?: string;
+    fromTurnId?: string;
+  }>) => {
+    const conversationId = pending.conversationId;
+    if (conversationId && pending.fromTurnId) {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/rewind`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fromTurnId: pending.fromTurnId }),
+        },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || "Albert could not rewind this conversation.");
+      }
+    }
+
+    const kept = chatMessages.slice(0, pending.messageIndex);
+    chatMessageSequenceRef.current = kept.reduce((max, message) => Math.max(max, message.id), 0);
+    if (conversationId) {
+      conversationCacheRef.current.delete(conversationId);
+    }
+    setTakeawaysOpen(false);
+
+    void sendChatMessage(pending.text, undefined, {
+      conversationId: conversationId ?? null,
+      priorMessageCount: pending.messageIndex,
+      allowWhileResponding: true,
+    });
+  };
+
   const resendEditedMessage = (messageId: number) => {
     const text = editDraft.trim();
-    if (!text) return;
-    window.clearTimeout(editCloseTimerRef.current);
-    setEditPanelOpen(false);
-    setEditClosingId(null);
-    setEditingMessageId(null);
-    setEditDraft("");
+    if (!text || editResendBusy) return;
     const messageIndex = chatMessages.findIndex(
       (message) => message.id === messageId && message.role === "user",
     );
     if (messageIndex < 0) return;
 
-    const kept = chatMessages.slice(0, messageIndex);
-    chatMessageSequenceRef.current = kept.reduce((max, message) => Math.max(max, message.id), 0);
-    if (activeConversationId) {
-      conversationCacheRef.current.delete(activeConversationId);
-    }
-    setActiveConversationId(undefined);
-    setTakeawaysOpen(false);
+    const conversationId = activeConversationId && ulidPattern.test(activeConversationId)
+      ? activeConversationId
+      : undefined;
+    const fromTurnId = resolveTurnIdForUserMessage(messageIndex);
+    const pending = {
+      messageId,
+      messageIndex,
+      text,
+      ...(conversationId ? { conversationId } : {}),
+      ...(fromTurnId ? { fromTurnId } : {}),
+    };
 
-    void sendChatMessage(text, undefined, {
-      conversationId: null,
-      priorMessageCount: messageIndex,
-      allowWhileResponding: true,
-    });
+    window.clearTimeout(editCloseTimerRef.current);
+    setEditPanelOpen(false);
+    setEditClosingId(null);
+    setEditingMessageId(null);
+    setEditDraft("");
+
+    // Later bubbles will disappear after rewind; ask before discarding them.
+    if (messageIndex < chatMessages.length - 1) {
+      window.clearTimeout(editResendConfirmCloseTimerRef.current);
+      setEditResendConfirmClosing(false);
+      setEditResendConfirm(pending);
+      return;
+    }
+
+    setEditResendBusy(true);
+    void executeEditedMessageResend(pending)
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : "Albert could not rerun this question.");
+      })
+      .finally(() => {
+        setEditResendBusy(false);
+      });
+  };
+
+  const confirmEditedMessageResend = async () => {
+    if (!editResendConfirm || editResendBusy) return;
+    setEditResendBusy(true);
+    try {
+      await executeEditedMessageResend(editResendConfirm);
+      window.clearTimeout(editResendConfirmCloseTimerRef.current);
+      setEditResendConfirm(null);
+      setEditResendConfirmClosing(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Albert could not rerun this question.");
+    } finally {
+      setEditResendBusy(false);
+    }
   };
 
   const resizeEditTextarea = useCallback(() => {
@@ -2286,7 +2511,20 @@ export default function DashPage() {
 
   useEffect(() => () => {
     window.clearTimeout(editCloseTimerRef.current);
+    window.clearTimeout(editResendConfirmCloseTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!editResendConfirm || editResendConfirmClosing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeEditResendConfirm();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeEditResendConfirm, editResendConfirm, editResendConfirmClosing]);
 
   // Same open pattern as ThinkingTrail: panel starts at 0fr, then opens to 1fr.
   useLayoutEffect(() => {
@@ -2537,6 +2775,7 @@ export default function DashPage() {
                             value={agentPreferences}
                             onChange={setAgentPreferences}
                             popoverPlacement="below"
+                            popoverAlign="shell-start"
                           />
                           <button
                             className={styles.chatMessageEditSend}
@@ -2624,7 +2863,10 @@ export default function DashPage() {
               height={20}
               decoding="async"
             />
-            <span className={styles.projectName}>Albert</span>
+            <span className={styles.projectName}>
+              <span className={styles.projectNameAlbert}>Albert</span>
+              <span className={styles.projectNameProduct}>Analytics</span>
+            </span>
           </div>
           <button
             ref={collapseButtonRef}
@@ -2641,7 +2883,7 @@ export default function DashPage() {
               setCollapsed((value) => {
                 const next = !value;
                 if (next) {
-                  // Match sidebar width transition (200ms) so layout hit-testing
+                  // Match sidebar width transition (720ms) so layout hit-testing
                   // flicker does not arm hover chrome mid-collapse.
                   collapseSwapArmTimerRef.current = window.setTimeout(() => {
                     collapseSwapArmTimerRef.current = undefined;
@@ -2649,7 +2891,7 @@ export default function DashPage() {
                     collapseSwapArmPendingRef.current = false;
                     if (collapseButtonRef.current?.matches(":hover")) return;
                     setCollapseIconSwapArmed(true);
-                  }, 220);
+                  }, 740);
                 }
                 return next;
               });
@@ -2879,7 +3121,21 @@ export default function DashPage() {
                             </span>
                             <span className={styles.conversationItemMain}>
                               <span className={styles.conversationItemTitleRow}>
-                                <span>{formatConversationTitle(conversation.title)}</span>
+                                <AnimatePresence mode="wait" initial={false}>
+                                  <motion.span
+                                    key={conversation.title}
+                                    className={styles.conversationItemTitleText}
+                                    initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+                                    transition={{
+                                      duration: reduceMotion ? 0 : 0.34,
+                                      ease: [0.22, 1, 0.36, 1],
+                                    }}
+                                  >
+                                    {formatConversationTitle(conversation.title)}
+                                  </motion.span>
+                                </AnimatePresence>
                               </span>
                             </span>
                           </button>
@@ -2890,7 +3146,7 @@ export default function DashPage() {
                                 type="button"
                                 aria-label={isPinned ? "Unpin conversation" : "Pin conversation"}
                                 aria-pressed={isPinned}
-                                title={isPinned ? "Unpin" : "Pin"}
+                                data-tooltip={isPinned ? "Unpin" : "Pin"}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   togglePinnedConversation(conversation.conversationId);
@@ -2902,7 +3158,7 @@ export default function DashPage() {
                                 className={styles.conversationItemAction}
                                 type="button"
                                 aria-label="Archive conversation"
-                                title="Archive"
+                                data-tooltip="Archive"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   archiveConversation(conversation.conversationId);
@@ -3012,6 +3268,12 @@ export default function DashPage() {
                   setAccountOpen(false);
                 }}
               ><Icon name="organization" /><span>Organization settings</span></button>
+              <a
+                href="/connector-specs.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setAccountOpen(false)}
+              ><Icon name="spec" /><span>Connector specs</span></a>
               {isInternalOperator ? (
                 <button
                   type="button"
@@ -3082,7 +3344,22 @@ export default function DashPage() {
           <div className={`${styles.chatShell} ${takeawaysOpen ? styles.chatShellTakeawaysOpen : ""}`}>
           <div className={styles.chatWorkspace}>
             <header className={styles.chatTopBar}>
-              <h1 id="dash-title" className={styles.chatTopTitle}>{chatTitle}</h1>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.h1
+                  key={chatTitle}
+                  id="dash-title"
+                  className={styles.chatTopTitle}
+                  initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+                  transition={{
+                    duration: reduceMotion ? 0 : 0.34,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                >
+                  {chatTitle}
+                </motion.h1>
+              </AnimatePresence>
               <div className={styles.chatTopActions}>
                 {chatMessages.length > 0 ? (
                   <button
@@ -3309,7 +3586,6 @@ export default function DashPage() {
               }}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (isChatResponding) return;
                 void sendChatMessage();
               }}
             >
@@ -3340,7 +3616,6 @@ export default function DashPage() {
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
-                      if (isChatResponding) return;
                       void sendChatMessage();
                     }
                   }}
@@ -3547,6 +3822,60 @@ export default function DashPage() {
           onClose={() => setRawDebugOpen(false)}
           onClear={() => setRawDebugTurns([])}
         />
+      ) : null}
+
+      {editResendConfirm ? (
+        <div
+          className={`${styles.popupBackdrop} ${editResendConfirmClosing ? styles.popupBackdropClosing : ""}`}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeEditResendConfirm();
+          }}
+        >
+          <div
+            className={`${styles.albertPopup} ${styles.rewindConfirmPopup} ${editResendConfirmClosing ? styles.albertPopupClosing : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-resend-title"
+            aria-describedby="edit-resend-copy"
+          >
+            <button
+              className={styles.popupClose}
+              type="button"
+              aria-label="Close"
+              onClick={closeEditResendConfirm}
+              disabled={editResendBusy}
+            >
+              <Icon name="close" />
+            </button>
+            <p className={styles.popupEyebrow}>Rerun from here</p>
+            <h2 id="edit-resend-title">Replace later answers?</h2>
+            <p id="edit-resend-copy">
+              Rerunning this question keeps the same chat, but every message after this point will be removed.
+            </p>
+            <div className={styles.rewindConfirmNotice} role="note">
+              Earlier messages stay. Anything after this question is cleared before Albert answers again.
+            </div>
+            <div className={styles.popupActions}>
+              <button
+                className={styles.popupSecondaryAction}
+                type="button"
+                onClick={closeEditResendConfirm}
+                disabled={editResendBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.popupPrimaryAction}
+                type="button"
+                onClick={() => void confirmEditedMessageResend()}
+                disabled={editResendBusy}
+              >
+                {editResendBusy ? "Rerunning…" : "Rerun question"}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
     </main>

@@ -107,6 +107,8 @@ test("the analytical schemas are readable", () => {
     "SELECT * FROM mart.commerce_sales_event",
     "SELECT * FROM core.product_variant",
     "SELECT * FROM quality.pipeline_stats",
+    "SELECT count(*) FROM source_lightspeed.ls_sales WHERE tombstone = false",
+    "SELECT count(*) FROM source_xero.xero_invoices WHERE tombstone = false",
     "WITH x AS (SELECT 1) SELECT * FROM x",
   ]) {
     assert.doesNotThrow(() => compileExploratorySql(sql), sql);
@@ -130,4 +132,38 @@ test("empty and oversized statements are refused", () => {
 
 test("the timeout is bounded well inside the pool's patience", () => {
   assert.ok(EXPLORATORY_SQL_TIMEOUT_MS > 0 && EXPLORATORY_SQL_TIMEOUT_MS <= 30_000);
+});
+
+test("retired unprefixed Lightspeed tables are refused with the ls_ correction", () => {
+  assert.throws(
+    () => compileExploratorySql("SELECT count(*) FROM source_lightspeed.sales WHERE tombstone = false"),
+    /retired empty table.*ls_sales/iu,
+  );
+  assert.throws(
+    () => compileExploratorySql("SELECT * FROM source_lightspeed.orders o JOIN source_lightspeed.order_lines l ON l.order_id = o.order_id"),
+    /ls_sales.*ls_sale_lines/iu,
+  );
+  assert.throws(
+    () => compileExploratorySql('SELECT * FROM source_lightspeed."items"'),
+    /ls_items/u,
+  );
+});
+
+test("unknown unprefixed Lightspeed tables are refused with the ls_ rule", () => {
+  assert.throws(
+    () => compileExploratorySql("SELECT * FROM source_lightspeed.made_up_table"),
+    /starts with ls_/iu,
+  );
+});
+
+test("every ls_ table reference passes the Lightspeed table gate", () => {
+  assert.doesNotThrow(() =>
+    compileExploratorySql(
+      "SELECT s.sale_id FROM source_lightspeed.ls_sales s JOIN source_lightspeed.ls_sale_lines l ON l.sale_id = s.sale_id",
+    ));
+});
+
+test("a legacy table name inside a string literal does not trip the gate", () => {
+  assert.doesNotThrow(() =>
+    compileExploratorySql("SELECT count(*) FROM source_lightspeed.ls_items WHERE description ILIKE '%source_lightspeed.sales%'"));
 });

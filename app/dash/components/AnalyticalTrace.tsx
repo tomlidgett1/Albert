@@ -42,11 +42,11 @@ type LineageState =
   | Readonly<{ kind: "error"; key: string; message: string }>;
 
 const answerStateDescriptions = {
-  Verified: "Validated against complete, query-ready data",
-  Qualified: "Useful with a disclosed data or definition limitation",
-  Exploratory: "Directional analysis that should be verified before action",
-  Clarification: "Albert needs one answer before the analysis can continue",
-  Unavailable: "The required data is not currently queryable",
+  Verified: "Checked against your connected data",
+  Qualified: "Useful answer, with a limitation noted below",
+  Exploratory: "From your live Lightspeed or Xero data",
+  Clarification: "Albert needs one quick choice before continuing",
+  Unavailable: "The required data is not available yet",
 } as const;
 
 function formatTime(value: string) {
@@ -686,9 +686,9 @@ export default function AnalyticalTrace({
 
               {event.type === "chart" ? <ResultChart event={event} table={tables.get(event.dataRef)} /> : null}
 
-              {event.type === "validation" ? (
+              {event.type === "validation" && event.outcome !== "passed" ? (
                 <div className={styles.traceValidation} data-outcome={event.outcome}>
-                  <span aria-hidden="true">{event.outcome === "passed" ? "✓" : event.outcome === "qualified" ? "!" : "×"}</span>
+                  <span aria-hidden="true">{event.outcome === "qualified" ? "!" : "×"}</span>
                   <div><strong>{event.name}</strong><p>{event.detail}</p></div>
                 </div>
               ) : null}

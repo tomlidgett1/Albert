@@ -115,20 +115,18 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
   await expect(settingsTrigger).toBeInViewport();
   await settingsTrigger.click();
   await expect(page.getByRole("dialog", { name: "Model and run settings" })).toBeVisible();
-  await expect(page.locator("[data-model-id]")).toHaveCount(3);
-  expect(await page.locator("[data-model-id]").evaluateAll((elements) =>
-    elements.map((element) => element.getAttribute("data-model-id"))
-  )).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
   await expect(page.locator("[data-reasoning-effort]")).toHaveCount(6);
   expect(await page.locator("[data-reasoning-effort]").evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("data-reasoning-effort"))
-  )).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
-  await expect(page.getByRole("radio", { name: /Sol/u })).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("radio", { name: /Terra/u })).toBeFocused();
-  await expect(page.getByRole("radio", { name: /Terra/u })).toHaveAttribute("aria-checked", "true");
-  await page.getByRole("button", { name: "Fast", exact: true }).click();
-  const reasoningCases = ["none", "low", "medium", "high", "xhigh", "max"] as const;
+  )).toEqual(["max", "xhigh", "high", "medium", "low", "none"]);
+  await expect(page.locator("[data-model-id]")).toHaveCount(3);
+  expect(await page.locator("[data-model-id]").evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-model-id"))
+  )).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  await page.getByRole("radio", { name: "Terra", exact: true }).click();
+  await expect(page.getByRole("radio", { name: "Terra", exact: true })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("switch", { name: "Fast mode" }).click();
+  const reasoningCases = ["max", "xhigh", "high", "medium", "low", "none"] as const;
   for (const [index, reasoningEffort] of reasoningCases.entries()) {
     await page.locator(`[data-reasoning-effort="${reasoningEffort}"]`).click();
     await page.keyboard.press("Escape");
@@ -157,7 +155,7 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
     if (index < reasoningCases.length - 1) {
       await settingsTrigger.click();
       await expect(page.getByRole("dialog", { name: "Model and run settings" })).toBeVisible();
-      await expect(page.getByRole("radio", { name: /Terra/u })).toBeFocused();
+      await expect(page.locator(`[data-reasoning-effort="${reasoningEffort}"]`)).toBeFocused();
     }
   }
 

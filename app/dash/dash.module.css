@@ -66,10 +66,24 @@
   --dash-preview-surface: light-dark(#f4f6ff, #20242e);
   --dash-preview-text: light-dark(#596b9b, #b5c3ee);
   --dash-modal-backdrop: light-dark(rgba(20, 21, 23, 0.38), rgba(4, 5, 7, 0.72));
-  min-height: 100vh;
+  --dash-content-inset: 8px;
+  --dash-content-radius: 16px;
+  --dash-content-shadow:
+    light-dark(
+      0 1px 2px rgba(30, 30, 32, 0.04),
+      0 1px 2px rgba(0, 0, 0, 0.22)
+    ),
+    light-dark(
+      0 10px 28px rgba(30, 30, 32, 0.08),
+      0 14px 36px rgba(0, 0, 0, 0.3)
+    );
+  min-height: 100dvh;
+  height: 100dvh;
   display: flex;
+  overflow: hidden;
   color: var(--dash-text);
-  background: var(--dash-canvas);
+  /* Sidebar tone as chrome so the main panel reads as a floating card */
+  background: var(--dash-sidebar);
   color-scheme: light;
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -151,14 +165,130 @@
   color-scheme: light dark;
 }
 
-.routeShell .sidebarActions {
-  gap: 8px;
-  padding: 8px 4px;
+.routeShell .conversationNav {
+  opacity: 1;
+  min-width: 0;
 }
 
-.routeShellNavItem {
-  height: var(--dash-control-height);
-  border-radius: 8px;
+.routeShell .accountArea {
+  margin-top: auto;
+}
+
+.routeShell .chatEmptyGrow:last-child {
+  flex-grow: 1;
+}
+
+.routeShellNavGlyph {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShellLine {
+  display: block;
+  height: 10px;
+  width: min(42%, 280px);
+  border-radius: 999px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShellLine[data-width="short"] {
+  width: min(28%, 180px);
+}
+
+.routeShellLine[data-width="account"] {
+  width: 88px;
+  height: 11px;
+}
+
+.routeShellLine[data-width="role"] {
+  width: 52px;
+  height: 9px;
+  opacity: 0.75;
+}
+
+.routeShellAccountTrigger {
+  display: flex;
+  min-width: 0;
+  min-height: 58px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
+  border-radius: 10px;
+  padding: 8px 8px 8px 1px;
+}
+
+.routeShellAccountAvatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShell .sidebarAction {
+  cursor: default;
+  pointer-events: none;
+}
+
+.routeShellAccountCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.routeShellIconButton {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShellComposer {
+  pointer-events: none;
+}
+
+.routeShellComposerPlus {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid var(--dash-border-soft);
+  background: transparent;
+}
+
+.routeShellComposerField {
+  display: block;
+  height: 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 999px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShellComposerTrailing {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.routeShellComposerChip {
+  width: 72px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--dash-surface-muted);
+}
+
+.routeShellComposerSend {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 999px;
   background: var(--dash-surface-muted);
 }
 
@@ -167,17 +297,6 @@
   flex-direction: column;
   gap: 12px;
   padding: 8px 4px 24px;
-}
-
-.routeShellLine {
-  height: 14px;
-  width: min(42%, 280px);
-  border-radius: 999px;
-  background: var(--dash-surface-muted);
-}
-
-.routeShellLine[data-width="short"] {
-  width: min(28%, 180px);
 }
 
 .routeShellBlock {
@@ -199,15 +318,25 @@
   top: 0;
   display: flex;
   width: var(--sidebar-width);
-  height: 100vh;
+  height: 100dvh;
   flex: 0 0 var(--sidebar-width);
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid var(--dash-border);
-  background: var(--dash-sidebar);
+  border-right: 0;
+  background: transparent;
   color: var(--dash-text);
   padding: 10px 8px 10px;
-  transition: width 200ms ease, flex-basis 200ms ease, padding 200ms ease;
+  /* Match Key Insights panel open/close */
+  transition:
+    width 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    flex-basis 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    padding 720ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
 }
 
 .dash[data-theme="green"] .sidebar {
@@ -226,7 +355,8 @@
   justify-content: space-between;
   gap: 10px;
   min-height: var(--dash-control-height);
-  padding: 0 9px 14px 8px;
+  /* Right edge matches conversation row / sidebar action column */
+  padding: 0 0 14px 8px;
 }
 
 .projectBrand {
@@ -248,13 +378,28 @@
 }
 
 .projectName {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.28em;
   overflow: hidden;
   font-size: calc(19px * var(--text-scale));
-  font-weight: 680;
   letter-spacing: -0.045em;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.projectNameAlbert {
+  font-family: var(--font-superior-serif), Georgia, "Times New Roman", serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.projectNameProduct {
+  font-family: var(--font-superior-serif), Georgia, "Times New Roman", serif;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 
 .chevrons {
@@ -448,17 +593,23 @@
   gap: 14px;
   /* Expanded column width so text does not reflow while the rail opens */
   min-width: calc(var(--sidebar-width) - 20px);
-  margin: 0 -2px;
+  /* Pull the track a few px toward the sidebar edge; keep content inset */
+  margin: 0 -6px 0 -2px;
   overflow-x: hidden;
   overflow-y: auto;
   opacity: 0;
-  padding: 0 2px 8px;
+  transform: translateX(-12px);
+  padding: 0 6px 8px 2px;
   scrollbar-width: thin;
-  transition: opacity 180ms ease;
+  /* Match Key Insights inner content fade / slide */
+  transition:
+    opacity 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 720ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .conversationNavRevealed {
   opacity: 1;
+  transform: translateX(0);
 }
 
 .conversationNavState {
@@ -838,6 +989,7 @@
 }
 
 .conversationItemAction {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -870,6 +1022,47 @@
   color: var(--dash-text-strong);
 }
 
+.conversationItemAction[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
+  border: 1px solid var(--dash-popup-border);
+  border-radius: 8px;
+  background: var(--dash-popup-surface);
+  color: var(--dash-popup-text);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+  padding: 5px 8px;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 8px 20px rgba(30, 30, 32, 0.12), 0 2px 6px rgba(30, 30, 32, 0.08);
+  /* Hide immediately on leave; show only after a sustained hover */
+  transition: opacity 120ms ease;
+}
+
+.conversationItemAction[data-tooltip]:hover::after,
+.conversationItemAction[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transition-delay: 0.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversationItemAction[data-tooltip]::after {
+    transition: opacity 0s linear;
+  }
+
+  .conversationItemAction[data-tooltip]:hover::after,
+  .conversationItemAction[data-tooltip]:focus-visible::after {
+    transition-delay: 0.5s;
+  }
+}
+
 .conversationItemMain {
   display: flex;
   min-width: 0;
@@ -884,8 +1077,15 @@
   gap: 7px;
 }
 
+.conversationItemTitleText {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .conversationItemMain strong,
-.conversationItemTitleRow > span {
+.conversationItemTitleRow > span,
+.conversationItemTitleText {
   overflow: hidden;
   color: var(--dash-text-strong);
   font-size: 13px;
@@ -1006,6 +1206,7 @@
 .navItem:focus-visible,
 .accountTrigger:focus-visible,
 .accountPopover button:focus-visible,
+.accountPopover a:focus-visible,
 .tabButton:focus-visible,
 .chatHistoryTrigger:focus-visible,
 .chatHistoryClose:focus-visible,
@@ -1610,6 +1811,7 @@
 }
 
 .accountLinks button,
+.accountLinks a,
 .logoutButton {
   display: flex;
   width: 100%;
@@ -1623,10 +1825,12 @@
   cursor: pointer;
   padding: 0 10px;
   text-align: left;
+  text-decoration: none;
   transition: background 150ms ease;
 }
 
 .accountLinks button:hover,
+.accountLinks a:hover,
 .logoutButton:hover:not(:disabled) {
   background: var(--dash-surface-soft);
 }
@@ -1700,6 +1904,7 @@
 @media (prefers-reduced-motion: reduce) {
   .conversationNav {
     transition: none;
+    transform: none;
   }
 }
 
@@ -1742,11 +1947,15 @@
   display: flex;
   min-width: 0;
   min-height: 0;
-  height: 100dvh;
+  height: calc(100dvh - (var(--dash-content-inset) * 2));
+  margin: var(--dash-content-inset);
   flex: 1;
   flex-direction: column;
   overflow: hidden;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: var(--dash-content-radius);
   background: var(--dash-canvas);
+  box-shadow: var(--dash-content-shadow);
 }
 
 .content > .pageHeader {
@@ -1988,7 +2197,8 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  background: var(--dash-canvas);
+  border-radius: inherit;
+  background: transparent;
 }
 
 .chatShellAgentOpen {
@@ -2010,7 +2220,10 @@
   overflow: hidden;
   background: var(--dash-chat-workspace);
   padding: 0 clamp(14px, 2.5vw, 28px) 14px;
-  transition: padding 200ms ease, flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Match takeaways / user-bubble expand easing; slower for the wide panel. */
+  transition:
+    padding 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    flex-basis 720ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .chatTopBar {
@@ -2025,6 +2238,7 @@
 
 .chatTopTitle {
   margin: 0;
+  min-width: 0;
   overflow: hidden;
   /* Match sidebar conversation title type */
   color: light-dark(#4c4c4c, #f1f2f4);
@@ -2106,11 +2320,12 @@
   background: var(--dash-sidebar);
   opacity: 0;
   pointer-events: none;
+  /* Same ease as ThinkingTrail / user-edit expandPanel; slowed for panel width. */
   transition:
-    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 180ms ease,
-    border-color 220ms ease;
+    width 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    flex-basis 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 720ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .takeawaysPanelOpen {
@@ -2126,6 +2341,16 @@
   height: 100%;
   min-height: 0;
   flex-direction: column;
+  opacity: 0;
+  transform: translateX(12px);
+  transition:
+    opacity 720ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 720ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.takeawaysPanelOpen .takeawaysPanelInner {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .takeawaysHeader {
@@ -2260,8 +2485,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .takeawaysPanel,
+  .takeawaysPanelInner,
   .chatWorkspace {
     transition: none;
+  }
+
+  .takeawaysPanelInner {
+    transform: none;
   }
 }
 
@@ -4252,7 +4482,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  border: 1px solid transparent;
+  border: 1px solid light-dark(rgba(36, 37, 40, 0.12), rgba(230, 233, 240, 0.14));
   overflow: hidden;
   transition: border-radius 300ms ease, border-color 300ms ease;
 }
@@ -4312,8 +4542,17 @@
   white-space: normal;
 }
 
+.chatMessageUserShell .modelControls {
+  z-index: 24;
+}
+
 .chatMessageUserShell .modelControlsPopover {
   border-radius: 14px;
+  z-index: 30;
+}
+
+.chatUserBlock:has([data-edit-open="true"]) {
+  z-index: 8;
 }
 
 .chatMessageEditInput {
@@ -4370,9 +4609,19 @@
   padding: 0 8px;
 }
 
+.chatMessageUserShell .modelControlsModelName,
+.chatMessageUserShell .modelControlsSummaryMeta,
+.chatMessageUserShell .modelControlsSummarySep {
+  font-size: 12px;
+}
+
 .chatMessageUserShell .modelControlsModelName {
-  font-size: 13px;
   font-weight: 550;
+}
+
+.chatMessageUserShell .modelControlsFastIcon {
+  width: 11px;
+  height: 11px;
 }
 
 .chatMessageEditSend {
@@ -6616,6 +6865,30 @@
   animation: popupExit 180ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
+.rewindConfirmPopup {
+  width: min(100%, 480px);
+}
+
+.rewindConfirmPopup h2 {
+  font-size: clamp(calc(26px * var(--text-scale)), calc(3.8vw * var(--text-scale)), calc(34px * var(--text-scale)));
+}
+
+.rewindConfirmNotice {
+  margin-top: 18px;
+  border: 1px solid var(--dash-popup-border);
+  border-radius: 16px;
+  background: light-dark(#ffffff, #25282d);
+  color: var(--dash-popup-text);
+  padding: 14px 16px;
+  font-size: calc(14px * var(--text-scale));
+  letter-spacing: -0.02em;
+  line-height: 1.45;
+}
+
+.dash[data-theme="green"] .rewindConfirmNotice {
+  background: #1e322c;
+}
+
 .albertPopup::before {
   position: absolute;
   z-index: -1;
@@ -7169,6 +7442,11 @@
 }
 
 @media (max-width: 720px) {
+  .dash {
+    --dash-content-inset: 6px;
+    --dash-content-radius: 14px;
+  }
+
   .sidebar {
     --sidebar-width: 52px;
     flex-basis: 52px;
@@ -9887,9 +10165,25 @@
   animation: connectionsProgressShimmer 14s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-.connectionsProviderList {
+.connectionsAppsSection {
   display: flex;
+  min-width: 0;
   flex-direction: column;
+  gap: 12px;
+}
+
+.connectionsAppsSectionTitle {
+  margin: 0;
+  color: var(--dash-text-subtle);
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.connectionsProviderList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -10078,9 +10372,34 @@
 }
 
 .connectionsProviderLogo[data-provider="xero"] img,
-.connectionsProviderLogo[data-provider="deputy"] img {
+.connectionsProviderLogo[data-provider="deputy"] img,
+.connectionsProviderLogo[data-provider="shopify"] img,
+.connectionsProviderLogo[data-provider="stripe"] img,
+.connectionsProviderLogo[data-provider="square"] img,
+.connectionsProviderLogo[data-provider="myob"] img,
+.connectionsProviderLogo[data-provider="momence"] img,
+.connectionsProviderLogo[data-provider="employment_hero"] img,
+.connectionsProviderLogo[data-provider="google_ads"] img,
+.connectionsProviderLogo[data-provider="meta_ads"] img,
+.connectionsProviderLogo[data-provider="tiktok_ads"] img,
+.connectionsProviderLogo[data-provider="google_analytics"] img,
+.connectionsProviderLogo[data-provider="paypal"] img,
+.connectionsProviderLogo[data-provider="afterpay"] img,
+.connectionsProviderLogo[data-provider="tyro"] img,
+.connectionsProviderLogo[data-provider="klaviyo"] img,
+.connectionsProviderLogo[data-provider="woocommerce"] img,
+.connectionsProviderLogo[data-provider="servicem8"] img {
   width: 34px;
   height: 34px;
+}
+
+.connectionsProviderRow[data-coming-soon="true"] {
+  opacity: 0.92;
+}
+
+.connectionsProviderRow[data-coming-soon="true"] .connectionsProviderActionPrimary:disabled {
+  opacity: 1;
+  color: var(--dash-text-soft);
 }
 
 .connectionsProviderCopy {
@@ -10223,6 +10542,37 @@
   letter-spacing: -0.035em;
   padding: 0 10px;
   color: var(--dash-text-heading);
+}
+
+/* Shopify alone needs an account identity before the redirect, so its card
+   carries an inline domain field sized to sit beside the Connect control. */
+.connectionsShopDomainInput {
+  height: var(--dash-control-height);
+  min-width: 0;
+  flex: 1 1 190px;
+  max-width: 240px;
+  border: 1px solid var(--dash-border-input);
+  border-radius: 999px;
+  background: var(--dash-surface);
+  color: var(--dash-text-heading);
+  font: inherit;
+  font-size: calc(13px * var(--text-scale));
+  letter-spacing: -0.02em;
+  line-height: 1;
+  padding: 0 13px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.connectionsShopDomainInput::placeholder { color: var(--dash-text-muted); }
+
+.connectionsShopDomainInput:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.connectionsShopDomainInput:disabled {
+  cursor: not-allowed;
+  color: var(--dash-disabled-text);
 }
 
 .connectionsProviderAddAction {
@@ -10822,6 +11172,10 @@
     padding: 24px 18px 36px;
   }
 
+  .connectionsProviderList {
+    grid-template-columns: 1fr;
+  }
+
   .connectionsDataHeader,
   .connectionsSectionIntro {
     align-items: flex-start;
@@ -11034,8 +11388,10 @@
 }
 
 .modelControlsTrigger {
+  position: relative;
   display: inline-flex;
   width: auto;
+  max-width: none;
   min-width: 52px;
   height: 32px;
   flex: 0 0 auto;
@@ -11047,9 +11403,17 @@
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
+  overflow: hidden;
   padding: 0 10px;
   text-align: center;
-  transition: background 160ms ease, color 160ms ease;
+  transition:
+    width 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.modelControlsTrigger[data-width-ready="true"] {
+  justify-content: flex-start;
 }
 
 .modelControlsTrigger:hover,
@@ -11069,23 +11433,72 @@
   outline-offset: 2px;
 }
 
-.modelControlsSummary {
-  display: flex;
-  width: 100%;
-  min-width: 0;
+.modelControlsSummary,
+.modelControlsSummaryMeasure {
+  display: inline-flex;
+  width: max-content;
+  min-width: max-content;
+  height: 14px;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 5px;
+  line-height: 14px;
+}
+
+.modelControlsSummaryMeasure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.modelControlsModelName,
+.modelControlsSummaryMeta,
+.modelControlsSummarySep {
+  display: block;
+  height: 14px;
+  flex: 0 0 auto;
+  overflow: visible;
+  color: currentColor;
+  font-size: calc(14px * var(--text-scale));
+  letter-spacing: -0.03em;
+  line-height: 14px;
+  white-space: nowrap;
 }
 
 .modelControlsModelName {
-  overflow: hidden;
-  color: currentColor;
-  font-size: calc(16px * var(--text-scale));
   font-weight: 620;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.modelControlsSummaryMeta {
+  font-weight: 540;
+  opacity: 0.88;
+}
+
+.modelControlsSummarySep {
+  color: var(--dash-text-faint);
+  font-weight: 500;
+}
+
+.modelControlsFastSlot {
+  display: inline-flex;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.modelControlsFastIcon {
+  display: block;
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  color: currentColor;
+  opacity: 0.9;
 }
 
 .modelControlsChevron {
@@ -11103,20 +11516,21 @@
 .modelControlsPopover {
   position: absolute;
   z-index: 30;
-  bottom: calc(100% + 12px);
-  left: 0;
-  width: min(260px, calc(100vw - 48px));
+  right: 0;
+  bottom: calc(100% + 10px);
+  left: auto;
+  width: min(196px, calc(100vw - 48px));
   max-height: min(620px, calc(100vh - 130px));
   overflow: auto;
   border: 1px solid var(--dash-popup-border);
-  border-radius: 14px;
-  background: var(--dash-popup-surface);
-  box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
+  border-radius: 12px;
+  background: light-dark(#ffffff, var(--dash-popup-surface));
+  box-shadow: 0 14px 32px rgba(30, 30, 32, 0.12), 0 2px 6px rgba(30, 30, 32, 0.07);
   opacity: 0;
-  padding: 8px;
+  padding: 2px 0;
   pointer-events: none;
   transform: translateY(10px) scale(0.96);
-  transform-origin: bottom left;
+  transform-origin: bottom right;
   visibility: hidden;
   transition:
     opacity 160ms ease,
@@ -11139,148 +11553,184 @@
   top: calc(100% + 8px);
   bottom: auto;
   transform: translateY(-10px) scale(0.96);
-  transform-origin: top left;
+  transform-origin: top right;
 }
 
 .modelControlsPopoverBelow.modelControlsPopoverOpen {
   transform: translateY(0) scale(1);
 }
 
-.modelControlsSection {
-  margin-top: 8px;
-  padding-top: 8px;
+.modelControlsPopoverFixed {
+  position: fixed;
+  right: auto;
+  z-index: 80;
+}
+
+.modelControlsPopoverShellStart {
+  transform-origin: bottom left;
+}
+
+.modelControlsPopoverShellStart.modelControlsPopoverBelow {
+  transform-origin: top left;
+}
+
+.modelControlsMenuSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 2px 0;
+}
+
+.modelControlsMenuSection + .modelControlsMenuSection {
   border-top: 1px solid var(--dash-border-soft);
 }
 
-.modelControlsLabel {
-  margin: 0 2px 6px;
-  color: var(--dash-text-muted);
-  font-size: calc(12px * var(--text-scale));
-  font-weight: 560;
-  letter-spacing: -0.02em;
+.modelControlsSectionTitle {
+  margin: 0;
+  color: var(--dash-text-faint);
+  font-size: calc(11px * var(--text-scale));
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  padding: 3px 12px 2px;
 }
 
-.modelControlsModelList {
+.modelControlsMenuList {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
+  padding: 0 4px;
 }
 
-.modelControlsModelRow {
+.modelControlsMenuRow,
+.modelControlsBackRow {
   display: flex;
   width: 100%;
-  min-height: 40px;
+  min-height: 28px;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--dash-text-body);
+  color: var(--dash-text-heading);
   cursor: pointer;
-  padding: 6px 10px;
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  padding: 4px 8px;
   text-align: left;
   transition: background 150ms ease, color 150ms ease;
 }
 
-.modelControlsModelRow:hover,
-.modelControlsModelRowActive {
+.modelControlsMenuRow:hover,
+.modelControlsMenuRowActive,
+.modelControlsBackRow:hover {
   background: var(--dash-surface-hover);
-  color: var(--dash-text-heading);
-}
-
-.modelControlsModelCopy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.modelControlsModelCopy strong {
-  color: currentColor;
-  font-size: calc(13px * var(--text-scale));
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-
-.modelControlsModelCopy small {
-  color: var(--dash-text-faint);
-  font-size: calc(11px * var(--text-scale));
-  letter-spacing: -0.015em;
 }
 
 .modelControlsCheck {
   display: grid;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
   place-items: center;
-  color: var(--dash-success-text);
-  font-size: 12px;
-  font-weight: 750;
+  color: var(--dash-text-faint);
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.modelControlsSegment,
-.modelControlsEffort {
+.modelControlsRowSpacer {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.modelControlsModelTabsWrap {
+  padding: 0 6px 4px;
+}
+
+.modelControlsModelTabs {
   position: relative;
   display: grid;
-  height: var(--dash-control-height);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 28px;
+  align-items: center;
   border-radius: 999px;
   background: var(--dash-control);
-  padding: 3px;
+  padding: 2px;
 }
 
-.modelControlsSegment {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.modelControlsSegmentIndicator {
+.modelControlsModelTabIndicator {
   position: absolute;
   z-index: 0;
-  top: 3px;
-  bottom: 3px;
+  top: 2px;
+  bottom: 2px;
   border-radius: 999px;
   background: var(--dash-control-active);
   box-shadow: 0 1px 2px rgba(26, 27, 30, 0.12);
-  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    left 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.modelControlsSegment button,
-.modelControlsEffort button {
+.modelControlsModelTabs button {
   position: relative;
   z-index: 1;
   min-width: 0;
+  height: 100%;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--dash-control-text);
   cursor: pointer;
-  font-size: calc(11px * var(--text-scale));
+  font-size: calc(12px * var(--text-scale));
   font-weight: 540;
   letter-spacing: -0.02em;
-  padding: 0 6px;
-  transition: color 160ms ease, background 160ms ease;
+  padding: 0 4px;
+  transition: color 160ms ease;
 }
 
-.modelControlsSegment button:hover,
-.modelControlsEffort button:hover {
+.modelControlsModelTabs button:hover {
   color: var(--dash-text-body);
 }
 
-.modelControlsSegment .modelControlsSegmentActive {
+.modelControlsModelTabs .modelControlsModelTabActive {
   color: var(--dash-active-text);
   font-weight: 620;
 }
 
-.modelControlsEffort {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+.modelControlsToggle {
+  position: relative;
+  display: inline-flex;
+  width: 30px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 999px;
+  background: light-dark(#d6d6d8, #3a3d44);
+  padding: 1px;
+  transition: background 160ms ease;
 }
 
-.modelControlsEffort .modelControlsEffortActive {
-  background: var(--dash-control-active);
-  box-shadow: 0 1px 2px rgba(26, 27, 30, 0.12);
-  color: var(--dash-active-text);
-  font-weight: 620;
+.modelControlsToggle > i {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(26, 27, 30, 0.18);
+  transform: translateX(0);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.modelControlsToggleOn {
+  background: light-dark(#34c759, #2f9e4f);
+}
+
+.modelControlsToggleOn > i {
+  transform: translateX(12px);
 }
 
 @media (max-width: 620px) {
@@ -11303,11 +11753,16 @@
   .modelControlsTrigger,
   .modelControlsChevron,
   .modelControlsPopover,
-  .modelControlsModelRow,
-  .modelControlsSegmentIndicator,
-  .modelControlsSegment button,
-  .modelControlsEffort button {
+  .modelControlsMenuRow,
+  .modelControlsToggle,
+  .modelControlsToggle > i,
+  .modelControlsModelTabIndicator,
+  .modelControlsModelTabs button {
     transition: none;
+  }
+
+  .modelControlsTrigger {
+    transition: background 160ms ease, color 160ms ease;
   }
 }
 

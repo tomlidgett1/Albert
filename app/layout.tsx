@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import localFont from "next/font/local";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -10,6 +11,33 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+const superiorSerif = localFont({
+  src: [
+    {
+      path: "./fonts/LTSuperiorSerif-Regular.otf",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/LTSuperiorSerif-Medium.otf",
+      weight: "500",
+      style: "normal",
+    },
+    {
+      path: "./fonts/LTSuperiorSerif-Semibold.otf",
+      weight: "600",
+      style: "normal",
+    },
+    {
+      path: "./fonts/LTSuperiorSerif-Bold.otf",
+      weight: "700",
+      style: "normal",
+    },
+  ],
+  variable: "--font-superior-serif",
+  display: "swap",
 });
 
 const metadataBase = new URL(
@@ -65,7 +93,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${superiorSerif.variable} antialiased`}
       >
         {children}
       </body>

@@ -138,10 +138,11 @@
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  align-items: center;
 }
 
+/* Single shimmer status line in plain language. */
 .streamingHeadline {
   position: relative;
   display: block;
@@ -151,39 +152,6 @@
   height: 20px;
   overflow: hidden;
   text-align: left;
-}
-
-/* Names the governed fields, period, or values behind the headline. */
-.streamingSubline {
-  position: relative;
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  height: 16px;
-  overflow: hidden;
-  text-align: left;
-}
-
-.streamingSublineMeasure {
-  display: block;
-  overflow: hidden;
-  visibility: hidden;
-  font-size: 11.5px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.streamingSublineLive {
-  position: absolute;
-  inset: 0;
-  display: block;
-  overflow: hidden;
-  color: light-dark(#737373, #a8abb4);
-  font-size: 11.5px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .streamingMeasure {
@@ -617,12 +585,18 @@
   color: light-dark(#171717, #f5f6f8);
 }
 
-.resultTableWrap {
+.resultTableShell {
   margin-top: 4px;
-  overflow: auto;
+  min-width: 0;
   border: 1px solid light-dark(#e5e5e5, #2d3036);
   border-radius: 8px;
   background: light-dark(#ffffff, #1b1d20);
+  overflow: hidden;
+}
+
+.resultTableWrap {
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .resultTable {
@@ -660,7 +634,7 @@
   background: light-dark(#ffffff, #1b1d20);
   color: light-dark(#a3a3a3, #8a8d96);
   font-size: 11px;
-  padding: 8px 12px;
+  padding: 6px 10px;
 }
 
 /* Detailed mode */
@@ -956,8 +930,19 @@
 
 .assistantProse :global(.answerTableScroll) {
   margin: 0.5em 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
+  max-height: 320px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid light-dark(#e5e5e5, #2d3036);
+  border-radius: 8px;
+  background: light-dark(#ffffff, #1b1d20);
+}
+
+.assistantProse :global(.answerTableScroll) :global(th) {
+  position: sticky;
+  top: 0;
+  background: light-dark(#ffffff, #1b1d20);
+  z-index: 1;
 }
 
 .assistantProse :global(table) {

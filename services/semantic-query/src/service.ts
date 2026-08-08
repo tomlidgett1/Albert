@@ -21,6 +21,7 @@ import { compileSourceQuery } from "./source-query.js";
 import {
   compileExploratorySql,
   EXPLORATORY_SQL_TIMEOUT_MS,
+  sqlTouchesSourceStaging,
 } from "./exploratory-sql.js";
 import { lintSqlFirstStatement } from "../../../packages/semantic-registry/src/index.js";
 import {
@@ -648,21 +649,27 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const tierWarnings = parsed.claims.length > 0 && lint.minimumFactTier < 2
       ? [`The statement touches tier-${lint.minimumFactTier} evidence, which caps certification below Verified until the substrate is reconciled.`]
       : [];
-    const advisoryWarnings = parsed.claims.length === 0
-      ? ["No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."]
-      : [];
+    const touchesStaging = sqlTouchesSourceStaging(parsed.sql);
+    const advisoryWarnings = touchesStaging
+      ? ["This statement reads raw connector staging. Figures are exploratory and should filter tombstone = false."]
+      : parsed.claims.length === 0
+        ? ["No governed claims were declared for this statement, so its figures are exploratory."]
+        : [];
     const warnings = [
       ...canaryWarnings, ...attestationWarnings, ...lintWarnings, ...freshness, ...tierWarnings, ...advisoryWarnings,
     ];
 
-    const state = deriveSqlFirstState({
-      claims: parsed.claims.length,
-      attestations,
-      canaryBlocked,
-      invariantsBlocked,
-      minimumFactTier: lint.minimumFactTier,
-      warningCount: warnings.length,
-    });
+    // Raw staging can never certify: keep Exploratory even if claims were attached.
+    const state = touchesStaging
+      ? "exploratory"
+      : deriveSqlFirstState({
+          claims: parsed.claims.length,
+          attestations,
+          canaryBlocked,
+          invariantsBlocked,
+          minimumFactTier: lint.minimumFactTier,
+          warningCount: warnings.length,
+        });
 
     const checks: Readonly<Record<string, unknown>>[] = [
       { checkId: "read_only_transaction", status: "passed" },

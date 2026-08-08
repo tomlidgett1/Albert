@@ -310,6 +310,16 @@ export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorM
   for (const stream of manifest.streams) visit(stream.id);
 
   const defaultConcepts = new Set<string>();
+  // Source authority is a claim that this connector can be believed about a
+  // concept. An authorization-only pack extracts nothing, so it must claim
+  // none — asserting authority without a stream to back it is the defect the
+  // non-empty rule below exists to prevent, inverted.
+  if (manifest.streams.length === 0) {
+    if (manifest.sourceAuthority.defaults.length > 0) {
+      throw new Error(`${manifest.id} declares no stream and cannot claim source authority.`);
+    }
+    return;
+  }
   if (manifest.sourceAuthority.defaults.length === 0) {
     throw new Error(`${manifest.id} must declare source-authority defaults.`);
   }

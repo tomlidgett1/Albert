@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { assertEmbeddedServiceBuildIdentity } from "../packages/config/src/build-identity.js";
 import { pathToFileURL } from "node:url";
 import { mapDeputyCanonical } from "../connectors/deputy/canonical.js";
+import { mapSquareCanonical } from "../connectors/square/canonical.js";
+import { mapShopifyCanonical } from "../connectors/shopify/canonical.js";
+import { mapStripeCanonical } from "../connectors/stripe/canonical.js";
+import { mapMomenceCanonical } from "../connectors/momence/canonical.js";
+import { mapMetaAdsCanonical } from "../connectors/meta-ads/canonical.js";
+import { mapGoogleAdsCanonical } from "../connectors/google-ads/canonical.js";
 import { mapLightspeedCanonical } from "../connectors/lightspeed-r/canonical.js";
 import { mapXeroCanonical } from "../connectors/xero/canonical.js";
 import { CanonicalTransformPipeline } from "../services/sync-workers/src/canonical-pipeline.js";
@@ -352,6 +358,12 @@ export async function runTransformCapacityHarness(
       "lightspeed-r": mapLightspeedCanonical,
       xero: mapXeroCanonical,
       deputy: mapDeputyCanonical,
+      square: mapSquareCanonical,
+      "shopify": mapShopifyCanonical,
+      "stripe": mapStripeCanonical,
+      "momence": mapMomenceCanonical,
+      "meta-ads": mapMetaAdsCanonical,
+      "google-ads": mapGoogleAdsCanonical,
     },
   );
   try {

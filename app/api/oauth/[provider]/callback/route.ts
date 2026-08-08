@@ -1,5 +1,6 @@
 import { consumeAlbertRateLimit, currentTenantContext, requireUser, ControlPlaneError } from "@/services/control-plane/src/web-repository";
 import { finishOAuthFlow, isOAuthWebProvider, OAuthFlowError } from "@/services/oauth/src/web-flow";
+import { verifyShopifyCallbackHmac } from "@/connectors/shopify/index";
 
 function callbackOrigin(request: Request): string | null {
   const configured = process.env.ALBERT_PUBLIC_ORIGIN?.trim();
@@ -56,6 +57,15 @@ export async function GET(
   const state = callback.searchParams.get("state");
   const code = callback.searchParams.get("code");
   if (!state || !code) return resultRedirect(request, provider, "invalid_callback");
+  // Shopify is the only vendor that signs its redirect, and it is the only one
+  // whose authorize host is merchant-supplied. The HMAC is what proves this
+  // callback came from Shopify rather than from whoever chose that host.
+  if (provider === "shopify") {
+    const secret = process.env.SHOPIFY_CLIENT_SECRET?.trim();
+    if (!secret || !verifyShopifyCallbackHmac(callback.searchParams, secret)) {
+      return resultRedirect(request, provider, "invalid_signature");
+    }
+  }
 
   try {
     const [{ user }, tenant] = await Promise.all([requireUser(), currentTenantContext()]);

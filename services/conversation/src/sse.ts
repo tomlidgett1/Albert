@@ -15,6 +15,13 @@ export function encodeTraceSseEvent(event: TraceEvent): string {
   return `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
+export function encodeConversationTitleSseEvent(payload: Readonly<{
+  conversationId: string;
+  title: string;
+}>): string {
+  return `event: conversation_title\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
 function wait(milliseconds: number): Promise<void> {
   if (milliseconds <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -57,11 +64,16 @@ export function createTraceSseResponse(
   });
 }
 
+export type LiveTraceStream = Readonly<{
+  emit: (event: TraceEvent) => void;
+  emitConversationTitle: (title: string) => void;
+}>;
+
 export type LiveTraceSseOptions = Readonly<{
   conversationId: string;
   turnId: string;
   signal?: AbortSignal;
-  run: (emit: (event: TraceEvent) => void, signal: AbortSignal) => Promise<void>;
+  run: (stream: LiveTraceStream, signal: AbortSignal) => Promise<void>;
 }>;
 
 /** Streams product trace events as they are persisted by the live runtime. */
@@ -82,12 +94,23 @@ export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Respon
       }, 15_000);
       const abort = () => close();
       runAbort.signal.addEventListener("abort", abort, { once: true });
+      const stream: LiveTraceStream = Object.freeze({
+        emit(event) {
+          if (!closed && !runAbort.signal.aborted) {
+            controller.enqueue(encoder.encode(encodeTraceSseEvent(event)));
+          }
+        },
+        emitConversationTitle(title) {
+          if (!closed && !runAbort.signal.aborted) {
+            controller.enqueue(encoder.encode(encodeConversationTitleSseEvent({
+              conversationId: options.conversationId,
+              title,
+            })));
+          }
+        },
+      });
 
-      void options.run((event) => {
-        if (!closed && !runAbort.signal.aborted) {
-          controller.enqueue(encoder.encode(encodeTraceSseEvent(event)));
-        }
-      }, runAbort.signal).then(close).catch((error) => {
+      void options.run(stream, runAbort.signal).then(close).catch((error) => {
         if (!closed) {
           closed = true;
           controller.error(error);

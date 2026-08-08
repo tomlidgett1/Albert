@@ -269,7 +269,7 @@ test("every declared stream carries an executable reconciliation policy", () => 
 test("reconciliation uses modification authority and unfiltered identity scans", async () => {
   const xeroFixture = fixture("../../connectors/xero/fixtures/sanitized-recording.json");
   const paymentResponse = structuredClone(
-    xeroFixture.responses.payments as Record<string, unknown>,
+    xeroFixture.responses.xero_payments as Record<string, unknown>,
   );
   const payment = (paymentResponse.Payments as Array<Record<string, unknown>>)[0];
   assert.ok(payment);
@@ -401,25 +401,16 @@ test("public OAuth builders contain only public, state-bound values", () => {
     clientId: "public-ls-id",
     state: "state-ls",
     redirectUri: "https://albert.example/oauth/lightspeed-r/callback",
-    codeChallenge: "challenge-ls",
   }));
   assert.equal(lightspeed.hostname, "cloud.lightspeedapp.com");
   assert.equal(lightspeed.searchParams.get("response_type"), "code");
   assert.equal(lightspeed.searchParams.get("state"), "state-ls");
-  assert.equal(lightspeed.searchParams.get("code_challenge"), "challenge-ls");
-  assert.equal(lightspeed.searchParams.get("code_challenge_method"), "S256");
+  // Confidential-client shape (bike-dashboard): no PKCE on authorize.
+  assert.equal(lightspeed.searchParams.get("code_challenge"), null);
+  assert.equal(lightspeed.searchParams.get("code_challenge_method"), null);
   assert.equal(lightspeed.searchParams.get("redirect_uri"), "https://albert.example/oauth/lightspeed-r/callback");
   assert.deepEqual(lightspeed.searchParams.get("scope")?.split(" "), [
-    "employee:register_read",
-    "employee:inventory_read",
-    "employee:customers_read",
-    "employee:product_cost",
-    "employee:admin_employees",
-    "employee:admin_shops",
-    "employee:categories",
-    "employee:vendors",
-    "employee:purchase_orders",
-    "employee:admin_purchases",
+    "employee:all",
   ]);
   assert.equal(lightspeed.toString().includes("secret"), false);
 
@@ -447,8 +438,8 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(deputy.searchParams.get("state"), "state-deputy");
 });
 
-test("Lightspeed R-Series exchanges codes as multipart form with PKCE and redirect_uri", async () => {
-  let exchangeBody: FormData | undefined;
+test("Lightspeed R-Series exchanges codes as JSON with redirect_uri (bike-dashboard shape)", async () => {
+  let exchangeBody: unknown;
   let exchangeContentType: string | null = null;
   const connector = new LightspeedRConnector({
     clientId: "lightspeed-client",
@@ -462,7 +453,7 @@ test("Lightspeed R-Series exchanges codes as multipart form with PKCE and redire
       metadata: {},
     }),
     fetcher: async (_input, init) => {
-      exchangeBody = init?.body as FormData;
+      exchangeBody = init?.body;
       exchangeContentType = new Headers(init?.headers).get("content-type");
       return Response.json({
         access_token: "access",
@@ -476,17 +467,17 @@ test("Lightspeed R-Series exchanges codes as multipart form with PKCE and redire
   await connector.exchange_authorization_code({
     code: "short-lived-code",
     redirectUri: "https://albert.example/api/oauth/lightspeed/callback",
-    codeVerifier: "v".repeat(64),
   });
 
-  assert.equal(exchangeContentType, null);
-  assert.ok(exchangeBody instanceof FormData);
-  assert.equal(exchangeBody.get("client_id"), "lightspeed-client");
-  assert.equal(exchangeBody.get("client_secret"), "lightspeed-secret");
-  assert.equal(exchangeBody.get("grant_type"), "authorization_code");
-  assert.equal(exchangeBody.get("code"), "short-lived-code");
-  assert.equal(exchangeBody.get("redirect_uri"), "https://albert.example/api/oauth/lightspeed/callback");
-  assert.equal(exchangeBody.get("code_verifier"), "v".repeat(64));
+  assert.equal(exchangeContentType, "application/json");
+  assert.equal(typeof exchangeBody, "string");
+  const parsed = JSON.parse(String(exchangeBody)) as Record<string, string>;
+  assert.equal(parsed.client_id, "lightspeed-client");
+  assert.equal(parsed.client_secret, "lightspeed-secret");
+  assert.equal(parsed.grant_type, "authorization_code");
+  assert.equal(parsed.code, "short-lived-code");
+  assert.equal(parsed.redirect_uri, "https://albert.example/api/oauth/lightspeed/callback");
+  assert.equal(parsed.code_verifier, undefined);
 });
 
 test("opaque cursors are provider and stream scoped", () => {
@@ -934,11 +925,11 @@ test("connector workers execute typed, read-only extraction pages against vendor
       }
       if (url.pathname.endsWith("/Invoices")) {
         assert.equal(new Headers(init?.headers).get("xero-tenant-id"), "xero-tenant");
-        return Response.json(xeroFixture.responses.invoices);
+        return Response.json(xeroFixture.responses.xero_invoices);
       }
       if (url.pathname.endsWith("/Payments")) {
         assert.equal(new Headers(init?.headers).get("xero-tenant-id"), "xero-tenant");
-        return Response.json(xeroFixture.responses.payments);
+        return Response.json(xeroFixture.responses.xero_payments);
       }
       return new Response(null, { status: 404 });
     },
@@ -1316,7 +1307,11 @@ test("Xero contact extraction always includes archived source records", async ()
   assert.equal(contactRequest?.searchParams.get("includeArchived"), "true");
   assert.equal(page.records[0]?.validationIssues, undefined);
   assert.equal(page.records[0]?.normalized?.tombstone, true);
-  assert.equal(page.records[0]?.normalized?.fields.Website, undefined);
+  // The spec-driven pack stages every field the pinned OpenAPI documents, so a
+  // documented contact field reaches the typed projection instead of being
+  // dropped to raw-only storage — while the exact vendor payload is still
+  // retained verbatim for replay.
+  assert.equal(page.records[0]?.normalized?.fields.Website, "https://customer.example");
   assert.equal((page.records[0]?.payload as Record<string, unknown>).Website, "https://customer.example");
 });
 
@@ -1484,7 +1479,7 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
       assert.equal(url.searchParams.get("pageSize"), "1000");
       xeroPageCalls += 1;
       return xeroPageCalls === 1 || xeroPageCalls === 3
-        ? Response.json(xeroFixture.responses.invoices)
+        ? Response.json(xeroFixture.responses.xero_invoices)
         : Response.json({ Invoices: [] });
     },
   });
@@ -1496,14 +1491,14 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
     encodeCursor({
       v: 1,
       connector: "xero",
-      stream: "invoices",
+      stream: "xero_invoices",
       mode: "incremental",
       watermark: originalWatermark,
     }),
   );
   const midXeroCursor = decodeCursor(firstXeroPage.nextCursor!, {
     connector: "xero",
-    stream: "invoices",
+    stream: "xero_invoices",
   });
   assert.equal(firstXeroPage.hasMore, true);
   assert.equal(midXeroCursor.watermark, originalWatermark);
@@ -1525,7 +1520,7 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
   );
   const finalXeroCursor = decodeCursor(finalXeroPage.nextCursor!, {
     connector: "xero",
-    stream: "invoices",
+    stream: "xero_invoices",
   });
   assert.equal(finalXeroPage.hasMore, false);
   assert.equal(finalXeroCursor.watermark,"2026-08-03T00:00:00.000Z");
@@ -1614,7 +1609,7 @@ test("Xero and Deputy hold incremental watermarks fixed until pagination complet
 test("Xero page scans require two identical bounded passes before advancing", async () => {
   const fixtureData=fixture("../../connectors/xero/fixtures/sanitized-recording.json");
   const base=structuredClone(
-    (fixtureData.responses.invoices as {Invoices:Array<Record<string,unknown>>}).Invoices[0]!,
+    (fixtureData.responses.xero_invoices as {Invoices:Array<Record<string,unknown>>}).Invoices[0]!,
   );
   const invoice=(id:string,updated:string) => ({
     ...structuredClone(base),InvoiceID:id,
@@ -1814,7 +1809,7 @@ test("Xero treats 304 Not Modified as a successful empty incremental page", asyn
   const page = await xero.incremental_sync(context, stream, encodeCursor({
     v: 1,
     connector: "xero",
-    stream: "invoices",
+    stream: "xero_invoices",
     mode: "incremental",
     watermark,
   }));

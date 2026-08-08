@@ -67,7 +67,6 @@ const providerDefinitions = {
     description: "Accounting, invoices, journals, and bank activity.",
     logo: "/logos/xero.svg",
     connectDetail: "Connect a Xero organisation.",
-    additionalConnectionLabel: "Add another Xero organisation",
   },
   deputy: {
     id: "deputy",
@@ -76,7 +75,144 @@ const providerDefinitions = {
     logo: "/logos/deputy.png",
     connectDetail: "Connect a Deputy installation.",
   },
+  square: {
+    id: "square",
+    name: "Square",
+    // Authorization only for now: the description promises identity, not data,
+    // because the pack declares no stream and contributes to no answer.
+    description: "Authorization only. No Square data is synced yet.",
+    logo: "/logos/square.svg",
+    connectDetail: "Connect a Square merchant account.",
+  },
+  shopify: {
+    id: "shopify",
+    name: "Shopify",
+    description: "Authorization only. No Shopify data is synced yet.",
+    logo: "/logos/shopify.svg",
+    connectDetail: "Enter your myshopify.com store domain to connect Shopify.",
+  },
+  stripe: {
+    id: "stripe",
+    name: "Stripe",
+    description: "Authorization only. No Stripe data is synced yet.",
+    logo: "/logos/stripe.svg",
+    connectDetail: "Connect a Stripe account.",
+  },
+  momence: {
+    id: "momence",
+    name: "Momence",
+    description: "Authorization only. No Momence data is synced yet.",
+    logo: "/logos/momence.svg",
+    connectDetail: "Connect a Momence studio.",
+  },
+  "meta-ads": {
+    id: "meta-ads",
+    name: "Meta Ads",
+    description: "Authorization only. No Meta Ads data is synced yet.",
+    logo: "/logos/meta.svg",
+    connectDetail: "Connect a Meta advertising account.",
+  },
+  "google-ads": {
+    id: "google-ads",
+    name: "Google Ads",
+    description: "Authorization only. No Google Ads data is synced yet.",
+    logo: "/logos/google-ads.svg",
+    connectDetail: "Connect a Google Ads account.",
+  },
 } as const;
+
+const comingSoonProviders = [
+  {
+    id: "employment_hero",
+    name: "Employment Hero",
+    description: "HR, payroll, and people operations.",
+    logo: "/logos/employment-hero.png",
+    connectDetail: "Employment Hero support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "myob",
+    name: "MYOB",
+    description: "Accounting, invoices, and Australian business books.",
+    logo: "/logos/myob.svg",
+    connectDetail: "MYOB support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "tiktok_ads",
+    name: "TikTok Ads",
+    description: "Short-form video campaign spend and attribution.",
+    logo: "/logos/tiktok.svg",
+    connectDetail: "TikTok Ads support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "google_analytics",
+    name: "Google Analytics",
+    description: "Website traffic, conversion paths, and storefront funnels.",
+    logo: "/logos/google-analytics.svg",
+    connectDetail: "Google Analytics support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "paypal",
+    name: "PayPal",
+    description: "Checkout payments, invoices, and payout activity.",
+    logo: "/logos/paypal.svg",
+    connectDetail: "PayPal support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "afterpay",
+    name: "Afterpay",
+    description: "Buy now, pay later orders and settlement activity.",
+    logo: "/logos/afterpay.svg",
+    connectDetail: "Afterpay support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "tyro",
+    name: "Tyro",
+    description: "Australian EFTPOS, in-person payments, and settlements.",
+    logo: "/logos/tyro.png",
+    connectDetail: "Tyro support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "klaviyo",
+    name: "Klaviyo",
+    description: "Email and SMS campaigns, flows, and attributed revenue.",
+    logo: "/logos/klaviyo.png",
+    connectDetail: "Klaviyo support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "woocommerce",
+    name: "WooCommerce",
+    description: "WordPress storefront orders, products, and customers.",
+    logo: "/logos/woocommerce.svg",
+    connectDetail: "WooCommerce support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+  {
+    id: "servicem8",
+    name: "ServiceM8",
+    description: "Tradie jobs, scheduling, quotes, and field invoices.",
+    logo: "/logos/servicem8.png",
+    connectDetail: "ServiceM8 support is coming soon.",
+    comingSoon: true as const,
+    connections: [] as const,
+  },
+] as const;
 
 const domainLabels: Readonly<Record<string, string>> = {
   sales: "Sales",
@@ -221,7 +357,7 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
     ])
     .filter((value): value is string => Boolean(value));
   const latestActivityAt = timestamps.sort((first, second) => Date.parse(second) - Date.parse(first))[0];
-  const activeConnectorKeys = new Set(
+  const activeConnectorKeys = new Set<string>(
     workspace.connections
       .filter(({ status }) => status !== "pending" && status !== "disconnected")
       .map(({ connector_key }) => connector_key),
@@ -299,7 +435,7 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
   return {
     tenantName: workspace.tenant_name,
     timezone,
-    providers,
+    providers: [...providers, ...comingSoonProviders],
     syncSummary: {
       progress,
       detail: allDomains.length

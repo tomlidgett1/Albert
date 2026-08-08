@@ -10,6 +10,7 @@ export * from "./claims.js";
 export * from "./usage-lifecycle.js";
 export * from "./semantic-adapter.js";
 export * from "./semantic-client.js";
+export * from "./conversation-title.js";
 
 /** Ready-to-mount fixture handler for an authenticated development route. */
 export function createFixtureConversationSseResponse(

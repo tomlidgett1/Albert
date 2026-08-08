@@ -59,7 +59,7 @@ test("canonical queue parses a fenced, typed claim and never accepts malformed d
     tenant_id:IDS.tenant,transform_job_id:IDS.job,batch_id:IDS.batch,
     sync_run_id:IDS.run,connection_id:IDS.connection,connection_generation:"7",
     connector_id:"xero",
-    stream:"journals",domains:["finance_journal_line"],mapping_version:"m2-v1",
+    stream:"xero_journals",domains:["finance_journal_line"],mapping_version:"m2-v1",
     backfill_complete:false,attempt_count:"2",lease_token:IDS.lease,
     lease_expires_at:"2026-08-03T01:00:00.000Z",
   };

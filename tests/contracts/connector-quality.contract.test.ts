@@ -10,7 +10,7 @@ import {
 } from "../../services/sync-workers/src/connector-quality.js";
 
 const job={
-  type:"IncrementalSync",connectorId:"xero",stream:"invoices",
+  type:"IncrementalSync",connectorId:"xero",stream:"xero_invoices",
 } as unknown as SyncJob;
 const supported:ConnectorCapability={
   id:"finance.invoices",support:"full",reasonCode:"live_stream_observed",

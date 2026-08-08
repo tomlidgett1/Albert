@@ -17,6 +17,8 @@ const questionSchema = z.object({
   id: identifier,
   label: z.string().trim().min(1),
   question: z.string().trim().min(1),
+  // Authorization-only connectors are deliberately absent: a prerequisite is a
+  // claim that the connector can supply data, which square cannot satisfy.
   connectorPrerequisites: z.array(
     z.enum(["lightspeed-r", "xero", "deputy"]),
   ).min(1),

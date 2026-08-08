@@ -50,9 +50,10 @@ type SessionEnvelopeRow = Readonly<{
   tenant_id: string;
   oauth_session_id: string;
   initiated_by: string;
-  provider: "lightspeed-r" | "xero" | "deputy";
+  provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   state_nonce_hash: string;
   redirect_uri: string;
+  vendor_account_hint: string | null;
   requested_scopes: string[];
   status: ActiveSessionStatus;
   expires_at: string | Date;
@@ -127,12 +128,14 @@ export type OAuthSessionContext = Readonly<{
   tenantId: string;
   oauthSessionId: string;
   initiatedBy: string;
-  provider: "lightspeed-r" | "xero" | "deputy";
+  provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   redirectUri: string;
   requestedScopes: readonly string[];
   status: ActiveSessionStatus;
   expiresAt: string;
   codeVerifier: string;
+  /** Shopify's shop domain; null for every vendor with a central authorize host. */
+  vendorAccountHint: string | null;
   choices: readonly SanitizedAccountChoice[];
   selectedAccountReference: string | null;
 }>;
@@ -210,12 +213,18 @@ export class OAuthSessionStore {
   async create(input: Readonly<{
     tenantId: string;
     initiatedBy: string;
-    provider: "lightspeed-r" | "xero" | "deputy";
+    provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
     redirectUri: string;
     requestedScopes: readonly string[];
     stateNonceHash: string;
     codeVerifier: string;
     expiresAt: string;
+    /**
+     * Pre-authorization account identity for vendors that host the authorize
+     * endpoint on the account itself (Shopify). Stored under the worker's own
+     * authority so the callback cannot be pointed at a different host.
+     */
+    vendorAccountHint?: string;
   }>): Promise<string> {
     const oauthSessionId = ulid();
     const pkceReference = `oauth_pkce_${ulid()}`;
@@ -237,8 +246,8 @@ export class OAuthSessionStore {
         `insert into control_plane.oauth_sessions (
            tenant_id, oauth_session_id, initiated_by, provider,
            state_nonce_hash, pkce_verifier_secret_reference, redirect_uri,
-           requested_scopes, status, expires_at
-         ) values ($1, $2, $3, $4, $5, $6, $7, $8::text[], 'pending', $9)`,
+           requested_scopes, status, expires_at, vendor_account_hint
+         ) values ($1, $2, $3, $4, $5, $6, $7, $8::text[], 'pending', $9, $10)`,
         [
           input.tenantId,
           oauthSessionId,
@@ -249,6 +258,7 @@ export class OAuthSessionStore {
           input.redirectUri,
           [...input.requestedScopes],
           input.expiresAt,
+          input.vendorAccountHint ?? null,
         ],
       );
       await insertSessionEnvelope(client, {
@@ -305,7 +315,7 @@ export class OAuthSessionStore {
       discovered_account_choices: SanitizedAccountChoice[] | null;
       completion_result: Record<string, unknown> | null;
     }>(
-      `select session.provider,session.redirect_uri,session.state_nonce_hash,
+      `select session.provider,session.redirect_uri,session.vendor_account_hint,session.state_nonce_hash,
               session.status,session.expires_at,session.discovered_account_choices,
               session.completion_result
          from control_plane.oauth_sessions as session
@@ -400,7 +410,7 @@ export class OAuthSessionStore {
   ): Promise<OAuthSessionContext> {
     const result = await this.db.query<SessionEnvelopeRow>(
       `select session.tenant_id, session.oauth_session_id, session.initiated_by,
-              session.provider, session.state_nonce_hash, session.redirect_uri,
+              session.provider, session.state_nonce_hash, session.redirect_uri, session.vendor_account_hint,
               session.requested_scopes, session.status, session.expires_at,
               session.discovered_account_choices, session.selected_account_reference,
               envelope.secret_reference, envelope.secret_kind,
@@ -442,6 +452,7 @@ export class OAuthSessionStore {
       status: row.status,
       expiresAt: new Date(row.expires_at).toISOString(),
       codeVerifier,
+      vendorAccountHint: row.vendor_account_hint,
       choices: row.discovered_account_choices ?? [],
       selectedAccountReference: row.selected_account_reference,
     };
@@ -798,7 +809,7 @@ class SessionCredentialVault implements WorkerCredentialVault {
   async read(credentialRef: string): Promise<VersionedCredential> {
     const result = await this.db.query<SessionEnvelopeRow>(
       `select session.tenant_id, session.oauth_session_id, session.initiated_by,
-              session.provider, session.state_nonce_hash, session.redirect_uri,
+              session.provider, session.state_nonce_hash, session.redirect_uri, session.vendor_account_hint,
               session.requested_scopes, session.status, session.expires_at,
               session.discovered_account_choices, session.selected_account_reference,
               envelope.secret_reference, envelope.secret_kind,

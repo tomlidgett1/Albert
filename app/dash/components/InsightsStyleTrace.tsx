@@ -79,11 +79,19 @@ function isStopMessage(message: string): boolean {
 }
 
 const answerStateDescriptions = {
-  Verified: "Validated against complete, query-ready data",
-  Qualified: "Useful with a disclosed data or definition limitation",
-  Exploratory: "Directional analysis that should be verified before action",
-  Clarification: "Albert needs one answer before the analysis can continue",
-  Unavailable: "The required data is not currently queryable",
+  Verified: "Checked against your connected data",
+  Qualified: "Useful answer, with a limitation noted below",
+  Exploratory: "From your live Lightspeed or Xero data",
+  Clarification: "Albert needs one quick choice before continuing",
+  Unavailable: "The required data is not available yet",
+} as const;
+
+const answerStateLabels = {
+  Verified: "Checked",
+  Qualified: "With a note",
+  Exploratory: "From your live data",
+  Clarification: "Needs a choice",
+  Unavailable: "Can't answer yet",
 } as const;
 
 function cleanReasoningSummary(value: string): string {
@@ -108,6 +116,26 @@ function conciseReasoningSummary(value: string): string {
 
 function humanize(value: string): string {
   return value.replaceAll("_", " ");
+}
+
+/** One plain status line for the shimmer: what Albert is doing, in owner words. */
+export function laymanProgressStatus(label: string, detail = ""): string {
+  const stage = label.trim();
+  const purpose = detail.trim().replace(/\.+$/u, "");
+  const softStage = stage
+    .replace(/^Understanding the question$/iu, "Working out what you're asking")
+    .replace(/^Running SQL(?: with governed claims)?$/iu, "Looking up your numbers")
+    .replace(/^Running an exploratory query$/iu, "Looking up your numbers")
+    .replace(/^SQL query failed$/iu, "That lookup did not work")
+    .replace(/^Analysing\b/iu, "Looking at")
+    .replace(/^Querying\b/iu, "Looking up")
+    .replace(/^Exploring\b/iu, "Looking through");
+
+  const looksTechnical = /SQL|governed|allowlisted|intent to available|tenant|staging|lint/iu.test(purpose);
+  if (purpose && !looksTechnical && (/^Looking up your numbers$/iu.test(softStage) || purpose.length >= softStage.length)) {
+    return purpose.charAt(0).toUpperCase() + purpose.slice(1);
+  }
+  return softStage || "Working on it";
 }
 
 export function buildTrailModel(
@@ -270,14 +298,17 @@ export function buildTrailModel(
     }
 
     if (event.type === "validation") {
+      // Passed lint/RLS and soft presentation repairs stay off the owner trail.
+      if (event.outcome === "passed") continue;
       const target = steps.at(-1);
       if (target) {
-        const list = warningsByStep.get(target.id) ?? [];
-        list.push(`${event.name}: ${event.detail}`);
-        warningsByStep.set(target.id, list);
         if (event.outcome === "failed") {
           const index = steps.findIndex((step) => step.id === target.id);
           steps[index] = { ...target, status: "error", error: event.detail };
+        } else if (event.name === "numeric_grounding") {
+          const list = warningsByStep.get(target.id) ?? [];
+          list.push(event.detail);
+          warningsByStep.set(target.id, list);
         }
       }
       continue;
@@ -422,37 +453,38 @@ function SparklesIcon({ size = 12 }: { size?: number }) {
 
 function ResultTable({
   table,
-  maxRows = 20,
-  maxHeight = 192,
+  maxHeight = 240,
 }: {
   table: TraceTableEvent;
-  maxRows?: number;
   maxHeight?: number;
 }) {
-  const rows = table.rows.slice(0, maxRows);
+  // Keep every row available. Cap height and scroll instead of truncating the
+  // result (weekly/monthly series often exceed a short preview).
   return (
-    <div className={styles.resultTableWrap} style={{ maxHeight }}>
-      <table className={styles.resultTable}>
-        <thead>
-          <tr>
-            {table.columns.map((column) => (
-              <th key={column.key}>{column.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={`${table.resultId}_${rowIndex}`}>
-              {table.columns.map((column: TraceTableColumn) => (
-                <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
+    <div className={styles.resultTableShell}>
+      <div className={styles.resultTableWrap} style={{ maxHeight }}>
+        <table className={styles.resultTable}>
+          <thead>
+            <tr>
+              {table.columns.map((column) => (
+                <th key={column.key}>{column.label}</th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {table.rows.length > rows.length ? (
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr key={`${table.resultId}_${rowIndex}`}>
+                {table.columns.map((column: TraceTableColumn) => (
+                  <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {table.rows.length > 8 ? (
         <p className={styles.resultTableFooter}>
-          Showing the first {rows.length.toLocaleString()} of {table.rows.length.toLocaleString()} rows
+          {table.rows.length.toLocaleString()} row{table.rows.length === 1 ? "" : "s"} · scroll for all
         </p>
       ) : null}
     </div>
@@ -559,9 +591,7 @@ function StreamingTrace({
   const lineTransition = reduceMotion
     ? { duration: 0 }
     : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const };
-  const sublineTransition = reduceMotion
-    ? { duration: 0 }
-    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const, delay: 0.08 };
+  const status = laymanProgressStatus(headline, detail);
 
   return (
     <motion.div
@@ -577,42 +607,26 @@ function StreamingTrace({
       <button
         type="button"
         aria-expanded={expanded}
+        aria-label={status}
         onClick={() => setExpanded((current) => !current)}
         className={styles.streamingToggle}
       >
         <span className={styles.streamingHeadlineGroup}>
           <span className={styles.streamingHeadline}>
-            <span aria-hidden className={styles.streamingMeasure}>{headline}</span>
+            <span aria-hidden className={styles.streamingMeasure}>{status}</span>
             <AnimatePresence>
               <motion.span
-                key={headline}
+                key={status}
                 initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
                 animate={{ y: "0%", opacity: 1 }}
                 exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
                 transition={lineTransition}
                 className={styles.streamingLive}
               >
-                {headline}
+                {status}
               </motion.span>
             </AnimatePresence>
           </span>
-          {detail ? (
-            <span className={styles.streamingSubline}>
-              <span aria-hidden className={styles.streamingSublineMeasure}>{detail}</span>
-              <AnimatePresence>
-                <motion.span
-                  key={detail}
-                  initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
-                  animate={{ y: "0%", opacity: 1 }}
-                  exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
-                  transition={sublineTransition}
-                  className={styles.streamingSublineLive}
-                >
-                  {detail}
-                </motion.span>
-              </AnimatePresence>
-            </span>
-          ) : null}
         </span>
         {steps.length > 0 ? (
           <span className={styles.streamingChevron}>
@@ -724,7 +738,7 @@ function ThinkingTrail({
           <span className={styles.thinkingChevron}><Chevron open={open} /></span>
         </span>
         {answerState ? (
-          <span className={styles.thinkingStateBadge}>{answerState}</span>
+          <span className={styles.thinkingStateBadge}>{answerStateLabels[answerState]}</span>
         ) : null}
         {model.stopped ? <span className={styles.thinkingStopped}>Stopped</span> : null}
         {meta ? <span className={styles.thinkingMeta}>{meta}</span> : null}
@@ -841,7 +855,7 @@ function DetailedQueryResult({
       ) : !step.table || step.table.rows.length === 0 ? (
         <p className={styles.detailedQueryEmpty}>The query completed with no rows.</p>
       ) : (
-        <ResultTable table={step.table} maxRows={80} maxHeight={360} />
+        <ResultTable table={step.table} maxHeight={360} />
       )}
     </motion.div>
   );
@@ -1194,9 +1208,9 @@ export default function InsightsStyleTrace({
               <span>Answer</span>
             </div>
           ) : null}
-          {detailedMode || !(model.steps.length > 0 || model.reasoning.trim().length > 0) ? (
+          {detailedMode ? (
             <div className={styles.answerState} title={answerStateDescriptions[model.answer.state]}>
-              {model.answer.state}
+              {answerStateLabels[model.answer.state]}
             </div>
           ) : null}
           <AssistantMarkdown

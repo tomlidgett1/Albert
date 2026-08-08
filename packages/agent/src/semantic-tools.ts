@@ -34,6 +34,8 @@ export const LOCAL_SEMANTIC_AGENT_TOOL_NAMES = [
   "ask_user",
   "publish_observation",
   "make_chart",
+  "resolve_named_entity",
+  "open_dimension_guide",
 ] as const;
 
 export const SEMANTIC_AGENT_TOOL_NAMES = [
@@ -320,6 +322,22 @@ export const semanticToolInputSchemas = Object.freeze({
     yKey: z.string().min(1),
     series: z.array(z.object({ key: z.string().min(1), label: z.string().min(1) }).strict()).optional(),
   }).strict(),
+  /**
+   * Resolve a dumbed-down product/service name against the store's Lightspeed
+   * catalogue, ranked by recent sales. Local tool: runs staging SQL via run_sql.
+   */
+  resolve_named_entity: z.object({
+    phrase: z.string().trim().min(1).max(120),
+    purpose: z.string().trim().min(1).max(300).default("Match the product or service the owner named"),
+  }).strict(),
+  /**
+   * Open the deep playbook + column dictionary for one Lightspeed dimension
+   * (sales, workshop, inventory, customers, purchasing, employees). Local
+   * tool: returns generated text, runs no SQL.
+   */
+  open_dimension_guide: z.object({
+    dimension: z.string().trim().min(1).max(40),
+  }).strict(),
 } satisfies Record<SemanticAgentToolName, z.ZodType>);
 
 const wireTimeRangeSchema = z.object({
@@ -342,10 +360,12 @@ const definitionDetailSchema = z.object({
 const governedResultWindowSchema = z.object({
   requestedLimit: z.number().int().min(1).max(1000),
   orderedBeforeLimit: z.literal(true),
+  // Ranking / aged-inventory statements often ORDER BY several expressions.
+  // Cap high enough for real shop SQL; the proof still records the prefix used.
   orderBy: z.array(z.object({
     columnKey: z.string().min(1),
     direction: z.enum(["asc", "desc"]),
-  }).strict()).max(5),
+  }).strict()).max(12),
 }).strict();
 
 /**
@@ -526,6 +546,28 @@ export type SemanticToolOutputMap = {
     xKey: string;
     yKey: string;
   }>;
+  resolve_named_entity: Readonly<{
+    phrase: string;
+    assumption: Readonly<{
+      itemId: string;
+      itemName: string;
+      unitsThisMonth: number;
+      unitsAllTime: number;
+    }> | null;
+    confidence: "high" | "medium" | "low" | "none";
+    reason: string;
+    candidates: readonly Readonly<{
+      itemId: string;
+      itemName: string;
+      unitsThisMonth: number;
+      unitsAllTime: number;
+    }>[];
+    nextStep: string;
+  }>;
+  open_dimension_guide: Readonly<
+    | { status: "ok"; dimension: string; guide: string }
+    | { status: "unknown_dimension"; guidance: string }
+  >;
 };
 
 export type SemanticAgentTool<Name extends SemanticAgentToolName = SemanticAgentToolName> =

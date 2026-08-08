@@ -21,11 +21,16 @@ export async function GET(
     if (!['owner', 'manager'].includes(tenant.role)) return Response.json({ error: "Owner or manager access is required." }, { status: 403 });
     const rateLimit = await consumeAlbertRateLimit("oauth.start");
     if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
+    // Shopify hosts its authorize endpoint on the merchant's own shop, so the
+    // domain is collected before the redirect. beginOAuthFlow validates it and
+    // the worker re-validates before it is ever used as a URL host.
+    const shopDomain = new URL(request.url).searchParams.get("shop") ?? undefined;
     const authorizationUrl = await beginOAuthFlow({
       provider,
       tenantId: tenant.tenant_id,
       userId: user.id,
       requestOrigin: new URL(request.url).origin,
+      shopDomain,
     });
     return Response.redirect(authorizationUrl, 302);
   } catch (error) {

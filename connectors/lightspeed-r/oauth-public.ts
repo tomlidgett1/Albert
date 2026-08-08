@@ -5,16 +5,17 @@ export type LightspeedRAuthorizationUrlInput = Readonly<{
   clientId: string;
   state: string;
   redirectUri: string;
-  codeChallenge: string;
+  /** Optional. bike-dashboard's working confidential-client flow omits PKCE. */
+  codeChallenge?: string;
   scopes?: readonly string[];
 }>;
 
 /**
  * Browser-safe: contains no client secret, token-vault or Node-only import.
  *
- * Authorize params follow the R-Series Authorization Code Grant docs plus the
- * registered redirect URI (required when a client has more than one callback)
- * and S256 PKCE.
+ * Authorize params follow the R-Series Authorization Code Grant docs and the
+ * live-proven bike-dashboard shape: `employee:all`, registered redirect URI,
+ * and no PKCE on the authorize URL for confidential server clients.
  * @see https://developers.lightspeedhq.com/retail/authentication/authorization-code-grant/
  */
 export function buildLightspeedRAuthorizationUrl(
@@ -28,21 +29,26 @@ export function buildLightspeedRAuthorizationUrl(
     !input.clientId ||
     !input.state ||
     !input.redirectUri ||
-    !input.codeChallenge ||
     unsupported.length > 0
   ) {
     throw new Error("Invalid Lightspeed R-Series OAuth authorization parameters.");
   }
+  // Param order matches bike-dashboard's live-working builder:
+  // response_type, client_id, scope, state, redirect_uri.
   const url = new URL("https://cloud.lightspeedapp.com/auth/oauth/authorize");
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", input.clientId);
-  url.searchParams.set("redirect_uri", input.redirectUri);
   // Lightspeed documents scopes as a space-separated list; URLSearchParams
   // encodes spaces as `+`, matching their `employee:a+employee:b` examples.
   url.searchParams.set("scope", scopes.join(" "));
   url.searchParams.set("state", input.state);
-  url.searchParams.set("code_challenge", input.codeChallenge);
-  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("redirect_uri", input.redirectUri);
+  // PKCE is optional for confidential clients. bike-dashboard omits it; sending
+  // code_challenge has correlated with Safari merchantos OIDC redirect loops.
+  if (input.codeChallenge) {
+    url.searchParams.set("code_challenge", input.codeChallenge);
+    url.searchParams.set("code_challenge_method", "S256");
+  }
   return url.toString();
 }
 
@@ -54,7 +60,7 @@ export function lightspeedAuthorizationInput(
     clientId,
     state: request.state,
     redirectUri: request.redirectUri,
-    codeChallenge: request.codeChallenge ?? "",
+    ...(request.codeChallenge ? { codeChallenge: request.codeChallenge } : {}),
     scopes: request.scopes,
   };
 }
