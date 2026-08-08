@@ -1,0 +1,175 @@
+{
+  "id": "l35",
+  "tier": "hard",
+  "domain": "customers",
+  "ask": "Over the last 365 days, what are active customers and average spend per active customer?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Over the last 365 days, there were 1,415 active customers, with average spend of $356.10 per customer and total sales of $503,885.50 including GST.\n\n| Active Customer Count | Net Sales Inc GST | Average Spend Per Active Customer Inc GST |\n| --- | ---: | ---: |\n| 1,415 | $503,885.50 | $356.10 |\n\nWould you like to see this by customer segment or month? Would you like a list of the highest-spending active customers?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see this by customer segment or month?",
+    "Would you like a list of the highest-spending active customers?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:956e227dc78a286d04e0426811a53f56041ea82172bb670d11fb3a32ff0f42f3",
+      "columns": [],
+      "rowCount": 0,
+      "sample": []
+    },
+    {
+      "resultId": "sql:a13e3f4270c5d30049c758ca87376ce673bd984b8538c1b13151c0282c8f0675",
+      "columns": [
+        "active_customer_count",
+        "net_sales_inc_gst",
+        "average_spend_per_active_customer_inc_gst"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "active_customer_count": "1415",
+          "net_sales_inc_gst": "503885.5000",
+          "average_spend_per_active_customer_inc_gst": "356.1028268551236749"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=0",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 106218,
+    "outputTokens": 1634,
+    "totalTokens": 107852,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 22,
+        "cached_tokens": 1143
+      },
+      {
+        "cache_write_tokens": 33936,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 414,
+        "cached_tokens": 33936
+      },
+      {
+        "cache_write_tokens": 1058,
+        "cached_tokens": 34350
+      },
+      {
+        "cache_write_tokens": 1344,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 284
+      },
+      {
+        "reasoning_tokens": 260
+      },
+      {
+        "reasoning_tokens": 58
+      },
+      {
+        "reasoning_tokens": 57
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1168,
+        "outputTokens": 128,
+        "inputTokensDetails": {
+          "cache_write_tokens": 22,
+          "cached_tokens": 1143
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33939,
+        "outputTokens": 331,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33936,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 284
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34353,
+        "outputTokens": 538,
+        "inputTokensDetails": {
+          "cache_write_tokens": 414,
+          "cached_tokens": 33936
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 260
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35411,
+        "outputTokens": 155,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1058,
+          "cached_tokens": 34350
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 58
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1347,
+        "outputTokens": 482,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1344,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 57
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 21531,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

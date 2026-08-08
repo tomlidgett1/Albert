@@ -1,0 +1,25 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZDREHT1KX3DY2KR1GQ6G23N",
+  "cases": [
+    "r1",
+    "r2"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"r1","tier":"smoke","attempt":1,"ask":"give me inventory data from lightspeed"}
+Albert run_sql tool failure {
+  turnId: '01KZDREJ2D3T4PN9M6C67NG7GK',
+  purpose: 'Summarise the current Lightspeed inventory position using the account-wide stock rows and identify the number of physica',
+  claims: 0,
+  error: 'The statement failed to execute: column s.item_archived does not exist. Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.'
+}
+{"event":"case_done","id":"r1","state":"Exploratory","ms":33037,"queries":2,"tables":2,"answerPreview":"## Current Lightspeed inventory snapshot\n\n| Shop | Catalogue records | Items in stock | Zero stock | Negative stock | QOH units | Sellable units | Inventory value* |\n|---|---:|---:"}
+{"event":"case_start","id":"r2","tier":"smoke","attempt":1,"ask":"how many completed sales do we have all time?"}
+{"event":"case_done","id":"r2","state":"Exploratory","ms":14260,"queries":1,"tables":1,"answerPreview":"You have **23,008 completed sales** across all available Lightspeed history, excluding voided and archived sales.\n\nFigures cover the available history from Lightspeed, current to 2"}

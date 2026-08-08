@@ -1,0 +1,123 @@
+{
+  "id": "e2",
+  "tier": "easy",
+  "domain": "employees",
+  "ask": "Who works here? List the employee or worker names from our POS.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Qualified",
+  "answerText": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer",
+  "claims": [],
+  "followUps": [],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [
+    "I loaded the allowlisted worker names from your connected POS directory."
+  ],
+  "validations": [],
+  "toolChain": [
+    "progress:directory",
+    "progress:planning",
+    "progress:field_values",
+    "progress:field_values"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 23843,
+    "outputTokens": 342,
+    "totalTokens": 24185,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 5820,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 89,
+        "cached_tokens": 5820
+      },
+      {
+        "cache_write_tokens": 92,
+        "cached_tokens": 5909
+      },
+      {
+        "cache_write_tokens": 100,
+        "cached_tokens": 6001
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 24
+      },
+      {
+        "reasoning_tokens": 27
+      },
+      {
+        "reasoning_tokens": 16
+      },
+      {
+        "reasoning_tokens": 94
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5823,
+        "outputTokens": 53,
+        "inputTokensDetails": {
+          "cache_write_tokens": 5820,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 24
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 5912,
+        "outputTokens": 56,
+        "inputTokensDetails": {
+          "cache_write_tokens": 89,
+          "cached_tokens": 5820
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 27
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6004,
+        "outputTokens": 43,
+        "inputTokensDetails": {
+          "cache_write_tokens": 92,
+          "cached_tokens": 5909
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 16
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6104,
+        "outputTokens": 190,
+        "inputTokensDetails": {
+          "cache_write_tokens": 100,
+          "cached_tokens": 6001
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 94
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 11877,
+  "eventTypes": [
+    "progress",
+    "narrative",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

@@ -1,0 +1,8 @@
+[
+  {"id":"gt_sales_30d","tier":"easy","ask":"Net sales last 30d","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst","transactions","avg_order_value","units_sold"],"time":{"field":"business_date","range":{"type":"last_n_days","days":30},"compare":"none"}}},
+  {"id":"gt_disc_ref","tier":"medium","ask":"Discount+refund totals","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["discount_amount","discount_rate","refund_amount","refund_rate"],"time":{"field":"business_date","range":{"type":"last_n_days","days":90},"compare":"none"}}},
+  {"id":"gt_inventory_cat_detail","tier":"hard","ask":"Why inventory cat unavailable","tool":"get_capabilities","input":{"topic":"inventory_health"}},
+  {"id":"gt_workforce_detail","tier":"easy","ask":"Workforce caps detail","tool":"get_capabilities","input":{"topic":"workforce_labour"}},
+  {"id":"gt_profit_detail","tier":"easy","ask":"Profit caps detail","tool":"get_capabilities","input":{"topic":"profitability_cash"}},
+  {"id":"gt_mtd_by_cat","tier":"hard","ask":"MTD by category","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst"],"dimensions":["product.category"],"time":{"field":"business_date","range":{"type":"month_to_date"},"compare":"same_period_prior_month"},"sort":[{"metric":"net_sales_ex_gst","dir":"desc"}],"limit":15}}
+]

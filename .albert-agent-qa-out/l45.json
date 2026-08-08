@@ -1,0 +1,142 @@
+{
+  "id": "l45",
+  "tier": "schema",
+  "domain": "workshop",
+  "ask": "Count workorders grouped by status name using the staging status name field.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "As at 7 August 2026, all 3 workorders returned have no status name.\n\n| Status Name | Workorder Count |\n| --- | ---: |\n| No status name | 3 |\n\nWould you like these workorders broken down by another field? Would you like a list of the 3 workorders?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these workorders broken down by another field?",
+    "Would you like a list of the 3 workorders?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:32e5ecc6e89c57a70ec03d2234a7d2d8570152ff1d0dd382808759d909b7b48b",
+      "columns": [
+        "status_name",
+        "workorder_count"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "status_name": null,
+          "workorder_count": "3"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70381,
+    "outputTokens": 967,
+    "totalTokens": 71348,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1037,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33725,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 813,
+        "cached_tokens": 33725
+      },
+      {
+        "cache_write_tokens": 1069,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 42
+      },
+      {
+        "reasoning_tokens": 158
+      },
+      {
+        "reasoning_tokens": 49
+      },
+      {
+        "reasoning_tokens": 172
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1040,
+        "outputTokens": 145,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1037,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 42
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33728,
+        "outputTokens": 314,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33725,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 158
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34541,
+        "outputTokens": 131,
+        "inputTokensDetails": {
+          "cache_write_tokens": 813,
+          "cached_tokens": 33725
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 49
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1072,
+        "outputTokens": 377,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1069,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 172
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 12843,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

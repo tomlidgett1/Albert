@@ -1,0 +1,143 @@
+{
+  "id": "r2",
+  "tier": "smoke",
+  "domain": "sales",
+  "ask": "how many completed sales do we have all time?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "You have **23,008 completed sales** across all available Lightspeed history, excluding voided and archived sales.\n\nFigures cover the available history from Lightspeed, current to 2026-08-07.",
+  "claims": [
+    {
+      "statement": "Completed Sales: 23,008.00.",
+      "assertion": "value",
+      "refs": [
+        {
+          "resultId": "sql:9e3870040dcfcce8a3c111522e711677b88a49dadf549d63f1744d40b72a7c92",
+          "rowIndex": 0,
+          "columnKey": "completed_sales"
+        }
+      ]
+    }
+  ],
+  "followUps": [],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:9e3870040dcfcce8a3c111522e711677b88a49dadf549d63f1744d40b72a7c92",
+      "columns": [
+        "completed_sales"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "completed_sales": "23008"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "qualified",
+      "detail": "Evidence Tier: warning."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:qualified",
+    "validation:warning_1:qualified"
+  ],
+  "usage": {
+    "requests": 2,
+    "inputTokens": 51826,
+    "outputTokens": 294,
+    "totalTokens": 52120,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 14,
+        "cached_tokens": 25590
+      },
+      {
+        "cache_write_tokens": 612,
+        "cached_tokens": 25604
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 24
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 25607,
+        "outputTokens": 168,
+        "inputTokensDetails": {
+          "cache_write_tokens": 14,
+          "cached_tokens": 25590
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 24
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 26219,
+        "outputTokens": 126,
+        "inputTokensDetails": {
+          "cache_write_tokens": 612,
+          "cached_tokens": 25604
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 14260,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "answer"
+  ]
+}

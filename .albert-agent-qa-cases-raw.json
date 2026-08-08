@@ -1,0 +1,1 @@
+[{"id":"r1","tier":"smoke","domain":"inventory","ask":"give me inventory data from lightspeed"},{"id":"r2","tier":"smoke","domain":"sales","ask":"how many completed sales do we have all time?"}]

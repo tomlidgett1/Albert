@@ -1,0 +1,74 @@
+[
+ {
+  "id": "gt_sales_30d",
+  "tier": "easy",
+  "ask": "Net sales last 30d",
+  "state": "ERROR",
+  "validation": "-",
+  "rowCount": 0,
+  "sample": "",
+  "error": "53300: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+  "ms": 8007
+ },
+ {
+  "id": "gt_disc_ref",
+  "tier": "medium",
+  "ask": "Discount+refund totals",
+  "state": "ERROR",
+  "validation": "-",
+  "rowCount": 0,
+  "sample": "",
+  "error": "53300: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+  "ms": 5742
+ },
+ {
+  "id": "gt_inventory_cat_detail",
+  "tier": "hard",
+  "ask": "Why inventory cat unavailable",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [],
+  "checks": [],
+  "ms": 4009
+ },
+ {
+  "id": "gt_workforce_detail",
+  "tier": "easy",
+  "ask": "Workforce caps detail",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [],
+  "checks": [],
+  "ms": 3975
+ },
+ {
+  "id": "gt_profit_detail",
+  "tier": "easy",
+  "ask": "Profit caps detail",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [],
+  "checks": [],
+  "ms": 4000
+ },
+ {
+  "id": "gt_mtd_by_cat",
+  "tier": "hard",
+  "ask": "MTD by category",
+  "state": "ERROR",
+  "validation": "-",
+  "rowCount": 0,
+  "sample": "",
+  "error": "53300: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+  "ms": 5686
+ }
+]

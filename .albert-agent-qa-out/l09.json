@@ -1,0 +1,148 @@
+{
+  "id": "l09",
+  "tier": "easy",
+  "domain": "sales",
+  "ask": "What was average order value last week?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Average order value was $108.67 including GST last week, from 27 July to 2 August 2026.\n\n| Week Start | Week End | Orders | Total Sales Inc GST | Average Order Value Inc GST |\n| --- | --- | ---: | ---: | ---: |\n| 27 July 2026 | 2 August 2026 | 66 | $7,172.40 | $108.67 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like average order value by product category?",
+    "Would you like a week-by-week average order value comparison?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:8f1e1e67fc1c3d90cf8a5ee19583b630861bd2743f961b8dd50514278264bac4",
+      "columns": [
+        "week_start",
+        "week_end",
+        "orders",
+        "total_sales_inc_gst",
+        "average_order_value_inc_gst"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "week_start": "2026-07-27T00:00:00.000Z",
+          "week_end": "2026-08-02T00:00:00.000Z",
+          "orders": "66",
+          "total_sales_inc_gst": "7172.4000",
+          "average_order_value_inc_gst": "108.6727272727272727"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70786,
+    "outputTokens": 1218,
+    "totalTokens": 72004,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1031,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33713,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1083,
+        "cached_tokens": 33713
+      },
+      {
+        "cache_write_tokens": 1234,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 171
+      },
+      {
+        "reasoning_tokens": 41
+      },
+      {
+        "reasoning_tokens": 71
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1034,
+        "outputTokens": 85,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1031,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33716,
+        "outputTokens": 513,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33713,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 171
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34799,
+        "outputTokens": 129,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1083,
+          "cached_tokens": 33713
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 41
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1237,
+        "outputTokens": 491,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1234,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 71
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 13585,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

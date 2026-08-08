@@ -1,0 +1,214 @@
+{
+  "id": "l32",
+  "tier": "hard",
+  "domain": "discount+refund",
+  "ask": "Over the last 90 days, which categories have the highest discount rates and which have the highest refund rates?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Electronics & Lights/Radar had both the highest discount rate, 64.51%, and the highest refund rate, 50.00%, in the supplied period of 1 January 2025 to 1 January 2026.\n\n| Units Sold | Units Refunded | Discount Amount | Sales Inc GST | Discount Rate Pct |\n| --- | --- | --- | --- | --- |\n| 2 | 1 | $199.99 | $110.00 | 64.51 |\n| 2 | 0 | $179.99 | $179.99 | 50 |\n| 3 | 0 | $39.99 | $79.98 | 33.33 |\n| 14 | 0 | $29.00 | $58.27 | 33.23 |\n| 10 | 1 | $162.49 | $337.42 | 32.5 |\n| 16 | 1 | $189.99 | $778.78 | 19.61 |\n| 44 | 1 | $182.43 | $874.79 | 17.26 |\n| 50 | 1 | $834.95 | $4,594.57 | 15.38 |\n| 2 | 0 | $42.50 | $297.48 | 12.5 |\n| 45 | 3 | $481.96 | $3,912.46 | 10.97 |\n| 6 | 1 | $394.99 | $4,229.99 | 8.54 |\n| 20 | 0 | $54.98 | $825.83 | 6.24 |\n| 3 | 0 | $84.99 | $1,383.99 | 5.79 |\n| 3 | 0 | $24.00 | $400.98 | 5.65 |\n| 63 | 0 | $19.77 | $354.27 | 5.29 |\n| 11 | 0 | $12.75 | $229.36 | 5.27 |\n| 14 | 0 | $3.25 | $71.75 | 4.33 |\n| 73 | 1 | $142.50 | $3,177.79 | 4.29 |\n| 18 | 0 | $36.00 | $1,083.83 | 3.21 |\n| 221 | 2 | $316.98 | $10,022.87 | 3.07 |\n| 424 | 2 | $378.21 | $13,979.17 | 2.63 |\n| 171 | 1 | $57.48 | $4,862.70 | 1.17 |\n| 453 | 0 | $203.00 | $22,939.91 | 0.88 |\n| 104 | 1 | $34.00 | $11,166.56 | 0.30 |\n| 20 | 0 | $27.00 | $11,449.93 | 0.24 |\n| 4 | 1 | $0.00 | $5,799.97 | 0.00 |\n| 19 | 2 | $0.00 | $834.72 | 0.00 |\n| 12 | 1 | $0.00 | $544.81 | 0.00 |\n| 33 | 0 | $0.00 | $634.69 | 0.00 |\n| 4 | 0 | $0.00 | $139.96 | 0.00 |\n| 3 | 0 | $0.00 | $109.93 | 0.00 |\n| 16 | 0 | $0.00 | $794.86 | 0.00 |\n| 3 | 0 | $0.00 | $194.97 | 0.00 |\n| 2 | 0 | $0.00 | $5,500.00 | 0.00 |\n| 1 | 0 | $0.00 | $650.00 | 0.00 |\n| 2 | 0 | $0.00 | $84.98 | 0.00 |\n\n…and 16 more rows in the query table above.",
+  "claims": [],
+  "followUps": [
+    "Would you like these rates shown as a chart?",
+    "Would you like the results broken down by product or SKU?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:c6681ab3079ed05b525bf0ddd835992e932fc8aaef1ae6bcb9521b207186b252",
+      "columns": [
+        "category",
+        "units_sold",
+        "units_refunded",
+        "discount_amount",
+        "sales_inc_gst",
+        "discount_rate_pct",
+        "refund_rate_pct"
+      ],
+      "rowCount": 52,
+      "sample": [
+        {
+          "category": "Electronics & Lights/Radar",
+          "units_sold": "2.0000",
+          "units_refunded": "1.0000",
+          "discount_amount": "199.9900",
+          "sales_inc_gst": "110.0000",
+          "discount_rate_pct": "64.51",
+          "refund_rate_pct": "50.00"
+        },
+        {
+          "category": "Accessories1/Child Seats",
+          "units_sold": "2.0000",
+          "units_refunded": "0",
+          "discount_amount": "179.9900",
+          "sales_inc_gst": "179.9900",
+          "discount_rate_pct": "50.00",
+          "refund_rate_pct": "0.00"
+        },
+        {
+          "category": "Accessories1/Training Wheels",
+          "units_sold": "3.0000",
+          "units_refunded": "0",
+          "discount_amount": "39.9900",
+          "sales_inc_gst": "79.9800",
+          "discount_rate_pct": "33.33",
+          "refund_rate_pct": "0.00"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=52",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 6,
+    "inputTokens": 151308,
+    "outputTokens": 4430,
+    "totalTokens": 155738,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1045,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33761,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1408,
+        "cached_tokens": 33761
+      },
+      {
+        "cache_write_tokens": 1421,
+        "cached_tokens": 35169
+      },
+      {
+        "cache_write_tokens": 4517,
+        "cached_tokens": 36590
+      },
+      {
+        "cache_write_tokens": 3618,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 182
+      },
+      {
+        "reasoning_tokens": 291
+      },
+      {
+        "reasoning_tokens": 134
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1048,
+        "outputTokens": 127,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1045,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33764,
+        "outputTokens": 1318,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33761,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35172,
+        "outputTokens": 1311,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1408,
+          "cached_tokens": 33761
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36593,
+        "outputTokens": 887,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1421,
+          "cached_tokens": 35169
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 182
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 41110,
+        "outputTokens": 393,
+        "inputTokensDetails": {
+          "cache_write_tokens": 4517,
+          "cached_tokens": 36590
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 291
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 3621,
+        "outputTokens": 394,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3618,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 134
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 42665,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

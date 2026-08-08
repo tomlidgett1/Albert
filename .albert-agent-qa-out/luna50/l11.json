@@ -1,0 +1,154 @@
+{
+  "id": "l11",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "Over the last 90 days, which product categories generated the most net sales? Rank them.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Over the last 90 days, Services generated the most net sales at $20,676.53 ex GST, followed by Parts/Wheels & Tyres at $12,512.41 and Bikes/Kids at $9,818.13; refunds are included and categories are ranked below.\n\n| Product Category | Net Sales Ex GST | Units Sold |\n| --- | ---: | ---: |\n| Services | $20,676.53 | 449 |\n| Parts/Wheels & Tyres | $12,512.41 | 417 |\n| Bikes/Kids | $9,818.13 | 19 |\n| Parts/Drivetrain | $8,795.36 | 216 |\n| Bikes/Gravel | $5,000.00 | 2 |\n| Parts/Brakes | $4,409.56 | 170 |\n| Clothing & Protection/Helmets | $4,176.93 | 49 |\n| Bikes/City | $3,730.89 | 5 |\n| Electronics & Lights/Lights | $3,311.36 | 42 |\n| Bikes/Mountain | $3,090.88 | 3 |\n| Parts/Cockpit | $2,647.88 | 70 |\n| Training & Transport/Indoor Trainers | $1,727.26 | 1 |\n| Electronics & Lights/Computers | $1,258.17 | 3 |\n| Tools & Maintenance/Pumps | $985.28 | 18 |\n| Parts/Pedals | $977.04 | 22 |\n| Accessories1/Bottles & Cages | $781.63 | 43 |\n| Accessories1/Bags & Baskets | $750.78 | 20 |\n| Accessories1/Mounts | $722.58 | 16 |\n| Clothing & Protection/Gloves | $686.17 | 17 |\n| Training & Transport/Car Racks | $681.82 | 1 |\n| Tools & Maintenance/Lubes | $659.79 | 30 |\n| Parts/Saddles & Seatposts | $604.37 | 14 |\n| Bikes/Hybrid | $590.91 | 1 |\n| Accessories1/Bells | $563.40 | 32 |\n| Accessories1/Locks | $454.36 | 11 |\n\nWould you like these results grouped into broader departments? Would you like to see the top-selling individual products within a category?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these results grouped into broader departments?",
+    "Would you like to see the top-selling individual products within a category?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:273aaf5b2cd2574110d44fdfee3e238a1cf63b64151da12e036f3981314526ec",
+      "columns": [
+        "product_category",
+        "net_sales_ex_gst",
+        "units_sold"
+      ],
+      "rowCount": 51,
+      "sample": [
+        {
+          "product_category": "Services",
+          "net_sales_ex_gst": "20676.5300",
+          "units_sold": "449.0000"
+        },
+        {
+          "product_category": "Parts/Wheels & Tyres",
+          "net_sales_ex_gst": "12512.4100",
+          "units_sold": "417.0000"
+        },
+        {
+          "product_category": "Bikes/Kids",
+          "net_sales_ex_gst": "9818.1300",
+          "units_sold": "19.0000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=51",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 73682,
+    "outputTokens": 1791,
+    "totalTokens": 75473,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1042,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33759,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 2636,
+        "cached_tokens": 33759
+      },
+      {
+        "cache_write_tokens": 2474,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 239
+      },
+      {
+        "reasoning_tokens": 18
+      },
+      {
+        "reasoning_tokens": 100
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1045,
+        "outputTokens": 118,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1042,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33762,
+        "outputTokens": 609,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33759,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 239
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36398,
+        "outputTokens": 99,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2636,
+          "cached_tokens": 33759
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 18
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2477,
+        "outputTokens": 965,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2474,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 100
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 18782,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

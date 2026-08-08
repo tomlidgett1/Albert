@@ -1,0 +1,66 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZ84VS5CA5EKG5016NBFB0GZ",
+  "cases": [
+    "e1",
+    "e2",
+    "e3",
+    "e4",
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "h7",
+    "h8",
+    "h9",
+    "h10"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"e1","tier":"easy","attempt":1,"ask":"What were Ashburton Cycles' net sales excluding GST over the last 30 days?"}
+{"event":"case_done","id":"e1","state":"Qualified","ms":41321,"queries":1,"tables":1,"answerPreview":"Location Ashburton Cycles had Net sales of AUD 37558.7."}
+{"event":"case_start","id":"e2","tier":"easy","attempt":1,"ask":"Who works here? List the employee or worker names from our POS."}
+{"event":"case_done","id":"e2","state":"Qualified","ms":15728,"queries":0,"tables":0,"answerPreview":"Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n"}
+{"event":"case_start","id":"e3","tier":"easy","attempt":1,"ask":"How many transactions did we process in the last 7 days, and what was average order value?"}
+{"event":"case_done","id":"e3","state":"Qualified","ms":82432,"queries":2,"tables":2,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"e4","tier":"easy","attempt":1,"ask":"What is our current stock on hand in units and dollar value?"}
+{"event":"case_retry","id":"e4","reason":"soft_timeout"}
+{"event":"case_start","id":"e4","tier":"easy","attempt":2,"ask":"What is our current stock on hand in units and dollar value?"}
+{"event":"case_done","id":"e4","state":"Unavailable","ms":15671,"queries":0,"tables":0,"answerPreview":"I can’t verify current stock on hand because the governed catalogue, inventory capability, and data-health services are unavailable. Restoring the semantic service and a connected "}
+{"event":"case_start","id":"m1","tier":"medium","attempt":1,"ask":"Over the last 90 days, which product categories generated the most net sales, and what was the gross margin percent for each? Rank by sales."}
+{"event":"case_done","id":"m1","state":"Unavailable","ms":15938,"queries":0,"tables":0,"answerPreview":"I couldn’t access the governed catalogue, capability, or data-health services, so I can’t safely rank product categories or report net sales and gross margin percent. This requires"}
+{"event":"case_start","id":"m2","tier":"medium","attempt":1,"ask":"Who were our top performing staff by net sales in the last 30 days, and how many transactions did each complete?"}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"m2","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180191}
+{"event":"case_start","id":"m3","tier":"medium","attempt":1,"ask":"In the last 90 days, how many new customers did we gain, and what was our returning customer rate?"}
+{"event":"case_done","id":"m3","state":"Qualified","ms":87569,"queries":2,"tables":2,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"m4","tier":"medium","attempt":1,"ask":"Compare month-to-date net sales excluding GST with the same period last month. Are we up or down, and by how much?"}
+{"event":"case_done","id":"m4","state":"Qualified","ms":95132,"queries":1,"tables":1,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"m5","tier":"medium","attempt":1,"ask":"By product category, what are stock cover days and sell-through rate over the last 90 days? Which categories look overstocked?"}
+{"event":"case_done","id":"m5","state":"Qualified","ms":134570,"queries":2,"tables":2,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"m6","tier":"medium","attempt":1,"ask":"What were our discount amount and discount rate, and our refund amount and refund rate, over the last 90 days?"}
+{"event":"case_done","id":"m6","state":"Qualified","ms":67931,"queries":2,"tables":2,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"h1","tier":"hard","attempt":1,"ask":"Over the last 90 days, which categories have high net sales but weak gross margin percent, and which have low sales but strong margin? Give me the trade-off so I know where volume is cheap and where margin is hiding."}
+{"event":"case_done","id":"h1","state":"Qualified","ms":136968,"queries":1,"tables":1,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"h2","tier":"hard","attempt":1,"ask":"Take our top 10 products by units sold in the last 90 days. For those same products, which ones look inventory-stressed (high days out of stock or thin stock cover)? I need sell-through winners that we keep running out of."}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"h2","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180192}
+{"event":"case_start","id":"h3","tier":"hard","attempt":1,"ask":"Net sales month to date versus the same period last month, then break the gap down by product category so I can see which categories caused the change."}
+{"event":"case_done","id":"h3","state":"Qualified","ms":118251,"queries":3,"tables":3,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"h4","tier":"hard","attempt":1,"ask":"Over the last 30 days, which workers have high transaction counts but below-shop average order value? Are they ringing lots of small tickets, and who are the outliers?"}
+{"event":"case_done","id":"h4","state":"Qualified","ms":46165,"queries":0,"tables":0,"answerPreview":"Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n"}
+{"event":"case_start","id":"h5","tier":"hard","attempt":1,"ask":"Over the last 90 days, which product categories have the highest discount rates, and which have the highest refund rates? Where are we leaving money on the table versus where returns are a problem?"}

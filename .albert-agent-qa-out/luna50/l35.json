@@ -1,0 +1,128 @@
+{
+  "id": "l35",
+  "tier": "hard",
+  "domain": "customers",
+  "ask": "Over the last 365 days, what are active customers and average spend per active customer?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Clarification",
+  "answerText": null,
+  "claims": [],
+  "followUps": [],
+  "clarification": {
+    "options": [
+      {
+        "id": "sales.gross_inc_gst",
+        "label": "Gross takings (inc GST)"
+      },
+      {
+        "id": "sales.net_ex_gst",
+        "label": "Net sales (ex GST)"
+      }
+    ]
+  },
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "clarification"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 102841,
+    "outputTokens": 553,
+    "totalTokens": 103394,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1041,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33789,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 149,
+        "cached_tokens": 33789
+      },
+      {
+        "cache_write_tokens": 123,
+        "cached_tokens": 33938
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 161
+      },
+      {
+        "reasoning_tokens": 40
+      },
+      {
+        "reasoning_tokens": 47
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1044,
+        "outputTokens": 309,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1041,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 161
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33792,
+        "outputTokens": 107,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33789,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 40
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33941,
+        "outputTokens": 105,
+        "inputTokensDetails": {
+          "cache_write_tokens": 149,
+          "cached_tokens": 33789
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 47
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34064,
+        "outputTokens": 32,
+        "inputTokensDetails": {
+          "cache_write_tokens": 123,
+          "cached_tokens": 33938
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 9314,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "clarification"
+  ]
+}

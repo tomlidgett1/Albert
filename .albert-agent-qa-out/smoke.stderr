@@ -1,0 +1,19 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZ84DDYF05HGBSRR0QCWK8KS",
+  "cases": [
+    "e1",
+    "e2"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"e1","tier":"easy","ask":"What were Ashburton Cycles' net sales excluding GST over the last 30 days?"}
+{"event":"case_done","id":"e1","state":"Qualified","ms":41497,"queries":1,"tables":1,"answerPreview":"Location Ashburton Cycles had Net sales of AUD 37558.7."}
+{"event":"case_start","id":"e2","tier":"easy","ask":"Who works here? List the employee or worker names from our POS."}
+{"event":"case_done","id":"e2","state":"Qualified","ms":61306,"queries":0,"tables":0,"answerPreview":"Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n"}

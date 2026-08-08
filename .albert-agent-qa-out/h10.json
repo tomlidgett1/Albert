@@ -1,0 +1,164 @@
+{
+  "id": "h10",
+  "tier": "hard",
+  "domain": "cross:unavailable+unlock",
+  "ask": "What is our gross profit per labour hour by employee for the last 30 days, and what was net profit last month? If you cannot answer, say exactly what connection or data unlocks it.",
+  "ok": true,
+  "attempt": 2,
+  "answerState": "Unavailable",
+  "answerText": "I can’t safely report either figure because the governed analytics service is currently unavailable, so I could not verify the tenant’s connected data or run the required queries.\n\nTo unlock the answers:\n- **Gross profit per labour hour by employee:** connected sales data with **gross margin attributed to each employee**, plus workforce/timekeeping data with **worked hours by employee** for the last 30 days.\n- **Net profit last month:** a connected accounting/GL source containing **accrued revenue, cost of sales, operating expenses and other net expenses** for the complete prior calendar month.\n\nIf those sources are already connected, restoring access to the governed analytics service is the only remaining unlock.",
+  "claims": [],
+  "followUps": [
+    "Retry once the governed analytics service is available."
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:query",
+    "progress:capabilities",
+    "progress:query"
+  ],
+  "usage": {
+    "requests": 6,
+    "inputTokens": 37466,
+    "outputTokens": 1019,
+    "totalTokens": 38485,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 5770
+      },
+      {
+        "cache_write_tokens": 267,
+        "cached_tokens": 5770
+      },
+      {
+        "cache_write_tokens": 71,
+        "cached_tokens": 6037
+      },
+      {
+        "cache_write_tokens": 302,
+        "cached_tokens": 6108
+      },
+      {
+        "cache_write_tokens": 96,
+        "cached_tokens": 6410
+      },
+      {
+        "cache_write_tokens": 111,
+        "cached_tokens": 6506
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 201
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 151
+      },
+      {
+        "reasoning_tokens": 26
+      },
+      {
+        "reasoning_tokens": 18
+      },
+      {
+        "reasoning_tokens": 190
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5773,
+        "outputTokens": 228,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 5770
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 201
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6040,
+        "outputTokens": 32,
+        "inputTokensDetails": {
+          "cache_write_tokens": 267,
+          "cached_tokens": 5770
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6111,
+        "outputTokens": 263,
+        "inputTokensDetails": {
+          "cache_write_tokens": 71,
+          "cached_tokens": 6037
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 151
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6413,
+        "outputTokens": 56,
+        "inputTokensDetails": {
+          "cache_write_tokens": 302,
+          "cached_tokens": 6108
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 26
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6509,
+        "outputTokens": 72,
+        "inputTokensDetails": {
+          "cache_write_tokens": 96,
+          "cached_tokens": 6410
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 18
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6620,
+        "outputTokens": 368,
+        "inputTokensDetails": {
+          "cache_write_tokens": 111,
+          "cached_tokens": 6506
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 190
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 28550,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

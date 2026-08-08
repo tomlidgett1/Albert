@@ -1,0 +1,324 @@
+{
+  "id": "h6",
+  "tier": "hard",
+  "domain": "cross:inventory+capital",
+  "ask": "Which categories have the worst sell-through and the longest stock cover days, and how much stock-on-hand value is tied up there? I want dead or slow capital called out clearly.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I can’t safely identify slow categories or quantify tied-up stock value because the governed inventory mart currently has no dated stock snapshots. Connector and canonical-mapping warnings are also active.\n\nTo unlock this analysis, inventory snapshots must be mapped with **category, quantity on hand, stock value and daily units sold**. That will support category-level sell-through, stock-cover days and a clear dead/slow-capital ranking.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to check the inventory connection and mapping coverage in more detail?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:fc5e0524c376a3d1f9a151b6363a70dbeb51f7db0841ba3d6d7f735074facb34",
+      "columns": [
+        "first_snapshot_date",
+        "latest_snapshot_date",
+        "latest_complete_snapshot_date"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "first_snapshot_date": null,
+          "latest_snapshot_date": null,
+          "latest_complete_snapshot_date": null
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:definition",
+    "progress:capabilities",
+    "progress:capabilities",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:definition",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified"
+  ],
+  "usage": {
+    "requests": 11,
+    "inputTokens": 84544,
+    "outputTokens": 2705,
+    "totalTokens": 87249,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 40,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 183,
+        "cached_tokens": 5766
+      },
+      {
+        "cache_write_tokens": 71,
+        "cached_tokens": 5949
+      },
+      {
+        "cache_write_tokens": 67,
+        "cached_tokens": 6020
+      },
+      {
+        "cache_write_tokens": 81,
+        "cached_tokens": 6087
+      },
+      {
+        "cache_write_tokens": 64,
+        "cached_tokens": 6168
+      },
+      {
+        "cache_write_tokens": 2423,
+        "cached_tokens": 6232
+      },
+      {
+        "cache_write_tokens": 104,
+        "cached_tokens": 8655
+      },
+      {
+        "cache_write_tokens": 1296,
+        "cached_tokens": 8759
+      },
+      {
+        "cache_write_tokens": 167,
+        "cached_tokens": 10055
+      },
+      {
+        "cache_write_tokens": 376,
+        "cached_tokens": 10222
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 126
+      },
+      {
+        "reasoning_tokens": 12
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 7
+      },
+      {
+        "reasoning_tokens": 263
+      },
+      {
+        "reasoning_tokens": 43
+      },
+      {
+        "reasoning_tokens": 703
+      },
+      {
+        "reasoning_tokens": 21
+      },
+      {
+        "reasoning_tokens": 60
+      },
+      {
+        "reasoning_tokens": 738
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5769,
+        "outputTokens": 147,
+        "inputTokensDetails": {
+          "cache_write_tokens": 40,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 126
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 5952,
+        "outputTokens": 34,
+        "inputTokensDetails": {
+          "cache_write_tokens": 183,
+          "cached_tokens": 5766
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 12
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6023,
+        "outputTokens": 30,
+        "inputTokensDetails": {
+          "cache_write_tokens": 71,
+          "cached_tokens": 5949
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6090,
+        "outputTokens": 37,
+        "inputTokensDetails": {
+          "cache_write_tokens": 67,
+          "cached_tokens": 6020
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6171,
+        "outputTokens": 28,
+        "inputTokensDetails": {
+          "cache_write_tokens": 81,
+          "cached_tokens": 6087
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 7
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6235,
+        "outputTokens": 284,
+        "inputTokensDetails": {
+          "cache_write_tokens": 64,
+          "cached_tokens": 6168
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 263
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8658,
+        "outputTokens": 66,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2423,
+          "cached_tokens": 6232
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 43
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8762,
+        "outputTokens": 799,
+        "inputTokensDetails": {
+          "cache_write_tokens": 104,
+          "cached_tokens": 8655
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 703
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10058,
+        "outputTokens": 126,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1296,
+          "cached_tokens": 8759
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 21
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10225,
+        "outputTokens": 289,
+        "inputTokensDetails": {
+          "cache_write_tokens": 167,
+          "cached_tokens": 10055
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 60
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10601,
+        "outputTokens": 865,
+        "inputTokensDetails": {
+          "cache_write_tokens": 376,
+          "cached_tokens": 10222
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 738
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 67629,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "answer"
+  ]
+}

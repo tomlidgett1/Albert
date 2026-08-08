@@ -1,0 +1,177 @@
+{
+  "id": "l12",
+  "tier": "medium",
+  "domain": "employees",
+  "ask": "Who were our top performing staff by net sales in the last 30 days?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Jack Lidgett was the top-performing staff member by net sales in the last 30 days, with $20,305.23 ex GST from 122 tickets.\n\n| Employee Id | Staff Name | Tickets | Net Sales Ex GST |\n| --- | --- | ---: | ---: |\n| 3 | Jack Lidgett | 122 | $20,305.23 |\n| 13 | Leigh Phillips | 167 | $18,728.87 |\n| 9 | Angus McKinnon | 9 | $769.01 |\n| 12 | Charles O'Hara | 2 | $268.41 |\n| 8 | Tom Wildoer | 1 | $163.64 |\n| 1 | Tom Lidgett | 6 | $0.00 |\n\nThese figures use completed, non-voided Lightspeed sales and are net of GST.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by category or department?",
+    "Would you like to see the top-performing individual products for each staff member?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:ebb37c787745d6762ae5e0bbd0283fbf0362d8d4a3e5193572be45535064f182",
+      "columns": [
+        "employee_id",
+        "staff_name",
+        "tickets",
+        "net_sales_ex_gst"
+      ],
+      "rowCount": 6,
+      "sample": [
+        {
+          "employee_id": "3.0000",
+          "staff_name": "Jack Lidgett",
+          "tickets": "122",
+          "net_sales_ex_gst": "20305.2300"
+        },
+        {
+          "employee_id": "13.0000",
+          "staff_name": "Leigh Phillips",
+          "tickets": "167",
+          "net_sales_ex_gst": "18728.8700"
+        },
+        {
+          "employee_id": "9.0000",
+          "staff_name": "Angus McKinnon",
+          "tickets": "9",
+          "net_sales_ex_gst": "769.0100"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=6",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 106324,
+    "outputTokens": 1908,
+    "totalTokens": 108232,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1039,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33745,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 742,
+        "cached_tokens": 33745
+      },
+      {
+        "cache_write_tokens": 1119,
+        "cached_tokens": 34487
+      },
+      {
+        "cache_write_tokens": 1432,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 307
+      },
+      {
+        "reasoning_tokens": 88
+      },
+      {
+        "reasoning_tokens": 61
+      },
+      {
+        "reasoning_tokens": 62
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1042,
+        "outputTokens": 107,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1039,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33748,
+        "outputTokens": 657,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33745,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 307
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34490,
+        "outputTokens": 426,
+        "inputTokensDetails": {
+          "cache_write_tokens": 742,
+          "cached_tokens": 33745
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 88
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35609,
+        "outputTokens": 151,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1119,
+          "cached_tokens": 34487
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 61
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1435,
+        "outputTokens": 567,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1432,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 62
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 22340,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

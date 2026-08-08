@@ -1,0 +1,263 @@
+{
+  "id": "l33",
+  "tier": "hard",
+  "domain": "inventory",
+  "ask": "Which categories have the longest stock cover days and how much stock-on-hand value is tied up there?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Among categories with recorded sales, Bikes/Hybrid has the longest stock cover at 1,170 days, with $0.00 of stock-on-hand value tied up; the figures use the 90-day sales window ending 7 August 2026. Categories with no sales have no calculable cover, and all reported stock values are $0.00 because cost values are currently zero.\n\n| Category | Stock Cover Days | Units On Hand | Stock On Hand Value | Units Sold 90d | Category Id |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| Bikes/BMX | n/a | 3 | $0.00 | 0 | 1454 |\n| Tools, Cleaning & Workshop Consumables / Cleaning Product | n/a | 1 | $0.00 | 0 | 760 |\n| Clothing & Protection/Pads | n/a | 2 | $0.00 | 0 | 1445 |\n| Clothing & Protection/Socks | n/a | 5 | $0.00 | 0 | 1405 |\n| Bikes/Scooters | n/a | 7 | $0.00 | 0 | 1448 |\n| Clothing & Protection/Jackets & Vests | n/a | 17 | $0.00 | 0 | 1437 |\n| Bikes/Road | n/a | 4 | $0.00 | 0 | 1463 |\n| Clothing & Protection/Warmers | n/a | 22 | $0.00 | 0 | 1435 |\n| Nutrition/Drink Mix | n/a | 143 | $0.00 | 0 | 1460 |\n| Tools & Maintenance/Grease | n/a | 1 | $0.00 | 0 | 1457 |\n| Bikes/Hybrid | 1,170 | 13 | $0.00 | 1 | 1444 |\n| Clothing & Protection/Bibs & Shorts | 1,035 | 23 | $0.00 | 2 | 1431 |\n| Training & Transport/Bike Storage | 900 | 10 | $0.00 | 1 | 1428 |\n| Drivetrain & Pedalling / Derailleur | 900 | 10 | $0.00 | 1 | 774 |\n| Tools & Maintenance/Cleaners | 765 | 51 | $0.00 | 6 | 1424 |\n| Tools & Maintenance/CO2 | 666 | 37 | $0.00 | 5 | 1447 |\n| Tools & Maintenance/Workshop Tools | 666 | 37 | $0.00 | 5 | 1430 |\n| Accessories1/Mirrors | 540 | 18 | $0.00 | 3 | 1461 |\n| Bikes/Mountain | 510 | 17 | $0.00 | 3 | 1449 |\n| Accessories1/Mudguards | 460 | 46 | $0.00 | 9 | 1434 |\n| Accessories1/Child Seats | 450 | 10 | $0.00 | 2 | 1450 |\n| Training & Transport/Car Racks | 450 | 5 | $0.00 | 1 | 1439 |\n| Electronics & Lights/Radar | 450 | 5 | $0.00 | 1 | 1467 |\n| Nutrition/Electrolytes | 400.9 | 49 | $0.00 | 11 | 1469 |\n| Accessories1/Racks & Panniers | 390 | 13 | $0.00 | 3 | 1441 |\n| Unknown category | n/a | 4,083 | $0.00 | 0 | n/a |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these categories grouped by parent category?",
+    "Would you like a list of the slowest-moving individual products?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:83c35c354d70609b189c1c4cc700e3489ca5ccec9665dc10e80c96e9902166a1",
+      "columns": [
+        "category_id",
+        "category",
+        "units_on_hand",
+        "stock_on_hand_value",
+        "units_sold_90d",
+        "avg_daily_units_sold",
+        "stock_cover_days"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "category_id": null,
+          "category": "Unknown category",
+          "units_on_hand": "4083.0000",
+          "stock_on_hand_value": "0.0000",
+          "units_sold_90d": "0",
+          "avg_daily_units_sold": "0.00",
+          "stock_cover_days": null
+        }
+      ]
+    },
+    {
+      "resultId": "sql:30c587eb9139f8e950940fae79989fa4144b3069b10dd2159ad3d5c7502e4f49",
+      "columns": [
+        "category_id",
+        "category",
+        "units_on_hand",
+        "stock_on_hand_value",
+        "units_sold_90d",
+        "stock_cover_days",
+        "no_velocity"
+      ],
+      "rowCount": 60,
+      "sample": [
+        {
+          "category_id": "1454.0000",
+          "category": "Bikes/BMX",
+          "units_on_hand": "3.0000",
+          "stock_on_hand_value": "0.0000",
+          "units_sold_90d": "0",
+          "stock_cover_days": null,
+          "no_velocity": 0
+        },
+        {
+          "category_id": "760.0000",
+          "category": "Tools, Cleaning & Workshop Consumables / Cleaning Product",
+          "units_on_hand": "1.0000",
+          "stock_on_hand_value": "0.0000",
+          "units_sold_90d": "0",
+          "stock_cover_days": null,
+          "no_velocity": 0
+        },
+        {
+          "category_id": "1445.0000",
+          "category": "Clothing & Protection/Pads",
+          "units_on_hand": "2.0000",
+          "stock_on_hand_value": "0.0000",
+          "units_sold_90d": "0",
+          "stock_cover_days": null,
+          "no_velocity": 0
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:query",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=60",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 7,
+    "inputTokens": 193084,
+    "outputTokens": 7202,
+    "totalTokens": 200286,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1043,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33769,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1357,
+        "cached_tokens": 33769
+      },
+      {
+        "cache_write_tokens": 1828,
+        "cached_tokens": 35126
+      },
+      {
+        "cache_write_tokens": 1472,
+        "cached_tokens": 36954
+      },
+      {
+        "cache_write_tokens": 5493,
+        "cached_tokens": 38426
+      },
+      {
+        "cache_write_tokens": 3826,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 81
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 500
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 465
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 134
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1046,
+        "outputTokens": 218,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1043,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 81
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33772,
+        "outputTokens": 1261,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33769,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35129,
+        "outputTokens": 1196,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1357,
+          "cached_tokens": 33769
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 500
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36957,
+        "outputTokens": 1382,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1828,
+          "cached_tokens": 35126
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 38429,
+        "outputTokens": 1260,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1472,
+          "cached_tokens": 36954
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 465
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 43922,
+        "outputTokens": 615,
+        "inputTokensDetails": {
+          "cache_write_tokens": 5493,
+          "cached_tokens": 38426
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 3829,
+        "outputTokens": 1270,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3826,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 134
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 63617,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

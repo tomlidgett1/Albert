@@ -1,0 +1,165 @@
+{
+  "id": "l19",
+  "tier": "medium",
+  "domain": "purchasing",
+  "ask": "How many open purchase orders do we have, and what is their total quantity?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "As at 7 August 2026, you have 3 open purchase orders with a total ordered quantity of 0.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [
+    {
+      "statement": "Open Purchase Orders: 3.",
+      "assertion": "value",
+      "refs": [
+        {
+          "resultId": "sql:aa4ab24651a5c3e77b83c4ab147b1ae5ff8f4620c1683dbd58fe53323e8ce23d",
+          "rowIndex": 0,
+          "columnKey": "open_purchase_orders"
+        }
+      ]
+    },
+    {
+      "statement": "Total Ordered Quantity: 0.",
+      "assertion": "value",
+      "refs": [
+        {
+          "resultId": "sql:aa4ab24651a5c3e77b83c4ab147b1ae5ff8f4620c1683dbd58fe53323e8ce23d",
+          "rowIndex": 0,
+          "columnKey": "total_ordered_quantity"
+        }
+      ]
+    }
+  ],
+  "followUps": [
+    "Would you like to see the open purchase orders by supplier?",
+    "Would you like to review the individual order lines?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:aa4ab24651a5c3e77b83c4ab147b1ae5ff8f4620c1683dbd58fe53323e8ce23d",
+      "columns": [
+        "open_purchase_orders",
+        "total_ordered_quantity"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "open_purchase_orders": "3",
+          "total_ordered_quantity": "0"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70437,
+    "outputTokens": 920,
+    "totalTokens": 71357,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1039,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33736,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 842,
+        "cached_tokens": 33736
+      },
+      {
+        "cache_write_tokens": 1072,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 112
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 128
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1042,
+        "outputTokens": 108,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1039,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33739,
+        "outputTokens": 374,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33736,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 112
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34581,
+        "outputTokens": 77,
+        "inputTokensDetails": {
+          "cache_write_tokens": 842,
+          "cached_tokens": 33736
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1075,
+        "outputTokens": 361,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1072,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 128
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 12157,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

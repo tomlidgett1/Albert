@@ -1,0 +1,165 @@
+{
+  "id": "l36",
+  "tier": "hard",
+  "domain": "workshop",
+  "ask": "For workorders booked in over the last 90 days, how many are archived versus still open, by status name?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Sorry, there are no results for that. The workorder data is sparse, so this does not establish that there were no workshop jobs in the last 90 days.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to check workorders over a longer period?",
+    "Would you like to see the available workorder statuses?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:fb3badeed50b5e164e1b8ecf71abec83985bb9f2518b177b952f8afb23aeb5b6",
+      "columns": [],
+      "rowCount": 0,
+      "sample": []
+    },
+    {
+      "resultId": "sql:66262056f013c17f9c9e0903d6ffd7490f3a601e4a5dd8b03d420e835b5c0b0a",
+      "columns": [],
+      "rowCount": 0,
+      "sample": []
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=0",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=0",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 106077,
+    "outputTokens": 1420,
+    "totalTokens": 107497,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 28,
+        "cached_tokens": 1093
+      },
+      {
+        "cache_write_tokens": 33748,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 782,
+        "cached_tokens": 33748
+      },
+      {
+        "cache_write_tokens": 950,
+        "cached_tokens": 34530
+      },
+      {
+        "cache_write_tokens": 1183,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 96
+      },
+      {
+        "reasoning_tokens": 145
+      },
+      {
+        "reasoning_tokens": 310
+      },
+      {
+        "reasoning_tokens": 18
+      },
+      {
+        "reasoning_tokens": 77
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1124,
+        "outputTokens": 212,
+        "inputTokensDetails": {
+          "cache_write_tokens": 28,
+          "cached_tokens": 1093
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 96
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33751,
+        "outputTokens": 361,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33748,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 145
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34533,
+        "outputTokens": 523,
+        "inputTokensDetails": {
+          "cache_write_tokens": 782,
+          "cached_tokens": 33748
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 310
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35483,
+        "outputTokens": 161,
+        "inputTokensDetails": {
+          "cache_write_tokens": 950,
+          "cached_tokens": 34530
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 18
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1186,
+        "outputTokens": 163,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1183,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 77
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 21037,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

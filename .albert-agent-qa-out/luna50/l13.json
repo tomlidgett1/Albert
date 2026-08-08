@@ -1,0 +1,158 @@
+{
+  "id": "l13",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "Compare month-to-date sales with the same period last month. Are we up or down?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Month-to-date sales are down 25.57%: $6,626.28 from 1–8 August 2026 versus $8,902.80 for the same period in July 2026, a decrease of $2,276.52.\n\n| This Month Start | This Period Through | Last Month Start | Last Period Through | Mtd Sales Inc GST |\n| --- | --- | --- | --- | --- |\n| August 2026 | 8 August 2026 | July 2026 | 8 July 2026 | $6,626.28 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like the comparison broken down by day?",
+    "Would you like to see which products contributed most to the change?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:d4dc31e0e478b623924107e5aa8f8a988e311c997664ccef228723e6c67866fb",
+      "columns": [
+        "this_month_start",
+        "this_period_through",
+        "last_month_start",
+        "last_period_through",
+        "mtd_sales_inc_gst",
+        "prior_sales_inc_gst",
+        "change_inc_gst",
+        "pct_change",
+        "mtd_transactions",
+        "prior_transactions"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "this_month_start": "2026-08-01T00:00:00.000Z",
+          "this_period_through": "2026-08-08T00:00:00.000Z",
+          "last_month_start": "2026-07-01T00:00:00.000Z",
+          "last_period_through": "2026-07-08T00:00:00.000Z",
+          "mtd_sales_inc_gst": "6626.2800",
+          "prior_sales_inc_gst": "8902.8000",
+          "change_inc_gst": "-2276.5200",
+          "pct_change": "-25.5708316484701442",
+          "mtd_transactions": "54",
+          "prior_transactions": "73"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 72277,
+    "outputTokens": 2351,
+    "totalTokens": 74628,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1041,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33741,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 2320,
+        "cached_tokens": 33741
+      },
+      {
+        "cache_write_tokens": 1422,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 735
+      },
+      {
+        "reasoning_tokens": 36
+      },
+      {
+        "reasoning_tokens": 86
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1044,
+        "outputTokens": 113,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1041,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33744,
+        "outputTokens": 1598,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33741,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 735
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36064,
+        "outputTokens": 119,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2320,
+          "cached_tokens": 33741
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 36
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1425,
+        "outputTokens": 521,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1422,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 86
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 23305,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

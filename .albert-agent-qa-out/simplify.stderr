@@ -1,0 +1,82 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZDETA7JJ5WMCVV40F7V6FR1",
+  "cases": [
+    "s1",
+    "s2"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"s1","tier":"smoke","attempt":1,"ask":"give me inventory data"}
+Albert run_sql tool failure {
+  turnId: '01KZDETAD20BS8GM1PD6DWEQ0N',
+  purpose: 'Provide a current inventory snapshot and category breakdown using the latest available inventory date.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZDETAD20BS8GM1PD6DWEQ0N',
+  purpose: 'Show inventory by category on the latest available snapshot date.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZDETAD20BS8GM1PD6DWEQ0N',
+  purpose: 'Find the latest available inventory snapshot date.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+{"event":"case_done","id":"s1","state":"Unavailable","ms":28160,"queries":0,"tables":0,"answerPreview":"I can't answer for “Inventory” on its own. I could not narrow the governed data to it, and reporting the whole business instead would answer a different question. Tell me which pro"}
+{"event":"case_start","id":"s2","tier":"smoke","attempt":1,"ask":"hey Albert, what data do you have on our business?"}
+Albert run_sql tool failure {
+  turnId: '01KZDEV80XXYB4466X5W6PK350',
+  purpose: 'Summarise which connected business datasets contain records and their date coverage.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZDEV80XXYB4466X5W6PK350',
+  purpose: 'Check sales event coverage.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZDEV80XXYB4466X5W6PK350',
+  purpose: 'Check the available date coverage and record volume for sales events.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZDEV80XXYB4466X5W6PK350',
+  purpose: 'Find the latest available sales event date.',
+  claims: 0,
+  error: 'The governed query service could not complete this request.'
+}
+Albert run_sql tool failure {
+  error: 'The governed query service could not complete this request.'
+}
+{"event":"case_done","id":"s2","state":"Unavailable","ms":29113,"queries":0,"tables":0,"answerPreview":"I’m configured to analyse these parts of your business:\n\n- **Sales:** transactions, net/gross sales, GST, discounts, refunds, units, costs and gross margin\n- **Products & stock:** "}

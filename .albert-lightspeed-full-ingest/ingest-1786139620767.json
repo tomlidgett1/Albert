@@ -1,0 +1,345 @@
+{
+  "mode": "ingest",
+  "at": "2026-08-07T21:53:40.766Z",
+  "groups": [
+    {
+      "resource": "Account",
+      "path": "Account/168990.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_account": 0,
+        "ls_account_purchasing_currencies": 0
+      },
+      "stagedByTable": {
+        "ls_account": 0,
+        "ls_account_purchasing_currencies": 0
+      },
+      "quarantined": 0,
+      "durationMs": 451
+    },
+    {
+      "resource": "CustomField",
+      "path": "CustomField.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_custom_fields": 0
+      },
+      "stagedByTable": {
+        "ls_custom_fields": 0
+      },
+      "quarantined": 0,
+      "durationMs": 397
+    },
+    {
+      "resource": "Locale",
+      "path": "Locale.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_locales": 0,
+        "ls_currency_denominations": 0
+      },
+      "stagedByTable": {
+        "ls_locales": 0,
+        "ls_currency_denominations": 0
+      },
+      "quarantined": 0,
+      "durationMs": 391
+    },
+    {
+      "resource": "OrderShipmentItem",
+      "path": "OrderShipmentItem.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_order_shipment_items": 0
+      },
+      "stagedByTable": {
+        "ls_order_shipment_items": 0
+      },
+      "quarantined": 0,
+      "durationMs": 377
+    },
+    {
+      "resource": "DiscountsByDay",
+      "path": "DiscountsByDay.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_discounts_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_discounts_by_day": 0
+      },
+      "quarantined": 0,
+      "durationMs": 431
+    },
+    {
+      "resource": "PaymentsByDay",
+      "path": "PaymentsByDay.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_payments_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_payments_by_day": 0
+      },
+      "quarantined": 0,
+      "durationMs": 405
+    },
+    {
+      "resource": "TaxesByDay",
+      "path": "TaxesByDay.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_taxes_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_taxes_by_day": 0
+      },
+      "quarantined": 0,
+      "durationMs": 401
+    },
+    {
+      "resource": "TaxClassSalesByDay",
+      "path": "TaxClassSalesByDay.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_tax_class_sales_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_tax_class_sales_by_day": 0
+      },
+      "quarantined": 0,
+      "durationMs": 385
+    },
+    {
+      "resource": "OrdersByTaxClass",
+      "path": "OrdersByTaxClass.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_orders_by_tax_class": 0
+      },
+      "stagedByTable": {
+        "ls_report_orders_by_tax_class": 0
+      },
+      "quarantined": 0,
+      "durationMs": 406
+    },
+    {
+      "resource": "Session",
+      "path": "Session.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_session": 0
+      },
+      "stagedByTable": {
+        "ls_session": 0
+      },
+      "quarantined": 0,
+      "durationMs": 393
+    },
+    {
+      "resource": "ls_custom_field_choices",
+      "path": "Customer/CustomField/{customFieldID}/CustomFieldChoice.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_custom_field_choices": 0
+      },
+      "stagedByTable": {
+        "ls_custom_field_choices": 0
+      },
+      "quarantined": 0,
+      "durationMs": 398
+    },
+    {
+      "resource": "ls_workorder_images",
+      "path": "Workorder/22/WorkorderImage.json",
+      "status": "unavailable",
+      "httpStatus": 404,
+      "pages": 1,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_workorder_images": 0
+      },
+      "stagedByTable": {
+        "ls_workorder_images": 0
+      },
+      "quarantined": 0,
+      "durationMs": 813
+    },
+    {
+      "resource": "ls_register_calculated",
+      "path": "Register/1/calculated.json",
+      "status": "empty",
+      "httpStatus": 200,
+      "pages": 1,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_register_calculated": 0
+      },
+      "stagedByTable": {
+        "ls_register_calculated": 0
+      },
+      "quarantined": 0,
+      "durationMs": 1018
+    }
+  ],
+  "nonemptyTables": 59,
+  "emptyTables": 31,
+  "empty": [
+    "ls_account",
+    "ls_account_purchasing_currencies",
+    "ls_cc_charges",
+    "ls_currency_rates",
+    "ls_custom_fields",
+    "ls_report_discounts_by_day",
+    "ls_employee_roles",
+    "ls_employee_hours",
+    "ls_item_prices",
+    "ls_item_fees",
+    "ls_locales",
+    "ls_currency_denominations",
+    "ls_report_orders_by_tax_class",
+    "ls_order_shipment_items",
+    "ls_report_payments_by_day",
+    "ls_processing_fees",
+    "ls_sale_payment_signatures",
+    "ls_seasons",
+    "ls_session",
+    "ls_order_shipments",
+    "ls_cc_gateways",
+    "ls_report_tax_class_sales_by_day",
+    "ls_report_taxes_by_day",
+    "ls_transfers",
+    "ls_transfer_items",
+    "ls_transfer_from",
+    "ls_transfer_to",
+    "ls_vendor_returns",
+    "ls_custom_field_choices",
+    "ls_workorder_images",
+    "ls_register_calculated"
+  ],
+  "counts": {
+    "ls_account": 0,
+    "ls_account_purchasing_currencies": 0,
+    "ls_catalog_vendor_items": 122500,
+    "ls_categories": 158,
+    "ls_cc_charges": 0,
+    "ls_credit_accounts": 2563,
+    "ls_contacts": 9457,
+    "ls_currency_rates": 0,
+    "ls_customers": 9455,
+    "ls_contact_emails": 12783,
+    "ls_contact_phones": 18701,
+    "ls_contact_websites": 8,
+    "ls_customer_custom_field_values": 4678,
+    "ls_customer_notes": 6729,
+    "ls_customer_types": 2,
+    "ls_custom_fields": 0,
+    "ls_discounts": 52,
+    "ls_report_discounts_by_day": 0,
+    "ls_employees": 15,
+    "ls_employee_roles": 0,
+    "ls_employee_role_rights": 573,
+    "ls_employee_rights": 225,
+    "ls_employee_hours": 0,
+    "ls_images": 100,
+    "ls_industries": 96,
+    "ls_inventory_count_calcs": 9127,
+    "ls_inventory_count_items": 12362,
+    "ls_inventory_count_reconciles": 6628,
+    "ls_inventory_logs": 230398,
+    "ls_items": 17138,
+    "ls_item_shops": 64010,
+    "ls_item_prices": 0,
+    "ls_item_components": 86,
+    "ls_item_vendor_nums": 12307,
+    "ls_item_attribute_sets": 10,
+    "ls_item_fees": 0,
+    "ls_item_matrices": 8,
+    "ls_locales": 0,
+    "ls_currency_denominations": 0,
+    "ls_manufacturers": 830,
+    "ls_options": 140,
+    "ls_purchase_orders": 4234,
+    "ls_purchase_order_lines": 4241,
+    "ls_report_orders_by_tax_class": 0,
+    "ls_order_shipment_items": 0,
+    "ls_report_payments_by_day": 0,
+    "ls_payment_types": 18,
+    "ls_price_levels": 3,
+    "ls_processing_fees": 0,
+    "ls_quotes": 374,
+    "ls_registers": 2,
+    "ls_register_counts": 4250,
+    "ls_register_count_amounts": 37910,
+    "ls_register_withdraws": 4874,
+    "ls_sales": 61575,
+    "ls_sale_lines": 116420,
+    "ls_sale_payments": 101585,
+    "ls_sale_accounts": 3,
+    "ls_sale_payment_signatures": 0,
+    "ls_sale_line_inventory_allocations": 19497,
+    "ls_sale_voids": 21,
+    "ls_seasons": 0,
+    "ls_serialized": 32084,
+    "ls_session": 0,
+    "ls_order_shipments": 0,
+    "ls_ship_tos": 7,
+    "ls_shops": 2,
+    "ls_cc_gateways": 0,
+    "ls_receipt_setups": 2,
+    "ls_special_orders": 77,
+    "ls_tags": 192,
+    "ls_tag_groups": 6,
+    "ls_tax_categories": 4,
+    "ls_tax_category_classes": 4,
+    "ls_tax_classes": 228,
+    "ls_report_tax_class_sales_by_day": 0,
+    "ls_report_taxes_by_day": 0,
+    "ls_transfers": 0,
+    "ls_transfer_items": 0,
+    "ls_transfer_from": 0,
+    "ls_transfer_to": 0,
+    "ls_vendors": 575,
+    "ls_vendor_returns": 0,
+    "ls_workorders": 3,
+    "ls_workorder_lines": 24599,
+    "ls_workorder_items": 24599,
+    "ls_workorder_statuses": 13,
+    "ls_custom_field_choices": 0,
+    "ls_workorder_images": 0,
+    "ls_register_calculated": 0
+  }
+}

@@ -1,0 +1,2155 @@
+[
+  {
+    "id": "l05",
+    "tier": "easy",
+    "domain": "inventory",
+    "ask": "Give me an aged inventory report",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the aged inventory lookup because of a query error. Please try again, or ask for the report by age band once more.",
+    "claims": [],
+    "followUps": [
+      "Would you like me to retry the report by age band?",
+      "Would you like the report broken down by product category?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 6,
+      "inputTokens": 143425,
+      "outputTokens": 3526,
+      "totalTokens": 146951,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 1103,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 33767,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1187,
+          "cached_tokens": 33767
+        },
+        {
+          "cache_write_tokens": 732,
+          "cached_tokens": 34954
+        },
+        {
+          "cache_write_tokens": 1282,
+          "cached_tokens": 35686
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 516
+        },
+        {
+          "reasoning_tokens": 58
+        },
+        {
+          "reasoning_tokens": 591
+        },
+        {
+          "reasoning_tokens": 365
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1106,
+          "outputTokens": 148,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1103,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33770,
+          "outputTokens": 1063,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33767,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 516
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34957,
+          "outputTokens": 642,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1187,
+            "cached_tokens": 33767
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 58
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35689,
+          "outputTokens": 1192,
+          "inputTokensDetails": {
+            "cache_write_tokens": 732,
+            "cached_tokens": 34954
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 591
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36971,
+          "outputTokens": 403,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1282,
+            "cached_tokens": 35686
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 365
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 932,
+          "outputTokens": 78,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 32744,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l10",
+    "tier": "easy",
+    "domain": "inventory",
+    "ask": "Which 10 items have the highest quantity on hand right now?",
+    "ok": true,
+    "attempt": 2,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand because the stock data service was unavailable. Please retry the request.",
+    "claims": [],
+    "followUps": [
+      "Would you like the top 10 items by category?",
+      "Would you like a stock-on-hand chart instead?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 104503,
+      "outputTokens": 1310,
+      "totalTokens": 105813,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1110
+        },
+        {
+          "cache_write_tokens": 33731,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 383,
+          "cached_tokens": 33731
+        },
+        {
+          "cache_write_tokens": 565,
+          "cached_tokens": 34114
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 97
+        },
+        {
+          "reasoning_tokens": 286
+        },
+        {
+          "reasoning_tokens": 214
+        },
+        {
+          "reasoning_tokens": 105
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1113,
+          "outputTokens": 108,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 1110
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33734,
+          "outputTokens": 293,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33731,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 97
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34117,
+          "outputTokens": 475,
+          "inputTokensDetails": {
+            "cache_write_tokens": 383,
+            "cached_tokens": 33731
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 286
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34682,
+          "outputTokens": 250,
+          "inputTokensDetails": {
+            "cache_write_tokens": 565,
+            "cached_tokens": 34114
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 214
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 857,
+          "outputTokens": 184,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 105
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 18117,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l23",
+    "tier": "medium",
+    "domain": "inventory",
+    "ask": "Which items have zero sellable stock but positive quantity on hand?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete that lookup because the stock data query was blocked. Please try again, or ask me to check a specific item or category.",
+    "claims": [],
+    "followUps": [
+      "Would you like me to retry the full stock check?",
+      "Would you like me to check a specific item or category?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "claim_attested:inventory.stock_on_hand_units",
+        "outcome": "failed",
+        "detail": "Claim Attested:Inventory Stock On Hand Units: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "claim_attested:inventory.stock_on_hand_units",
+        "outcome": "failed",
+        "detail": "Claim Attested:Inventory Stock On Hand Units: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:claim_attested:inventory.stock_on_hand_units:failed",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:claim_attested:inventory.stock_on_hand_units:failed",
+      "validation:no_fanout:failed",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 8,
+      "inputTokens": 218125,
+      "outputTokens": 3472,
+      "totalTokens": 221597,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 17,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33714,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 510,
+          "cached_tokens": 33714
+        },
+        {
+          "cache_write_tokens": 1716,
+          "cached_tokens": 34224
+        },
+        {
+          "cache_write_tokens": 396,
+          "cached_tokens": 35940
+        },
+        {
+          "cache_write_tokens": 427,
+          "cached_tokens": 36336
+        },
+        {
+          "cache_write_tokens": 2314,
+          "cached_tokens": 36763
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 186
+        },
+        {
+          "reasoning_tokens": 516
+        },
+        {
+          "reasoning_tokens": 86
+        },
+        {
+          "reasoning_tokens": 100
+        },
+        {
+          "reasoning_tokens": 1097
+        },
+        {
+          "reasoning_tokens": 74
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1113,
+          "outputTokens": 94,
+          "inputTokensDetails": {
+            "cache_write_tokens": 17,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33717,
+          "outputTokens": 420,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33714,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 186
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34227,
+          "outputTokens": 768,
+          "inputTokensDetails": {
+            "cache_write_tokens": 510,
+            "cached_tokens": 33714
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 516
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35943,
+          "outputTokens": 306,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1716,
+            "cached_tokens": 34224
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 86
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36339,
+          "outputTokens": 337,
+          "inputTokensDetails": {
+            "cache_write_tokens": 396,
+            "cached_tokens": 35940
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 100
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36766,
+          "outputTokens": 1354,
+          "inputTokensDetails": {
+            "cache_write_tokens": 427,
+            "cached_tokens": 36336
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1097
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 39080,
+          "outputTokens": 115,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2314,
+            "cached_tokens": 36763
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 74
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 940,
+          "outputTokens": 78,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 46621,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "validation",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "validation",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l25",
+    "tier": "medium",
+    "domain": "sales",
+    "ask": "Top 15 products by units sold in the last 60 days.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "In the last 60 days, Service - Change Tyre, Cass, Rotor led sales with 85 units sold, followed by Service - General Service with 71 and Gear Inner Wire - Stainless Steel, 1.2x2000mm with 39.\n\n| Item Id | Product | Units Sold | Sales Inc GST |\n| --- | --- | ---: | ---: |\n| 1004 | Service - Change Tyre, Cass, Rotor | 85 | $1,680.00 |\n| 9 | Service - General Service | 71 | $9,139.80 |\n| 9687 | Gear Inner Wire - Stainless Steel, 1.2x2000mm | 39 | $387.11 |\n| 1037 | BRAKE CABLE INNER - Road/MTB | 33 | $327.17 |\n| 1009 | Service - Brake Pad Replacement / Clean / Fix | 26 | $530.00 |\n| 1001 | Service - Fit Brake Cable | 25 | $411.25 |\n| 14821 | Brake Pad Shimano Resin Disc B03s/B05s Black | 24 | $719.76 |\n| 1002 | Service - Fit Gear Cable | 24 | $550.00 |\n| 999 | Service - Brake Bleed | 20 | $1,005.00 |\n| 10973 | Service - Full Service | 20 | $4,028.82 |\n| 984 | TIOGA TUBE 700 X 35/42 SV 48MM | 20 | $284.81 |\n| 16499 | Pirelli Sportube 700 x 32-40mm Presta 48mm | 16 | $240.00 |\n| 8624 | TIOGA TUBE 26 X 1.9/2.125 SV 48MM | 15 | $214.46 |\n| 16724 | Pirelli Sportube 700 x 23-30 Presta 48mm | 14 | $210.00 |\n| 1028 | Service - Fit Chain/Cass | 14 | $363.75 |\n\nWould you like these top sellers grouped by product category? Would you like a chart of units sold for these products?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like these top sellers grouped by product category?",
+      "Would you like a chart of units sold for these products?"
+    ],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:e3062cbaff3041460e3f5f624341274748892b99bd5b5ae6e5c71ee15e934cae",
+        "columns": [
+          "item_id",
+          "product",
+          "units_sold",
+          "sales_inc_gst"
+        ],
+        "rowCount": 15,
+        "sample": [
+          {
+            "item_id": "1004.0000",
+            "product": "Service - Change Tyre, Cass, Rotor",
+            "units_sold": "85.0000",
+            "sales_inc_gst": "1680.0000"
+          },
+          {
+            "item_id": "9.0000",
+            "product": "Service - General Service",
+            "units_sold": "71.0000",
+            "sales_inc_gst": "9139.8000"
+          },
+          {
+            "item_id": "9687.0000",
+            "product": "Gear Inner Wire - Stainless Steel, 1.2x2000mm",
+            "units_sold": "39.0000",
+            "sales_inc_gst": "387.1100"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=15",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 72328,
+      "outputTokens": 1617,
+      "totalTokens": 73945,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 18,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33732,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1605,
+          "cached_tokens": 33732
+        },
+        {
+          "cache_write_tokens": 2136,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 132
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 153
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1114,
+          "outputTokens": 108,
+          "inputTokensDetails": {
+            "cache_write_tokens": 18,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33735,
+          "outputTokens": 470,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33732,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 132
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35340,
+          "outputTokens": 85,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1605,
+            "cached_tokens": 33732
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 2139,
+          "outputTokens": 954,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2136,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 153
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 21953,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l26",
+    "tier": "hard",
+    "domain": "inventory",
+    "ask": "Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the aged inventory lookup because the report query failed. Please retry the report.",
+    "claims": [],
+    "followUps": [
+      "Would you like the report split by product category?",
+      "Would you like a list of slow-moving SKUs instead?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 7,
+      "inputTokens": 182423,
+      "outputTokens": 5023,
+      "totalTokens": 187446,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 26,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33793,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1195,
+          "cached_tokens": 33793
+        },
+        {
+          "cache_write_tokens": 769,
+          "cached_tokens": 34988
+        },
+        {
+          "cache_write_tokens": 1190,
+          "cached_tokens": 35757
+        },
+        {
+          "cache_write_tokens": 1897,
+          "cached_tokens": 36947
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 51
+        },
+        {
+          "reasoning_tokens": 499
+        },
+        {
+          "reasoning_tokens": 70
+        },
+        {
+          "reasoning_tokens": 474
+        },
+        {
+          "reasoning_tokens": 1207
+        },
+        {
+          "reasoning_tokens": 51
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1122,
+          "outputTokens": 210,
+          "inputTokensDetails": {
+            "cache_write_tokens": 26,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 51
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33796,
+          "outputTokens": 1071,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33793,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 499
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34991,
+          "outputTokens": 679,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1195,
+            "cached_tokens": 33793
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 70
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35760,
+          "outputTokens": 1100,
+          "inputTokensDetails": {
+            "cache_write_tokens": 769,
+            "cached_tokens": 34988
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 474
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36950,
+          "outputTokens": 1807,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1190,
+            "cached_tokens": 35757
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1207
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 38847,
+          "outputTokens": 89,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1897,
+            "cached_tokens": 36947
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 51
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 957,
+          "outputTokens": 67,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 56979,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l28",
+    "tier": "hard",
+    "domain": "sales+margin",
+    "ask": "Over the last 90 days, which categories have high net sales but weak gross margin percent?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the category sales and gross-margin lookup for the last 90 days. Please try again, and I can compare high-sales categories with weak gross margins.",
+    "claims": [],
+    "followUps": [
+      "Would you like the comparison by category?",
+      "Would you like a chart of sales against gross margin?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "validation:no_fanout:failed",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 7,
+      "inputTokens": 191178,
+      "outputTokens": 7195,
+      "totalTokens": 198373,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 23,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33761,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1960,
+          "cached_tokens": 33761
+        },
+        {
+          "cache_write_tokens": 1712,
+          "cached_tokens": 35721
+        },
+        {
+          "cache_write_tokens": 2043,
+          "cached_tokens": 37433
+        },
+        {
+          "cache_write_tokens": 3174,
+          "cached_tokens": 39476
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 104
+        },
+        {
+          "reasoning_tokens": 1006
+        },
+        {
+          "reasoning_tokens": 718
+        },
+        {
+          "reasoning_tokens": 34
+        },
+        {
+          "reasoning_tokens": 1000
+        },
+        {
+          "reasoning_tokens": 358
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1119,
+          "outputTokens": 224,
+          "inputTokensDetails": {
+            "cache_write_tokens": 23,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 104
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33764,
+          "outputTokens": 1870,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33761,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1006
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35724,
+          "outputTokens": 1617,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1960,
+            "cached_tokens": 33761
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 718
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 37436,
+          "outputTokens": 934,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1712,
+            "cached_tokens": 35721
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 34
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 39479,
+          "outputTokens": 2068,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2043,
+            "cached_tokens": 37433
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1000
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 42653,
+          "outputTokens": 402,
+          "inputTokensDetails": {
+            "cache_write_tokens": 3174,
+            "cached_tokens": 39476
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 358
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1003,
+          "outputTokens": 80,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 55671,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "progress",
+      "progress",
+      "validation",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l30",
+    "tier": "hard",
+    "domain": "period+category",
+    "ask": "Net sales month to date versus the same period last month, broken down by product category.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn't complete that lookup from your connected inventory data. Please ask again and I'll retry.",
+    "claims": [],
+    "followUps": [
+      "Try the aged inventory report again",
+      "Show current stock on hand value instead"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "claim_attested:commerce.net_sales_ex_gst",
+        "outcome": "failed",
+        "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "claim_attested:commerce.net_sales_ex_gst",
+        "outcome": "failed",
+        "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "claim_attested:commerce.net_sales_ex_gst",
+        "outcome": "failed",
+        "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "failed",
+        "detail": "No Fanout: blocked."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "validation:no_fanout:failed",
+      "progress:query",
+      "progress:query",
+      "validation:no_fanout:failed"
+    ],
+    "usage": {
+      "requests": 13,
+      "inputTokens": 538193,
+      "outputTokens": 16423,
+      "totalTokens": 554616,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 22,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33747,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 2534,
+          "cached_tokens": 33747
+        },
+        {
+          "cache_write_tokens": 1785,
+          "cached_tokens": 36281
+        },
+        {
+          "cache_write_tokens": 2280,
+          "cached_tokens": 38066
+        },
+        {
+          "cache_write_tokens": 1385,
+          "cached_tokens": 40346
+        },
+        {
+          "cache_write_tokens": 2348,
+          "cached_tokens": 41731
+        },
+        {
+          "cache_write_tokens": 1700,
+          "cached_tokens": 44079
+        },
+        {
+          "cache_write_tokens": 2627,
+          "cached_tokens": 45779
+        },
+        {
+          "cache_write_tokens": 1227,
+          "cached_tokens": 48406
+        },
+        {
+          "cache_write_tokens": 1430,
+          "cached_tokens": 49633
+        },
+        {
+          "cache_write_tokens": 1818,
+          "cached_tokens": 51063
+        },
+        {
+          "cache_write_tokens": 2146,
+          "cached_tokens": 52881
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 1457
+        },
+        {
+          "reasoning_tokens": 672
+        },
+        {
+          "reasoning_tokens": 216
+        },
+        {
+          "reasoning_tokens": 291
+        },
+        {
+          "reasoning_tokens": 268
+        },
+        {
+          "reasoning_tokens": 634
+        },
+        {
+          "reasoning_tokens": 588
+        },
+        {
+          "reasoning_tokens": 460
+        },
+        {
+          "reasoning_tokens": 636
+        },
+        {
+          "reasoning_tokens": 23
+        },
+        {
+          "reasoning_tokens": 342
+        },
+        {
+          "reasoning_tokens": 191
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1118,
+          "outputTokens": 118,
+          "inputTokensDetails": {
+            "cache_write_tokens": 22,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33750,
+          "outputTokens": 2444,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33747,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1457
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36284,
+          "outputTokens": 1700,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2534,
+            "cached_tokens": 33747
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 672
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 38069,
+          "outputTokens": 1236,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1785,
+            "cached_tokens": 36281
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 216
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 40349,
+          "outputTokens": 1295,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2280,
+            "cached_tokens": 38066
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 291
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 41734,
+          "outputTokens": 1306,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1385,
+            "cached_tokens": 40346
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 268
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 44082,
+          "outputTokens": 1610,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2348,
+            "cached_tokens": 41731
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 634
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 45782,
+          "outputTokens": 1589,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1700,
+            "cached_tokens": 44079
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 588
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 48409,
+          "outputTokens": 1094,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2627,
+            "cached_tokens": 45779
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 460
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 49636,
+          "outputTokens": 1335,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1227,
+            "cached_tokens": 48406
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 636
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 51066,
+          "outputTokens": 723,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1430,
+            "cached_tokens": 49633
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 23
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 52884,
+          "outputTokens": 1045,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1818,
+            "cached_tokens": 51063
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 342
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 55030,
+          "outputTokens": 928,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2146,
+            "cached_tokens": 52881
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 191
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 126465,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "validation",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "validation",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "validation",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "progress",
+      "progress",
+      "validation",
+      "progress",
+      "progress",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "l35",
+    "tier": "hard",
+    "domain": "customers",
+    "ask": "Over the last 365 days, what are active customers and average spend per active customer?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Clarification",
+    "answerText": null,
+    "claims": [],
+    "followUps": [],
+    "clarification": {
+      "options": [
+        {
+          "id": "sales.net_ex_gst",
+          "label": "Net sales (ex GST)"
+        },
+        {
+          "id": "sales.gross_inc_gst",
+          "label": "Gross takings (inc GST)"
+        }
+      ]
+    },
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "clarification"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 102911,
+      "outputTokens": 617,
+      "totalTokens": 103528,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 22,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33782,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 149,
+          "cached_tokens": 33782
+        },
+        {
+          "cache_write_tokens": 140,
+          "cached_tokens": 33931
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 190
+        },
+        {
+          "reasoning_tokens": 42
+        },
+        {
+          "reasoning_tokens": 65
+        },
+        {
+          "reasoning_tokens": 22
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1118,
+          "outputTokens": 331,
+          "inputTokensDetails": {
+            "cache_write_tokens": 22,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 190
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33785,
+          "outputTokens": 107,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33782,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 42
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33934,
+          "outputTokens": 122,
+          "inputTokensDetails": {
+            "cache_write_tokens": 149,
+            "cached_tokens": 33782
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 65
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34074,
+          "outputTokens": 57,
+          "inputTokensDetails": {
+            "cache_write_tokens": 140,
+            "cached_tokens": 33931
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 22
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 10635,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "clarification"
+    ]
+  },
+  {
+    "id": "l36",
+    "tier": "hard",
+    "domain": "workshop",
+    "ask": "For workorders booked in over the last 90 days, how many are archived versus still open, by status name?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "Sorry, there are no results for that. The workorder data is sparse, so this does not establish that there were no workshop jobs in the last 90 days.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like to check workorders over a longer period?",
+      "Would you like to see the available workorder statuses?"
+    ],
+    "clarification": null,
+    "queryCount": 2,
+    "tableCount": 2,
+    "tables": [
+      {
+        "resultId": "sql:fb3badeed50b5e164e1b8ecf71abec83985bb9f2518b177b952f8afb23aeb5b6",
+        "columns": [],
+        "rowCount": 0,
+        "sample": []
+      },
+      {
+        "resultId": "sql:66262056f013c17f9c9e0903d6ffd7490f3a601e4a5dd8b03d420e835b5c0b0a",
+        "columns": [],
+        "rowCount": 0,
+        "sample": []
+      }
+    ],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=0",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=0",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 106077,
+      "outputTokens": 1420,
+      "totalTokens": 107497,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 28,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33748,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 782,
+          "cached_tokens": 33748
+        },
+        {
+          "cache_write_tokens": 950,
+          "cached_tokens": 34530
+        },
+        {
+          "cache_write_tokens": 1183,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 96
+        },
+        {
+          "reasoning_tokens": 145
+        },
+        {
+          "reasoning_tokens": 310
+        },
+        {
+          "reasoning_tokens": 18
+        },
+        {
+          "reasoning_tokens": 77
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1124,
+          "outputTokens": 212,
+          "inputTokensDetails": {
+            "cache_write_tokens": 28,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 96
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33751,
+          "outputTokens": 361,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33748,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 145
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34533,
+          "outputTokens": 523,
+          "inputTokensDetails": {
+            "cache_write_tokens": 782,
+            "cached_tokens": 33748
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 310
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35483,
+          "outputTokens": 161,
+          "inputTokensDetails": {
+            "cache_write_tokens": 950,
+            "cached_tokens": 34530
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 18
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1186,
+          "outputTokens": 163,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1183,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 77
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 21037,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l41",
+    "tier": "schema",
+    "domain": "inventory",
+    "ask": "Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the aged inventory lookup because the query failed. Please try again, and I can produce the table by age band, stock on hand and stock value.",
+    "claims": [],
+    "followUps": [
+      "Would you like the aged inventory split by category?",
+      "Would you like a list of the slowest-moving items?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 106492,
+      "outputTokens": 2350,
+      "totalTokens": 108842,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 26,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33797,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1090,
+          "cached_tokens": 33797
+        },
+        {
+          "cache_write_tokens": 800,
+          "cached_tokens": 34887
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 81
+        },
+        {
+          "reasoning_tokens": 363
+        },
+        {
+          "reasoning_tokens": 65
+        },
+        {
+          "reasoning_tokens": 300
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1122,
+          "outputTokens": 244,
+          "inputTokensDetails": {
+            "cache_write_tokens": 26,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 81
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33800,
+          "outputTokens": 980,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33797,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 363
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34890,
+          "outputTokens": 704,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1090,
+            "cached_tokens": 33797
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 65
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35690,
+          "outputTokens": 340,
+          "inputTokensDetails": {
+            "cache_write_tokens": 800,
+            "cached_tokens": 34887
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 300
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 990,
+          "outputTokens": 82,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 23409,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l50",
+    "tier": "schema",
+    "domain": "inventory",
+    "ask": "Aged inventory again: bands 0-30, 31-60, 61-90, 91-180, 180+ days since last inventory log create_time.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I couldn’t complete the aged inventory lookup because the inventory query was blocked. Please retry, or ask for the ageing bands again by category or SKU.",
+    "claims": [],
+    "followUps": [
+      "Would you like the aged inventory split by category?",
+      "Would you like to check a specific SKU’s last inventory activity?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 9,
+      "inputTokens": 261646,
+      "outputTokens": 5146,
+      "totalTokens": 266792,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 41,
+          "cached_tokens": 1093
+        },
+        {
+          "cache_write_tokens": 33785,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1513,
+          "cached_tokens": 33785
+        },
+        {
+          "cache_write_tokens": 1203,
+          "cached_tokens": 35298
+        },
+        {
+          "cache_write_tokens": 1293,
+          "cached_tokens": 36501
+        },
+        {
+          "cache_write_tokens": 579,
+          "cached_tokens": 37794
+        },
+        {
+          "cache_write_tokens": 340,
+          "cached_tokens": 38373
+        },
+        {
+          "cache_write_tokens": 415,
+          "cached_tokens": 38713
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 516
+        },
+        {
+          "reasoning_tokens": 315
+        },
+        {
+          "reasoning_tokens": 507
+        },
+        {
+          "reasoning_tokens": 324
+        },
+        {
+          "reasoning_tokens": 71
+        },
+        {
+          "reasoning_tokens": 177
+        },
+        {
+          "reasoning_tokens": 23
+        },
+        {
+          "reasoning_tokens": 38
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1137,
+          "outputTokens": 135,
+          "inputTokensDetails": {
+            "cache_write_tokens": 41,
+            "cached_tokens": 1093
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33788,
+          "outputTokens": 1428,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33785,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 516
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35301,
+          "outputTokens": 1118,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1513,
+            "cached_tokens": 33785
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 315
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 36504,
+          "outputTokens": 1208,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1203,
+            "cached_tokens": 35298
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 507
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 37797,
+          "outputTokens": 494,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1293,
+            "cached_tokens": 36501
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 324
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 38376,
+          "outputTokens": 255,
+          "inputTokensDetails": {
+            "cache_write_tokens": 579,
+            "cached_tokens": 37794
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 71
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 38716,
+          "outputTokens": 330,
+          "inputTokensDetails": {
+            "cache_write_tokens": 340,
+            "cached_tokens": 38373
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 177
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 39131,
+          "outputTokens": 58,
+          "inputTokensDetails": {
+            "cache_write_tokens": 415,
+            "cached_tokens": 38713
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 23
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 896,
+          "outputTokens": 120,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 38
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 46636,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  }
+]

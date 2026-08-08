@@ -1,0 +1,606 @@
+{
+  "summary": {
+    "total": 50,
+    "ok": 38,
+    "exploratory": 35,
+    "qualified": 3,
+    "unavailable": 8,
+    "clarification": 1,
+    "error": 3,
+    "withTables": 35,
+    "failures": [
+      {
+        "id": "l05",
+        "state": "ERROR",
+        "tables": 0,
+        "preview": "Error: The model did not return a structured answer for this turn."
+      },
+      {
+        "id": "l10",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand right now. Please try again, and I’ll return the ranked li"
+      },
+      {
+        "id": "l22",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete that lookup because the available sales data does not include a layaway indicator, so I can’t calculate the shares for i"
+      },
+      {
+        "id": "l23",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I could not complete the stock lookup because the query was blocked before it ran. Please try again."
+      },
+      {
+        "id": "l25",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the lookup for the top 15 products by units sold in the last 60 days. Please retry the request."
+      },
+      {
+        "id": "l26",
+        "state": "ERROR",
+        "tables": 0,
+        "preview": "Error: The model did not return a structured answer for this turn."
+      },
+      {
+        "id": "l28",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the lookup for categories with high net sales and weak gross margins over the last 90 days. Please try again."
+      },
+      {
+        "id": "l30",
+        "state": "ERROR",
+        "tables": 0,
+        "preview": "MaxTurnsExceededError: Max turns (12) exceeded"
+      },
+      {
+        "id": "l35",
+        "state": "Clarification",
+        "tables": 0,
+        "preview": ""
+      },
+      {
+        "id": "l36",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the lookup for workorders booked in over the last 90 days. Please try again."
+      },
+      {
+        "id": "l41",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the aged inventory lookup because the query failed before it ran. Please retry the lookup."
+      },
+      {
+        "id": "l50",
+        "state": "Unavailable",
+        "tables": 0,
+        "preview": "I couldn’t complete the aged-inventory lookup because the inventory data request failed before it ran. Please try again."
+      }
+    ]
+  },
+  "failures": [
+    {
+      "id": "l05",
+      "state": "ERROR",
+      "tables": 0,
+      "preview": "Error: The model did not return a structured answer for this turn."
+    },
+    {
+      "id": "l10",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand right now. Please try again, and I’ll return the ranked li"
+    },
+    {
+      "id": "l22",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete that lookup because the available sales data does not include a layaway indicator, so I can’t calculate the shares for i"
+    },
+    {
+      "id": "l23",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I could not complete the stock lookup because the query was blocked before it ran. Please try again."
+    },
+    {
+      "id": "l25",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for the top 15 products by units sold in the last 60 days. Please retry the request."
+    },
+    {
+      "id": "l26",
+      "state": "ERROR",
+      "tables": 0,
+      "preview": "Error: The model did not return a structured answer for this turn."
+    },
+    {
+      "id": "l28",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for categories with high net sales and weak gross margins over the last 90 days. Please try again."
+    },
+    {
+      "id": "l30",
+      "state": "ERROR",
+      "tables": 0,
+      "preview": "MaxTurnsExceededError: Max turns (12) exceeded"
+    },
+    {
+      "id": "l35",
+      "state": "Clarification",
+      "tables": 0,
+      "preview": ""
+    },
+    {
+      "id": "l36",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for workorders booked in over the last 90 days. Please try again."
+    },
+    {
+      "id": "l41",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the aged inventory lookup because the query failed before it ran. Please retry the lookup."
+    },
+    {
+      "id": "l50",
+      "state": "Unavailable",
+      "tables": 0,
+      "preview": "I couldn’t complete the aged-inventory lookup because the inventory data request failed before it ran. Please try again."
+    }
+  ],
+  "all": [
+    {
+      "id": "l01",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 17177,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Net sales excluding GST were **$40,235.16** over the 30 days from **9 July to 8 August 2026**, across 307 completed tickets, with refunds netted.\n\n| Period From"
+    },
+    {
+      "id": "l02",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 14742,
+      "queries": 1,
+      "tables": 1,
+      "preview": "We processed 54 completed transactions in the last 7 days.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l03",
+      "state": "Qualified",
+      "ok": true,
+      "ms": 2573,
+      "queries": 0,
+      "tables": 0,
+      "preview": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"
+    },
+    {
+      "id": "l04",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 47824,
+      "queries": 2,
+      "tables": 2,
+      "preview": "As at 7 August 2026, current stock is 4,083 units valued at $160,205.12 using item average cost; the stock-snapshot average-cost field was unpopulated.\n\n| Units"
+    },
+    {
+      "id": "l05",
+      "state": "ERROR",
+      "ok": false,
+      "ms": 17085,
+      "preview": "Error: The model did not return a structured answer for this turn."
+    },
+    {
+      "id": "l06",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 10089,
+      "queries": 1,
+      "tables": 1,
+      "preview": "You have 17,005 active, non-archived products in the catalogue.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l07",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 14024,
+      "queries": 1,
+      "tables": 1,
+      "preview": "You have 9,385 customers on file as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l08",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 16872,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Daily completed sales, including GST, totalled between $0.00 and $2,648.75 per day from 2 to 8 August 2026.\n\n| Sales Day | Sales Inc GST |\n| --- | ---: |\n| 2 Au"
+    },
+    {
+      "id": "l09",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 13585,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Average order value was $108.67 including GST last week, from 27 July to 2 August 2026.\n\n| Week Start | Week End | Orders | Total Sales Inc GST | Average Order "
+    },
+    {
+      "id": "l10",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 15228,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand right now. Please try again, and I’ll return the ranked list."
+    },
+    {
+      "id": "l11",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 18782,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Over the last 90 days, Services generated the most net sales at $20,676.53 ex GST, followed by Parts/Wheels & Tyres at $12,512.41 and Bikes/Kids at $9,818.13; r"
+    },
+    {
+      "id": "l12",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 22340,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Jack Lidgett was the top-performing staff member by net sales in the last 30 days, with $20,305.23 ex GST from 122 tickets.\n\n| Employee Id | Staff Name | Ticket"
+    },
+    {
+      "id": "l13",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 23305,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Month-to-date sales are down 25.57%: $6,626.28 from 1–8 August 2026 versus $8,902.80 for the same period in July 2026, a decrease of $2,276.52.\n\n| This Month St"
+    },
+    {
+      "id": "l14",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 49058,
+      "queries": 2,
+      "tables": 2,
+      "preview": "| Age Band | SKUs | Stock Value |\n| --- | ---: | ---: |\n| 180+ days | 503 | $84,111.76 |\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l15",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 26940,
+      "queries": 2,
+      "tables": 2,
+      "preview": "Currently held stock is led by Bikes/Mountain at $28,033.34 across 17 units, based on the stock snapshot through 7 August 2026. The evidence also includes a sep"
+    },
+    {
+      "id": "l16",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 18368,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Here is what came back:\n\n| Period From | Period To | Gross Sales Inc GST | Refund Amount Inc GST | Refund Transactions |\n| --- | --- | --- | --- | --- |\n| 9 May"
+    },
+    {
+      "id": "l17",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 17641,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Monthly sales including GST totalled the following amounts from August 2025 to July 2026:\n\n| Month | Sales Inc GST |\n| --- | ---: |\n| August 2025 | $47,320.07 |"
+    },
+    {
+      "id": "l18",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 10595,
+      "queries": 1,
+      "tables": 1,
+      "preview": "You have 3 open workorders right now, as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l19",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 12157,
+      "queries": 1,
+      "tables": 1,
+      "preview": "As at 7 August 2026, you have 3 open purchase orders with a total ordered quantity of 0.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l20",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 11546,
+      "queries": 1,
+      "tables": 1,
+      "preview": "In the last 90 days, 355 distinct identified customers bought from you. Walk-in sales without a customer record are excluded.\n\nFigures from Lightspeed (updated "
+    },
+    {
+      "id": "l21",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 17189,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Here are the top results, led by Accessories1:\n\n| Category Name |\n| --- |\n| Accessories1 |\n| Bikes |\n| Clothing & Protection |\n| Drivetrain & Pedalling |\n| Elec"
+    },
+    {
+      "id": "l22",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 36931,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete that lookup because the available sales data does not include a layaway indicator, so I can’t calculate the shares for incomplete layaways v"
+    },
+    {
+      "id": "l23",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 30645,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I could not complete the stock lookup because the query was blocked before it ran. Please try again."
+    },
+    {
+      "id": "l24",
+      "state": "Qualified",
+      "ok": true,
+      "ms": 2949,
+      "queries": 0,
+      "tables": 0,
+      "preview": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"
+    },
+    {
+      "id": "l25",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 26191,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for the top 15 products by units sold in the last 60 days. Please retry the request."
+    },
+    {
+      "id": "l26",
+      "state": "ERROR",
+      "ok": false,
+      "ms": 11782,
+      "preview": "Error: The model did not return a structured answer for this turn."
+    },
+    {
+      "id": "l27",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 30075,
+      "queries": 2,
+      "tables": 2,
+      "preview": "Here are the top results, led by F26 IZALCO MAX 9.7 - Large 56 Soothbrush:\n\n| Unit Cost | Stock Value | Value Rank | Item Id | Sku Name |\n| --- | --- | --- | --"
+    },
+    {
+      "id": "l28",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 25813,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for categories with high net sales and weak gross margins over the last 90 days. Please try again."
+    },
+    {
+      "id": "l29",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 29683,
+      "queries": 2,
+      "tables": 2,
+      "preview": "The top seller was Service - Change Tyre, Cass, Rotor, with 124 units sold and 0 in stock; the top 10 covered 1 December 2025 to 1 March 2026, with stock curren"
+    },
+    {
+      "id": "l30",
+      "state": "ERROR",
+      "ok": false,
+      "ms": 128911,
+      "preview": "MaxTurnsExceededError: Max turns (12) exceeded"
+    },
+    {
+      "id": "l31",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 22549,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Over the 30 days from 17 February to 19 March 2026, Leigh Phillips had high transaction volume with 167 transactions and an average order value of $121.50, whic"
+    },
+    {
+      "id": "l32",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 42665,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Electronics & Lights/Radar had both the highest discount rate, 64.51%, and the highest refund rate, 50.00%, in the supplied period of 1 January 2025 to 1 Januar"
+    },
+    {
+      "id": "l33",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 63617,
+      "queries": 2,
+      "tables": 2,
+      "preview": "Among categories with recorded sales, Bikes/Hybrid has the longest stock cover at 1,170 days, with $0.00 of stock-on-hand value tied up; the figures use the 90-"
+    },
+    {
+      "id": "l34",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 31080,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Daily net sales were $9.09 on the weakest completed day, 5 August 2026; 8 August is incomplete because the data runs through 7 August 2026.\n\n| Trading Date | Ne"
+    },
+    {
+      "id": "l35",
+      "state": "Clarification",
+      "ok": true,
+      "ms": 9314,
+      "queries": 0,
+      "tables": 0,
+      "preview": ""
+    },
+    {
+      "id": "l36",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 22641,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the lookup for workorders booked in over the last 90 days. Please try again."
+    },
+    {
+      "id": "l37",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 18112,
+      "queries": 1,
+      "tables": 1,
+      "preview": "There are 3 incomplete purchase orders: Wiggle on 22 January 2019, Shimano Australia on 2 January 2019, and one with no vendor name on 31 July 2018; each has a "
+    },
+    {
+      "id": "l38",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 10745,
+      "queries": 1,
+      "tables": 1,
+      "preview": "There are 0 transfers sent but not yet received, as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l39",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 27365,
+      "queries": 2,
+      "tables": 2,
+      "preview": "As at 7 August 2026, there are 17,005 active items and no archived items; the on-hand value of active items cannot be determined because no cost records are ava"
+    },
+    {
+      "id": "l40",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 21282,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Gross profit dollars totalled $4,222.27 in August 2026 and peaked at $36,595.37 in December 2025, covering September 2025 to August 2026.\n\n| Month | Sales Ex GS"
+    },
+    {
+      "id": "l41",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 28722,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the aged inventory lookup because the query failed before it ran. Please retry the lookup."
+    },
+    {
+      "id": "l42",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 18842,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Here are the top results, led by Helmet Lazer Lupo Kineticore UNISIZE - Matte Fern:\n\n| Item Id | Description | Create Time | Archived |\n| --- | --- | --- | --- "
+    },
+    {
+      "id": "l43",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 15906,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Completed, non-voided sales totalled $42,018.62 across 307 tickets from 8 July 2026 to 7 August 2026.\n\n| Period Start | Period End | Completed Non-Voided Ticket"
+    },
+    {
+      "id": "l44",
+      "state": "Qualified",
+      "ok": true,
+      "ms": 2223,
+      "queries": 0,
+      "tables": 0,
+      "preview": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"
+    },
+    {
+      "id": "l45",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 12843,
+      "queries": 1,
+      "tables": 1,
+      "preview": "As at 7 August 2026, all 3 workorders returned have no status name.\n\n| Status Name | Workorder Count |\n| --- | ---: |\n| No status name | 3 |\n\nWould you like the"
+    },
+    {
+      "id": "l46",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 9155,
+      "queries": 1,
+      "tables": 1,
+      "preview": "There are 3 active purchase orders that are incomplete and not archived.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l47",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 13433,
+      "queries": 2,
+      "tables": 2,
+      "preview": "Full Path Name: Clothing & Protection/Eyewear.\n\nTreating “Eyewear” as Eyewear Tifosi Optics Podium XC Fototec/Silver.\n\nFigures from Lightspeed (updated through "
+    },
+    {
+      "id": "l48",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 13643,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Shop 0 has total stock on hand of 4,083 units, with a total stock value of $0.00 for the active, non-archived stock rows.\n\n| Total QOH | Stock value |\n|---:|---"
+    },
+    {
+      "id": "l49",
+      "state": "Exploratory",
+      "ok": true,
+      "ms": 16366,
+      "queries": 1,
+      "tables": 1,
+      "preview": "Monthly sales including GST totalled $6,626.28 to $73,288.94 across September 2024 to August 2026, with the highest month in December 2024 and the lowest in Aug"
+    },
+    {
+      "id": "l50",
+      "state": "Unavailable",
+      "ok": true,
+      "ms": 50334,
+      "queries": 0,
+      "tables": 0,
+      "preview": "I couldn’t complete the aged-inventory lookup because the inventory data request failed before it ran. Please try again."
+    }
+  ]
+}

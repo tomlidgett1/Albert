@@ -1,0 +1,229 @@
+{
+  "id": "l05",
+  "tier": "easy",
+  "domain": "inventory",
+  "ask": "Give me an aged inventory report",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Here are the top results, led by 0-30 days:\n\n| Band Sort | Age Band | Skus | Units | Stock Value |\n| --- | --- | --- | --- | --- |\n| 1 | 0-30 days | 232 | 1526 | $20,234.22 |\n| 2 | 31-60 days | 424 | 1485 | $27,666.58 |\n| 3 | 61-90 days | 52 | 89 | $3,398.76 |\n| 4 | 91-180 days | 161 | 263 | $24,812.29 |\n| 5 | 180+ days | 503 | 720 | $84,093.27 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by category?",
+    "Would you like a list of the slowest-moving items?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:b2ce2f87e1ffe33708b7d4848636cce06befd3848c61f1b60e7d68786e9a376e",
+      "columns": [
+        "band_sort",
+        "age_band",
+        "skus",
+        "units",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "band_sort": 1,
+          "age_band": "0-30 days",
+          "skus": "232",
+          "units": "1526.0000",
+          "stock_value": "0.0000"
+        },
+        {
+          "band_sort": 2,
+          "age_band": "31-60 days",
+          "skus": "424",
+          "units": "1485.0000",
+          "stock_value": "0.0000"
+        },
+        {
+          "band_sort": 3,
+          "age_band": "61-90 days",
+          "skus": "52",
+          "units": "89.0000",
+          "stock_value": "0.0000"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:4d1ee8427b34d5bd915428862fb1c32d0bd2a48d7365a0f9be864c6b10dc89a1",
+      "columns": [
+        "band_sort",
+        "age_band",
+        "skus",
+        "units",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "band_sort": 1,
+          "age_band": "0-30 days",
+          "skus": "232",
+          "units": "1526.0000",
+          "stock_value": "20234.22410000"
+        },
+        {
+          "band_sort": 2,
+          "age_band": "31-60 days",
+          "skus": "424",
+          "units": "1485.0000",
+          "stock_value": "27666.57640000"
+        },
+        {
+          "band_sort": 3,
+          "age_band": "61-90 days",
+          "skus": "52",
+          "units": "89.0000",
+          "stock_value": "3398.75580000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (4,083)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 109700,
+    "outputTokens": 3243,
+    "totalTokens": 112943,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 1153
+      },
+      {
+        "cache_write_tokens": 34044,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1586,
+        "cached_tokens": 34044
+      },
+      {
+        "cache_write_tokens": 1415,
+        "cached_tokens": 35630
+      },
+      {
+        "cache_write_tokens": 1813,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 347
+      },
+      {
+        "reasoning_tokens": 104
+      },
+      {
+        "reasoning_tokens": 75
+      },
+      {
+        "reasoning_tokens": 361
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1156,
+        "outputTokens": 127,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1153
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34047,
+        "outputTokens": 927,
+        "inputTokensDetails": {
+          "cache_write_tokens": 34044,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 347
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35633,
+        "outputTokens": 747,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1586,
+          "cached_tokens": 34044
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 104
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 37048,
+        "outputTokens": 200,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1415,
+          "cached_tokens": 35630
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 75
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1816,
+        "outputTokens": 1242,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1813,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 361
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 30234,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

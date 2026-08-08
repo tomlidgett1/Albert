@@ -1,0 +1,36 @@
+{
+  "summaryPath": "/Users/user/Documents/Albert/.albert-agent-qa-out/summary-1786084466128.json",
+  "conversationId": "01KZDETA7JJ5WMCVV40F7V6FR1",
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
+    "fastMode": false
+  },
+  "results": [
+    {
+      "id": "s1",
+      "tier": "smoke",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 28160,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I can't answer for “Inventory” on its own. I could not narrow the governed data to it, and reporting the whole business instead would answer a different question. Tell me which product department, category, location or c"
+    },
+    {
+      "id": "s2",
+      "tier": "smoke",
+      "domain": "discovery",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 29113,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I’m configured to analyse these parts of your business:\n\n- **Sales:** transactions, net/gross sales, GST, discounts, refunds, units, costs and gross margin\n- **Products & stock:** variants, categories/departments, stock "
+    }
+  ]
+}
+EXIT:0

@@ -1,0 +1,257 @@
+{
+  "id": "l14",
+  "tier": "medium",
+  "domain": "inventory",
+  "ask": "By ageing band, how much stock value is over 90 days since last movement?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "| Age Band | SKUs | Stock Value |\n| --- | ---: | ---: |\n| 180+ days | 503 | $84,111.76 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this split by product category?",
+    "Would you like a list of the slowest-moving SKUs?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:56cf8096fb10dae1316a4fa997c7e5e51064260f1f8fc9bdad72e80a5f439cd9",
+      "columns": [
+        "age_band",
+        "skus",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "age_band": "0-30 days",
+          "skus": "232",
+          "stock_value": "0.0000"
+        },
+        {
+          "age_band": "180+ days",
+          "skus": "503",
+          "stock_value": "0.0000"
+        },
+        {
+          "age_band": "31-60 days",
+          "skus": "424",
+          "stock_value": "0.0000"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:9f249ba64206d0fae394b0baf1b028d75b2d6adf325f75ee23d2286f61d13d49",
+      "columns": [
+        "age_band",
+        "skus",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "age_band": "0-30 days",
+          "skus": "232",
+          "stock_value": "20234.22410000"
+        },
+        {
+          "age_band": "180+ days",
+          "skus": "503",
+          "stock_value": "84111.76110000"
+        },
+        {
+          "age_band": "31-60 days",
+          "skus": "424",
+          "stock_value": "27666.57640000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it ($108,985.40, 664, 91, 30, 31)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 7,
+    "inputTokens": 182171,
+    "outputTokens": 4476,
+    "totalTokens": 186647,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1040,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33774,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1020,
+        "cached_tokens": 33774
+      },
+      {
+        "cache_write_tokens": 788,
+        "cached_tokens": 34794
+      },
+      {
+        "cache_write_tokens": 1311,
+        "cached_tokens": 35582
+      },
+      {
+        "cache_write_tokens": 1516,
+        "cached_tokens": 36893
+      },
+      {
+        "cache_write_tokens": 1658,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 68
+      },
+      {
+        "reasoning_tokens": 347
+      },
+      {
+        "reasoning_tokens": 134
+      },
+      {
+        "reasoning_tokens": 315
+      },
+      {
+        "reasoning_tokens": 437
+      },
+      {
+        "reasoning_tokens": 73
+      },
+      {
+        "reasoning_tokens": 126
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1043,
+        "outputTokens": 211,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1040,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 68
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33777,
+        "outputTokens": 924,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33774,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 347
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34797,
+        "outputTokens": 698,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1020,
+          "cached_tokens": 33774
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 134
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35585,
+        "outputTokens": 747,
+        "inputTokensDetails": {
+          "cache_write_tokens": 788,
+          "cached_tokens": 34794
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 315
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36896,
+        "outputTokens": 938,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1311,
+          "cached_tokens": 35582
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 437
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 38412,
+        "outputTokens": 163,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1516,
+          "cached_tokens": 36893
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 73
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1661,
+        "outputTokens": 795,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1658,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 126
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 49058,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

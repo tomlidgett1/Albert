@@ -1,0 +1,258 @@
+{
+  "id": "e4",
+  "tier": "easy",
+  "domain": "inventory",
+  "ask": "What is our current stock on hand in units and dollar value?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I can’t safely report current stock on hand because the latest point-in-time inventory snapshot date is not populated. A dated inventory snapshot is required to total units and stock value without summing balances across dates.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to check the inventory connection and snapshot coverage?",
+    "Would you like the latest available stock movements instead?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:c77ace88353e81641cbce236471d45ef02ac1ebf0cbf5553bd84642d2c364059",
+      "columns": [
+        "latest_snapshot_date"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "latest_snapshot_date": null
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:capabilities",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified"
+  ],
+  "usage": {
+    "requests": 8,
+    "inputTokens": 59750,
+    "outputTokens": 1781,
+    "totalTokens": 61531,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 17,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 211,
+        "cached_tokens": 5743
+      },
+      {
+        "cache_write_tokens": 70,
+        "cached_tokens": 5954
+      },
+      {
+        "cache_write_tokens": 67,
+        "cached_tokens": 6024
+      },
+      {
+        "cache_write_tokens": 2219,
+        "cached_tokens": 6091
+      },
+      {
+        "cache_write_tokens": 733,
+        "cached_tokens": 8310
+      },
+      {
+        "cache_write_tokens": 127,
+        "cached_tokens": 9043
+      },
+      {
+        "cache_write_tokens": 221,
+        "cached_tokens": 9170
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 150
+      },
+      {
+        "reasoning_tokens": 11
+      },
+      {
+        "reasoning_tokens": 10
+      },
+      {
+        "reasoning_tokens": 59
+      },
+      {
+        "reasoning_tokens": 239
+      },
+      {
+        "reasoning_tokens": 21
+      },
+      {
+        "reasoning_tokens": 53
+      },
+      {
+        "reasoning_tokens": 829
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5746,
+        "outputTokens": 173,
+        "inputTokensDetails": {
+          "cache_write_tokens": 17,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 150
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 5957,
+        "outputTokens": 33,
+        "inputTokensDetails": {
+          "cache_write_tokens": 211,
+          "cached_tokens": 5743
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 11
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6027,
+        "outputTokens": 31,
+        "inputTokensDetails": {
+          "cache_write_tokens": 70,
+          "cached_tokens": 5954
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 10
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6094,
+        "outputTokens": 80,
+        "inputTokensDetails": {
+          "cache_write_tokens": 67,
+          "cached_tokens": 6024
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 59
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8313,
+        "outputTokens": 303,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2219,
+          "cached_tokens": 6091
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 239
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9046,
+        "outputTokens": 86,
+        "inputTokensDetails": {
+          "cache_write_tokens": 733,
+          "cached_tokens": 8310
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 21
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9173,
+        "outputTokens": 154,
+        "inputTokensDetails": {
+          "cache_write_tokens": 127,
+          "cached_tokens": 9043
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 53
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9394,
+        "outputTokens": 921,
+        "inputTokensDetails": {
+          "cache_write_tokens": 221,
+          "cached_tokens": 9170
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 829
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 44234,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "answer"
+  ]
+}

@@ -1,0 +1,358 @@
+{
+  "id": "h4",
+  "tier": "hard",
+  "domain": "cross:employees+basket",
+  "ask": "Over the last 30 days, which workers have high transaction counts but below-shop average order value? Are they ringing lots of small tickets, and who are the outliers?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I can’t safely identify worker outliers yet. The sales-performance feed is blocked by unresolved schema drift, with line/header reconciliation and tender-reconciliation failures, so worker transaction counts and average order values are not currently reliable.\n\nResolving the Lightspeed sale-line schema mapping and reconciliation checks will unlock the 30-day worker comparison.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to rerun this once the sales feed health checks are cleared?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:051fb8ef5bba95d5840313a6b9d4e1f36b7d0fbfa0f127a4ff03dd55fca8fa67",
+      "columns": [
+        "as_of_date",
+        "latest_sales_date"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "as_of_date": "2026-08-07T00:00:00.000Z",
+          "latest_sales_date": "2026-08-07T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified",
+    "progress:definition",
+    "progress:definition",
+    "progress:definition",
+    "progress:data_health",
+    "progress:data_health"
+  ],
+  "usage": {
+    "requests": 13,
+    "inputTokens": 127142,
+    "outputTokens": 4112,
+    "totalTokens": 131254,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 39,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 1391,
+        "cached_tokens": 5765
+      },
+      {
+        "cache_write_tokens": 827,
+        "cached_tokens": 7156
+      },
+      {
+        "cache_write_tokens": 299,
+        "cached_tokens": 7983
+      },
+      {
+        "cache_write_tokens": 193,
+        "cached_tokens": 8282
+      },
+      {
+        "cache_write_tokens": 261,
+        "cached_tokens": 8475
+      },
+      {
+        "cache_write_tokens": 679,
+        "cached_tokens": 8736
+      },
+      {
+        "cache_write_tokens": 335,
+        "cached_tokens": 9415
+      },
+      {
+        "cache_write_tokens": 443,
+        "cached_tokens": 9750
+      },
+      {
+        "cache_write_tokens": 342,
+        "cached_tokens": 10193
+      },
+      {
+        "cache_write_tokens": 609,
+        "cached_tokens": 10535
+      },
+      {
+        "cache_write_tokens": 3598,
+        "cached_tokens": 11144
+      },
+      {
+        "cache_write_tokens": 185,
+        "cached_tokens": 14742
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 64
+      },
+      {
+        "reasoning_tokens": 245
+      },
+      {
+        "reasoning_tokens": 101
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 11
+      },
+      {
+        "reasoning_tokens": 508
+      },
+      {
+        "reasoning_tokens": 64
+      },
+      {
+        "reasoning_tokens": 272
+      },
+      {
+        "reasoning_tokens": 90
+      },
+      {
+        "reasoning_tokens": 436
+      },
+      {
+        "reasoning_tokens": 298
+      },
+      {
+        "reasoning_tokens": 14
+      },
+      {
+        "reasoning_tokens": 827
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5768,
+        "outputTokens": 121,
+        "inputTokensDetails": {
+          "cache_write_tokens": 39,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 64
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7159,
+        "outputTokens": 323,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1391,
+          "cached_tokens": 5765
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 245
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7986,
+        "outputTokens": 122,
+        "inputTokensDetails": {
+          "cache_write_tokens": 827,
+          "cached_tokens": 7156
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 101
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8285,
+        "outputTokens": 21,
+        "inputTokensDetails": {
+          "cache_write_tokens": 299,
+          "cached_tokens": 7983
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8478,
+        "outputTokens": 38,
+        "inputTokensDetails": {
+          "cache_write_tokens": 193,
+          "cached_tokens": 8282
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 11
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8739,
+        "outputTokens": 638,
+        "inputTokensDetails": {
+          "cache_write_tokens": 261,
+          "cached_tokens": 8475
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 508
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9418,
+        "outputTokens": 239,
+        "inputTokensDetails": {
+          "cache_write_tokens": 679,
+          "cached_tokens": 8736
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 64
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9753,
+        "outputTokens": 402,
+        "inputTokensDetails": {
+          "cache_write_tokens": 335,
+          "cached_tokens": 9415
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 272
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10196,
+        "outputTokens": 263,
+        "inputTokensDetails": {
+          "cache_write_tokens": 443,
+          "cached_tokens": 9750
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 90
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10538,
+        "outputTokens": 542,
+        "inputTokensDetails": {
+          "cache_write_tokens": 342,
+          "cached_tokens": 10193
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 436
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11147,
+        "outputTokens": 321,
+        "inputTokensDetails": {
+          "cache_write_tokens": 609,
+          "cached_tokens": 10535
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 298
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 14745,
+        "outputTokens": 144,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3598,
+          "cached_tokens": 11144
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 14
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 14930,
+        "outputTokens": 938,
+        "inputTokensDetails": {
+          "cache_write_tokens": 185,
+          "cached_tokens": 14742
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 827
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 92381,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

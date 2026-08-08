@@ -1,0 +1,1209 @@
+{
+  "mode": "ingest",
+  "at": "2026-08-07T05:42:45.674Z",
+  "groups": [
+    {
+      "resource": "Item",
+      "path": "Item.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 9,
+      "leaderRecords": 900,
+      "projectedByTable": {
+        "ls_items": 900,
+        "ls_item_shops": 1800,
+        "ls_item_prices": 0,
+        "ls_item_components": 0,
+        "ls_item_vendor_nums": 1061
+      },
+      "stagedByTable": {
+        "ls_items": 900,
+        "ls_item_shops": 1800,
+        "ls_item_prices": 0,
+        "ls_item_components": 0,
+        "ls_item_vendor_nums": 1061
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 776999
+    },
+    {
+      "resource": "InventoryLog",
+      "path": "InventoryLog.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_inventory_logs": 0
+      },
+      "stagedByTable": {
+        "ls_inventory_logs": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 301
+    },
+    {
+      "resource": "InventoryCountItem",
+      "path": "InventoryCountItem.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_inventory_count_items": 0
+      },
+      "stagedByTable": {
+        "ls_inventory_count_items": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 309
+    },
+    {
+      "resource": "Transfer",
+      "path": "Transfer.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_transfers": 0,
+        "ls_transfer_items": 0,
+        "ls_transfer_from": 0,
+        "ls_transfer_to": 0
+      },
+      "stagedByTable": {
+        "ls_transfers": 0,
+        "ls_transfer_items": 0,
+        "ls_transfer_from": 0,
+        "ls_transfer_to": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 333
+    },
+    {
+      "resource": "Account",
+      "path": "Account/168990.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_account": 0,
+        "ls_account_purchasing_currencies": 0
+      },
+      "stagedByTable": {
+        "ls_account": 0,
+        "ls_account_purchasing_currencies": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 365
+    },
+    {
+      "resource": "Category",
+      "path": "Category.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_categories": 0
+      },
+      "stagedByTable": {
+        "ls_categories": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 299
+    },
+    {
+      "resource": "CCCharge",
+      "path": "CCCharge.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_cc_charges": 0
+      },
+      "stagedByTable": {
+        "ls_cc_charges": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 301
+    },
+    {
+      "resource": "CreditAccount",
+      "path": "CreditAccount.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_credit_accounts": 0,
+        "ls_contacts": 0
+      },
+      "stagedByTable": {
+        "ls_credit_accounts": 0,
+        "ls_contacts": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 313
+    },
+    {
+      "resource": "CurrencyRate",
+      "path": "CurrencyRate.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_currency_rates": 0
+      },
+      "stagedByTable": {
+        "ls_currency_rates": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 381
+    },
+    {
+      "resource": "Customer",
+      "path": "Customer.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_customers": 0,
+        "ls_contacts": 0,
+        "ls_contact_emails": 0,
+        "ls_contact_phones": 0,
+        "ls_contact_websites": 0,
+        "ls_customer_custom_field_values": 0,
+        "ls_customer_notes": 0
+      },
+      "stagedByTable": {
+        "ls_customers": 0,
+        "ls_contacts": 0,
+        "ls_contact_emails": 0,
+        "ls_contact_phones": 0,
+        "ls_contact_websites": 0,
+        "ls_customer_custom_field_values": 0,
+        "ls_customer_notes": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 310
+    },
+    {
+      "resource": "CustomerType",
+      "path": "CustomerType.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_customer_types": 0
+      },
+      "stagedByTable": {
+        "ls_customer_types": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 311
+    },
+    {
+      "resource": "CustomField",
+      "path": "CustomField.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_custom_fields": 0
+      },
+      "stagedByTable": {
+        "ls_custom_fields": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 301
+    },
+    {
+      "resource": "Discount",
+      "path": "Discount.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_discounts": 0
+      },
+      "stagedByTable": {
+        "ls_discounts": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 305
+    },
+    {
+      "resource": "DiscountsByDay",
+      "path": "DiscountsByDay.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_discounts_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_discounts_by_day": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 308
+    },
+    {
+      "resource": "Employee",
+      "path": "Employee.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_employees": 0,
+        "ls_employee_roles": 0,
+        "ls_employee_role_rights": 0,
+        "ls_employee_rights": 0
+      },
+      "stagedByTable": {
+        "ls_employees": 0,
+        "ls_employee_roles": 0,
+        "ls_employee_role_rights": 0,
+        "ls_employee_rights": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 304
+    },
+    {
+      "resource": "EmployeeHours",
+      "path": "EmployeeHours.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_employee_hours": 0
+      },
+      "stagedByTable": {
+        "ls_employee_hours": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 765
+    },
+    {
+      "resource": "Image",
+      "path": "Image.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_images": 0
+      },
+      "stagedByTable": {
+        "ls_images": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 299
+    },
+    {
+      "resource": "Industry",
+      "path": "Industry.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_industries": 0
+      },
+      "stagedByTable": {
+        "ls_industries": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 298
+    },
+    {
+      "resource": "InventoryCountCalc",
+      "path": "InventoryCountCalc.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_inventory_count_calcs": 0
+      },
+      "stagedByTable": {
+        "ls_inventory_count_calcs": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "InventoryCountReconcile",
+      "path": "InventoryCountReconcile.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_inventory_count_reconciles": 0
+      },
+      "stagedByTable": {
+        "ls_inventory_count_reconciles": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 309
+    },
+    {
+      "resource": "ItemAttributeSet",
+      "path": "ItemAttributeSet.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_item_attribute_sets": 0
+      },
+      "stagedByTable": {
+        "ls_item_attribute_sets": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 369
+    },
+    {
+      "resource": "ItemFee",
+      "path": "ItemFee.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_item_fees": 0
+      },
+      "stagedByTable": {
+        "ls_item_fees": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 302
+    },
+    {
+      "resource": "ItemMatrix",
+      "path": "ItemMatrix.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_item_matrices": 0
+      },
+      "stagedByTable": {
+        "ls_item_matrices": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "Locale",
+      "path": "Locale.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_locales": 0,
+        "ls_currency_denominations": 0
+      },
+      "stagedByTable": {
+        "ls_locales": 0,
+        "ls_currency_denominations": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "Manufacturer",
+      "path": "Manufacturer.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_manufacturers": 0
+      },
+      "stagedByTable": {
+        "ls_manufacturers": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 296
+    },
+    {
+      "resource": "Option",
+      "path": "Option.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_options": 0
+      },
+      "stagedByTable": {
+        "ls_options": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 308
+    },
+    {
+      "resource": "Order",
+      "path": "Order.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_purchase_orders": 0,
+        "ls_purchase_order_lines": 0
+      },
+      "stagedByTable": {
+        "ls_purchase_orders": 0,
+        "ls_purchase_order_lines": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 306
+    },
+    {
+      "resource": "OrdersByTaxClass",
+      "path": "OrdersByTaxClass.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_orders_by_tax_class": 0
+      },
+      "stagedByTable": {
+        "ls_report_orders_by_tax_class": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 300
+    },
+    {
+      "resource": "OrderShipmentItem",
+      "path": "OrderShipmentItem.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_order_shipment_items": 0
+      },
+      "stagedByTable": {
+        "ls_order_shipment_items": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 300
+    },
+    {
+      "resource": "PaymentsByDay",
+      "path": "PaymentsByDay.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_payments_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_payments_by_day": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 435
+    },
+    {
+      "resource": "PaymentType",
+      "path": "PaymentType.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_payment_types": 0
+      },
+      "stagedByTable": {
+        "ls_payment_types": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 308
+    },
+    {
+      "resource": "PriceLevel",
+      "path": "PriceLevel.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_price_levels": 0
+      },
+      "stagedByTable": {
+        "ls_price_levels": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "ProcessingFee",
+      "path": "ProcessingFee.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_processing_fees": 0
+      },
+      "stagedByTable": {
+        "ls_processing_fees": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 298
+    },
+    {
+      "resource": "Quote",
+      "path": "Quote.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_quotes": 0
+      },
+      "stagedByTable": {
+        "ls_quotes": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 326
+    },
+    {
+      "resource": "Register",
+      "path": "Register.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_registers": 0
+      },
+      "stagedByTable": {
+        "ls_registers": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 320
+    },
+    {
+      "resource": "RegisterCount",
+      "path": "RegisterCount.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_register_counts": 0,
+        "ls_register_count_amounts": 0
+      },
+      "stagedByTable": {
+        "ls_register_counts": 0,
+        "ls_register_count_amounts": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 298
+    },
+    {
+      "resource": "RegisterWithdraw",
+      "path": "RegisterWithdraw.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_register_withdraws": 0
+      },
+      "stagedByTable": {
+        "ls_register_withdraws": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 395
+    },
+    {
+      "resource": "Sale",
+      "path": "Sale.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_sales": 0,
+        "ls_sale_lines": 0,
+        "ls_sale_payments": 0,
+        "ls_sale_accounts": 0,
+        "ls_sale_payment_signatures": 0,
+        "ls_sale_line_inventory_allocations": 0
+      },
+      "stagedByTable": {
+        "ls_sales": 0,
+        "ls_sale_lines": 0,
+        "ls_sale_payments": 0,
+        "ls_sale_accounts": 0,
+        "ls_sale_payment_signatures": 0,
+        "ls_sale_line_inventory_allocations": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 312
+    },
+    {
+      "resource": "SaleVoid",
+      "path": "SaleVoid.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_sale_voids": 0
+      },
+      "stagedByTable": {
+        "ls_sale_voids": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 503
+    },
+    {
+      "resource": "Season",
+      "path": "Season.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_seasons": 0
+      },
+      "stagedByTable": {
+        "ls_seasons": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 298
+    },
+    {
+      "resource": "Serialized",
+      "path": "Serialized.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_serialized": 0
+      },
+      "stagedByTable": {
+        "ls_serialized": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "Session",
+      "path": "Session.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_session": 0
+      },
+      "stagedByTable": {
+        "ls_session": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 523
+    },
+    {
+      "resource": "Shipment",
+      "path": "Shipment.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_order_shipments": 0
+      },
+      "stagedByTable": {
+        "ls_order_shipments": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 316
+    },
+    {
+      "resource": "ShipTo",
+      "path": "ShipTo.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_ship_tos": 0,
+        "ls_contacts": 0
+      },
+      "stagedByTable": {
+        "ls_ship_tos": 0,
+        "ls_contacts": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 296
+    },
+    {
+      "resource": "Shop",
+      "path": "Shop.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_shops": 0,
+        "ls_cc_gateways": 0,
+        "ls_receipt_setups": 0
+      },
+      "stagedByTable": {
+        "ls_shops": 0,
+        "ls_cc_gateways": 0,
+        "ls_receipt_setups": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 310
+    },
+    {
+      "resource": "SpecialOrder",
+      "path": "SpecialOrder.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_special_orders": 0
+      },
+      "stagedByTable": {
+        "ls_special_orders": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 326
+    },
+    {
+      "resource": "Tag",
+      "path": "Tag.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_tags": 0
+      },
+      "stagedByTable": {
+        "ls_tags": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 318
+    },
+    {
+      "resource": "TagGroup",
+      "path": "TagGroup.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_tag_groups": 0
+      },
+      "stagedByTable": {
+        "ls_tag_groups": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 297
+    },
+    {
+      "resource": "TaxCategory",
+      "path": "TaxCategory.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_tax_categories": 0,
+        "ls_tax_category_classes": 0
+      },
+      "stagedByTable": {
+        "ls_tax_categories": 0,
+        "ls_tax_category_classes": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 301
+    },
+    {
+      "resource": "TaxClass",
+      "path": "TaxClass.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_tax_classes": 0
+      },
+      "stagedByTable": {
+        "ls_tax_classes": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 304
+    },
+    {
+      "resource": "TaxClassSalesByDay",
+      "path": "TaxClassSalesByDay.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_tax_class_sales_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_tax_class_sales_by_day": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 324
+    },
+    {
+      "resource": "TaxesByDay",
+      "path": "TaxesByDay.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_report_taxes_by_day": 0
+      },
+      "stagedByTable": {
+        "ls_report_taxes_by_day": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 376
+    },
+    {
+      "resource": "Vendor",
+      "path": "Vendor.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_vendors": 0
+      },
+      "stagedByTable": {
+        "ls_vendors": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 304
+    },
+    {
+      "resource": "VendorReturn",
+      "path": "VendorReturn.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_vendor_returns": 0
+      },
+      "stagedByTable": {
+        "ls_vendor_returns": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 304
+    },
+    {
+      "resource": "Workorder",
+      "path": "Workorder.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_workorders": 0,
+        "ls_workorder_lines": 0,
+        "ls_workorder_items": 0
+      },
+      "stagedByTable": {
+        "ls_workorders": 0,
+        "ls_workorder_lines": 0,
+        "ls_workorder_items": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 307
+    },
+    {
+      "resource": "WorkorderStatus",
+      "path": "WorkorderStatus.json",
+      "status": "error",
+      "httpStatus": 401,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_workorder_statuses": 0
+      },
+      "stagedByTable": {
+        "ls_workorder_statuses": 0
+      },
+      "quarantined": 0,
+      "error": "{\"httpCode\":\"401\",\"httpMessage\":\"Unauthorized\",\"message\":\"The resource owner or authorization server denied the request. Reason:access_denied Access token has been revoked\",\"errorClass\":\"BadAuthenticationRequestException\"}",
+      "durationMs": 465
+    },
+    {
+      "resource": "ls_custom_field_choices",
+      "path": "Customer/CustomField/{customFieldID}/CustomFieldChoice.json",
+      "status": "empty",
+      "httpStatus": 200,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_custom_field_choices": 0
+      },
+      "stagedByTable": {
+        "ls_custom_field_choices": 0
+      },
+      "quarantined": 0,
+      "durationMs": 310
+    },
+    {
+      "resource": "ls_workorder_images",
+      "path": "Workorder/{workorderID}/WorkorderImage.json",
+      "status": "empty",
+      "httpStatus": 200,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_workorder_images": 0
+      },
+      "stagedByTable": {
+        "ls_workorder_images": 0
+      },
+      "quarantined": 0,
+      "durationMs": 322
+    },
+    {
+      "resource": "ls_register_calculated",
+      "path": "Register/{registerID}/calculated.json",
+      "status": "empty",
+      "httpStatus": 200,
+      "pages": 0,
+      "leaderRecords": 0,
+      "projectedByTable": {
+        "ls_register_calculated": 0
+      },
+      "stagedByTable": {
+        "ls_register_calculated": 0
+      },
+      "quarantined": 0,
+      "durationMs": 325
+    }
+  ],
+  "nonemptyTables": 47,
+  "emptyTables": 43,
+  "empty": [
+    "ls_account",
+    "ls_account_purchasing_currencies",
+    "ls_cc_charges",
+    "ls_currency_rates",
+    "ls_custom_fields",
+    "ls_report_discounts_by_day",
+    "ls_employee_roles",
+    "ls_employee_hours",
+    "ls_industries",
+    "ls_inventory_count_calcs",
+    "ls_inventory_count_items",
+    "ls_inventory_count_reconciles",
+    "ls_item_prices",
+    "ls_item_fees",
+    "ls_locales",
+    "ls_currency_denominations",
+    "ls_report_orders_by_tax_class",
+    "ls_order_shipment_items",
+    "ls_report_payments_by_day",
+    "ls_price_levels",
+    "ls_processing_fees",
+    "ls_sale_payment_signatures",
+    "ls_sale_voids",
+    "ls_seasons",
+    "ls_session",
+    "ls_order_shipments",
+    "ls_ship_tos",
+    "ls_cc_gateways",
+    "ls_special_orders",
+    "ls_report_tax_class_sales_by_day",
+    "ls_report_taxes_by_day",
+    "ls_transfers",
+    "ls_transfer_items",
+    "ls_transfer_from",
+    "ls_transfer_to",
+    "ls_vendor_returns",
+    "ls_workorders",
+    "ls_workorder_lines",
+    "ls_workorder_items",
+    "ls_workorder_statuses",
+    "ls_custom_field_choices",
+    "ls_workorder_images",
+    "ls_register_calculated"
+  ],
+  "counts": {
+    "ls_account": 0,
+    "ls_account_purchasing_currencies": 0,
+    "ls_catalog_vendor_items": 122500,
+    "ls_categories": 79,
+    "ls_cc_charges": 0,
+    "ls_credit_accounts": 1316,
+    "ls_contacts": 49,
+    "ls_currency_rates": 0,
+    "ls_customers": 70,
+    "ls_contact_emails": 6442,
+    "ls_contact_phones": 9441,
+    "ls_contact_websites": 4,
+    "ls_customer_custom_field_values": 2343,
+    "ls_customer_notes": 3405,
+    "ls_customer_types": 1,
+    "ls_custom_fields": 0,
+    "ls_discounts": 34,
+    "ls_report_discounts_by_day": 0,
+    "ls_employees": 6,
+    "ls_employee_roles": 0,
+    "ls_employee_role_rights": 573,
+    "ls_employee_rights": 225,
+    "ls_employee_hours": 0,
+    "ls_images": 50,
+    "ls_industries": 0,
+    "ls_inventory_count_calcs": 0,
+    "ls_inventory_count_items": 0,
+    "ls_inventory_count_reconciles": 0,
+    "ls_inventory_logs": 103500,
+    "ls_items": 1033,
+    "ls_item_shops": 31800,
+    "ls_item_prices": 0,
+    "ls_item_components": 43,
+    "ls_item_vendor_nums": 7231,
+    "ls_item_attribute_sets": 5,
+    "ls_item_fees": 0,
+    "ls_item_matrices": 4,
+    "ls_locales": 0,
+    "ls_currency_denominations": 0,
+    "ls_manufacturers": 415,
+    "ls_options": 70,
+    "ls_purchase_orders": 36,
+    "ls_purchase_order_lines": 43,
+    "ls_report_orders_by_tax_class": 0,
+    "ls_order_shipment_items": 0,
+    "ls_report_payments_by_day": 0,
+    "ls_payment_types": 9,
+    "ls_price_levels": 0,
+    "ls_processing_fees": 0,
+    "ls_quotes": 187,
+    "ls_registers": 1,
+    "ls_register_counts": 2125,
+    "ls_register_count_amounts": 18955,
+    "ls_register_withdraws": 2437,
+    "ls_sales": 378,
+    "ls_sale_lines": 810,
+    "ls_sale_payments": 48506,
+    "ls_sale_accounts": 3,
+    "ls_sale_payment_signatures": 0,
+    "ls_sale_line_inventory_allocations": 17833,
+    "ls_sale_voids": 0,
+    "ls_seasons": 0,
+    "ls_serialized": 16041,
+    "ls_session": 0,
+    "ls_order_shipments": 0,
+    "ls_ship_tos": 0,
+    "ls_shops": 2,
+    "ls_cc_gateways": 0,
+    "ls_receipt_setups": 2,
+    "ls_special_orders": 0,
+    "ls_tags": 96,
+    "ls_tag_groups": 3,
+    "ls_tax_categories": 2,
+    "ls_tax_category_classes": 2,
+    "ls_tax_classes": 114,
+    "ls_report_tax_class_sales_by_day": 0,
+    "ls_report_taxes_by_day": 0,
+    "ls_transfers": 0,
+    "ls_transfer_items": 0,
+    "ls_transfer_from": 0,
+    "ls_transfer_to": 0,
+    "ls_vendors": 3,
+    "ls_vendor_returns": 0,
+    "ls_workorders": 0,
+    "ls_workorder_lines": 0,
+    "ls_workorder_items": 0,
+    "ls_workorder_statuses": 0,
+    "ls_custom_field_choices": 0,
+    "ls_workorder_images": 0,
+    "ls_register_calculated": 0
+  }
+}

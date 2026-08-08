@@ -1,0 +1,144 @@
+{
+  "summaryPath": "/Users/user/Documents/Albert/.albert-agent-qa-out/summary-1786146882873.json",
+  "conversationId": "01KZF9X6Q3CEMY0KW4CNHD67N0",
+  "preferences": {
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "results": [
+    {
+      "id": "l05",
+      "tier": "easy",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 32744,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the aged inventory lookup because of a query error. Please try again, or ask for the report by age band once more."
+    },
+    {
+      "id": "l10",
+      "tier": "easy",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 18117,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand because the stock data service was unavailable. Please retry the request."
+    },
+    {
+      "id": "l23",
+      "tier": "medium",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 46621,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete that lookup because the stock data query was blocked. Please try again, or ask me to check a specific item or category."
+    },
+    {
+      "id": "l25",
+      "tier": "medium",
+      "domain": "sales",
+      "ok": true,
+      "state": "Exploratory",
+      "ms": 21953,
+      "queries": 1,
+      "tables": 1,
+      "claims": 0,
+      "answerPreview": "In the last 60 days, Service - Change Tyre, Cass, Rotor led sales with 85 units sold, followed by Service - General Service with 71 and Gear Inner Wire - Stainless Steel, 1.2x2000mm with 39.\n\n| Item Id | Product | Units "
+    },
+    {
+      "id": "l26",
+      "tier": "hard",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 56979,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the aged inventory lookup because the report query failed. Please retry the report."
+    },
+    {
+      "id": "l28",
+      "tier": "hard",
+      "domain": "sales+margin",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 55671,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the category sales and gross-margin lookup for the last 90 days. Please try again, and I can compare high-sales categories with weak gross margins."
+    },
+    {
+      "id": "l30",
+      "tier": "hard",
+      "domain": "period+category",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 126465,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn't complete that lookup from your connected inventory data. Please ask again and I'll retry."
+    },
+    {
+      "id": "l35",
+      "tier": "hard",
+      "domain": "customers",
+      "ok": true,
+      "state": "Clarification",
+      "ms": 10635,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": ""
+    },
+    {
+      "id": "l36",
+      "tier": "hard",
+      "domain": "workshop",
+      "ok": true,
+      "state": "Exploratory",
+      "ms": 21037,
+      "queries": 2,
+      "tables": 2,
+      "claims": 0,
+      "answerPreview": "Sorry, there are no results for that. The workorder data is sparse, so this does not establish that there were no workshop jobs in the last 90 days.\n\nFigures from Lightspeed (updated through 7 August 2026)."
+    },
+    {
+      "id": "l41",
+      "tier": "schema",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 23409,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the aged inventory lookup because the query failed. Please try again, and I can produce the table by age band, stock on hand and stock value."
+    },
+    {
+      "id": "l50",
+      "tier": "schema",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 46636,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "I couldn’t complete the aged inventory lookup because the inventory query was blocked. Please retry, or ask for the ageing bands again by category or SKU."
+    }
+  ]
+}
+EXIT:0

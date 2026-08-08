@@ -1,0 +1,35 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZ87HAR6G63KTHW6YFB582ZX",
+  "cases": [
+    "h5",
+    "h6",
+    "h7",
+    "h8",
+    "h9",
+    "h10"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"h5","tier":"hard","attempt":1,"ask":"Over the last 90 days, which product categories have the highest discount rates, and which have the highest refund rates? Where are we leaving money on the table versus where returns are a problem?"}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"h5","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180207}
+{"event":"case_start","id":"h6","tier":"hard","attempt":1,"ask":"Which categories have the worst sell-through and the longest stock cover days, and how much stock-on-hand value is tied up there? I want dead or slow capital called out clearly."}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"h6","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180204}
+{"event":"case_start","id":"h7","tier":"hard","attempt":1,"ask":"For the last 90 days, is our top category by net sales also our top category by gross margin dollars and by gross margin percent? If not, quantify the mismatch."}
+{"event":"case_done","id":"h7","state":"Qualified","ms":106413,"queries":3,"tables":3,"answerPreview":"Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."}
+{"event":"case_start","id":"h8","tier":"hard","attempt":1,"ask":"Show daily net sales for the last 14 days. Identify the weakest days, then for those weak days tell me which product categories underperformed versus the period average."}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"h8","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180201}
+{"event":"case_start","id":"h9","tier":"hard","attempt":1,"ask":"Over the last 365 days, what are active customers, repeat purchase rate, and average customer value? Then tell me whether retention or acquisition looks like the bigger lever right now."}
+Accessed finalOutput before agent run is completed.
+{"event":"case_error","id":"h9","error":"ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]","ms":180290}
+{"event":"case_start","id":"h10","tier":"hard","attempt":1,"ask":"What is our gross profit per labour hour by employee for the last 30 days, and what was net profit last month? If you cannot answer, say exactly what connection or data unlocks it."}
+{"event":"case_done","id":"h10","state":"Qualified","ms":59193,"queries":0,"tables":0,"answerPreview":"Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n"}

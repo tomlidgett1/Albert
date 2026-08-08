@@ -1,0 +1,3252 @@
+[
+  {
+    "id": "h5",
+    "tier": "hard",
+    "domain": "cross:discount+refund",
+    "ask": "Over the last 90 days, which product categories have the highest discount rates, and which have the highest refund rates? Where are we leaving money on the table versus where returns are a problem?",
+    "ok": false,
+    "attempt": 1,
+    "answerState": "ERROR",
+    "answerText": null,
+    "error": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]",
+    "events": [
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "planning",
+        "label": "Planning the governed analysis",
+        "detail": "Matching the question to governed Topics, then checking source capabilities and data health before querying",
+        "progress": 0.05
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Sales performance, Customers and retention, Inventory health"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "capabilities",
+        "label": "Checking source support for sales performance",
+        "detail": "Confirming the connected sources carry every field this Topic needs"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "capabilities",
+        "label": "Connected sources support sales performance",
+        "detail": "1 of 1 required capabilities present"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "data_health",
+        "label": "Checking sales performance data health",
+        "detail": "Readiness, freshness, and named quality warnings for this domain"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "data_health",
+        "label": "Sales performance data health: warning",
+        "detail": "data through 5 Aug 2026 · 19 checks run · 1 warning"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying sales performance",
+        "detail": "discount rate, discount amount · by category · last 90 days"
+      },
+      {
+        "type": "query",
+        "status": "complete",
+        "topic": "sales_performance",
+        "metrics": [
+          "commerce.discount_rate",
+          "commerce.discount_amount"
+        ],
+        "dimensions": [
+          "product.category"
+        ],
+        "timeRange": {
+          "label": "2026-05-08 to 2026-08-05",
+          "start": "2026-05-07T14:00:00.000Z",
+          "end": "2026-08-05T14:00:00.000Z",
+          "timezone": "Australia/Melbourne"
+        },
+        "lens": "Discount rate · Discount amount"
+      },
+      {
+        "type": "table",
+        "status": "complete",
+        "caption": "sales performance · 2026-05-08 to 2026-08-05",
+        "columns": [
+          {
+            "key": "product.category",
+            "label": "Product Category",
+            "type": "string"
+          },
+          {
+            "key": "discount_rate",
+            "label": "Discount rate",
+            "type": "percent"
+          },
+          {
+            "key": "discount_amount",
+            "label": "Discount amount",
+            "type": "currency",
+            "currency": "AUD"
+          }
+        ],
+        "rows": [
+          {
+            "product.category": "Radar",
+            "discount_rate": "64.5149843543340108",
+            "discount_amount": "199.9900"
+          },
+          {
+            "product.category": "Child Seats",
+            "discount_rate": "50.0000000000000000",
+            "discount_amount": "179.9900"
+          },
+          {
+            "product.category": "Training Wheels",
+            "discount_rate": "33.3333333333333333",
+            "discount_amount": "39.9900"
+          },
+          {
+            "product.category": "Other",
+            "discount_rate": "33.2302051105763722",
+            "discount_amount": "29.0000"
+          },
+          {
+            "product.category": "Mudguards",
+            "discount_rate": "32.5038506931247625",
+            "discount_amount": "162.4900"
+          }
+        ],
+        "resultId": "semantic:ce24603b8c5eac6eced4c6add6ebbe1973c55d0ef3aa240a050e25217a55eef7",
+        "provenance": {
+          "sources": [
+            {
+              "connector": "lightspeed",
+              "label": "Ashburton Cycles",
+              "dataThrough": "2026-08-05T05:35:00.142Z"
+            }
+          ],
+          "timeRange": {
+            "label": "2026-05-08 to 2026-08-05",
+            "start": "2026-05-07T14:00:00.000Z",
+            "end": "2026-08-05T14:00:00.000Z",
+            "timezone": "Australia/Melbourne"
+          },
+          "definitions": [
+            {
+              "metric": "commerce.discount_rate",
+              "label": "Discount rate",
+              "definition": "Discount amount as a percentage of pre-discount gross value."
+            },
+            {
+              "metric": "commerce.discount_amount",
+              "label": "Discount amount",
+              "definition": "Discount value granted on completed sale lines."
+            }
+          ],
+          "semanticBundleHash": "ce24603b8c5eac6eced4c6add6ebbe1973c55d0ef3aa240a050e25217a55eef7",
+          "identityGraph": {
+            "version": 0,
+            "hash": "d41d8cd98f00b204e9800998ecf8427e"
+          }
+        }
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1883,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":100,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":1,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "slice_single_currency:discount_amount",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Discount Amount: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of discount rate",
+        "detail": "commerce.discount_rate"
+      },
+      {
+        "type": "narrative",
+        "status": "complete",
+        "text": "Product Category Radar had Discount amount of AUD 199.99. Based on this evidence, I’ll prepare the answer next."
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying sales performance",
+        "detail": "refund rate, refund amount · by category · last 90 days"
+      },
+      {
+        "type": "query",
+        "status": "complete",
+        "topic": "sales_performance",
+        "metrics": [
+          "commerce.refund_rate",
+          "commerce.refund_amount"
+        ],
+        "dimensions": [
+          "product.category"
+        ],
+        "timeRange": {
+          "label": "2026-05-08 to 2026-08-05",
+          "start": "2026-05-07T14:00:00.000Z",
+          "end": "2026-08-05T14:00:00.000Z",
+          "timezone": "Australia/Melbourne"
+        },
+        "lens": "Refund rate · Refund amount"
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=5",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_single_currency:discount_amount:passed",
+      "validation:result_shape:passed",
+      "progress:definition",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=5",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_single_currency:refund_amount:passed",
+      "validation:result_shape:passed"
+    ],
+    "ms": 180207
+  },
+  {
+    "id": "h6",
+    "tier": "hard",
+    "domain": "cross:inventory+capital",
+    "ask": "Which categories have the worst sell-through and the longest stock cover days, and how much stock-on-hand value is tied up there? I want dead or slow capital called out clearly.",
+    "ok": false,
+    "attempt": 1,
+    "answerState": "ERROR",
+    "answerText": null,
+    "error": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]",
+    "events": [
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "planning",
+        "label": "Planning the governed analysis",
+        "detail": "Matching the question to governed Topics, then checking source capabilities and data health before querying",
+        "progress": 0.05
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Inventory health, Sales performance, Customers and retention"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "capabilities",
+        "label": "Checking source support for inventory health",
+        "detail": "Confirming the connected sources carry every field this Topic needs"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "capabilities",
+        "label": "Connected sources support inventory health",
+        "detail": "1 of 1 required capabilities present"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "data_health",
+        "label": "Checking inventory data health",
+        "detail": "Readiness, freshness, and named quality warnings for this domain"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "data_health",
+        "label": "Inventory data health: warning",
+        "detail": "data through 5 Aug 2026 · 17 checks run · 1 warning"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of stock cover days",
+        "detail": "inventory.stock_cover_days"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of sell through rate",
+        "detail": "inventory.sell_through_rate"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of stock on hand value",
+        "detail": "inventory.stock_on_hand_value"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of stock velocity days",
+        "detail": "stock_velocity_days"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Inventory health, Sales performance, Customers and retention"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying inventory health",
+        "detail": "sell through rate, stock cover days, stock on hand value · by category · last 90 days"
+      },
+      {
+        "type": "query",
+        "status": "complete",
+        "topic": "inventory_health",
+        "metrics": [
+          "inventory.sell_through_rate",
+          "inventory.stock_cover_days",
+          "inventory.stock_on_hand_value"
+        ],
+        "dimensions": [
+          "product.category"
+        ],
+        "timeRange": {
+          "label": "2026-07-07 to 2026-08-05",
+          "start": "2026-07-06T14:00:00.000Z",
+          "end": "2026-08-05T14:00:00.000Z",
+          "timezone": "Australia/Melbourne"
+        },
+        "lens": "Sell-through rate · Stock cover days · Stock on hand value"
+      },
+      {
+        "type": "table",
+        "status": "complete",
+        "caption": "inventory health · 2026-07-07 to 2026-08-05",
+        "columns": [
+          {
+            "key": "product.category",
+            "label": "Product Category",
+            "type": "string"
+          },
+          {
+            "key": "sell_through_rate",
+            "label": "Sell-through rate",
+            "type": "percent"
+          },
+          {
+            "key": "stock_cover_days",
+            "label": "Stock cover days",
+            "type": "string"
+          },
+          {
+            "key": "stock_on_hand_value",
+            "label": "Stock on hand value",
+            "type": "currency",
+            "currency": "AUD"
+          }
+        ],
+        "rows": [
+          {
+            "product.category": "CO2",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "344.6198"
+          },
+          {
+            "product.category": "Frames & Forks",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "124.5000"
+          },
+          {
+            "product.category": "Drink Mix",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "677.2004"
+          },
+          {
+            "product.category": "Hybrid",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "12546.7050"
+          },
+          {
+            "product.category": "Suspension",
+            "sell_through_rate": null,
+            "stock_cover_days": null,
+            "stock_on_hand_value": "0.0000"
+          },
+          {
+            "product.category": "Helmets",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "5904.5266"
+          },
+          {
+            "product.category": "Pumps",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "691.4904"
+          },
+          {
+            "product.category": "Radar",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "1175.8000"
+          },
+          {
+            "product.category": "Jerseys",
+            "sell_through_rate": null,
+            "stock_cover_days": null,
+            "stock_on_hand_value": "0.0000"
+          },
+          {
+            "product.category": "Bells",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "728.2843"
+          },
+          {
+            "product.category": "Workshop Tools",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "639.0644"
+          },
+          {
+            "product.category": "Multi-Tools",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "170.6920"
+          },
+          {
+            "product.category": "Bags & Baskets",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "2075.5478"
+          },
+          {
+            "product.category": "Other",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "273.6300"
+          },
+          {
+            "product.category": "Books",
+            "sell_through_rate": null,
+            "stock_cover_days": null,
+            "stock_on_hand_value": "0.0000"
+          },
+          {
+            "product.category": "Child Seats",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "187.6800"
+          },
+          {
+            "product.category": "Drivetrain & Pedalling / Derailleur",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "240.3200"
+          },
+          {
+            "product.category": "Power Meters",
+            "sell_through_rate": null,
+            "stock_cover_days": null,
+            "stock_on_hand_value": "0.0000"
+          },
+          {
+            "product.category": "Cleaners",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "661.8404"
+          },
+          {
+            "product.category": "Sensors",
+            "sell_through_rate": "0.00000000000000000000",
+            "stock_cover_days": null,
+            "stock_on_hand_value": "243.9500"
+          }
+        ],
+        "resultId": "semantic:36952963d70fdd9e93e091c8997340ba1cbaa96a643212656873abc83c38351d",
+        "provenance": {
+          "sources": [
+            {
+              "connector": "lightspeed",
+              "label": "Ashburton Cycles",
+              "dataThrough": "2026-08-05T05:35:00.142Z"
+            }
+          ],
+          "timeRange": {
+            "label": "2026-07-07 to 2026-08-05",
+            "start": "2026-07-06T14:00:00.000Z",
+            "end": "2026-08-05T14:00:00.000Z",
+            "timezone": "Australia/Melbourne"
+          },
+          "definitions": [
+            {
+              "metric": "inventory.sell_through_rate",
+              "label": "Sell-through rate",
+              "definition": "Units sold divided by opening units plus received units."
+            },
+            {
+              "metric": "inventory.stock_cover_days",
+              "label": "Stock cover days",
+              "definition": "Latest stock units divided by total trailing demand per calendar day over the tenant-approved velocity window."
+            },
+            {
+              "metric": "inventory.stock_on_hand_value",
+              "label": "Stock on hand value",
+              "definition": "Latest cost value of stock on hand."
+            }
+          ],
+          "semanticBundleHash": "36952963d70fdd9e93e091c8997340ba1cbaa96a643212656873abc83c38351d",
+          "identityGraph": {
+            "version": 0,
+            "hash": "d41d8cd98f00b204e9800998ecf8427e"
+          }
+        }
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_complete"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"20"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_com"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"item_shops\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":34368,\"cursor_complete\":true,\"local_live_total\":34368,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1414,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":0,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":100,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "stock_continuity",
+        "outcome": "passed",
+        "detail": "Stock Continuity: passed. {\"tolerance\":\"0.0001\",\"measurement\":\"daily_snapshot_and_movement_balance_continuity\",\"negative_snapshots\":0,\"missing_snapshot_days\":0,\"movement_pairs_reconciled\":0,\"movement_balance_mismatches\":0,\"domain\":\"inventory\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops",
+        "outcome": "qualified",
+        "detail": "Progressive Coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:Item Shops: warning."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "slice_cost_coverage:stock_on_hand_value",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Stock On Hand Value: passed."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:definition",
+      "progress:definition",
+      "progress:definition",
+      "progress:definition",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:query",
+      "query:inventory_health",
+      "table:rows=20",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:stock_continuity:passed",
+      "validation:progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops:qualified",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:stock_on_hand_value:passed",
+      "validation:slice_single_currency:stock_on_hand_value:passed",
+      "validation:result_shape:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:inventory_health",
+      "table:rows=20",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:stock_continuity:passed",
+      "validation:progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops:qualified",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:stock_on_hand_value:passed",
+      "validation:slice_single_currency:stock_on_hand_value:passed",
+      "validation:result_shape:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "validation:progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops:failed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:inventory_health",
+      "table:rows=1",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:stock_continuity:passed",
+      "validation:progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops:qualified",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:stock_on_hand_value:passed",
+      "validation:slice_single_currency:stock_on_hand_value:passed",
+      "validation:result_shape:passed",
+      "validation:warning_1:qualified",
+      "progress:query"
+    ],
+    "ms": 180204
+  },
+  {
+    "id": "h7",
+    "tier": "hard",
+    "domain": "cross:revenue+margin",
+    "ask": "For the last 90 days, is our top category by net sales also our top category by gross margin dollars and by gross margin percent? If not, quantify the mismatch.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Qualified",
+    "answerText": "Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above.",
+    "claims": [],
+    "followUps": [
+      "Would you like the ranking filtered to a minimum net-sales threshold?",
+      "Should I inspect the category setup for 'Service' versus 'Services'?"
+    ],
+    "clarification": null,
+    "queryCount": 3,
+    "tableCount": 3,
+    "tables": [
+      {
+        "resultId": "semantic:4dd76b01ea1a46edbadce7a4c5f63730025fc49a7e62621b9523045afc1e27e4",
+        "columns": [
+          "product.category",
+          "net_sales_ex_gst",
+          "gross_margin",
+          "gross_margin_pct"
+        ],
+        "rowCount": 10,
+        "sample": [
+          {
+            "product.category": "Services",
+            "net_sales_ex_gst": "21662.8200",
+            "gross_margin": "21212.8200",
+            "gross_margin_pct": "97.9227081238730692"
+          },
+          {
+            "product.category": null,
+            "net_sales_ex_gst": "17244.0200",
+            "gross_margin": "15247.3600",
+            "gross_margin_pct": "88.4211454173678759"
+          },
+          {
+            "product.category": "Wheels & Tyres",
+            "net_sales_ex_gst": "12701.4100",
+            "gross_margin": "6781.6590",
+            "gross_margin_pct": "53.3929618837593621"
+          }
+        ]
+      },
+      {
+        "resultId": "semantic:32e4ca7b8c5671d23cfdbde80037ccd079ea293f041f76f9a687f869de84f377",
+        "columns": [
+          "product.category",
+          "net_sales_ex_gst",
+          "gross_margin",
+          "gross_margin_pct"
+        ],
+        "rowCount": 10,
+        "sample": [
+          {
+            "product.category": "Services",
+            "net_sales_ex_gst": "21662.8200",
+            "gross_margin": "21212.8200",
+            "gross_margin_pct": "97.9227081238730692"
+          },
+          {
+            "product.category": null,
+            "net_sales_ex_gst": "17244.0200",
+            "gross_margin": "15247.3600",
+            "gross_margin_pct": "88.4211454173678759"
+          },
+          {
+            "product.category": "Wheels & Tyres",
+            "net_sales_ex_gst": "12701.4100",
+            "gross_margin": "6781.6590",
+            "gross_margin_pct": "53.3929618837593621"
+          }
+        ]
+      },
+      {
+        "resultId": "semantic:b15a2ca7fcf3ed4696bd0913f1d90811ad1cd8e91cd13cce6f2d60d2330f003f",
+        "columns": [
+          "product.category",
+          "net_sales_ex_gst",
+          "gross_margin",
+          "gross_margin_pct"
+        ],
+        "rowCount": 10,
+        "sample": [
+          {
+            "product.category": "Radar",
+            "net_sales_ex_gst": "0.0000",
+            "gross_margin": "-108.5500",
+            "gross_margin_pct": null
+          },
+          {
+            "product.category": "Service",
+            "net_sales_ex_gst": "270.4400",
+            "gross_margin": "270.4400",
+            "gross_margin_pct": "100.0000000000000000"
+          },
+          {
+            "product.category": "Services",
+            "net_sales_ex_gst": "21662.8200",
+            "gross_margin": "21212.8200",
+            "gross_margin_pct": "97.9227081238730692"
+          }
+        ]
+      }
+    ],
+    "narratives": [
+      "Product Category Services had the highest Net sales at AUD 21662.82. Based on this evidence, I’ll check the governed margin view next.",
+      "Product Category Services had the highest Gross margin at AUD 21212.82. Based on this evidence, I’ll check the governed margin view next.",
+      "Product Category Service had the highest Gross margin percent at 100%. Based on this evidence, I’ll prepare the answer next."
+    ],
+    "validations": [
+      {
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":100,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":0,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin_pct",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin Pct: passed."
+      },
+      {
+        "name": "slice_single_currency:net_sales_ex_gst",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Net Sales Ex Gst: passed."
+      },
+      {
+        "name": "slice_single_currency:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Gross Margin: passed."
+      },
+      {
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":1,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":1,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin_pct",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin Pct: passed."
+      },
+      {
+        "name": "slice_single_currency:net_sales_ex_gst",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Net Sales Ex Gst: passed."
+      },
+      {
+        "name": "slice_single_currency:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Gross Margin: passed."
+      },
+      {
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":1,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":1,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin: passed."
+      },
+      {
+        "name": "slice_cost_coverage:gross_margin_pct",
+        "outcome": "passed",
+        "detail": "Slice Cost Coverage:Gross Margin Pct: passed."
+      },
+      {
+        "name": "slice_single_currency:net_sales_ex_gst",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Net Sales Ex Gst: passed."
+      },
+      {
+        "name": "slice_single_currency:gross_margin",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Gross Margin: passed."
+      },
+      {
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "name": "structured_claim_grounding",
+        "outcome": "qualified",
+        "detail": "A model-authored claim was blocked before it reached the answer because its exact cell association was not proven."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=10",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:gross_margin:passed",
+      "validation:slice_cost_coverage:gross_margin_pct:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:slice_single_currency:gross_margin:passed",
+      "validation:result_shape:passed",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=10",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:gross_margin:passed",
+      "validation:slice_cost_coverage:gross_margin_pct:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:slice_single_currency:gross_margin:passed",
+      "validation:result_shape:passed",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=10",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_cost_coverage:gross_margin:passed",
+      "validation:slice_cost_coverage:gross_margin_pct:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:slice_single_currency:gross_margin:passed",
+      "validation:result_shape:passed",
+      "validation:structured_claim_grounding:qualified"
+    ],
+    "usage": {
+      "requests": 11,
+      "inputTokens": 111737,
+      "outputTokens": 4299,
+      "totalTokens": 116036,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 39,
+          "cached_tokens": 2375
+        },
+        {
+          "cache_write_tokens": 1347,
+          "cached_tokens": 2414
+        },
+        {
+          "cache_write_tokens": 939,
+          "cached_tokens": 3761
+        },
+        {
+          "cache_write_tokens": 2359,
+          "cached_tokens": 4700
+        },
+        {
+          "cache_write_tokens": 3157,
+          "cached_tokens": 7059
+        },
+        {
+          "cache_write_tokens": 343,
+          "cached_tokens": 10216
+        },
+        {
+          "cache_write_tokens": 280,
+          "cached_tokens": 10559
+        },
+        {
+          "cache_write_tokens": 2921,
+          "cached_tokens": 10839
+        },
+        {
+          "cache_write_tokens": 232,
+          "cached_tokens": 13760
+        },
+        {
+          "cache_write_tokens": 2925,
+          "cached_tokens": 13992
+        },
+        {
+          "cache_write_tokens": 570,
+          "cached_tokens": 16917
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 44
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 231
+        },
+        {
+          "reasoning_tokens": 125
+        },
+        {
+          "reasoning_tokens": 48
+        },
+        {
+          "reasoning_tokens": 9
+        },
+        {
+          "reasoning_tokens": 10
+        },
+        {
+          "reasoning_tokens": 25
+        },
+        {
+          "reasoning_tokens": 337
+        },
+        {
+          "reasoning_tokens": 1233
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 2417,
+          "outputTokens": 104,
+          "inputTokensDetails": {
+            "cache_write_tokens": 39,
+            "cached_tokens": 2375
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 44
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 3764,
+          "outputTokens": 21,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1347,
+            "cached_tokens": 2414
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4703,
+          "outputTokens": 21,
+          "inputTokensDetails": {
+            "cache_write_tokens": 939,
+            "cached_tokens": 3761
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7062,
+          "outputTokens": 344,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2359,
+            "cached_tokens": 4700
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 231
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 10219,
+          "outputTokens": 302,
+          "inputTokensDetails": {
+            "cache_write_tokens": 3157,
+            "cached_tokens": 7059
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 125
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 10562,
+          "outputTokens": 230,
+          "inputTokensDetails": {
+            "cache_write_tokens": 343,
+            "cached_tokens": 10216
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 48
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 10842,
+          "outputTokens": 120,
+          "inputTokensDetails": {
+            "cache_write_tokens": 280,
+            "cached_tokens": 10559
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 9
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 13763,
+          "outputTokens": 182,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2921,
+            "cached_tokens": 10839
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 10
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 13995,
+          "outputTokens": 137,
+          "inputTokensDetails": {
+            "cache_write_tokens": 232,
+            "cached_tokens": 13760
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 25
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 16920,
+          "outputTokens": 525,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2925,
+            "cached_tokens": 13992
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 337
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 17490,
+          "outputTokens": 2313,
+          "inputTokensDetails": {
+            "cache_write_tokens": 570,
+            "cached_tokens": 16917
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 1233
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 106413,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "narrative",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "narrative",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "narrative",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "h8",
+    "tier": "hard",
+    "domain": "cross:daily+category",
+    "ask": "Show daily net sales for the last 14 days. Identify the weakest days, then for those weak days tell me which product categories underperformed versus the period average.",
+    "ok": false,
+    "attempt": 1,
+    "answerState": "ERROR",
+    "answerText": null,
+    "error": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]",
+    "events": [
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "planning",
+        "label": "Planning the governed analysis",
+        "detail": "Matching the question to governed Topics, then checking source capabilities and data health before querying",
+        "progress": 0.05
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Sales performance, Inventory health, Customers and retention"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "capabilities",
+        "label": "Checking source support for sales performance",
+        "detail": "Confirming the connected sources carry every field this Topic needs"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "capabilities",
+        "label": "Connected sources support sales performance",
+        "detail": "1 of 1 required capabilities present"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "data_health",
+        "label": "Checking sales performance data health",
+        "detail": "Readiness, freshness, and named quality warnings for this domain"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "data_health",
+        "label": "Sales performance data health: warning",
+        "detail": "data through 5 Aug 2026 · 19 checks run · 1 warning"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of net sales ex GST",
+        "detail": "commerce.net_sales_ex_gst"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying sales performance",
+        "detail": "net sales ex GST · by business date · last 14 days"
+      },
+      {
+        "type": "query",
+        "status": "complete",
+        "topic": "sales_performance",
+        "metrics": [
+          "commerce.net_sales_ex_gst"
+        ],
+        "dimensions": [
+          "business_date"
+        ],
+        "timeRange": {
+          "label": "2026-07-23 to 2026-08-05",
+          "start": "2026-07-22T14:00:00.000Z",
+          "end": "2026-08-05T14:00:00.000Z",
+          "timezone": "Australia/Melbourne"
+        },
+        "lens": "Net sales"
+      },
+      {
+        "type": "table",
+        "status": "complete",
+        "caption": "sales performance · 2026-07-23 to 2026-08-05",
+        "columns": [
+          {
+            "key": "business_date",
+            "label": "Business Date",
+            "type": "date"
+          },
+          {
+            "key": "net_sales_ex_gst",
+            "label": "Net sales",
+            "type": "currency",
+            "currency": "AUD"
+          }
+        ],
+        "rows": [
+          {
+            "business_date": "2026-08-05T00:00:00.000Z",
+            "net_sales_ex_gst": "9.0900"
+          },
+          {
+            "business_date": "2026-07-31T00:00:00.000Z",
+            "net_sales_ex_gst": "573.4400"
+          },
+          {
+            "business_date": "2026-07-30T00:00:00.000Z",
+            "net_sales_ex_gst": "613.5800"
+          },
+          {
+            "business_date": "2026-08-04T00:00:00.000Z",
+            "net_sales_ex_gst": "621.7100"
+          },
+          {
+            "business_date": "2026-07-28T00:00:00.000Z",
+            "net_sales_ex_gst": "650.1000"
+          },
+          {
+            "business_date": "2026-08-03T00:00:00.000Z",
+            "net_sales_ex_gst": "654.4600"
+          },
+          {
+            "business_date": "2026-07-26T00:00:00.000Z",
+            "net_sales_ex_gst": "710.8300"
+          },
+          {
+            "business_date": "2026-08-02T00:00:00.000Z",
+            "net_sales_ex_gst": "749.0400"
+          },
+          {
+            "business_date": "2026-07-23T00:00:00.000Z",
+            "net_sales_ex_gst": "863.5800"
+          },
+          {
+            "business_date": "2026-07-29T00:00:00.000Z",
+            "net_sales_ex_gst": "980.7300"
+          },
+          {
+            "business_date": "2026-08-01T00:00:00.000Z",
+            "net_sales_ex_gst": "1086.1900"
+          },
+          {
+            "business_date": "2026-07-25T00:00:00.000Z",
+            "net_sales_ex_gst": "1450.6500"
+          },
+          {
+            "business_date": "2026-07-27T00:00:00.000Z",
+            "net_sales_ex_gst": "1867.2100"
+          },
+          {
+            "business_date": "2026-07-24T00:00:00.000Z",
+            "net_sales_ex_gst": "2797.1900"
+          }
+        ],
+        "resultId": "semantic:e4ccd3f83806a75f4856f3396ba6b1b11843d2c9b390bf2c7287a2e47bf16532",
+        "provenance": {
+          "sources": [
+            {
+              "connector": "lightspeed",
+              "label": "Ashburton Cycles",
+              "dataThrough": "2026-08-05T05:55:00.117Z"
+            }
+          ],
+          "timeRange": {
+            "label": "2026-07-23 to 2026-08-05",
+            "start": "2026-07-22T14:00:00.000Z",
+            "end": "2026-08-05T14:00:00.000Z",
+            "timezone": "Australia/Melbourne"
+          },
+          "definitions": [
+            {
+              "metric": "commerce.net_sales_ex_gst",
+              "label": "Net sales",
+              "definition": "Completed sales excluding GST, with refunds subtracting when they occur."
+            }
+          ],
+          "semanticBundleHash": "e4ccd3f83806a75f4856f3396ba6b1b11843d2c9b390bf2c7287a2e47bf16532",
+          "identityGraph": {
+            "version": 0,
+            "hash": "d41d8cd98f00b204e9800998ecf8427e"
+          }
+        }
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":1,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":1,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "slice_single_currency:net_sales_ex_gst",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Net Sales Ex Gst: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "type": "narrative",
+        "status": "complete",
+        "text": "Business Date 2026-08-05T00:00:00.000Z had the lowest Net sales at AUD 9.09. Based on this evidence, I’ll break the result down by product next."
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Sales performance, Inventory health, Customers and retention"
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:definition",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=14",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:result_shape:passed",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=109",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:result_shape:passed"
+    ],
+    "ms": 180201
+  },
+  {
+    "id": "h9",
+    "tier": "hard",
+    "domain": "cross:customers+value",
+    "ask": "Over the last 365 days, what are active customers, repeat purchase rate, and average customer value? Then tell me whether retention or acquisition looks like the bigger lever right now.",
+    "ok": false,
+    "attempt": 1,
+    "answerState": "ERROR",
+    "answerText": null,
+    "error": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]",
+    "events": [
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "planning",
+        "label": "Planning the governed analysis",
+        "detail": "Matching the question to governed Topics, then checking source capabilities and data health before querying",
+        "progress": 0.05
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "catalogue",
+        "label": "Searching the governed catalogue",
+        "detail": "Matching the question to Albert’s governed Topics, metrics, and confirmed defaults"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "catalogue",
+        "label": "Matched 3 governed Topics",
+        "detail": "Customers and retention, Sales performance, Inventory health"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "capabilities",
+        "label": "Checking source support for customers retention",
+        "detail": "Confirming the connected sources carry every field this Topic needs"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "capabilities",
+        "label": "Connected sources support customers retention",
+        "detail": "1 of 1 required capabilities present"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "data_health",
+        "label": "Checking customers retention data health",
+        "detail": "Readiness, freshness, and named quality warnings for this domain"
+      },
+      {
+        "type": "progress",
+        "status": "complete",
+        "stage": "data_health",
+        "label": "Customers retention data health: warning",
+        "detail": "data through 5 Aug 2026 · 19 checks run · 1 warning"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of active customers",
+        "detail": "customers.active_customers"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of repeat purchase rate",
+        "detail": "customers.repeat_purchase_rate"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "definition",
+        "label": "Reading the governed definition of avg customer value",
+        "detail": "customers.avg_customer_value"
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying customers retention",
+        "detail": "active customers, repeat purchase rate, avg customer value +2 more · last 365 days"
+      },
+      {
+        "type": "query",
+        "status": "complete",
+        "topic": "customers_retention",
+        "metrics": [
+          "customers.active_customers",
+          "customers.repeat_purchase_rate",
+          "customers.avg_customer_value",
+          "customers.new_customers",
+          "customers.lapsed_customers"
+        ],
+        "dimensions": [],
+        "timeRange": {
+          "label": "2026-05-08 to 2026-08-05",
+          "start": "2026-05-07T14:00:00.000Z",
+          "end": "2026-08-05T14:00:00.000Z",
+          "timezone": "Australia/Melbourne"
+        },
+        "lens": "Active customers · Repeat purchase rate · Average customer value · New customers · Lapsed customers"
+      },
+      {
+        "type": "table",
+        "status": "complete",
+        "caption": "customers retention · 2026-05-08 to 2026-08-05",
+        "columns": [
+          {
+            "key": "active_customers",
+            "label": "Active customers",
+            "type": "number"
+          },
+          {
+            "key": "repeat_purchase_rate",
+            "label": "Repeat purchase rate",
+            "type": "percent"
+          },
+          {
+            "key": "avg_customer_value",
+            "label": "Average customer value",
+            "type": "currency"
+          },
+          {
+            "key": "new_customers",
+            "label": "New customers",
+            "type": "number"
+          },
+          {
+            "key": "lapsed_customers",
+            "label": "Lapsed customers",
+            "type": "number"
+          }
+        ],
+        "rows": [
+          {
+            "active_customers": "364",
+            "repeat_purchase_rate": "68.1318681318681319",
+            "avg_customer_value": "281.5022527472527473",
+            "new_customers": "141",
+            "lapsed_customers": "8241"
+          }
+        ],
+        "resultId": "semantic:2f0df108555602a64907a712f090084a2aafe36452261353b5d69934572eceba",
+        "provenance": {
+          "sources": [
+            {
+              "connector": "lightspeed",
+              "label": "Ashburton Cycles",
+              "dataThrough": "2026-08-05T05:55:00.117Z"
+            }
+          ],
+          "timeRange": {
+            "label": "2026-05-08 to 2026-08-05",
+            "start": "2026-05-07T14:00:00.000Z",
+            "end": "2026-08-05T14:00:00.000Z",
+            "timezone": "Australia/Melbourne"
+          },
+          "definitions": [
+            {
+              "metric": "customers.active_customers",
+              "label": "Active customers",
+              "definition": "Distinct identified customers purchasing inside the tenant-defined active window."
+            },
+            {
+              "metric": "customers.repeat_purchase_rate",
+              "label": "Repeat purchase rate",
+              "definition": "Share of identified customers with at least two completed purchases in the selected period."
+            },
+            {
+              "metric": "customers.avg_customer_value",
+              "label": "Average customer value",
+              "definition": "Net sales excluding GST per identified purchasing customer."
+            },
+            {
+              "metric": "customers.new_customers",
+              "label": "New customers",
+              "definition": "Identified customers placing their first observed completed order."
+            },
+            {
+              "metric": "customers.lapsed_customers",
+              "label": "Lapsed customers",
+              "definition": "Identified customers whose last purchase precedes the tenant-defined lapse cutoff."
+            }
+          ],
+          "semanticBundleHash": "2f0df108555602a64907a712f090084a2aafe36452261353b5d69934572eceba",
+          "identityGraph": {
+            "version": 0,
+            "hash": "d41d8cd98f00b204e9800998ecf8427e"
+          }
+        }
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1884,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":636,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":9,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":9,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "type": "validation",
+        "status": "complete",
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      },
+      {
+        "type": "narrative",
+        "status": "complete",
+        "text": "Row 1 had Lapsed customers of 8241. Based on this evidence, I’ll compare the governed period next."
+      },
+      {
+        "type": "progress",
+        "status": "running",
+        "stage": "query",
+        "label": "Querying customers retention",
+        "detail": "repeat purchase rate, avg customer value, new customers +1 more · last 365 days"
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:definition",
+      "progress:definition",
+      "progress:definition",
+      "progress:query",
+      "query:customers_retention",
+      "table:rows=1",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:result_shape:passed",
+      "progress:query",
+      "query:customers_retention",
+      "table:rows=1",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:result_shape:passed",
+      "progress:query",
+      "query:customers_retention",
+      "table:rows=1",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:result_shape:passed"
+    ],
+    "ms": 180290
+  },
+  {
+    "id": "h10",
+    "tier": "hard",
+    "domain": "cross:unavailable+unlock",
+    "ask": "What is our gross profit per labour hour by employee for the last 30 days, and what was net profit last month? If you cannot answer, say exactly what connection or data unlocks it.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Qualified",
+    "answerText": "Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n- Jack Alsop\n- Jack Lidgett\n- Leigh Phillips\n- Mai Etchebarne\n- Tom Lidgett\n- Tom Wildoer",
+    "claims": [],
+    "followUps": [
+      "Would you like guidance on connecting workforce time entries?",
+      "Would you like guidance on connecting accounting journals?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [
+      "I loaded the allowlisted worker names from your connected POS directory."
+    ],
+    "validations": [],
+    "toolChain": [
+      "progress:directory",
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:field_values",
+      "progress:field_values"
+    ],
+    "usage": {
+      "requests": 9,
+      "inputTokens": 71952,
+      "outputTokens": 1028,
+      "totalTokens": 72980,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 2495,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1899,
+          "cached_tokens": 2495
+        },
+        {
+          "cache_write_tokens": 733,
+          "cached_tokens": 4394
+        },
+        {
+          "cache_write_tokens": 167,
+          "cached_tokens": 5127
+        },
+        {
+          "cache_write_tokens": 4370,
+          "cached_tokens": 5294
+        },
+        {
+          "cache_write_tokens": 1432,
+          "cached_tokens": 9664
+        },
+        {
+          "cache_write_tokens": 76,
+          "cached_tokens": 11096
+        },
+        {
+          "cache_write_tokens": 86,
+          "cached_tokens": 11172
+        },
+        {
+          "cache_write_tokens": 167,
+          "cached_tokens": 11258
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 190
+        },
+        {
+          "reasoning_tokens": 42
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 16
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 11
+        },
+        {
+          "reasoning_tokens": 23
+        },
+        {
+          "reasoning_tokens": 32
+        },
+        {
+          "reasoning_tokens": 359
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 2498,
+          "outputTokens": 239,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2495,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 190
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4397,
+          "outputTokens": 65,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1899,
+            "cached_tokens": 2495
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 42
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5130,
+          "outputTokens": 21,
+          "inputTokensDetails": {
+            "cache_write_tokens": 733,
+            "cached_tokens": 4394
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5297,
+          "outputTokens": 39,
+          "inputTokensDetails": {
+            "cache_write_tokens": 167,
+            "cached_tokens": 5127
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 16
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 9667,
+          "outputTokens": 21,
+          "inputTokensDetails": {
+            "cache_write_tokens": 4370,
+            "cached_tokens": 5294
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 11099,
+          "outputTokens": 40,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1432,
+            "cached_tokens": 9664
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 11
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 11175,
+          "outputTokens": 50,
+          "inputTokensDetails": {
+            "cache_write_tokens": 76,
+            "cached_tokens": 11096
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 23
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 11261,
+          "outputTokens": 61,
+          "inputTokensDetails": {
+            "cache_write_tokens": 86,
+            "cached_tokens": 11172
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 32
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 11428,
+          "outputTokens": 492,
+          "inputTokensDetails": {
+            "cache_write_tokens": 167,
+            "cached_tokens": 11258
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 359
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 59193,
+    "eventTypes": [
+      "progress",
+      "narrative",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  }
+]

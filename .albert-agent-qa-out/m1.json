@@ -1,0 +1,415 @@
+{
+  "id": "m1",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "Over the last 90 days, which product categories generated the most net sales, and what was the gross margin percent for each? Rank by sales.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t obtain a governed category ranking in this turn, so I can’t safely report the sales or gross-margin percentages without risking unsupported figures.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to rerun the 90-day category analysis?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:802b1822d851e07190d41d36695423750a63c5623456e78091958c2b08064eef",
+      "columns": [
+        "period_start",
+        "period_end"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "period_start": "2026-05-09T00:00:00.000Z",
+          "period_end": "2026-08-07T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "qualified",
+      "detail": "Evidence Tier: warning."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:definition",
+    "progress:definition",
+    "progress:definition",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:qualified",
+    "validation:warning_1:qualified",
+    "progress:capabilities",
+    "progress:capabilities"
+  ],
+  "usage": {
+    "requests": 16,
+    "inputTokens": 137376,
+    "outputTokens": 5293,
+    "totalTokens": 142669,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 34,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 363,
+        "cached_tokens": 5760
+      },
+      {
+        "cache_write_tokens": 275,
+        "cached_tokens": 6123
+      },
+      {
+        "cache_write_tokens": 55,
+        "cached_tokens": 6398
+      },
+      {
+        "cache_write_tokens": 233,
+        "cached_tokens": 6453
+      },
+      {
+        "cache_write_tokens": 70,
+        "cached_tokens": 6686
+      },
+      {
+        "cache_write_tokens": 650,
+        "cached_tokens": 6756
+      },
+      {
+        "cache_write_tokens": 670,
+        "cached_tokens": 7406
+      },
+      {
+        "cache_write_tokens": 409,
+        "cached_tokens": 8076
+      },
+      {
+        "cache_write_tokens": 1107,
+        "cached_tokens": 8485
+      },
+      {
+        "cache_write_tokens": 754,
+        "cached_tokens": 9592
+      },
+      {
+        "cache_write_tokens": 65,
+        "cached_tokens": 10346
+      },
+      {
+        "cache_write_tokens": 441,
+        "cached_tokens": 10411
+      },
+      {
+        "cache_write_tokens": 297,
+        "cached_tokens": 10852
+      },
+      {
+        "cache_write_tokens": 81,
+        "cached_tokens": 11149
+      },
+      {
+        "cache_write_tokens": 375,
+        "cached_tokens": 11230
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 306
+      },
+      {
+        "reasoning_tokens": 13
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 11
+      },
+      {
+        "reasoning_tokens": 105
+      },
+      {
+        "reasoning_tokens": 305
+      },
+      {
+        "reasoning_tokens": 163
+      },
+      {
+        "reasoning_tokens": 742
+      },
+      {
+        "reasoning_tokens": 687
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 213
+      },
+      {
+        "reasoning_tokens": 231
+      },
+      {
+        "reasoning_tokens": 17
+      },
+      {
+        "reasoning_tokens": 253
+      },
+      {
+        "reasoning_tokens": 836
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5763,
+        "outputTokens": 327,
+        "inputTokensDetails": {
+          "cache_write_tokens": 34,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 306
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6126,
+        "outputTokens": 37,
+        "inputTokensDetails": {
+          "cache_write_tokens": 363,
+          "cached_tokens": 5760
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 13
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6401,
+        "outputTokens": 19,
+        "inputTokensDetails": {
+          "cache_write_tokens": 275,
+          "cached_tokens": 6123
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6456,
+        "outputTokens": 29,
+        "inputTokensDetails": {
+          "cache_write_tokens": 55,
+          "cached_tokens": 6398
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6689,
+        "outputTokens": 33,
+        "inputTokensDetails": {
+          "cache_write_tokens": 233,
+          "cached_tokens": 6453
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 11
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6759,
+        "outputTokens": 178,
+        "inputTokensDetails": {
+          "cache_write_tokens": 70,
+          "cached_tokens": 6686
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 105
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7409,
+        "outputTokens": 629,
+        "inputTokensDetails": {
+          "cache_write_tokens": 650,
+          "cached_tokens": 6756
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 305
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8079,
+        "outputTokens": 325,
+        "inputTokensDetails": {
+          "cache_write_tokens": 670,
+          "cached_tokens": 7406
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 163
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8488,
+        "outputTokens": 1066,
+        "inputTokensDetails": {
+          "cache_write_tokens": 409,
+          "cached_tokens": 8076
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 742
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9595,
+        "outputTokens": 713,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1107,
+          "cached_tokens": 8485
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 687
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10349,
+        "outputTokens": 29,
+        "inputTokensDetails": {
+          "cache_write_tokens": 754,
+          "cached_tokens": 9592
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10414,
+        "outputTokens": 362,
+        "inputTokensDetails": {
+          "cache_write_tokens": 65,
+          "cached_tokens": 10346
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 213
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10855,
+        "outputTokens": 261,
+        "inputTokensDetails": {
+          "cache_write_tokens": 441,
+          "cached_tokens": 10411
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 231
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11152,
+        "outputTokens": 45,
+        "inputTokensDetails": {
+          "cache_write_tokens": 297,
+          "cached_tokens": 10852
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 17
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11233,
+        "outputTokens": 334,
+        "inputTokensDetails": {
+          "cache_write_tokens": 81,
+          "cached_tokens": 11149
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 253
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11608,
+        "outputTokens": 906,
+        "inputTokensDetails": {
+          "cache_write_tokens": 375,
+          "cached_tokens": 11230
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 836
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 115094,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

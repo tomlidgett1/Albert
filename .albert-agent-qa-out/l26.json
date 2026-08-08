@@ -1,0 +1,170 @@
+{
+  "id": "l26",
+  "tier": "hard",
+  "domain": "inventory",
+  "ask": "Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "The aged inventory report covers 1 April 2018 to 31 December 2026, with 503 SKUs, 720 units and $84,093.27 at average cost in the 180+ day band—the largest stock value.\n\n| Band Sort | Age Band | SKU Count | Units | Stock Value |\n| --- | --- | ---: | ---: | ---: |\n| 5 | 180+ days | 503 | 720 | $84,093.27 |\n\nThese figures cover 1 April 2018 – 30 December 2026 from Lightspeed (updated through 31 December 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by product category?",
+    "Would you like the slowest-moving SKUs in the 180+ day band?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:c4c5c0eb2b515b970d978fe46781894f01a03d5df2ac29b66bef7988434398c4",
+      "columns": [
+        "band_sort",
+        "age_band",
+        "sku_count",
+        "units",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "band_sort": 1,
+          "age_band": "0-30 days",
+          "sku_count": "232",
+          "units": "1526.0000",
+          "stock_value": "20234.22410000"
+        },
+        {
+          "band_sort": 2,
+          "age_band": "31-60 days",
+          "sku_count": "424",
+          "units": "1485.0000",
+          "stock_value": "27666.57640000"
+        },
+        {
+          "band_sort": 3,
+          "age_band": "61-90 days",
+          "sku_count": "52",
+          "units": "89.0000",
+          "stock_value": "3398.75580000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (30, 60, 61, 90, 91)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 72700,
+    "outputTokens": 2756,
+    "totalTokens": 75456,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 1169
+      },
+      {
+        "cache_write_tokens": 34086,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1854,
+        "cached_tokens": 34086
+      },
+      {
+        "cache_write_tokens": 1493,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 44
+      },
+      {
+        "reasoning_tokens": 138
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1172,
+        "outputTokens": 150,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1169
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34089,
+        "outputTokens": 1179,
+        "inputTokensDetails": {
+          "cache_write_tokens": 34086,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35943,
+        "outputTokens": 136,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1854,
+          "cached_tokens": 34086
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 44
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1496,
+        "outputTokens": 1291,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1493,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 138
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 24476,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

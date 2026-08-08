@@ -1,0 +1,830 @@
+[
+  {
+    "id": "l05",
+    "tier": "easy",
+    "domain": "inventory",
+    "ask": "Give me an aged inventory report",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "| Band Sort | Age Band | SKUs | Units | Stock Value |\n| --- | --- | ---: | ---: | ---: |\n| 5 | 180+ days | 503 | 720 | $0.00 |\n\nWould you like this broken down by category? Would you like a list of the slowest-moving SKUs?\n\nThese figures cover 1 April 2018 – 30 December 2026 from Lightspeed (updated through 31 December 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like this broken down by category?",
+      "Would you like a list of the slowest-moving SKUs?"
+    ],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:c3d191ec4f3324611fb3dc7ddc6e80e759ade96014deab78cc4fc048f62b683d",
+        "columns": [
+          "band_sort",
+          "age_band",
+          "skus",
+          "units",
+          "stock_value"
+        ],
+        "rowCount": 5,
+        "sample": [
+          {
+            "band_sort": 1,
+            "age_band": "0-30 days",
+            "skus": "232",
+            "units": "1526.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 2,
+            "age_band": "31-60 days",
+            "skus": "424",
+            "units": "1485.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 3,
+            "age_band": "61-90 days",
+            "skus": "52",
+            "units": "89.0000",
+            "stock_value": "0.0000"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "numeric_grounding",
+        "outcome": "qualified",
+        "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (30, 60, 61, 90, 91)."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=5",
+      "progress:planning",
+      "validation:numeric_grounding:qualified"
+    ],
+    "usage": {
+      "requests": 3,
+      "inputTokens": 36525,
+      "outputTokens": 2122,
+      "totalTokens": 38647,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 1153,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1422,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 286
+        },
+        {
+          "reasoning_tokens": 271
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1156,
+          "outputTokens": 149,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1153,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33944,
+          "outputTokens": 866,
+          "inputTokensDetails": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 286
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1425,
+          "outputTokens": 1107,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1422,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 271
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 27614,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "l26",
+    "tier": "hard",
+    "domain": "inventory",
+    "ask": "Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "As at 7 August 2026, the aged inventory report shows 232–503 SKUs per age band, 89–1,526 units, and $0.00 stock value at average cost in every band.\n\n| Age Band | SKUs | Units | Stock Value |\n| --- | ---: | ---: | ---: |\n| 180+ days | 503 | 720 | $0.00 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like this broken down by product category?",
+      "Would you like a list of the slowest-moving SKUs?"
+    ],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:d116b51b4fe914b37c22400ac8d8c21fc61bf08dcffc865a1f083afb4d070904",
+        "columns": [
+          "band_sort",
+          "age_band",
+          "skus",
+          "units",
+          "stock_value"
+        ],
+        "rowCount": 5,
+        "sample": [
+          {
+            "band_sort": 1,
+            "age_band": "0-30 days",
+            "skus": "232",
+            "units": "1526.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 2,
+            "age_band": "31-60 days",
+            "skus": "424",
+            "units": "1485.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 3,
+            "age_band": "61-90 days",
+            "skus": "52",
+            "units": "89.0000",
+            "stock_value": "0.0000"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "numeric_grounding",
+        "outcome": "qualified",
+        "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (30, 31, 60, 61, 90)."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=5",
+      "progress:planning",
+      "validation:numeric_grounding:qualified"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 72015,
+      "outputTokens": 2640,
+      "totalTokens": 74655,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 26,
+          "cached_tokens": 1143
+        },
+        {
+          "cache_write_tokens": 33972,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1422,
+          "cached_tokens": 33972
+        },
+        {
+          "cache_write_tokens": 1468,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 169
+        },
+        {
+          "reasoning_tokens": 127
+        },
+        {
+          "reasoning_tokens": 106
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1172,
+          "outputTokens": 161,
+          "inputTokensDetails": {
+            "cache_write_tokens": 26,
+            "cached_tokens": 1143
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33975,
+          "outputTokens": 738,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33972,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 169
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35397,
+          "outputTokens": 214,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1422,
+            "cached_tokens": 33972
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 127
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1471,
+          "outputTokens": 1527,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1468,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 106
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 26126,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "l35",
+    "tier": "hard",
+    "domain": "customers",
+    "ask": "Over the last 365 days, what are active customers and average spend per active customer?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "Over the last 365 days, there were 1,415 active customers, with average spend of $356.10 per customer and total sales of $503,885.50 including GST.\n\n| Active Customer Count | Net Sales Inc GST | Average Spend Per Active Customer Inc GST |\n| --- | ---: | ---: |\n| 1,415 | $503,885.50 | $356.10 |\n\nWould you like to see this by customer segment or month? Would you like a list of the highest-spending active customers?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like to see this by customer segment or month?",
+      "Would you like a list of the highest-spending active customers?"
+    ],
+    "clarification": null,
+    "queryCount": 2,
+    "tableCount": 2,
+    "tables": [
+      {
+        "resultId": "sql:956e227dc78a286d04e0426811a53f56041ea82172bb670d11fb3a32ff0f42f3",
+        "columns": [],
+        "rowCount": 0,
+        "sample": []
+      },
+      {
+        "resultId": "sql:a13e3f4270c5d30049c758ca87376ce673bd984b8538c1b13151c0282c8f0675",
+        "columns": [
+          "active_customer_count",
+          "net_sales_inc_gst",
+          "average_spend_per_active_customer_inc_gst"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "active_customer_count": "1415",
+            "net_sales_inc_gst": "503885.5000",
+            "average_spend_per_active_customer_inc_gst": "356.1028268551236749"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=0",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 106218,
+      "outputTokens": 1634,
+      "totalTokens": 107852,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 22,
+          "cached_tokens": 1143
+        },
+        {
+          "cache_write_tokens": 33936,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 414,
+          "cached_tokens": 33936
+        },
+        {
+          "cache_write_tokens": 1058,
+          "cached_tokens": 34350
+        },
+        {
+          "cache_write_tokens": 1344,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 284
+        },
+        {
+          "reasoning_tokens": 260
+        },
+        {
+          "reasoning_tokens": 58
+        },
+        {
+          "reasoning_tokens": 57
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1168,
+          "outputTokens": 128,
+          "inputTokensDetails": {
+            "cache_write_tokens": 22,
+            "cached_tokens": 1143
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33939,
+          "outputTokens": 331,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33936,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 284
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 34353,
+          "outputTokens": 538,
+          "inputTokensDetails": {
+            "cache_write_tokens": 414,
+            "cached_tokens": 33936
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 260
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35411,
+          "outputTokens": 155,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1058,
+            "cached_tokens": 34350
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 58
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1347,
+          "outputTokens": 482,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1344,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 57
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 21531,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l41",
+    "tier": "schema",
+    "domain": "inventory",
+    "ask": "Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "The aged inventory table below shows 25 supplied non-zero stock items at shop 0, all in the 0–30 days band, based on latest movement through 7 August 2026; item names and average costs are unavailable, so each stock value is $0.00.\n\n| Item Id | Item Name | Quantity On Hand | Avg Cost | Stock Value At Avg Cost | Last Moved At | Age Band |\n| --- | --- | ---: | ---: | ---: | --- | --- |\n| 113 | n/a | 1 | n/a | $0.00 | 11 July 2026 | 0–30 days |\n| 627 | n/a | 2 | n/a | $0.00 | 2 August 2026 | 0–30 days |\n| 845 | n/a | 8 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 885 | n/a | 6 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 907 | n/a | 47 | n/a | $0.00 | 29 July 2026 | 0–30 days |\n| 984 | n/a | 81 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 987 | n/a | 17 | n/a | $0.00 | 20 July 2026 | 0–30 days |\n| 1944 | n/a | 2 | n/a | $0.00 | 15 July 2026 | 0–30 days |\n| 2645 | n/a | 1 | n/a | $0.00 | 6 August 2026 | 0–30 days |\n| 2937 | n/a | 1 | n/a | $0.00 | 14 July 2026 | 0–30 days |\n| 2974 | n/a | 1 | n/a | $0.00 | 19 July 2026 | 0–30 days |\n| 2980 | n/a | 1 | n/a | $0.00 | 14 July 2026 | 0–30 days |\n| 3051 | n/a | 2 | n/a | $0.00 | August 2026 | 0–30 days |\n| 7478 | n/a | 4 | n/a | $0.00 | 17 July 2026 | 0–30 days |\n| 7555 | n/a | 8 | n/a | $0.00 | 22 July 2026 | 0–30 days |\n| 7557 | n/a | 2 | n/a | $0.00 | 26 July 2026 | 0–30 days |\n| 7568 | n/a | 5 | n/a | $0.00 | 16 July 2026 | 0–30 days |\n| 7600 | n/a | 6 | n/a | $0.00 | 18 July 2026 | 0–30 days |\n| 7810 | n/a | 1 | n/a | $0.00 | 26 July 2026 | 0–30 days |\n| 8624 | n/a | 40 | n/a | $0.00 | 6 August 2026 | 0–30 days |\n| 9582 | n/a | 13 | n/a | $0.00 | 5 August 2026 | 0–30 days |\n| 9598 | n/a | 1 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 9639 | n/a | 14 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 9655 | n/a | 3 | n/a | $0.00 | 22 July 2026 | 0–30 days |\n| 9719 | n/a | 2 | n/a | $0.00 | 5 August 2026 | 0–30 days |\n\nThe supplied extract contains 200 result rows in total; only the 25 rows provided here are displayed.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like the full 200-row aged inventory table?",
+      "Would you like this split by category or slow movers?"
+    ],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:5f6a3bd80d1c16956a75d781f1127e4c4fb1b04afde32bfbc7ee2369a145fdbd",
+        "columns": [
+          "item_id",
+          "item_name",
+          "quantity_on_hand",
+          "avg_cost",
+          "stock_value_at_avg_cost",
+          "last_moved_at",
+          "age_band"
+        ],
+        "rowCount": 200,
+        "sample": [
+          {
+            "item_id": "113.0000",
+            "item_name": null,
+            "quantity_on_hand": "1.0000",
+            "avg_cost": null,
+            "stock_value_at_avg_cost": "0.0000",
+            "last_moved_at": "2026-07-11T02:39:23.000Z",
+            "age_band": "0-30 days"
+          },
+          {
+            "item_id": "627.0000",
+            "item_name": null,
+            "quantity_on_hand": "2.0000",
+            "avg_cost": null,
+            "stock_value_at_avg_cost": "0.0000",
+            "last_moved_at": "2026-08-02T02:31:44.000Z",
+            "age_band": "0-30 days"
+          },
+          {
+            "item_id": "845.0000",
+            "item_name": null,
+            "quantity_on_hand": "8.0000",
+            "avg_cost": null,
+            "stock_value_at_avg_cost": "0.0000",
+            "last_moved_at": "2026-08-07T01:04:57.000Z",
+            "age_band": "0-30 days"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=200",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 88044,
+      "outputTokens": 3208,
+      "totalTokens": 91252,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 26,
+          "cached_tokens": 1143
+        },
+        {
+          "cache_write_tokens": 33991,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 15033,
+          "cached_tokens": 33991
+        },
+        {
+          "cache_write_tokens": 3848,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 69
+        },
+        {
+          "reasoning_tokens": 354
+        },
+        {
+          "reasoning_tokens": 516
+        },
+        {
+          "reasoning_tokens": 177
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1172,
+          "outputTokens": 249,
+          "inputTokensDetails": {
+            "cache_write_tokens": 26,
+            "cached_tokens": 1143
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 69
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33994,
+          "outputTokens": 846,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33991,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 354
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 49027,
+          "outputTokens": 637,
+          "inputTokensDetails": {
+            "cache_write_tokens": 15033,
+            "cached_tokens": 33991
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 516
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 3851,
+          "outputTokens": 1476,
+          "inputTokensDetails": {
+            "cache_write_tokens": 3848,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 177
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 32612,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "answer"
+    ]
+  },
+  {
+    "id": "l50",
+    "tier": "schema",
+    "domain": "inventory",
+    "ask": "Aged inventory again: bands 0-30, 31-60, 61-90, 91-180, 180+ days since last inventory log create_time.",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "As at 7 August 2026, current stock is spread across five ageing bands, with 503 SKUs and 720 units aged 180+ days; recorded stock value is $0.00 in every band.\n\n| Band Sort | Age Band | SKUs | Units | Stock Value |\n| --- | --- | ---: | ---: | ---: |\n| 1 | 0–30 days | 249 | 1,562 | $0.00 |\n| 2 | 31–60 days | 407 | 1,449 | $0.00 |\n| 3 | 61–90 days | 53 | 91 | $0.00 |\n| 4 | 91–180 days | 160 | 261 | $0.00 |\n| 5 | 180+ days | 503 | 720 | $0.00 |\n\nWould you like this split by product category? Would you like to see the slowest-moving SKUs?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+    "claims": [],
+    "followUps": [
+      "Would you like this split by product category?",
+      "Would you like to see the slowest-moving SKUs?"
+    ],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:04d888262cae4aaac2d34e5b1e517960a11e41ef83b33b0265a4544bfbbeb8df",
+        "columns": [
+          "band_sort",
+          "age_band",
+          "skus",
+          "units",
+          "stock_value"
+        ],
+        "rowCount": 5,
+        "sample": [
+          {
+            "band_sort": 1,
+            "age_band": "0-30 days",
+            "skus": "249",
+            "units": "1562.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 2,
+            "age_band": "31-60 days",
+            "skus": "407",
+            "units": "1449.0000",
+            "stock_value": "0.0000"
+          },
+          {
+            "band_sort": 3,
+            "age_band": "61-90 days",
+            "skus": "53",
+            "units": "91.0000",
+            "stock_value": "0.0000"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [],
+    "toolChain": [
+      "progress:planning",
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=5",
+      "progress:planning"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 72343,
+      "outputTokens": 2644,
+      "totalTokens": 74987,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 41,
+          "cached_tokens": 1143
+        },
+        {
+          "cache_write_tokens": 33958,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 1786,
+          "cached_tokens": 33958
+        },
+        {
+          "cache_write_tokens": 1445,
+          "cached_tokens": 0
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 516
+        },
+        {
+          "reasoning_tokens": 30
+        },
+        {
+          "reasoning_tokens": 89
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 1187,
+          "outputTokens": 132,
+          "inputTokensDetails": {
+            "cache_write_tokens": 41,
+            "cached_tokens": 1143
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 33961,
+          "outputTokens": 1102,
+          "inputTokensDetails": {
+            "cache_write_tokens": 33958,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 516
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 35747,
+          "outputTokens": 108,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1786,
+            "cached_tokens": 33958
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 30
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 1448,
+          "outputTokens": 1302,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1445,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 89
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 25102,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "progress",
+      "answer"
+    ]
+  }
+]

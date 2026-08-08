@@ -1,0 +1,160 @@
+{
+  "id": "l16",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "What were our refund amount and refund rate over the last 90 days?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Here is what came back:\n\n| Period From | Period To | Gross Sales Inc GST | Refund Amount Inc GST | Refund Transactions |\n| --- | --- | --- | --- | --- |\n| 9 May 2026 | 7 August 2026 | $126,107.87 | $3,294.94 | 8 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see refunds by category?",
+    "Would you like a chart of the refund trend?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:62d74554d5a29e0ee9efdf089cc2821cdc35bf9fa889d608caec1abbe5c3d042",
+      "columns": [
+        "period_from",
+        "period_to",
+        "gross_sales_inc_gst",
+        "refund_amount_inc_gst",
+        "refund_transactions",
+        "completed_transactions",
+        "refund_rate"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "period_from": "2026-05-09T23:28:25.196Z",
+          "period_to": "2026-08-07T23:28:25.196Z",
+          "gross_sales_inc_gst": "126107.8700",
+          "refund_amount_inc_gst": "3294.9400",
+          "refund_transactions": "8",
+          "completed_transactions": "886",
+          "refund_rate": "0.02612794903283990127"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (2.61%)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 71368,
+    "outputTokens": 1506,
+    "totalTokens": 72874,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1038,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33742,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1552,
+        "cached_tokens": 33742
+      },
+      {
+        "cache_write_tokens": 1282,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 38
+      },
+      {
+        "reasoning_tokens": 80
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1041,
+        "outputTokens": 105,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1038,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33745,
+        "outputTokens": 941,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33742,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35297,
+        "outputTokens": 111,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1552,
+          "cached_tokens": 33742
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 38
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1285,
+        "outputTokens": 349,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1282,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 80
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 18368,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

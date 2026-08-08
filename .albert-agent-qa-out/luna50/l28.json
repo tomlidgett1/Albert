@@ -1,0 +1,148 @@
+{
+  "id": "l28",
+  "tier": "hard",
+  "domain": "sales+margin",
+  "ask": "Over the last 90 days, which categories have high net sales but weak gross margin percent?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the lookup for categories with high net sales and weak gross margins over the last 90 days. Please try again.",
+  "claims": [],
+  "followUps": [
+    "Would you like the results ranked by net sales?",
+    "Would you like a category-by-category margin breakdown?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 106677,
+    "outputTokens": 2403,
+    "totalTokens": 109080,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1042,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33762,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1209,
+        "cached_tokens": 33762
+      },
+      {
+        "cache_write_tokens": 955,
+        "cached_tokens": 34971
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 94
+      },
+      {
+        "reasoning_tokens": 339
+      },
+      {
+        "reasoning_tokens": 100
+      },
+      {
+        "reasoning_tokens": 108
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1045,
+        "outputTokens": 227,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1042,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 94
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33765,
+        "outputTokens": 1099,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33762,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 339
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34974,
+        "outputTokens": 859,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1209,
+          "cached_tokens": 33762
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 100
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35929,
+        "outputTokens": 145,
+        "inputTokensDetails": {
+          "cache_write_tokens": 955,
+          "cached_tokens": 34971
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 108
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 964,
+        "outputTokens": 73,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 25813,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

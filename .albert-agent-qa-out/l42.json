@@ -1,0 +1,166 @@
+{
+  "id": "l42",
+  "tier": "schema",
+  "domain": "catalogue",
+  "ask": "Show 10 items with description, create_time, and whether archived. Use the real staging column names.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Here are the top results, led by Helmet Lazer Lupo Kineticore UNISIZE - Matte Fern:\n\n| Item Id | Description | Create Time | Archived |\n| --- | --- | --- | --- |\n| 17407 | Helmet Lazer Lupo Kineticore UNISIZE - Matte Fern | 5 August 2026 | false |\n| 17406 | Helmet Lazer Compact KC - Pistachio Unisize | 5 August 2026 | false |\n| 17405 | Helmet Lazer Compact KC - Wild Green Unisize | 5 August 2026 | false |\n| 17404 | Helmet Lazer Compact KC - Matte Regal Blue Unisize | 5 August 2026 | false |\n| 17403 | Helmet Lazer Compact KC - Matte Clay Unisize | 5 August 2026 | false |\n| 17402 | Helmet Lazer Compact KC - Matte Garnet Red Unisize | 5 August 2026 | false |\n| 17401 | Helmet Lazer Compact KC - Matte Black Unisize | 5 August 2026 | false |\n| 17400 | Helmet Lazer Compact KC - White Unisize | 5 August 2026 | false |\n| 17399 | Helmet Lazer Compact KC - Flash Orange Unisize | 5 August 2026 | false |\n| 17398 | Helmet Lazer Compact KC - Flash Yellow Unisize | 5 August 2026 | false |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these items grouped by product category?",
+    "Would you like to see which items are archived or inactive?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:486500ed2a1b751e2fd4021309945e569ce8e5712fdb3e6af4005897fc8abfa0",
+      "columns": [
+        "item_id",
+        "description",
+        "create_time",
+        "archived"
+      ],
+      "rowCount": 10,
+      "sample": [
+        {
+          "item_id": "17407.0000",
+          "description": "Helmet Lazer Lupo Kineticore UNISIZE - Matte Fern",
+          "create_time": "2026-08-05T09:39:13.000Z",
+          "archived": "false"
+        },
+        {
+          "item_id": "17406.0000",
+          "description": "Helmet Lazer Compact KC - Pistachio Unisize",
+          "create_time": "2026-08-05T09:21:22.000Z",
+          "archived": "false"
+        },
+        {
+          "item_id": "17405.0000",
+          "description": "Helmet Lazer Compact KC - Wild Green Unisize",
+          "create_time": "2026-08-05T09:20:46.000Z",
+          "archived": "false"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (09, 39, 13, 21, 22)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=10",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 71653,
+    "outputTokens": 1691,
+    "totalTokens": 73344,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1044,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33739,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1245,
+        "cached_tokens": 33739
+      },
+      {
+        "cache_write_tokens": 1874,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 116
+      },
+      {
+        "reasoning_tokens": 90
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 223
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1047,
+        "outputTokens": 226,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1044,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 116
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33742,
+        "outputTokens": 259,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33739,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 90
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34987,
+        "outputTokens": 71,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1245,
+          "cached_tokens": 33739
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1877,
+        "outputTokens": 1135,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1874,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 223
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 18842,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

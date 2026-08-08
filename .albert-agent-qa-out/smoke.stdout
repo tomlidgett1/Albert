@@ -1,0 +1,35 @@
+{
+  "summaryPath": "/Users/user/Documents/Albert/.albert-agent-qa-out/summary-1785905827495.json",
+  "conversationId": "01KZ84DDYF05HGBSRR0QCWK8KS",
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "results": [
+    {
+      "id": "e1",
+      "tier": "easy",
+      "domain": "sales",
+      "ok": true,
+      "state": "Qualified",
+      "ms": 41497,
+      "queries": 1,
+      "tables": 1,
+      "claims": 1,
+      "answerPreview": "Location Ashburton Cycles had Net sales of AUD 37558.7."
+    },
+    {
+      "id": "e2",
+      "tier": "easy",
+      "domain": "employees",
+      "ok": true,
+      "state": "Qualified",
+      "ms": 61306,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n- Jack Alsop\n- Jack Lidgett\n- Leigh Phil"
+    }
+  ]
+}

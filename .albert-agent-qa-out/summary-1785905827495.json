@@ -1,0 +1,779 @@
+[
+  {
+    "id": "e1",
+    "tier": "easy",
+    "domain": "sales",
+    "ask": "What were Ashburton Cycles' net sales excluding GST over the last 30 days?",
+    "ok": true,
+    "answerState": "Qualified",
+    "answerText": "Location Ashburton Cycles had Net sales of AUD 37558.7.",
+    "claims": [
+      {
+        "statement": "Location Ashburton Cycles had Net sales of AUD 37558.7.",
+        "assertion": "value",
+        "refs": [
+          {
+            "resultId": "semantic:a135dd44a4ac6392597c96c7701f1d338996d434c60860c2c80150611a5682ee",
+            "rowIndex": 0,
+            "columnKey": "net_sales_ex_gst"
+          },
+          {
+            "resultId": "semantic:a135dd44a4ac6392597c96c7701f1d338996d434c60860c2c80150611a5682ee",
+            "rowIndex": 0,
+            "columnKey": "location"
+          }
+        ]
+      }
+    ],
+    "followUps": [],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "semantic:a135dd44a4ac6392597c96c7701f1d338996d434c60860c2c80150611a5682ee",
+        "columns": [
+          "location",
+          "net_sales_ex_gst"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "location": "Ashburton Cycles",
+            "net_sales_ex_gst": "37558.7000"
+          }
+        ]
+      }
+    ],
+    "narratives": [
+      "Location Ashburton Cycles had Net sales of AUD 37558.7."
+    ],
+    "validations": [
+      {
+        "name": "cursor_completeness",
+        "outcome": "passed",
+        "detail": "Cursor Completeness: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_a"
+      },
+      {
+        "name": "delete_handling",
+        "outcome": "passed",
+        "detail": "Delete Handling: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "enum_drift",
+        "outcome": "passed",
+        "detail": "Enum Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"2026-"
+      },
+      {
+        "name": "retention_limit_recorded",
+        "outcome": "passed",
+        "detail": "Retention Limit Recorded: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_comple"
+      },
+      {
+        "name": "schema_drift",
+        "outcome": "passed",
+        "detail": "Schema Drift: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\"202"
+      },
+      {
+        "name": "scope_available",
+        "outcome": "passed",
+        "detail": "Scope Available: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed_at\":\""
+      },
+      {
+        "name": "webhook_gap_recovered",
+        "outcome": "passed",
+        "detail": "Webhook Gap Recovered: passed. {\"reason_code\":\"capability_scoped_durable_connector_health\",\"contributors\":[{\"status\":\"passed\",\"stream\":\"sales\",\"details\":{\"reason_code\":\"durable_stream_check\",\"source_total\":61767,\"cursor_complete\":true,\"local_live_total\":61767,\"backfill_complete\":true,\"cursor_chain_valid\":true,\"observed_page_count\":1881,\"connection_generation\":1,\"unresolved_enum_drift\":0,\"unresolved_quarantine\":633,\"unresolved_schema_drift\":0,\"reconciliation_gap_count\":0,\"reconciliation_completed"
+      },
+      {
+        "name": "canonical_mapping_total",
+        "outcome": "qualified",
+        "detail": "Canonical Mapping Total: warning. {\"measurement\":\"open_canonical_mapping_quarantine\",\"staged_rows\":1,\"open_records\":665,\"rejected_rows\":0,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "field_coverage_vs_manifest",
+        "outcome": "passed",
+        "detail": "Field Coverage Vs Manifest: passed. {\"measurement\":\"open_manifest_quarantine\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "no_orphan_observations",
+        "outcome": "passed",
+        "detail": "No Orphan Observations: passed. {\"measurement\":\"observation_target_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "observation_coverage",
+        "outcome": "passed",
+        "detail": "Observation Coverage: passed. {\"measurement\":\"authoritative_commerce_fact_observation_coverage\",\"orders_missing\":0,\"payments_missing\":0,\"order_lines_missing\":0,\"missing_observations\":0,\"refund_lines_missing\":0,\"total_commerce_facts\":230537,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "orphan_rate",
+        "outcome": "passed",
+        "detail": "Orphan Rate: passed. {\"measurement\":\"explicit_tenant_scoped_reference_scan\",\"orphan_references\":0,\"references_checked\":330152,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "pk_unique",
+        "outcome": "passed",
+        "detail": "Pk Unique: passed. {\"measurement\":\"tenant_primary_grain_duplicates\",\"tables_checked\":38,\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "status_mapping_total",
+        "outcome": "passed",
+        "detail": "Status Mapping Total: passed. {\"measurement\":\"governed_free_text_status_scan\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tax_consistency",
+        "outcome": "passed",
+        "detail": "Tax Consistency: passed. {\"measurement\":\"line_ex_tax_plus_tax\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "tz_validity",
+        "outcome": "passed",
+        "detail": "Tz Validity: passed. {\"measurement\":\"iana_timezone_lookup\",\"domain\":\"canonical\"}"
+      },
+      {
+        "name": "cost_coverage",
+        "outcome": "passed",
+        "detail": "Cost Coverage: passed. {\"covered_lines\":112925,\"eligible_lines\":112925,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "line_maths",
+        "outcome": "passed",
+        "detail": "Line Maths: passed. {\"measurement\":\"line_header_refund_reconciliation\",\"header_scope\":\"completed_not_voided\",\"header_failures\":0,\"header_tolerance\":\"0.0100\",\"component_tolerance\":\"0.0001\",\"line_component_failures\":0,\"non_governed_header_drift\":198,\"refund_component_failures\":0,\"refund_reversal_link_failures\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "tender_reconciles",
+        "outcome": "passed",
+        "detail": "Tender Reconciles: passed. {\"measurement\":\"signed_live_tenders_reconcile_completed_orders\",\"staged_records\":1,\"quarantined_records\":0,\"domain\":\"commerce\"}"
+      },
+      {
+        "name": "no_fanout",
+        "outcome": "passed",
+        "detail": "No Fanout: passed."
+      },
+      {
+        "name": "grain_compatible_ratios",
+        "outcome": "passed",
+        "detail": "Grain Compatible Ratios: passed."
+      },
+      {
+        "name": "snapshot_not_summed",
+        "outcome": "passed",
+        "detail": "Snapshot Not Summed: passed."
+      },
+      {
+        "name": "authority_respected",
+        "outcome": "passed",
+        "detail": "Authority Respected: passed."
+      },
+      {
+        "name": "golden_fixture_match",
+        "outcome": "passed",
+        "detail": "Golden Fixture Match: passed."
+      },
+      {
+        "name": "slice_single_currency:net_sales_ex_gst",
+        "outcome": "passed",
+        "detail": "Slice Single Currency:Net Sales Ex Gst: passed."
+      },
+      {
+        "name": "result_shape",
+        "outcome": "passed",
+        "detail": "Result Shape: passed."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:query",
+      "query:sales_performance",
+      "table:rows=1",
+      "validation:cursor_completeness:passed",
+      "validation:delete_handling:passed",
+      "validation:enum_drift:passed",
+      "validation:retention_limit_recorded:passed",
+      "validation:schema_drift:passed",
+      "validation:scope_available:passed",
+      "validation:webhook_gap_recovered:passed",
+      "validation:canonical_mapping_total:qualified",
+      "validation:field_coverage_vs_manifest:passed",
+      "validation:no_orphan_observations:passed",
+      "validation:observation_coverage:passed",
+      "validation:orphan_rate:passed",
+      "validation:pk_unique:passed",
+      "validation:status_mapping_total:passed",
+      "validation:tax_consistency:passed",
+      "validation:tz_validity:passed",
+      "validation:cost_coverage:passed",
+      "validation:line_maths:passed",
+      "validation:tender_reconciles:passed",
+      "validation:no_fanout:passed",
+      "validation:grain_compatible_ratios:passed",
+      "validation:snapshot_not_summed:passed",
+      "validation:authority_respected:passed",
+      "validation:golden_fixture_match:passed",
+      "validation:slice_single_currency:net_sales_ex_gst:passed",
+      "validation:result_shape:passed"
+    ],
+    "usage": {
+      "requests": 7,
+      "inputTokens": 45265,
+      "outputTokens": 1130,
+      "totalTokens": 46395,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 2398,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 2296,
+          "cached_tokens": 2398
+        },
+        {
+          "cache_write_tokens": 939,
+          "cached_tokens": 4694
+        },
+        {
+          "cache_write_tokens": 1188,
+          "cached_tokens": 5633
+        },
+        {
+          "cache_write_tokens": 126,
+          "cached_tokens": 6821
+        },
+        {
+          "cache_write_tokens": 2215,
+          "cached_tokens": 6947
+        },
+        {
+          "cache_write_tokens": 427,
+          "cached_tokens": 9162
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 43
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 70
+        },
+        {
+          "reasoning_tokens": 49
+        },
+        {
+          "reasoning_tokens": 215
+        },
+        {
+          "reasoning_tokens": 166
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 2401,
+          "outputTokens": 82,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2398,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 43
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4697,
+          "outputTokens": 21,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2296,
+            "cached_tokens": 2398
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5636,
+          "outputTokens": 19,
+          "inputTokensDetails": {
+            "cache_write_tokens": 939,
+            "cached_tokens": 4694
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 6824,
+          "outputTokens": 103,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1188,
+            "cached_tokens": 5633
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 70
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 6950,
+          "outputTokens": 154,
+          "inputTokensDetails": {
+            "cache_write_tokens": 126,
+            "cached_tokens": 6821
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 49
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 9165,
+          "outputTokens": 390,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2215,
+            "cached_tokens": 6947
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 215
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 9592,
+          "outputTokens": 361,
+          "inputTokensDetails": {
+            "cache_write_tokens": 427,
+            "cached_tokens": 9162
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 166
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 41497,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "narrative",
+      "answer"
+    ]
+  },
+  {
+    "id": "e2",
+    "tier": "easy",
+    "domain": "employees",
+    "ask": "Who works here? List the employee or worker names from our POS.",
+    "ok": true,
+    "answerState": "Qualified",
+    "answerText": "Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n- Jack Alsop\n- Jack Lidgett\n- Leigh Phillips\n- Mai Etchebarne\n- Tom Lidgett\n- Tom Wildoer",
+    "claims": [],
+    "followUps": [
+      "Would you like only the named workers, excluding the generic Employee entries?"
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [
+      "I loaded the allowlisted worker names from your connected POS directory."
+    ],
+    "validations": [],
+    "toolChain": [
+      "progress:directory",
+      "progress:planning",
+      "progress:catalogue",
+      "progress:catalogue",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:capabilities",
+      "progress:data_health",
+      "progress:data_health",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values",
+      "progress:field_values"
+    ],
+    "usage": {
+      "requests": 15,
+      "inputTokens": 100579,
+      "outputTokens": 1224,
+      "totalTokens": 101803,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 2469,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 2314,
+          "cached_tokens": 2469
+        },
+        {
+          "cache_write_tokens": 55,
+          "cached_tokens": 4783
+        },
+        {
+          "cache_write_tokens": 972,
+          "cached_tokens": 4838
+        },
+        {
+          "cache_write_tokens": 1188,
+          "cached_tokens": 5810
+        },
+        {
+          "cache_write_tokens": 86,
+          "cached_tokens": 6998
+        },
+        {
+          "cache_write_tokens": 86,
+          "cached_tokens": 7084
+        },
+        {
+          "cache_write_tokens": 81,
+          "cached_tokens": 7170
+        },
+        {
+          "cache_write_tokens": 130,
+          "cached_tokens": 7251
+        },
+        {
+          "cache_write_tokens": 114,
+          "cached_tokens": 7381
+        },
+        {
+          "cache_write_tokens": 146,
+          "cached_tokens": 7495
+        },
+        {
+          "cache_write_tokens": 102,
+          "cached_tokens": 7641
+        },
+        {
+          "cache_write_tokens": 106,
+          "cached_tokens": 7743
+        },
+        {
+          "cache_write_tokens": 59,
+          "cached_tokens": 7849
+        },
+        {
+          "cache_write_tokens": 206,
+          "cached_tokens": 7908
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 103
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 31
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 21
+        },
+        {
+          "reasoning_tokens": 23
+        },
+        {
+          "reasoning_tokens": 16
+        },
+        {
+          "reasoning_tokens": 36
+        },
+        {
+          "reasoning_tokens": 50
+        },
+        {
+          "reasoning_tokens": 25
+        },
+        {
+          "reasoning_tokens": 6
+        },
+        {
+          "reasoning_tokens": 6
+        },
+        {
+          "reasoning_tokens": 7
+        },
+        {
+          "reasoning_tokens": 132
+        },
+        {
+          "reasoning_tokens": 249
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 2472,
+          "outputTokens": 136,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2469,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 103
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4786,
+          "outputTokens": 19,
+          "inputTokensDetails": {
+            "cache_write_tokens": 2314,
+            "cached_tokens": 2469
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4841,
+          "outputTokens": 54,
+          "inputTokensDetails": {
+            "cache_write_tokens": 55,
+            "cached_tokens": 4783
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 31
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5813,
+          "outputTokens": 19,
+          "inputTokensDetails": {
+            "cache_write_tokens": 972,
+            "cached_tokens": 4838
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7001,
+          "outputTokens": 50,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1188,
+            "cached_tokens": 5810
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 21
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7087,
+          "outputTokens": 50,
+          "inputTokensDetails": {
+            "cache_write_tokens": 86,
+            "cached_tokens": 6998
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 23
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7173,
+          "outputTokens": 45,
+          "inputTokensDetails": {
+            "cache_write_tokens": 86,
+            "cached_tokens": 7084
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 16
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7254,
+          "outputTokens": 65,
+          "inputTokensDetails": {
+            "cache_write_tokens": 81,
+            "cached_tokens": 7170
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 36
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7384,
+          "outputTokens": 78,
+          "inputTokensDetails": {
+            "cache_write_tokens": 130,
+            "cached_tokens": 7251
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 50
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7498,
+          "outputTokens": 54,
+          "inputTokensDetails": {
+            "cache_write_tokens": 114,
+            "cached_tokens": 7381
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 25
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7644,
+          "outputTokens": 35,
+          "inputTokensDetails": {
+            "cache_write_tokens": 146,
+            "cached_tokens": 7495
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 6
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7746,
+          "outputTokens": 35,
+          "inputTokensDetails": {
+            "cache_write_tokens": 102,
+            "cached_tokens": 7641
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 6
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7852,
+          "outputTokens": 36,
+          "inputTokensDetails": {
+            "cache_write_tokens": 106,
+            "cached_tokens": 7743
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 7
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7911,
+          "outputTokens": 161,
+          "inputTokensDetails": {
+            "cache_write_tokens": 59,
+            "cached_tokens": 7849
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 132
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 8117,
+          "outputTokens": 387,
+          "inputTokensDetails": {
+            "cache_write_tokens": 206,
+            "cached_tokens": 7908
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 249
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 61306,
+    "eventTypes": [
+      "progress",
+      "narrative",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "answer"
+    ]
+  }
+]

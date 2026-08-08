@@ -1,0 +1,402 @@
+[
+  {
+    "id": "r1",
+    "tier": "smoke",
+    "domain": "inventory",
+    "ask": "give me inventory data from lightspeed",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "## Current Lightspeed inventory snapshot\n\n| Shop | Catalogue records | Items in stock | Zero stock | Negative stock | QOH units | Sellable units | Inventory value* |\n|---|---:|---:|---:|---:|---:|---:|---:|\n| Shop 1 | 18,100 | 826 | 17,274 | 0 | 2,730 | 2,730 | $72,223.01 |\n\nOnly **826 catalogue records currently have stock on hand**. There are no negative-stock records.\n\n\\*Inventory value uses Lightspeed quantity on hand × average cost.\n\nFigures cover the available history from Lightspeed, current to 2026-08-07.",
+    "claims": [],
+    "followUps": [
+      "Would you like the stock broken down by product or category?",
+      "Would you like a low-stock and out-of-stock report?"
+    ],
+    "clarification": null,
+    "queryCount": 2,
+    "tableCount": 2,
+    "tables": [
+      {
+        "resultId": "sql:33f95a87e6620d78b1d7c7618ee471c5653556eb55078d969e3af231d42106c3",
+        "columns": [
+          "account_item_records",
+          "stocked_item_records",
+          "zero_or_negative_item_records",
+          "total_qoh_units",
+          "total_sellable_units",
+          "inventory_value_avg_cost",
+          "shop_item_records",
+          "physical_shop_count"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "account_item_records": "18100",
+            "stocked_item_records": "826",
+            "zero_or_negative_item_records": "17274",
+            "total_qoh_units": "2730.0000",
+            "total_sellable_units": "2730.0000",
+            "inventory_value_avg_cost": "72223.00890000",
+            "shop_item_records": "18100",
+            "physical_shop_count": "1"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:1a675f33437dad2358fb51e59da043d396c67ad9128aaa65bd12b904bcb5e6ee",
+        "columns": [
+          "shop_id",
+          "item_records",
+          "stocked_item_records",
+          "zero_stock_item_records",
+          "negative_stock_item_records",
+          "qoh_units",
+          "sellable_units",
+          "inventory_value_avg_cost"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "shop_id": "1.0000",
+            "item_records": "18100",
+            "stocked_item_records": "826",
+            "zero_stock_item_records": "17274",
+            "negative_stock_item_records": "0",
+            "qoh_units": "2730.0000",
+            "sellable_units": "2730.0000",
+            "inventory_value_avg_cost": "72223.00890000"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "qualified",
+        "detail": "Evidence Tier: warning."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "qualified",
+        "detail": "Evidence Tier: warning."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:qualified",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:qualified",
+      "validation:warning_1:qualified"
+    ],
+    "usage": {
+      "requests": 4,
+      "inputTokens": 107012,
+      "outputTokens": 1812,
+      "totalTokens": 108824,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 25601,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 557,
+          "cached_tokens": 25601
+        },
+        {
+          "cache_write_tokens": 968,
+          "cached_tokens": 26158
+        },
+        {
+          "cache_write_tokens": 989,
+          "cached_tokens": 27126
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 114
+        },
+        {
+          "reasoning_tokens": 24
+        },
+        {
+          "reasoning_tokens": 51
+        },
+        {
+          "reasoning_tokens": 100
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 25604,
+          "outputTokens": 469,
+          "inputTokensDetails": {
+            "cache_write_tokens": 25601,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 114
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 26161,
+          "outputTokens": 340,
+          "inputTokensDetails": {
+            "cache_write_tokens": 557,
+            "cached_tokens": 25601
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 24
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 27129,
+          "outputTokens": 340,
+          "inputTokensDetails": {
+            "cache_write_tokens": 968,
+            "cached_tokens": 26158
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 51
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 28118,
+          "outputTokens": 663,
+          "inputTokensDetails": {
+            "cache_write_tokens": 989,
+            "cached_tokens": 27126
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 100
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 33037,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "r2",
+    "tier": "smoke",
+    "domain": "sales",
+    "ask": "how many completed sales do we have all time?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "You have **23,008 completed sales** across all available Lightspeed history, excluding voided and archived sales.\n\nFigures cover the available history from Lightspeed, current to 2026-08-07.",
+    "claims": [
+      {
+        "statement": "Completed Sales: 23,008.00.",
+        "assertion": "value",
+        "refs": [
+          {
+            "resultId": "sql:9e3870040dcfcce8a3c111522e711677b88a49dadf549d63f1744d40b72a7c92",
+            "rowIndex": 0,
+            "columnKey": "completed_sales"
+          }
+        ]
+      }
+    ],
+    "followUps": [],
+    "clarification": null,
+    "queryCount": 1,
+    "tableCount": 1,
+    "tables": [
+      {
+        "resultId": "sql:9e3870040dcfcce8a3c111522e711677b88a49dadf549d63f1744d40b72a7c92",
+        "columns": [
+          "completed_sales"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "completed_sales": "23008"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "qualified",
+        "detail": "Evidence Tier: warning."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:qualified",
+      "validation:warning_1:qualified"
+    ],
+    "usage": {
+      "requests": 2,
+      "inputTokens": 51826,
+      "outputTokens": 294,
+      "totalTokens": 52120,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 14,
+          "cached_tokens": 25590
+        },
+        {
+          "cache_write_tokens": 612,
+          "cached_tokens": 25604
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 24
+        },
+        {
+          "reasoning_tokens": 0
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 25607,
+          "outputTokens": 168,
+          "inputTokensDetails": {
+            "cache_write_tokens": 14,
+            "cached_tokens": 25590
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 24
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 26219,
+          "outputTokens": 126,
+          "inputTokensDetails": {
+            "cache_write_tokens": 612,
+            "cached_tokens": 25604
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 14260,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "answer"
+    ]
+  }
+]

@@ -1,0 +1,158 @@
+{
+  "id": "l37",
+  "tier": "hard",
+  "domain": "purchasing",
+  "ask": "List incomplete purchase orders with vendor name, ordered date, and total quantity.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "There are 3 incomplete purchase orders: Wiggle on 22 January 2019, Shimano Australia on 2 January 2019, and one with no vendor name on 31 July 2018; each has a total quantity of 0.\n\n| Order Id | Vendor Name | Ordered Date | Total Quantity |\n| --- | --- | --- | ---: |\n| 417 | Wiggle | 22 January 2019 | 0 |\n| 364 | Shimano Australia | 2 January 2019 | 0 |\n| 63 | n/a | 31 July 2018 | 0 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these incomplete orders grouped by vendor?",
+    "Would you like to see the items on a specific purchase order?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:e0b9c0ef265e4a76416cc8943fc4534b82e8848c758775fd26e6b612021dc1ff",
+      "columns": [
+        "order_id",
+        "vendor_name",
+        "ordered_date",
+        "total_quantity"
+      ],
+      "rowCount": 3,
+      "sample": [
+        {
+          "order_id": "417.0000",
+          "vendor_name": "Wiggle",
+          "ordered_date": "2019-01-22T13:00:00.000Z",
+          "total_quantity": "0"
+        },
+        {
+          "order_id": "364.0000",
+          "vendor_name": "Shimano Australia",
+          "ordered_date": "2019-01-02T13:00:00.000Z",
+          "total_quantity": "0"
+        },
+        {
+          "order_id": "63.0000",
+          "vendor_name": null,
+          "ordered_date": "2018-07-31T14:00:00.000Z",
+          "total_quantity": "0"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=3",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 71064,
+    "outputTokens": 1548,
+    "totalTokens": 72612,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1038,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33751,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1224,
+        "cached_tokens": 33751
+      },
+      {
+        "cache_write_tokens": 1288,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 290
+      },
+      {
+        "reasoning_tokens": 44
+      },
+      {
+        "reasoning_tokens": 72
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1041,
+        "outputTokens": 123,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1038,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33754,
+        "outputTokens": 597,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33751,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 290
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34978,
+        "outputTokens": 124,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1224,
+          "cached_tokens": 33751
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 44
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1291,
+        "outputTokens": 704,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1288,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 72
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 18112,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

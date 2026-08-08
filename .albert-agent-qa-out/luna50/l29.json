@@ -1,0 +1,213 @@
+{
+  "id": "l29",
+  "tier": "hard",
+  "domain": "sales+inventory",
+  "ask": "Take our top 10 products by units sold in the last 90 days. For those products, what is current stock on hand?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "The top seller was Service - Change Tyre, Cass, Rotor, with 124 units sold and 0 in stock; the top 10 covered 1 December 2025 to 1 March 2026, with stock current to 1 March 2026.\n\n| Item Id | Product | Units Sold | Current Stock On Hand |\n| --- | --- | ---: | ---: |\n| 1004 | Service - Change Tyre, Cass, Rotor | 124 | 0 |\n| 9 | Service - General Service | 110 | 0 |\n| 9687 | Gear Inner Wire - Stainless Steel, 1.2x2000mm | 51 | 0 |\n| 1009 | Service - Brake Pad Replacement / Clean / Fix | 42 | 0 |\n| 1037 | BRAKE CABLE INNER - Road/MTB | 42 | 0 |\n| 1002 | Service - Fit Gear Cable | 35 | 0 |\n| 1001 | Service - Fit Brake Cable | 33 | 0 |\n| 14821 | Brake Pad Shimano Resin Disc B03s/B05s Black | 32 | 35 |\n| 1028 | Service - Fit Chain/Cass | 29 | 0 |\n| 984 | TIOGA TUBE 700 X 35/42 SV 48MM | 29 | 81 |\n\nOnly the Brake Pad Shimano item and the TIOGA tube had stock on hand among these top 10: 35 and 81 units respectively.",
+  "claims": [],
+  "followUps": [
+    "Would you like these top 10 split by category?",
+    "Would you like a list of the top sellers with zero stock?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:12deabaa2f994cb26566fb5a478be1137a651b307db3a7a0cefd660780fa423f",
+      "columns": [
+        "item_id",
+        "product",
+        "units_sold",
+        "current_stock_on_hand"
+      ],
+      "rowCount": 10,
+      "sample": [
+        {
+          "item_id": "1004.0000",
+          "product": "Item 1004.0000",
+          "units_sold": "124.0000",
+          "current_stock_on_hand": "0.0000"
+        },
+        {
+          "item_id": "9.0000",
+          "product": "Item 9.0000",
+          "units_sold": "110.0000",
+          "current_stock_on_hand": "0.0000"
+        },
+        {
+          "item_id": "9687.0000",
+          "product": "Item 9687.0000",
+          "units_sold": "51.0000",
+          "current_stock_on_hand": "0.0000"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:0bf363d0e5d5b9304b7b14dc219d4daf59226fff65c70d2483f93154a5d1e8cb",
+      "columns": [
+        "item_id",
+        "product",
+        "units_sold",
+        "current_stock_on_hand"
+      ],
+      "rowCount": 10,
+      "sample": [
+        {
+          "item_id": "1004.0000",
+          "product": "Service - Change Tyre, Cass, Rotor",
+          "units_sold": "124.0000",
+          "current_stock_on_hand": "0.0000"
+        },
+        {
+          "item_id": "9.0000",
+          "product": "Service - General Service",
+          "units_sold": "110.0000",
+          "current_stock_on_hand": "0.0000"
+        },
+        {
+          "item_id": "9687.0000",
+          "product": "Gear Inner Wire - Stainless Steel, 1.2x2000mm",
+          "units_sold": "51.0000",
+          "current_stock_on_hand": "0.0000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=10",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=10",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 109798,
+    "outputTokens": 2943,
+    "totalTokens": 112741,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1050,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33769,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1769,
+        "cached_tokens": 33769
+      },
+      {
+        "cache_write_tokens": 1512,
+        "cached_tokens": 35538
+      },
+      {
+        "cache_write_tokens": 2376,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 173
+      },
+      {
+        "reasoning_tokens": 233
+      },
+      {
+        "reasoning_tokens": 130
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1053,
+        "outputTokens": 120,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1050,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33772,
+        "outputTokens": 910,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33769,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35541,
+        "outputTokens": 613,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1769,
+          "cached_tokens": 33769
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 173
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 37053,
+        "outputTokens": 326,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1512,
+          "cached_tokens": 35538
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 233
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2379,
+        "outputTokens": 974,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2376,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 130
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 29683,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

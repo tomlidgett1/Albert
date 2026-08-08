@@ -1,0 +1,165 @@
+{
+  "id": "l25",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "Top 15 products by units sold in the last 60 days.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the lookup for the top 15 products by units sold in the last 60 days. Please retry the request.",
+  "claims": [],
+  "followUps": [
+    "Would you like the results broken down by product category?",
+    "Would you like a list of slow-moving products instead?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 6,
+    "inputTokens": 140553,
+    "outputTokens": 2266,
+    "totalTokens": 142819,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1037,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33735,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 675,
+        "cached_tokens": 33735
+      },
+      {
+        "cache_write_tokens": 514,
+        "cached_tokens": 34410
+      },
+      {
+        "cache_write_tokens": 647,
+        "cached_tokens": 34924
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 247
+      },
+      {
+        "reasoning_tokens": 103
+      },
+      {
+        "reasoning_tokens": 178
+      },
+      {
+        "reasoning_tokens": 425
+      },
+      {
+        "reasoning_tokens": 61
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1040,
+        "outputTokens": 101,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1037,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33738,
+        "outputTokens": 585,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33735,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 247
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34413,
+        "outputTokens": 424,
+        "inputTokensDetails": {
+          "cache_write_tokens": 675,
+          "cached_tokens": 33735
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 103
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34927,
+        "outputTokens": 557,
+        "inputTokensDetails": {
+          "cache_write_tokens": 514,
+          "cached_tokens": 34410
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 178
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35574,
+        "outputTokens": 461,
+        "inputTokensDetails": {
+          "cache_write_tokens": 647,
+          "cached_tokens": 34924
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 425
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 861,
+        "outputTokens": 138,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 61
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 26191,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

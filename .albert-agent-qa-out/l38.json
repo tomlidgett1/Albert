@@ -1,0 +1,121 @@
+{
+  "id": "l38",
+  "tier": "hard",
+  "domain": "transfers",
+  "ask": "How many transfers are sent but not yet received?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "There are 0 transfers sent but not yet received, as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see transfers by destination?",
+    "Would you like to review any outstanding stock movements?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:df860a78f7441b738a98c780b36d8ccb0a618a3246e89c06f5ad1b37f2b722e9",
+      "columns": [
+        "transfers_sent_not_received"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "transfers_sent_not_received": "0"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 3,
+    "inputTokens": 69189,
+    "outputTokens": 467,
+    "totalTokens": 69656,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 33727,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 690,
+        "cached_tokens": 33727
+      },
+      {
+        "cache_write_tokens": 1036,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 90
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 33730,
+        "outputTokens": 246,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33727,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 90
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34420,
+        "outputTokens": 74,
+        "inputTokensDetails": {
+          "cache_write_tokens": 690,
+          "cached_tokens": 33727
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1039,
+        "outputTokens": 147,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1036,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 10745,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

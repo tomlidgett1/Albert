@@ -1,0 +1,34 @@
+{
+  "id": "l26",
+  "tier": "hard",
+  "domain": "inventory",
+  "ask": "Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost.",
+  "ok": false,
+  "attempt": 1,
+  "answerState": "ERROR",
+  "answerText": null,
+  "error": "Error: The model did not return a structured answer for this turn.",
+  "events": [
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "planning",
+      "label": "Working out what you need",
+      "detail": "",
+      "progress": 0.03
+    },
+    {
+      "type": "progress",
+      "status": "complete",
+      "stage": "planning",
+      "label": "I need the age basis before building the inventory report.",
+      "detail": "Confirm how inventory age should be measured · Group stock into age bands · Show SKU counts, units, and value at average cost",
+      "progress": 0.08
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning"
+  ],
+  "ms": 11782
+}

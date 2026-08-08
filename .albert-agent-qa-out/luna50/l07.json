@@ -1,0 +1,140 @@
+{
+  "id": "l07",
+  "tier": "easy",
+  "domain": "customers",
+  "ask": "How many customers do we have on file?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "You have 9,385 customers on file as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by customer type or location?",
+    "Would you like to see customers who have not purchased recently?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:190cf1724fa63b80ad071430ed493d18011ad01a4365f7ab93c4a468915a7f6f",
+      "columns": [
+        "customer_records_on_file"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "customer_records_on_file": "9385"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70134,
+    "outputTokens": 608,
+    "totalTokens": 70742,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1032,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33701,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 672,
+        "cached_tokens": 33701
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 118
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 58
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1035,
+        "outputTokens": 84,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1032,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33704,
+        "outputTokens": 241,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33701,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 118
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34376,
+        "outputTokens": 69,
+        "inputTokensDetails": {
+          "cache_write_tokens": 672,
+          "cached_tokens": 33701
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1019,
+        "outputTokens": 214,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 58
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 14024,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

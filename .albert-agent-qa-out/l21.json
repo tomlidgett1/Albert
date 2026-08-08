@@ -1,0 +1,146 @@
+{
+  "id": "l21",
+  "tier": "medium",
+  "domain": "catalogue",
+  "ask": "List the top-level product categories by name.",
+  "ok": true,
+  "attempt": 2,
+  "answerState": "Exploratory",
+  "answerText": "Here are the top results, led by Accessories1:\n\n| Category Name |\n| --- |\n| Accessories1 |\n| Bikes |\n| Clothing & Protection |\n| Drivetrain & Pedalling |\n| Electronics & Lights |\n| Gift & Miscellaneous |\n| Nutrition |\n| Parts |\n| Services |\n| Tools & Maintenance |\n| Tools, Cleaning & Workshop Consumables |\n| Training & Transport |\n| Workshop |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these categories grouped by product count?",
+    "Would you like to see the products in a specific category?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:08178a19159d2ab00ad584786c791cb68ce60e4f4ff75c63988a09ae82cdd7e5",
+      "columns": [
+        "category_name"
+      ],
+      "rowCount": 13,
+      "sample": [
+        {
+          "category_name": "Accessories1"
+        },
+        {
+          "category_name": "Bikes"
+        },
+        {
+          "category_name": "Clothing & Protection"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=13",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70661,
+    "outputTokens": 1581,
+    "totalTokens": 72242,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 1032
+      },
+      {
+        "cache_write_tokens": 33717,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 981,
+        "cached_tokens": 33717
+      },
+      {
+        "cache_write_tokens": 1202,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 233
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 91
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1035,
+        "outputTokens": 88,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1032
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33720,
+        "outputTokens": 435,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33717,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 233
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34701,
+        "outputTokens": 71,
+        "inputTokensDetails": {
+          "cache_write_tokens": 981,
+          "cached_tokens": 33717
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1205,
+        "outputTokens": 987,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1202,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 91
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 17189,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

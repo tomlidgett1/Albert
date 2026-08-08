@@ -1,0 +1,84 @@
+{
+  "summaryPath": "/Users/user/Documents/Albert/.albert-agent-qa-out/summary-1785909910027.json",
+  "conversationId": "01KZ87HAR6G63KTHW6YFB582ZX",
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "results": [
+    {
+      "id": "h5",
+      "tier": "hard",
+      "domain": "cross:discount+refund",
+      "ok": false,
+      "state": "ERROR",
+      "ms": 180207,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+    },
+    {
+      "id": "h6",
+      "tier": "hard",
+      "domain": "cross:inventory+capital",
+      "ok": false,
+      "state": "ERROR",
+      "ms": 180204,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+    },
+    {
+      "id": "h7",
+      "tier": "hard",
+      "domain": "cross:revenue+margin",
+      "ok": true,
+      "state": "Qualified",
+      "ms": 106413,
+      "queries": 3,
+      "tables": 3,
+      "claims": 0,
+      "answerPreview": "Albert withheld the narrative because a quantitative claim was not bound to its exact governed table cells. The governed table remains available above."
+    },
+    {
+      "id": "h8",
+      "tier": "hard",
+      "domain": "cross:daily+category",
+      "ok": false,
+      "state": "ERROR",
+      "ms": 180201,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+    },
+    {
+      "id": "h9",
+      "tier": "hard",
+      "domain": "cross:customers+value",
+      "ok": false,
+      "state": "ERROR",
+      "ms": 180290,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "ZodError: [\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"
+    },
+    {
+      "id": "h10",
+      "tier": "hard",
+      "domain": "cross:unavailable+unlock",
+      "ok": true,
+      "state": "Qualified",
+      "ms": 59193,
+      "queries": 0,
+      "tables": 0,
+      "claims": 0,
+      "answerPreview": "Here are the 13 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Dan Leader\n- Employee [2]\n- Employee [4]\n- Employee [6]\n- Harvey Mitchelhill\n- Jack Alsop\n- Jack Lidgett\n- Leigh Phil"
+    }
+  ]
+}
+EXIT:0

@@ -1,0 +1,226 @@
+{
+  "id": "l30",
+  "tier": "hard",
+  "domain": "period+category",
+  "ask": "Net sales month to date versus the same period last month, broken down by product category.",
+  "ok": false,
+  "attempt": 1,
+  "answerState": "ERROR",
+  "answerText": null,
+  "error": "MaxTurnsExceededError: Max turns (12) exceeded",
+  "events": [
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "planning",
+      "label": "Working out what you need",
+      "detail": "",
+      "progress": 0.03
+    },
+    {
+      "type": "progress",
+      "status": "complete",
+      "stage": "planning",
+      "label": "I’ll compare month-to-date net sales with the same period last month for each product category.",
+      "detail": "Match sales lines to product categories and exclude refunded amounts appropriately · Calculate net sales month to date and the equivalent elapsed period last month · Show the category-by-category comp",
+      "progress": 0.08
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "claim_attested:commerce.net_sales_ex_gst",
+      "outcome": "failed",
+      "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "SUM(business_date) aggregates a key or attribute of sales_day_location_category; its measures are gross_takings_inc_gst, net_sales_ex_gst, gross_margin, units_s"
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    },
+    {
+      "type": "progress",
+      "status": "error",
+      "stage": "query",
+      "label": "That lookup did not work",
+      "detail": "Join fan-out blocked the statement. On Lightspeed, pin every table to the current mapping_version using the playbook pack CTE (ORDER BY max(ingested_at), never "
+    },
+    {
+      "type": "validation",
+      "status": "error",
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "query",
+      "label": "Comparing month-to-date net sales with the same elapsed period last month by product category",
+      "detail": ""
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query"
+  ],
+  "ms": 128911
+}

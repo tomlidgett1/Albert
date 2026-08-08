@@ -1,0 +1,152 @@
+{
+  "id": "l46",
+  "tier": "schema",
+  "domain": "purchasing",
+  "ask": "Count purchase orders where complete is false and archived is false.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "There are 3 active purchase orders that are incomplete and not archived.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [
+    {
+      "statement": "Active Incomplete Purchase Orders: 3.",
+      "assertion": "value",
+      "refs": [
+        {
+          "resultId": "sql:ee88c9938e58e8b8ab0be729aeed345809cb4894733446f71175776e1b9e44b2",
+          "rowIndex": 0,
+          "columnKey": "active_incomplete_purchase_orders"
+        }
+      ]
+    }
+  ],
+  "followUps": [
+    "Would you like to see these purchase orders by supplier?",
+    "Would you like a list of the incomplete purchase order numbers?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:ee88c9938e58e8b8ab0be729aeed345809cb4894733446f71175776e1b9e44b2",
+      "columns": [
+        "active_incomplete_purchase_orders"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "active_incomplete_purchase_orders": "3"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70174,
+    "outputTokens": 594,
+    "totalTokens": 70768,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1035,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33715,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 670,
+        "cached_tokens": 33715
+      },
+      {
+        "cache_write_tokens": 1027,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 86
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 60
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1038,
+        "outputTokens": 93,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1035,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33718,
+        "outputTokens": 232,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33715,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 86
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34388,
+        "outputTokens": 67,
+        "inputTokensDetails": {
+          "cache_write_tokens": 670,
+          "cached_tokens": 33715
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1030,
+        "outputTokens": 202,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1027,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 60
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 9155,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

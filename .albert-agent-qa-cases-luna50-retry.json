@@ -1,0 +1,13 @@
+[
+  {"id": "l05", "tier": "easy", "domain": "inventory", "ask": "Give me an aged inventory report"},
+  {"id": "l10", "tier": "easy", "domain": "inventory", "ask": "Which 10 items have the highest quantity on hand right now?"},
+  {"id": "l23", "tier": "medium", "domain": "inventory", "ask": "Which items have zero sellable stock but positive quantity on hand?"},
+  {"id": "l25", "tier": "medium", "domain": "sales", "ask": "Top 15 products by units sold in the last 60 days."},
+  {"id": "l26", "tier": "hard", "domain": "inventory", "ask": "Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost."},
+  {"id": "l28", "tier": "hard", "domain": "sales+margin", "ask": "Over the last 90 days, which categories have high net sales but weak gross margin percent?"},
+  {"id": "l30", "tier": "hard", "domain": "period+category", "ask": "Net sales month to date versus the same period last month, broken down by product category."},
+  {"id": "l35", "tier": "hard", "domain": "customers", "ask": "Over the last 365 days, what are active customers and average spend per active customer?"},
+  {"id": "l36", "tier": "hard", "domain": "workshop", "ask": "For workorders booked in over the last 90 days, how many are archived versus still open, by status name?"},
+  {"id": "l41", "tier": "schema", "domain": "inventory", "ask": "Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names."},
+  {"id": "l50", "tier": "schema", "domain": "inventory", "ask": "Aged inventory again: bands 0-30, 31-60, 61-90, 91-180, 180+ days since last inventory log create_time."}
+]

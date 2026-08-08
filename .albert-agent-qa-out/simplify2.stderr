@@ -1,0 +1,19 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZDEYCAA0D4EVJK0TTGHCT9P",
+  "cases": [
+    "s1",
+    "s2"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"s1","tier":"smoke","attempt":1,"ask":"give me inventory data"}
+{"event":"case_done","id":"s1","state":"Unavailable","ms":40693,"queries":5,"tables":5,"answerPreview":"Sorry, there are no results for that. The Lightspeed inventory snapshot contains no rows. The merchandising dataset has 77 records from 7 July to 7 August 2026, but none contains a"}
+{"event":"case_start","id":"s2","tier":"smoke","attempt":1,"ask":"hey Albert, what data do you have on our business?"}
+{"event":"case_done","id":"s2","state":"Exploratory","ms":63801,"queries":5,"tables":5,"answerPreview":"You currently have **Lightspeed operational data covering 7 July–7 August 2026**. The main usable areas are sales, products, customers, payments, staff attribution and reconciliati"}

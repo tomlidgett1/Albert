@@ -1,0 +1,240 @@
+{
+  "id": "l23",
+  "tier": "medium",
+  "domain": "inventory",
+  "ask": "Which items have zero sellable stock but positive quantity on hand?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete that lookup because the stock data query was blocked. Please try again, or ask me to check a specific item or category.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to retry the full stock check?",
+    "Would you like me to check a specific item or category?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "claim_attested:inventory.stock_on_hand_units",
+      "outcome": "failed",
+      "detail": "Claim Attested:Inventory Stock On Hand Units: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "claim_attested:inventory.stock_on_hand_units",
+      "outcome": "failed",
+      "detail": "Claim Attested:Inventory Stock On Hand Units: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:inventory.stock_on_hand_units:failed",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:inventory.stock_on_hand_units:failed",
+    "validation:no_fanout:failed",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 8,
+    "inputTokens": 218125,
+    "outputTokens": 3472,
+    "totalTokens": 221597,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 17,
+        "cached_tokens": 1093
+      },
+      {
+        "cache_write_tokens": 33714,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 510,
+        "cached_tokens": 33714
+      },
+      {
+        "cache_write_tokens": 1716,
+        "cached_tokens": 34224
+      },
+      {
+        "cache_write_tokens": 396,
+        "cached_tokens": 35940
+      },
+      {
+        "cache_write_tokens": 427,
+        "cached_tokens": 36336
+      },
+      {
+        "cache_write_tokens": 2314,
+        "cached_tokens": 36763
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 186
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 86
+      },
+      {
+        "reasoning_tokens": 100
+      },
+      {
+        "reasoning_tokens": 1097
+      },
+      {
+        "reasoning_tokens": 74
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1113,
+        "outputTokens": 94,
+        "inputTokensDetails": {
+          "cache_write_tokens": 17,
+          "cached_tokens": 1093
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33717,
+        "outputTokens": 420,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33714,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 186
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34227,
+        "outputTokens": 768,
+        "inputTokensDetails": {
+          "cache_write_tokens": 510,
+          "cached_tokens": 33714
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35943,
+        "outputTokens": 306,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1716,
+          "cached_tokens": 34224
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 86
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36339,
+        "outputTokens": 337,
+        "inputTokensDetails": {
+          "cache_write_tokens": 396,
+          "cached_tokens": 35940
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 100
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36766,
+        "outputTokens": 1354,
+        "inputTokensDetails": {
+          "cache_write_tokens": 427,
+          "cached_tokens": 36336
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1097
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 39080,
+        "outputTokens": 115,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2314,
+          "cached_tokens": 36763
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 74
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 940,
+        "outputTokens": 78,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 46621,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "progress",
+    "answer"
+  ]
+}

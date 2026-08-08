@@ -1,0 +1,119 @@
+{"phase":"start","mode":"probe","connectionId":"01KZ54B1PCKM1MHSNHY4XT6DEX","accountId":"168990","streams":90}
+warn: refreshed token held in-process only (vault CAS needs lease)
+{"phase":"probe","resource":"Account","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_account":0,"ls_account_purchasing_currencies":0},"staged":{"ls_account":0,"ls_account_purchasing_currencies":0},"quarantined":0,"ms":565}
+{"phase":"probe","resource":"CatalogVendorItem","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_catalog_vendor_items":0},"staged":{"ls_catalog_vendor_items":0},"quarantined":0,"ms":591,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"Category","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_categories":0},"staged":{"ls_categories":0},"quarantined":0,"ms":468,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"CCCharge","status":"empty","httpStatus":200,"pages":1,"leaderRecords":0,"projected":{"ls_cc_charges":0},"staged":{"ls_cc_charges":0},"quarantined":0,"ms":439}
+{"phase":"probe","resource":"CreditAccount","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_credit_accounts":0,"ls_contacts":0},"staged":{"ls_credit_accounts":0,"ls_contacts":0},"quarantined":0,"ms":586,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"CurrencyRate","status":"empty","httpStatus":200,"pages":1,"leaderRecords":0,"projected":{"ls_currency_rates":0},"staged":{"ls_currency_rates":0},"quarantined":0,"ms":426}
+{"phase":"probe","resource":"Customer","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_customers":0,"ls_contacts":0,"ls_contact_emails":0,"ls_contact_phones":0,"ls_contact_websites":0,"ls_customer_custom_field_values":0,"ls_customer_notes":0},"staged":{"ls_customers":0,"ls_contacts":0,"ls_contact_emails":0,"ls_contact_phones":0,"ls_contact_websites":0,"ls_customer_custom_field_values":0,"ls_customer_notes":0},"quarantined":0,"ms":598,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"CustomerType","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_customer_types":0},"staged":{"ls_customer_types":0},"quarantined":0,"ms":438,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"CustomField","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_custom_fields":0},"staged":{"ls_custom_fields":0},"quarantined":0,"ms":409}
+{"phase":"probe","resource":"Discount","status":"ok","httpStatus":200,"pages":1,"leaderRecords":18,"projected":{"ls_discounts":18},"staged":{"ls_discounts":0},"quarantined":0,"ms":442}
+{"phase":"probe","resource":"DiscountsByDay","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_report_discounts_by_day":0},"staged":{"ls_report_discounts_by_day":0},"quarantined":0,"ms":398}
+{"phase":"probe","resource":"Employee","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_employees":0,"ls_employee_roles":0,"ls_employee_role_rights":0,"ls_employee_rights":0},"staged":{"ls_employees":0,"ls_employee_roles":0,"ls_employee_role_rights":0,"ls_employee_rights":0},"quarantined":0,"ms":520,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"EmployeeHours","status":"empty","httpStatus":200,"pages":1,"leaderRecords":0,"projected":{"ls_employee_hours":0},"staged":{"ls_employee_hours":0},"quarantined":0,"ms":433}
+{"phase":"probe","resource":"Image","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_images":0},"staged":{"ls_images":0},"quarantined":0,"ms":513,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"Industry","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_industries":0},"staged":{"ls_industries":0},"quarantined":0,"ms":413,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"InventoryCountCalc","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_inventory_count_calcs":0},"staged":{"ls_inventory_count_calcs":0},"quarantined":0,"ms":433,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"InventoryCountItem","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_inventory_count_items":0},"staged":{"ls_inventory_count_items":0},"quarantined":0,"ms":426,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"InventoryCountReconcile","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_inventory_count_reconciles":0},"staged":{"ls_inventory_count_reconciles":0},"quarantined":0,"ms":417,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"InventoryLog","status":"ok","httpStatus":200,"pages":1,"leaderRecords":100,"projected":{"ls_inventory_logs":100},"staged":{"ls_inventory_logs":0},"quarantined":0,"ms":481}
+{"phase":"probe","resource":"Item","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_items":0,"ls_item_shops":0,"ls_item_prices":0,"ls_item_components":0,"ls_item_vendor_nums":0},"staged":{"ls_items":0,"ls_item_shops":0,"ls_item_prices":0,"ls_item_components":0,"ls_item_vendor_nums":0},"quarantined":0,"ms":905,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"ItemAttributeSet","status":"ok","httpStatus":200,"pages":1,"leaderRecords":5,"projected":{"ls_item_attribute_sets":5},"staged":{"ls_item_attribute_sets":0},"quarantined":0,"ms":441}
+{"phase":"probe","resource":"ItemFee","status":"error","httpStatus":400,"pages":0,"leaderRecords":0,"projected":{"ls_item_fees":0},"staged":{"ls_item_fees":0},"quarantined":0,"ms":440,"error":"{\"httpCode\":\"400\",\"httpMessage\":\"Bad Request\",\"message\":\"Tried to load one or more relations that are not allowed: ItemFeeCategories\",\"errorClass\":\"InvalidQueryException\"}"}
+{"phase":"probe","resource":"ItemMatrix","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_item_matrices":0},"staged":{"ls_item_matrices":0},"quarantined":0,"ms":546,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"Locale","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_locales":0,"ls_currency_denominations":0},"staged":{"ls_locales":0,"ls_currency_denominations":0},"quarantined":0,"ms":508}
+{"phase":"probe","resource":"Manufacturer","status":"ok","httpStatus":200,"pages":1,"leaderRecords":100,"projected":{"ls_manufacturers":100},"staged":{"ls_manufacturers":0},"quarantined":0,"ms":440}
+{"phase":"probe","resource":"Option","status":"ok","httpStatus":200,"pages":1,"leaderRecords":70,"projected":{"ls_options":70},"staged":{"ls_options":0},"quarantined":0,"ms":444}
+{"phase":"probe","resource":"Order","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_purchase_orders":0,"ls_purchase_order_lines":0},"staged":{"ls_purchase_orders":0,"ls_purchase_order_lines":0},"quarantined":0,"ms":1863,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"OrdersByTaxClass","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_report_orders_by_tax_class":0},"staged":{"ls_report_orders_by_tax_class":0},"quarantined":0,"ms":382}
+{"phase":"probe","resource":"OrderShipmentItem","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_order_shipment_items":0},"staged":{"ls_order_shipment_items":0},"quarantined":0,"ms":829}
+{"phase":"probe","resource":"PaymentsByDay","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_report_payments_by_day":0},"staged":{"ls_report_payments_by_day":0},"quarantined":0,"ms":374}
+{"phase":"probe","resource":"PaymentType","status":"ok","httpStatus":200,"pages":1,"leaderRecords":9,"projected":{"ls_payment_types":9},"staged":{"ls_payment_types":0},"quarantined":0,"ms":536}
+{"phase":"probe","resource":"PriceLevel","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_price_levels":0},"staged":{"ls_price_levels":0},"quarantined":0,"ms":401,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"ProcessingFee","status":"empty","httpStatus":200,"pages":1,"leaderRecords":0,"projected":{"ls_processing_fees":0},"staged":{"ls_processing_fees":0},"quarantined":0,"ms":436}
+{"phase":"probe","resource":"Quote","status":"ok","httpStatus":200,"pages":1,"leaderRecords":100,"projected":{"ls_quotes":100},"staged":{"ls_quotes":0},"quarantined":0,"ms":459}
+{"phase":"probe","resource":"Register","status":"ok","httpStatus":200,"pages":1,"leaderRecords":1,"projected":{"ls_registers":1},"staged":{"ls_registers":0},"quarantined":0,"ms":441}
+{"phase":"probe","resource":"RegisterCount","status":"error","httpStatus":400,"pages":0,"leaderRecords":0,"projected":{"ls_register_counts":0,"ls_register_count_amounts":0},"staged":{"ls_register_counts":0,"ls_register_count_amounts":0},"quarantined":0,"ms":402,"error":"{\"httpCode\":\"400\",\"httpMessage\":\"Bad Request\",\"message\":\"Tried to load one or more relations that are not allowed: PaymentType\",\"errorClass\":\"InvalidQueryException\"}"}
+{"phase":"probe","resource":"RegisterWithdraw","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_register_withdraws":0},"staged":{"ls_register_withdraws":0},"quarantined":0,"ms":473,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"Sale","status":"error","httpStatus":400,"pages":0,"leaderRecords":0,"projected":{"ls_sales":0,"ls_sale_lines":0,"ls_sale_payments":0,"ls_sale_accounts":0,"ls_sale_payment_signatures":0,"ls_sale_line_inventory_allocations":0},"staged":{"ls_sales":0,"ls_sale_lines":0,"ls_sale_payments":0,"ls_sale_accounts":0,"ls_sale_payment_signatures":0,"ls_sale_line_inventory_allocations":0},"quarantined":0,"ms":436,"error":"{\"httpCode\":\"400\",\"httpMessage\":\"Bad Request\",\"message\":\"Tried to load one or more relations that are not allowed: CCCharge, InventorySales, Item, Note, PaymentType, ProcessingFees, SaleAccounts, Signatures, TaxClass\",\"errorClass\":\"InvalidQueryException\"}"}
+{"phase":"probe","resource":"SaleVoid","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_sale_voids":0},"staged":{"ls_sale_voids":0},"quarantined":0,"ms":405,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"Season","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_seasons":0},"staged":{"ls_seasons":0},"quarantined":0,"ms":406,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"Serialized","status":"ok","httpStatus":200,"pages":1,"leaderRecords":100,"projected":{"ls_serialized":100},"staged":{"ls_serialized":0},"quarantined":0,"ms":419}
+{"phase":"probe","resource":"Session","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_session":0},"staged":{"ls_session":0},"quarantined":0,"ms":391}
+{"phase":"probe","resource":"Shipment","status":"empty","httpStatus":200,"pages":1,"leaderRecords":0,"projected":{"ls_order_shipments":0},"staged":{"ls_order_shipments":0},"quarantined":0,"ms":6185}
+{"phase":"probe","resource":"ShipTo","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_ship_tos":0,"ls_contacts":0},"staged":{"ls_ship_tos":0,"ls_contacts":0},"quarantined":0,"ms":437,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"Shop","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_shops":0,"ls_cc_gateways":0,"ls_receipt_setups":0},"staged":{"ls_shops":0,"ls_cc_gateways":0,"ls_receipt_setups":0},"quarantined":0,"ms":502,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"SpecialOrder","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_special_orders":0},"staged":{"ls_special_orders":0},"quarantined":0,"ms":502,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"Tag","status":"ok","httpStatus":200,"pages":1,"leaderRecords":96,"projected":{"ls_tags":96},"staged":{"ls_tags":0},"quarantined":0,"ms":440}
+{"phase":"probe","resource":"TagGroup","status":"ok","httpStatus":200,"pages":1,"leaderRecords":3,"projected":{"ls_tag_groups":3},"staged":{"ls_tag_groups":0},"quarantined":0,"ms":405}
+{"phase":"probe","resource":"TaxCategory","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_tax_categories":0,"ls_tax_category_classes":0},"staged":{"ls_tax_categories":0,"ls_tax_category_classes":0},"quarantined":0,"ms":449,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"TaxClass","status":"ok","httpStatus":200,"pages":1,"leaderRecords":100,"projected":{"ls_tax_classes":100},"staged":{"ls_tax_classes":0},"quarantined":0,"ms":426}
+{"phase":"probe","resource":"TaxClassSalesByDay","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_report_tax_class_sales_by_day":0},"staged":{"ls_report_tax_class_sales_by_day":0},"quarantined":0,"ms":382}
+{"phase":"probe","resource":"TaxesByDay","status":"unavailable","httpStatus":404,"pages":0,"leaderRecords":0,"projected":{"ls_report_taxes_by_day":0},"staged":{"ls_report_taxes_by_day":0},"quarantined":0,"ms":388}
+{"phase":"probe","resource":"Transfer","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_transfers":0,"ls_transfer_items":0,"ls_transfer_from":0,"ls_transfer_to":0},"staged":{"ls_transfers":0,"ls_transfer_items":0,"ls_transfer_from":0,"ls_transfer_to":0},"quarantined":0,"ms":399,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"Vendor","status":"error","pages":0,"leaderRecords":0,"projected":{"ls_vendors":0},"staged":{"ls_vendors":0},"quarantined":0,"ms":2625,"error":"Cannot read properties of undefined (reading 'map')"}
+{"phase":"probe","resource":"VendorReturn","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_vendor_returns":0},"staged":{"ls_vendor_returns":0},"quarantined":0,"ms":404,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"Workorder","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_workorders":0,"ls_workorder_lines":0,"ls_workorder_items":0},"staged":{"ls_workorders":0,"ls_workorder_lines":0,"ls_workorder_items":0},"quarantined":0,"ms":440,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe","resource":"WorkorderStatus","status":"error","httpStatus":403,"pages":0,"leaderRecords":0,"projected":{"ls_workorder_statuses":0},"staged":{"ls_workorder_statuses":0},"quarantined":0,"ms":396,"error":"{\"httpCode\":\"403\",\"httpMessage\":\"Forbidden\",\"message\":\"Not Authorized: Insufficient rights to perform the request\",\"errorClass\":\"InsufficientRightsException\"}"}
+{"phase":"probe:fanout","resource":"ls_custom_field_choices","status":"unavailable","httpStatus":404,"leaderRecords":0,"staged":{"ls_custom_field_choices":0},"ms":388}
+{"phase":"probe:fanout","resource":"ls_workorder_images","status":"empty","httpStatus":200,"leaderRecords":0,"staged":{"ls_workorder_images":0},"ms":436}
+{"phase":"probe:fanout","resource":"ls_register_calculated","status":"empty","httpStatus":200,"leaderRecords":0,"staged":{"ls_register_calculated":0},"ms":905}
+{
+  "phase": "done",
+  "mode": "probe",
+  "groupResults": {
+    "ok": 12,
+    "empty": 7,
+    "unavailable": 11,
+    "error": 30
+  },
+  "nonemptyTables": 47,
+  "emptyTables": 43,
+  "empty": [
+    "ls_account",
+    "ls_account_purchasing_currencies",
+    "ls_cc_charges",
+    "ls_currency_rates",
+    "ls_custom_fields",
+    "ls_report_discounts_by_day",
+    "ls_employee_roles",
+    "ls_employee_hours",
+    "ls_industries",
+    "ls_inventory_count_calcs",
+    "ls_inventory_count_items",
+    "ls_inventory_count_reconciles",
+    "ls_item_prices",
+    "ls_item_fees",
+    "ls_locales",
+    "ls_currency_denominations",
+    "ls_report_orders_by_tax_class",
+    "ls_order_shipment_items",
+    "ls_report_payments_by_day",
+    "ls_price_levels",
+    "ls_processing_fees",
+    "ls_sale_payment_signatures",
+    "ls_sale_voids",
+    "ls_seasons",
+    "ls_session",
+    "ls_order_shipments",
+    "ls_ship_tos",
+    "ls_cc_gateways",
+    "ls_special_orders",
+    "ls_report_tax_class_sales_by_day",
+    "ls_report_taxes_by_day",
+    "ls_transfers",
+    "ls_transfer_items",
+    "ls_transfer_from",
+    "ls_transfer_to",
+    "ls_vendor_returns",
+    "ls_workorders",
+    "ls_workorder_lines",
+    "ls_workorder_items",
+    "ls_workorder_statuses",
+    "ls_custom_field_choices",
+    "ls_workorder_images",
+    "ls_register_calculated"
+  ]
+}

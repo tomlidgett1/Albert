@@ -1,0 +1,306 @@
+{
+  "event": "battery_start",
+  "tenant": "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
+  "conversationId": "01KZF8HXAS7HMV3D5WNWGK9X63",
+  "cases": [
+    "l01",
+    "l02",
+    "l03",
+    "l04",
+    "l05",
+    "l06",
+    "l07",
+    "l08",
+    "l09",
+    "l10",
+    "l11",
+    "l12",
+    "l13",
+    "l14",
+    "l15",
+    "l16",
+    "l17",
+    "l18",
+    "l19",
+    "l20",
+    "l21",
+    "l22",
+    "l23",
+    "l24",
+    "l25",
+    "l26",
+    "l27",
+    "l28",
+    "l29",
+    "l30",
+    "l31",
+    "l32",
+    "l33",
+    "l34",
+    "l35",
+    "l36",
+    "l37",
+    "l38",
+    "l39",
+    "l40",
+    "l41",
+    "l42",
+    "l43",
+    "l44",
+    "l45",
+    "l46",
+    "l47",
+    "l48",
+    "l49",
+    "l50"
+  ],
+  "preferences": {
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "high",
+    "fastMode": false
+  },
+  "semantic": "https://albert-semantic-query-dogfood.fly.dev"
+}
+{"event":"case_start","id":"l01","tier":"easy","attempt":1,"ask":"What were our net sales excluding GST over the last 30 days?"}
+{"event":"case_done","id":"l01","state":"Exploratory","ms":17177,"queries":1,"tables":1,"answerPreview":"Net sales excluding GST were **$40,235.16** over the 30 days from **9 July to 8 August 2026**, across 307 completed tickets, with refunds netted.\n\n| Period From | Period To | Compl"}
+{"event":"case_start","id":"l02","tier":"easy","attempt":1,"ask":"How many completed transactions did we process in the last 7 days?"}
+{"event":"case_done","id":"l02","state":"Exploratory","ms":14742,"queries":1,"tables":1,"answerPreview":"We processed 54 completed transactions in the last 7 days.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l03","tier":"easy","attempt":1,"ask":"Who works here? List the employee names from our POS."}
+{"event":"case_done","id":"l03","state":"Qualified","ms":2573,"queries":0,"tables":0,"answerPreview":"Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"}
+{"event":"case_start","id":"l04","tier":"easy","attempt":1,"ask":"What is our current stock on hand in units and dollar value at average cost?"}
+{"event":"case_done","id":"l04","state":"Exploratory","ms":47824,"queries":2,"tables":2,"answerPreview":"As at 7 August 2026, current stock is 4,083 units valued at $160,205.12 using item average cost; the stock-snapshot average-cost field was unpopulated.\n\n| Units On Hand | Stock Val"}
+{"event":"case_start","id":"l05","tier":"easy","attempt":1,"ask":"Give me an aged inventory report"}
+{"event":"case_error","id":"l05","error":"Error: The model did not return a structured answer for this turn.","ms":17085}
+{"event":"case_start","id":"l06","tier":"easy","attempt":1,"ask":"How many active (not archived) products do we have in the catalogue?"}
+{"event":"case_done","id":"l06","state":"Exploratory","ms":10089,"queries":1,"tables":1,"answerPreview":"You have 17,005 active, non-archived products in the catalogue.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l07","tier":"easy","attempt":1,"ask":"How many customers do we have on file?"}
+{"event":"case_done","id":"l07","state":"Exploratory","ms":14024,"queries":1,"tables":1,"answerPreview":"You have 9,385 customers on file as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l08","tier":"easy","attempt":1,"ask":"Show a simple table of daily sales totals for the last 7 days."}
+{"event":"case_done","id":"l08","state":"Exploratory","ms":16872,"queries":1,"tables":1,"answerPreview":"Daily completed sales, including GST, totalled between $0.00 and $2,648.75 per day from 2 to 8 August 2026.\n\n| Sales Day | Sales Inc GST |\n| --- | ---: |\n| 2 August 2026 | $823.94 "}
+{"event":"case_start","id":"l09","tier":"easy","attempt":1,"ask":"What was average order value last week?"}
+{"event":"case_done","id":"l09","state":"Exploratory","ms":13585,"queries":1,"tables":1,"answerPreview":"Average order value was $108.67 including GST last week, from 27 July to 2 August 2026.\n\n| Week Start | Week End | Orders | Total Sales Inc GST | Average Order Value Inc GST |\n| --"}
+{"event":"case_start","id":"l10","tier":"easy","attempt":1,"ask":"Which 10 items have the highest quantity on hand right now?"}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l10","state":"Unavailable","ms":15228,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the lookup for the 10 items with the highest quantity on hand right now. Please try again, and I’ll return the ranked list."}
+{"event":"case_start","id":"l11","tier":"medium","attempt":1,"ask":"Over the last 90 days, which product categories generated the most net sales? Rank them."}
+{"event":"case_done","id":"l11","state":"Exploratory","ms":18782,"queries":1,"tables":1,"answerPreview":"Over the last 90 days, Services generated the most net sales at $20,676.53 ex GST, followed by Parts/Wheels & Tyres at $12,512.41 and Bikes/Kids at $9,818.13; refunds are included "}
+{"event":"case_start","id":"l12","tier":"medium","attempt":1,"ask":"Who were our top performing staff by net sales in the last 30 days?"}
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+{"event":"case_done","id":"l12","state":"Exploratory","ms":22340,"queries":1,"tables":1,"answerPreview":"Jack Lidgett was the top-performing staff member by net sales in the last 30 days, with $20,305.23 ex GST from 122 tickets.\n\n| Employee Id | Staff Name | Tickets | Net Sales Ex GST"}
+{"event":"case_start","id":"l13","tier":"medium","attempt":1,"ask":"Compare month-to-date sales with the same period last month. Are we up or down?"}
+{"event":"case_done","id":"l13","state":"Exploratory","ms":23305,"queries":1,"tables":1,"answerPreview":"Month-to-date sales are down 25.57%: $6,626.28 from 1–8 August 2026 versus $8,902.80 for the same period in July 2026, a decrease of $2,276.52.\n\n| This Month Start | This Period Th"}
+{"event":"case_start","id":"l14","tier":"medium","attempt":1,"ask":"By ageing band, how much stock value is over 90 days since last movement?"}
+Albert run_sql tool failure {
+  turnId: '01KZF8T3FS87E4NW2KRNE52F3X',
+  purpose: 'Current stock value by ageing band since the latest inventory movement, including stock over 90 days',
+  claims: 0,
+  error: 'Request body or tool input is invalid. (data.resultWindow.orderBy: Too big: expected array to have <=5 items)'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l14","state":"Exploratory","ms":49058,"queries":2,"tables":2,"answerPreview":"| Age Band | SKUs | Stock Value |\n| --- | ---: | ---: |\n| 180+ days | 503 | $84,111.76 |\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l15","tier":"medium","attempt":1,"ask":"Show stock value by category for items currently on hand."}
+{"event":"case_done","id":"l15","state":"Exploratory","ms":26940,"queries":2,"tables":2,"answerPreview":"Currently held stock is led by Bikes/Mountain at $28,033.34 across 17 units, based on the stock snapshot through 7 August 2026. The evidence also includes a separate Uncategorised "}
+{"event":"case_start","id":"l16","tier":"medium","attempt":1,"ask":"What were our refund amount and refund rate over the last 90 days?"}
+{"event":"case_done","id":"l16","state":"Exploratory","ms":18368,"queries":1,"tables":1,"answerPreview":"Here is what came back:\n\n| Period From | Period To | Gross Sales Inc GST | Refund Amount Inc GST | Refund Transactions |\n| --- | --- | --- | --- | --- |\n| 9 May 2026 | 7 August 202"}
+{"event":"case_start","id":"l17","tier":"medium","attempt":1,"ask":"Show monthly sales totals for the last 12 months as a table."}
+{"event":"case_done","id":"l17","state":"Exploratory","ms":17641,"queries":1,"tables":1,"answerPreview":"Monthly sales including GST totalled the following amounts from August 2025 to July 2026:\n\n| Month | Sales Inc GST |\n| --- | ---: |\n| August 2025 | $47,320.07 |\n| September 2025 | "}
+{"event":"case_start","id":"l18","tier":"medium","attempt":1,"ask":"How many open workorders do we have right now?"}
+{"event":"case_done","id":"l18","state":"Exploratory","ms":10595,"queries":1,"tables":1,"answerPreview":"You have 3 open workorders right now, as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l19","tier":"medium","attempt":1,"ask":"How many open purchase orders do we have, and what is their total quantity?"}
+{"event":"case_done","id":"l19","state":"Exploratory","ms":12157,"queries":1,"tables":1,"answerPreview":"As at 7 August 2026, you have 3 open purchase orders with a total ordered quantity of 0.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l20","tier":"medium","attempt":1,"ask":"In the last 90 days, how many distinct customers bought from us?"}
+{"event":"case_done","id":"l20","state":"Exploratory","ms":11546,"queries":1,"tables":1,"answerPreview":"In the last 90 days, 355 distinct identified customers bought from you. Walk-in sales without a customer record are excluded.\n\nFigures from Lightspeed (updated through 7 August 202"}
+{"event":"case_start","id":"l21","tier":"medium","attempt":1,"ask":"List the top-level product categories by name."}
+{"event":"case_retry","id":"l21","reason":"soft_timeout"}
+{"event":"case_start","id":"l21","tier":"medium","attempt":2,"ask":"List the top-level product categories by name."}
+{"event":"case_done","id":"l21","state":"Exploratory","ms":17189,"queries":1,"tables":1,"answerPreview":"Here are the top results, led by Accessories1:\n\n| Category Name |\n| --- |\n| Accessories1 |\n| Bikes |\n| Clothing & Protection |\n| Drivetrain & Pedalling |\n| Electronics & Lights |\n|"}
+{"event":"case_start","id":"l22","tier":"medium","attempt":1,"ask":"What share of last 30 days sales came from layaways still incomplete versus completed sales?"}
+Albert run_sql tool failure {
+  turnId: '01KZF90A8HQS92MA60DXJ8MANM',
+  purpose: 'Compare the last 30 days sales share from incomplete layaways versus completed sales',
+  claims: 0,
+  error: 'The statement failed to execute: column s.layaway does not exist. Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZF90A8HQS92MA60DXJ8MANM',
+  purpose: 'Compare the last 30 days sales share from incomplete layaways versus completed sales using the sale layaway flag',
+  claims: 0,
+  error: 'The statement failed to execute: column s.is_layaway does not exist. Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.'
+}
+{"event":"case_done","id":"l22","state":"Unavailable","ms":36931,"queries":0,"tables":0,"answerPreview":"I couldn’t complete that lookup because the available sales data does not include a layaway indicator, so I can’t calculate the shares for incomplete layaways versus completed sale"}
+{"event":"case_start","id":"l23","tier":"medium","attempt":1,"ask":"Which items have zero sellable stock but positive quantity on hand?"}
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_retry","id":"l23","reason":"soft_timeout"}
+{"event":"case_start","id":"l23","tier":"medium","attempt":2,"ask":"Which items have zero sellable stock but positive quantity on hand?"}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l23","state":"Unavailable","ms":30645,"queries":0,"tables":0,"answerPreview":"I could not complete the stock lookup because the query was blocked before it ran. Please try again."}
+{"event":"case_start","id":"l24","tier":"medium","attempt":1,"ask":"List active employees and whether each is archived or not."}
+{"event":"case_done","id":"l24","state":"Qualified","ms":2949,"queries":0,"tables":0,"answerPreview":"Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"}
+{"event":"case_start","id":"l25","tier":"medium","attempt":1,"ask":"Top 15 products by units sold in the last 60 days."}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l25","state":"Unavailable","ms":26191,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the lookup for the top 15 products by units sold in the last 60 days. Please retry the request."}
+{"event":"case_start","id":"l26","tier":"hard","attempt":1,"ask":"Give me an aged inventory report with age bands, SKU counts, units, and stock value at average cost."}
+{"event":"case_error","id":"l26","error":"Error: The model did not return a structured answer for this turn.","ms":11782}
+{"event":"case_start","id":"l27","tier":"hard","attempt":1,"ask":"Within the 180+ day aged stock band, which 20 SKUs tie up the most stock value?"}
+{"event":"case_done","id":"l27","state":"Exploratory","ms":30075,"queries":2,"tables":2,"answerPreview":"Here are the top results, led by F26 IZALCO MAX 9.7 - Large 56 Soothbrush:\n\n| Unit Cost | Stock Value | Value Rank | Item Id | Sku Name |\n| --- | --- | --- | --- | --- |\n| $6,293.0"}
+{"event":"case_start","id":"l28","tier":"hard","attempt":1,"ask":"Over the last 90 days, which categories have high net sales but weak gross margin percent?"}
+Albert run_sql tool failure {
+  turnId: '01KZF96XDBSH0DTA3XXN4WD42W',
+  purpose: 'Identify categories with high net sales and comparatively weak gross margins over the last 90 days',
+  claims: 0,
+  error: 'The statement failed to execute: column l.calc_fifo_cost does not exist. Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZF96XDBSH0DTA3XXN4WD42W',
+  purpose: 'Identify categories with high net sales and comparatively weak gross margins over the last 90 days',
+  claims: 0,
+  error: 'Request body or tool input is invalid. (data.resultWindow.orderBy: Too big: expected array to have <=5 items)'
+}
+{"event":"case_done","id":"l28","state":"Unavailable","ms":25813,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the lookup for categories with high net sales and weak gross margins over the last 90 days. Please try again."}
+{"event":"case_start","id":"l29","tier":"hard","attempt":1,"ask":"Take our top 10 products by units sold in the last 90 days. For those products, what is current stock on hand?"}
+{"event":"case_done","id":"l29","state":"Exploratory","ms":29683,"queries":2,"tables":2,"answerPreview":"The top seller was Service - Change Tyre, Cass, Rotor, with 124 units sold and 0 in stock; the top 10 covered 1 December 2025 to 1 March 2026, with stock current to 1 March 2026.\n\n"}
+{"event":"case_start","id":"l30","tier":"hard","attempt":1,"ask":"Net sales month to date versus the same period last month, broken down by product category."}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZF98RTEX6KMCH17H087FYRD',
+  purpose: 'Compare month-to-date net sales with the same elapsed period last month by product category',
+  claims: 1,
+  error: 'SUM(business_date) aggregates a key or attribute of sales_day_location_category; its measures are gross_takings_inc_gst, net_sales_ex_gst, gross_margin, units_sold, transactions, refund_amount_inc_tax, discount_amount. SUM(business_date) aggregates a key or attribute of sales_day_location_category; its measures are gross_takings_inc_gst, net_sales_ex_gst, gross_margin, units_sold, transactions, re'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_error","id":"l30","error":"MaxTurnsExceededError: Max turns (12) exceeded","ms":128911}
+{"event":"case_start","id":"l31","tier":"hard","attempt":1,"ask":"Over the last 30 days, which workers have high transaction counts but below-shop average order value?"}
+{"event":"case_done","id":"l31","state":"Exploratory","ms":22549,"queries":1,"tables":1,"answerPreview":"Over the 30 days from 17 February to 19 March 2026, Leigh Phillips had high transaction volume with 167 transactions and an average order value of $121.50, which was $15.36 below t"}
+{"event":"case_start","id":"l32","tier":"hard","attempt":1,"ask":"Over the last 90 days, which categories have the highest discount rates and which have the highest refund rates?"}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  turnId: '01KZF9DJ1PBDKQZ7Q1BTDD7TW1',
+  purpose: 'Compare product-category discount and refund rates over the last 90 days',
+  claims: 0,
+  error: 'The statement failed to execute: syntax error at or near "DESC". Fix the statement against the schema in your instructions (dimension tables join on their `id` column) and run it again.'
+}
+{"event":"case_done","id":"l32","state":"Exploratory","ms":42665,"queries":1,"tables":1,"answerPreview":"Electronics & Lights/Radar had both the highest discount rate, 64.51%, and the highest refund rate, 50.00%, in the supplied period of 1 January 2025 to 1 January 2026.\n\n| Units Sol"}
+{"event":"case_start","id":"l33","tier":"hard","attempt":1,"ask":"Which categories have the longest stock cover days and how much stock-on-hand value is tied up there?"}
+Albert run_sql tool failure {
+  turnId: '01KZF9EYAEV4Q4NYHWTF5JVTM0',
+  purpose: 'Rank product categories by current stock-cover days and show stock-on-hand value tied up, using the last 90 days of comp',
+  claims: 0,
+  error: 'Request body or tool input is invalid. (data.resultWindow.orderBy: Too big: expected array to have <=5 items)'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l33","state":"Exploratory","ms":63617,"queries":2,"tables":2,"answerPreview":"Among categories with recorded sales, Bikes/Hybrid has the longest stock cover at 1,170 days, with $0.00 of stock-on-hand value tied up; the figures use the 90-day sales window end"}
+{"event":"case_start","id":"l34","tier":"hard","attempt":1,"ask":"Show daily net sales for the last 14 days and call out the weakest days."}
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+{"event":"case_done","id":"l34","state":"Exploratory","ms":31080,"queries":1,"tables":1,"answerPreview":"Daily net sales were $9.09 on the weakest completed day, 5 August 2026; 8 August is incomplete because the data runs through 7 August 2026.\n\n| Trading Date | Net Sales Ex GST | Com"}
+{"event":"case_start","id":"l35","tier":"hard","attempt":1,"ask":"Over the last 365 days, what are active customers and average spend per active customer?"}
+{"event":"case_done","id":"l35","state":"Clarification","ms":9314,"queries":0,"tables":0,"answerPreview":""}
+{"event":"case_start","id":"l36","tier":"hard","attempt":1,"ask":"For workorders booked in over the last 90 days, how many are archived versus still open, by status name?"}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l36","state":"Unavailable","ms":22641,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the lookup for workorders booked in over the last 90 days. Please try again."}
+{"event":"case_start","id":"l37","tier":"hard","attempt":1,"ask":"List incomplete purchase orders with vendor name, ordered date, and total quantity."}
+{"event":"case_done","id":"l37","state":"Exploratory","ms":18112,"queries":1,"tables":1,"answerPreview":"There are 3 incomplete purchase orders: Wiggle on 22 January 2019, Shimano Australia on 2 January 2019, and one with no vendor name on 31 July 2018; each has a total quantity of 0."}
+{"event":"case_start","id":"l38","tier":"hard","attempt":1,"ask":"How many transfers are sent but not yet received?"}
+{"event":"case_done","id":"l38","state":"Exploratory","ms":10745,"queries":1,"tables":1,"answerPreview":"There are 0 transfers sent but not yet received, as at 7 August 2026.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l39","tier":"hard","attempt":1,"ask":"How many items are archived versus active, and what is the on-hand value of active items only?"}
+{"event":"case_done","id":"l39","state":"Exploratory","ms":27365,"queries":2,"tables":2,"answerPreview":"As at 7 August 2026, there are 17,005 active items and no archived items; the on-hand value of active items cannot be determined because no cost records are available.\n\n| Status | "}
+{"event":"case_start","id":"l40","tier":"hard","attempt":1,"ask":"Gross profit dollars by month for the last 12 months using sale cost versus sales excluding GST."}
+{"event":"case_done","id":"l40","state":"Exploratory","ms":21282,"queries":1,"tables":1,"answerPreview":"Gross profit dollars totalled $4,222.27 in August 2026 and peaked at $36,595.37 in December 2025, covering September 2025 to August 2026.\n\n| Month | Sales Ex GST | Sale Cost | Gros"}
+{"event":"case_start","id":"l41","tier":"schema","attempt":1,"ask":"Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names."}
+Albert run_sql tool failure {
+  turnId: '01KZF9NTGXA9FTFR1550DN5JKT',
+  purpose: 'Produce the aged inventory table from current stock snapshots and latest inventory movement dates',
+  claims: 0,
+  error: 'Request body or tool input is invalid. (data.resultWindow.orderBy: Too big: expected array to have <=5 items)'
+}
+Albert run_sql tool failure {
+  error: 'The semantic service returned an invalid governed result-window proof.'
+}
+{"event":"case_done","id":"l41","state":"Unavailable","ms":28722,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the aged inventory lookup because the query failed before it ran. Please retry the lookup."}
+{"event":"case_start","id":"l42","tier":"schema","attempt":1,"ask":"Show 10 items with description, create_time, and whether archived. Use the real staging column names."}
+{"event":"case_done","id":"l42","state":"Exploratory","ms":18842,"queries":1,"tables":1,"answerPreview":"Here are the top results, led by Helmet Lazer Lupo Kineticore UNISIZE - Matte Fern:\n\n| Item Id | Description | Create Time | Archived |\n| --- | --- | --- | --- |\n| 17407 | Helmet L"}
+{"event":"case_start","id":"l43","tier":"schema","attempt":1,"ask":"Sum calc_total for completed non-voided sales in the last 30 days."}
+{"event":"case_done","id":"l43","state":"Exploratory","ms":15906,"queries":1,"tables":1,"answerPreview":"Completed, non-voided sales totalled $42,018.62 across 307 tickets from 8 July 2026 to 7 August 2026.\n\n| Period Start | Period End | Completed Non-Voided Tickets | Total Sales |\n| "}
+{"event":"case_start","id":"l44","tier":"schema","attempt":1,"ask":"List employees with first_name and last_name, not a full_name column."}
+{"event":"case_done","id":"l44","state":"Qualified","ms":2223,"queries":0,"tables":0,"answerPreview":"Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer"}
+{"event":"case_start","id":"l45","tier":"schema","attempt":1,"ask":"Count workorders grouped by status name using the staging status name field."}
+{"event":"case_done","id":"l45","state":"Exploratory","ms":12843,"queries":1,"tables":1,"answerPreview":"As at 7 August 2026, all 3 workorders returned have no status name.\n\n| Status Name | Workorder Count |\n| --- | ---: |\n| No status name | 3 |\n\nWould you like these workorders broken"}
+{"event":"case_start","id":"l46","tier":"schema","attempt":1,"ask":"Count purchase orders where complete is false and archived is false."}
+{"event":"case_done","id":"l46","state":"Exploratory","ms":9155,"queries":1,"tables":1,"answerPreview":"There are 3 active purchase orders that are incomplete and not archived.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l47","tier":"schema","attempt":1,"ask":"Show category full_path_name values that contain Eyewear."}
+{"event":"case_done","id":"l47","state":"Exploratory","ms":13433,"queries":2,"tables":2,"answerPreview":"Full Path Name: Clothing & Protection/Eyewear.\n\nTreating “Eyewear” as Eyewear Tifosi Optics Podium XC Fototec/Silver.\n\nFigures from Lightspeed (updated through 7 August 2026)."}
+{"event":"case_start","id":"l48","tier":"schema","attempt":1,"ask":"What is total qoh and stock value for shop_id = 0 stock rows that are not archived?"}
+{"event":"case_done","id":"l48","state":"Exploratory","ms":13643,"queries":1,"tables":1,"answerPreview":"Shop 0 has total stock on hand of 4,083 units, with a total stock value of $0.00 for the active, non-archived stock rows.\n\n| Total QOH | Stock value |\n|---:|---:|\n| 4,083 units | $"}
+{"event":"case_start","id":"l49","tier":"schema","attempt":1,"ask":"Monthly sales line chart data: month bucket and sum of calc_total for the last 24 months."}
+{"event":"case_done","id":"l49","state":"Exploratory","ms":16366,"queries":1,"tables":1,"answerPreview":"Monthly sales including GST totalled $6,626.28 to $73,288.94 across September 2024 to August 2026, with the highest month in December 2024 and the lowest in August 2026.\n\n| Month |"}
+{"event":"case_start","id":"l50","tier":"schema","attempt":1,"ask":"Aged inventory again: bands 0-30, 31-60, 61-90, 91-180, 180+ days since last inventory log create_time."}
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+Albert run_sql tool failure { error: 'Invalid JSON input for tool' }
+{"event":"case_done","id":"l50","state":"Unavailable","ms":50334,"queries":0,"tables":0,"answerPreview":"I couldn’t complete the aged-inventory lookup because the inventory data request failed before it ran. Please try again."}

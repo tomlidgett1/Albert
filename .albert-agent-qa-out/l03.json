@@ -1,0 +1,64 @@
+{
+  "id": "l03",
+  "tier": "easy",
+  "domain": "employees",
+  "ask": "Who works here? List the employee names from our POS.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Qualified",
+  "answerText": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer",
+  "claims": [],
+  "followUps": [],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [
+    "I loaded the worker names from your connected POS directory."
+  ],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:directory"
+  ],
+  "usage": {
+    "requests": 1,
+    "inputTokens": 1038,
+    "outputTokens": 80,
+    "totalTokens": 1118,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1035,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1038,
+        "outputTokens": 80,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1035,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 2573,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "narrative",
+    "answer"
+  ]
+}

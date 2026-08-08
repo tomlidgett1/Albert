@@ -1,0 +1,746 @@
+[
+ {
+  "id": "gt_sales_30d",
+  "tier": "easy",
+  "ask": "Net sales last 30d",
+  "state": "ERROR",
+  "validation": "-",
+  "rowCount": 0,
+  "sample": "",
+  "error": "53300: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+  "ms": 8158
+ },
+ {
+  "id": "gt_sales_7d",
+  "tier": "easy",
+  "ask": "Sales last 7d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 1,
+  "sample": "{\"net_sales_ex_gst\":\"4307.5100\",\"transactions\":\"52\",\"avg_order_value\":\"91.1221153846153846\"}",
+  "rows": [
+   {
+    "net_sales_ex_gst": "4307.5100",
+    "transactions": "52",
+    "avg_order_value": "91.1221153846153846"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 0,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 14707
+ },
+ {
+  "id": "gt_mtd_vs_prior",
+  "tier": "hard",
+  "ask": "MTD vs prior",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 1,
+  "sample": "{\"net_sales_ex_gst\":\"3120.4900\",\"net_sales_ex_gst__comparison\":\"5138.1200\",\"net_sales_ex_gst__change\":\"-2017.6300\",\"net_sales_ex_gst__change_pct\":\"-39.2678645107549065\"}",
+  "rows": [
+   {
+    "net_sales_ex_gst": "3120.4900",
+    "net_sales_ex_gst__comparison": "5138.1200",
+    "net_sales_ex_gst__change": "-2017.6300",
+    "net_sales_ex_gst__change_pct": "-39.2678645107549065"
+   }
+  ],
+  "warnings": [
+   "The selected time window is shorter than seven days."
+  ],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15480
+ },
+ {
+  "id": "gt_cat_90d",
+  "tier": "medium",
+  "ask": "Category sales+margin 90d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 20,
+  "sample": "{\"product.category\":\"Services\",\"net_sales_ex_gst\":\"21662.8200\",\"gross_margin\":\"21212.8200\",\"gross_margin_pct\":\"97.9227081238730692\",\"discount_rate\":\"0.84467647850631239631\",\"refund_rate\":nul",
+  "rows": [
+   {
+    "product.category": "Services",
+    "net_sales_ex_gst": "21662.8200",
+    "gross_margin": "21212.8200",
+    "gross_margin_pct": "97.9227081238730692",
+    "discount_rate": "0.84467647850631239631",
+    "refund_rate": null
+   },
+   {
+    "product.category": null,
+    "net_sales_ex_gst": "17244.0200",
+    "gross_margin": "15247.3600",
+    "gross_margin_pct": "88.4211454173678759",
+    "discount_rate": "0.23057702949709053712",
+    "refund_rate": "0.36767486616634871545"
+   },
+   {
+    "product.category": "Wheels & Tyres",
+    "net_sales_ex_gst": "12701.4100",
+    "gross_margin": "6781.6590",
+    "gross_margin_pct": "53.3929618837593621",
+    "discount_rate": "2.0343658250961544",
+    "refund_rate": "1.06224169822704778955"
+   },
+   {
+    "product.category": "Kids",
+    "net_sales_ex_gst": "9663.5900",
+    "gross_margin": "4653.5267",
+    "gross_margin_pct": "48.1552580355747709",
+    "discount_rate": "0.25335602902897079274",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Drivetrain",
+    "net_sales_ex_gst": "9053.3900",
+    "gross_margin": "4845.2300",
+    "gross_margin_pct": "53.5184058126293024",
+    "discount_rate": "3.0163550045628816",
+    "refund_rate": "2.2860691953181648"
+   },
+   {
+    "product.category": "City",
+    "net_sales_ex_gst": "8185.4400",
+    "gross_margin": "2225.4400",
+    "gross_margin_pct": "27.1877870951347759",
+    "discount_rate": "4.1468853477907565",
+    "refund_rate": "1.3800672289892979"
+   },
+   {
+    "product.category": "Gravel",
+    "net_sales_ex_gst": "5000.0000",
+    "gross_margin": "-345.0000",
+    "gross_margin_pct": "-6.9000000000000000",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Mountain",
+    "net_sales_ex_gst": "4909.0500",
+    "gross_margin": "2005.6500",
+    "gross_margin_pct": "40.8561738014483454",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": "30.7693885609669793"
+   },
+   {
+    "product.category": "Brakes",
+    "net_sales_ex_gst": "4427.7100",
+    "gross_margin": "2807.5263",
+    "gross_margin_pct": "63.4080890573230857",
+    "discount_rate": "1.1635321337697591",
+    "refund_rate": "0.24576817916500261129"
+   },
+   {
+    "product.category": "Helmets",
+    "net_sales_ex_gst": "4113.3000",
+    "gross_margin": "1677.2317",
+    "gross_margin_pct": "40.7758174701577809",
+    "discount_rate": "13.9738456214802055",
+    "refund_rate": "0.00000000000000000000"
+   },
+   {
+    "product.category": "Lights",
+    "net_sales_ex_gst": "3288.5900",
+    "gross_margin": "1574.8832",
+    "gross_margin_pct": "47.8893142653842528",
+    "discount_rate": "11.2886263505901256",
+    "refund_rate": "4.4882203687421947"
+   },
+   {
+    "product.category": "Cockpit",
+    "net_sales_ex_gst": "2702.4400",
+    "gross_margin": "1345.3665",
+    "gross_margin_pct": "49.7833994464261926",
+    "discount_rate": "4.4319072440690196",
+    "refund_rate": "3.2540142279730020"
+   },
+   {
+    "product.category": "Indoor Trainers",
+    "net_sales_ex_gst": "1727.2600",
+    "gross_margin": "259.1200",
+    "gross_margin_pct": "15.0017947500665794",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Computers",
+    "net_sales_ex_gst": "1576.3500",
+    "gross_margin": "185.4208",
+    "gross_margin_pct": "11.7626669204174200",
+    "discount_rate": "4.6723988169193724",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Pedals",
+    "net_sales_ex_gst": "1031.5800",
+    "gross_margin": "593.7683",
+    "gross_margin_pct": "57.5591132049865255",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Pumps",
+    "net_sales_ex_gst": "930.7400",
+    "gross_margin": "562.6797",
+    "gross_margin_pct": "60.4550894986784709",
+    "discount_rate": "3.3967391304347826",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Bags & Baskets",
+    "net_sales_ex_gst": "768.9600",
+    "gross_margin": "428.0897",
+    "gross_margin_pct": "55.6712572825634623",
+    "discount_rate": "2.3087939756531381",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Bottles & Cages",
+    "net_sales_ex_gst": "727.1000",
+    "gross_margin": "307.6570",
+    "gross_margin_pct": "42.3128868106175217",
+    "discount_rate": "18.5726648002036142",
+    "refund_rate": null
+   },
+   {
+    "product.category": "Gloves",
+    "net_sales_ex_gst": "717.9900",
+    "gross_margin": "383.2089",
+    "gross_margin_pct": "53.3724564408975055",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": "9.1914639194223428"
+   },
+   {
+    "product.category": "Lubes",
+    "net_sales_ex_gst": "696.1200",
+    "gross_margin": "393.7847",
+    "gross_margin_pct": "56.5685083031661208",
+    "discount_rate": "0.00000000000000000000",
+    "refund_rate": null
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15121
+ },
+ {
+  "id": "gt_staff_30d",
+  "tier": "medium",
+  "ask": "Staff sales 30d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 7,
+  "sample": "{\"worker\":\"Jack Lidgett\",\"net_sales_ex_gst\":\"19185.1000\",\"transactions\":\"153\",\"avg_order_value\":\"137.9331372549019608\"}",
+  "rows": [
+   {
+    "worker": "Jack Lidgett",
+    "net_sales_ex_gst": "19185.1000",
+    "transactions": "153",
+    "avg_order_value": "137.9331372549019608"
+   },
+   {
+    "worker": "Leigh Phillips",
+    "net_sales_ex_gst": "17399.4900",
+    "transactions": "186",
+    "avg_order_value": "102.9010752688172043"
+   },
+   {
+    "worker": "Angus McKinnon",
+    "net_sales_ex_gst": "573.6100",
+    "transactions": "10",
+    "avg_order_value": "63.0970000000000000"
+   },
+   {
+    "worker": "Charles O'Hara",
+    "net_sales_ex_gst": "236.8600",
+    "transactions": "3",
+    "avg_order_value": "86.8500000000000000"
+   },
+   {
+    "worker": "Tom Wildoer",
+    "net_sales_ex_gst": "163.6400",
+    "transactions": "1",
+    "avg_order_value": "180.0000000000000000"
+   },
+   {
+    "worker": "Tom Lidgett",
+    "net_sales_ex_gst": "0.0000",
+    "transactions": "1",
+    "avg_order_value": "0.00000000000000000000"
+   },
+   {
+    "worker": "Mai Etchebarne",
+    "net_sales_ex_gst": "0.0000",
+    "transactions": "1",
+    "avg_order_value": "0.00000000000000000000"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15361
+ },
+ {
+  "id": "gt_customers_90d",
+  "tier": "medium",
+  "ask": "Customers 90d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 1,
+  "sample": "{\"new_customers\":\"141\",\"returning_customer_rate\":\"68.1318681318681319\",\"active_customers\":\"364\"}",
+  "rows": [
+   {
+    "new_customers": "141",
+    "returning_customer_rate": "68.1318681318681319",
+    "active_customers": "364"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15230
+ },
+ {
+  "id": "gt_customers_365d",
+  "tier": "hard",
+  "ask": "Customers 365d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 1,
+  "sample": "{\"active_customers\":\"364\",\"repeat_purchase_rate\":\"68.1318681318681319\",\"avg_customer_value\":\"281.5022527472527473\"}",
+  "rows": [
+   {
+    "active_customers": "364",
+    "repeat_purchase_rate": "68.1318681318681319",
+    "avg_customer_value": "281.5022527472527473"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15314
+ },
+ {
+  "id": "gt_inventory",
+  "tier": "medium",
+  "ask": "Inventory SOH",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 1,
+  "sample": "{\"stock_on_hand_units\":\"4078.0000\",\"stock_on_hand_value\":\"173435.5893\"}",
+  "rows": [
+   {
+    "stock_on_hand_units": "4078.0000",
+    "stock_on_hand_value": "173435.5893"
+   }
+  ],
+  "warnings": [
+   "Recent data is available only for the disclosed covered range while deeper history continues. item_shops is covered from 2026-07-04T04:32:57.328Z through 2026-08-04T04:32:57.328Z."
+  ],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   },
+   {
+    "checkId": "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops",
+    "status": "warning",
+    "capability": "inventory.balances",
+    "connectionId": "01KZ54B1PCKM1MHSNHY4XT6DEX",
+    "stream": "item_shops",
+    "coverageStatus": "queryable",
+    "coveredFrom": "2026-07-04T04:32:57.328Z",
+    "coveredTo": "2026-08-04T04:32:57.328Z",
+    "requestedFrom": "2026-07-06T14:00:00.000Z"
+   }
+  ],
+  "ms": 17056
+ },
+ {
+  "id": "gt_inventory_cat",
+  "tier": "hard",
+  "ask": "Inventory by category",
+  "state": "unavailable",
+  "validation": "blocked",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [
+   "Recent data is available only for the disclosed covered range while deeper history continues. item_shops is covered from 2026-07-04T04:32:57.328Z through 2026-08-04T04:32:57.328Z.",
+   "slice_cost_coverage:inventory_turns: missing cost observations (2/10930 covered); verified output was withheld."
+  ],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   },
+   {
+    "checkId": "progressive_coverage:01KZ54B1PCKM1MHSNHY4XT6DEX:item_shops",
+    "status": "warning",
+    "capability": "inventory.balances",
+    "connectionId": "01KZ54B1PCKM1MHSNHY4XT6DEX",
+    "stream": "item_shops",
+    "coverageStatus": "queryable",
+    "coveredFrom": "2026-07-04T04:32:57.328Z",
+    "coveredTo": "2026-08-04T04:32:57.328Z",
+    "requestedFrom": "2026-07-06T14:00:00.000Z"
+   },
+   {
+    "checkId": "slice_cost_coverage:inventory_turns",
+    "status": "blocked",
+    "eligibleRows": 10930,
+    "observedRows": 2,
+    "coverage": 0.00018298261665141812,
+    "failingRows": 20
+   }
+  ],
+  "ms": 15869
+ },
+ {
+  "id": "gt_top_products",
+  "tier": "hard",
+  "ask": "Top products units",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 10,
+  "sample": "{\"product.variant\":null,\"units_sold\":\"484.0000\",\"net_sales_ex_gst\":\"7174.5000\"}",
+  "rows": [
+   {
+    "product.variant": null,
+    "units_sold": "484.0000",
+    "net_sales_ex_gst": "7174.5000"
+   },
+   {
+    "product.variant": "Service - Change Tyre, Cass, Rotor",
+    "units_sold": "130.0000",
+    "net_sales_ex_gst": "2340.6800"
+   },
+   {
+    "product.variant": "Service - General Service",
+    "units_sold": "114.0000",
+    "net_sales_ex_gst": "13336.8700"
+   },
+   {
+    "product.variant": "Gear Inner Wire - Stainless Steel, 1.2x2000mm",
+    "units_sold": "53.0000",
+    "net_sales_ex_gst": "497.1600"
+   },
+   {
+    "product.variant": "Service - Brake Pad Replacement / Clean / Fix",
+    "units_sold": "45.0000",
+    "net_sales_ex_gst": "827.1900"
+   },
+   {
+    "product.variant": "BRAKE CABLE INNER - Road/MTB",
+    "units_sold": "42.0000",
+    "net_sales_ex_gst": "370.0100"
+   },
+   {
+    "product.variant": "Service - Fit Gear Cable",
+    "units_sold": "37.0000",
+    "net_sales_ex_gst": "759.0400"
+   },
+   {
+    "product.variant": "Brake Pad Shimano Resin Disc B03s/B05s Black",
+    "units_sold": "36.0000",
+    "net_sales_ex_gst": "981.4500"
+   },
+   {
+    "product.variant": "Service - Fit Brake Cable",
+    "units_sold": "33.0000",
+    "net_sales_ex_gst": "483.0600"
+   },
+   {
+    "product.variant": "Service - Fit Chain/Cass",
+    "units_sold": "31.0000",
+    "net_sales_ex_gst": "717.1300"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 14962
+ },
+ {
+  "id": "gt_daily_14d",
+  "tier": "hard",
+  "ask": "Daily sales 14d",
+  "state": "qualified",
+  "validation": "warning",
+  "rowCount": 14,
+  "sample": "{\"business_date\":\"2026-07-22T14:00:00.000Z\",\"net_sales_ex_gst\":\"863.5800\",\"transactions\":\"7\"}",
+  "rows": [
+   {
+    "business_date": "2026-07-22T14:00:00.000Z",
+    "net_sales_ex_gst": "863.5800",
+    "transactions": "7"
+   },
+   {
+    "business_date": "2026-07-23T14:00:00.000Z",
+    "net_sales_ex_gst": "2797.1900",
+    "transactions": "12"
+   },
+   {
+    "business_date": "2026-07-24T14:00:00.000Z",
+    "net_sales_ex_gst": "1450.6500",
+    "transactions": "8"
+   },
+   {
+    "business_date": "2026-07-25T14:00:00.000Z",
+    "net_sales_ex_gst": "710.8300",
+    "transactions": "9"
+   },
+   {
+    "business_date": "2026-07-26T14:00:00.000Z",
+    "net_sales_ex_gst": "1867.2100",
+    "transactions": "10"
+   },
+   {
+    "business_date": "2026-07-27T14:00:00.000Z",
+    "net_sales_ex_gst": "650.1000",
+    "transactions": "8"
+   },
+   {
+    "business_date": "2026-07-28T14:00:00.000Z",
+    "net_sales_ex_gst": "980.7300",
+    "transactions": "10"
+   },
+   {
+    "business_date": "2026-07-29T14:00:00.000Z",
+    "net_sales_ex_gst": "613.5800",
+    "transactions": "12"
+   },
+   {
+    "business_date": "2026-07-30T14:00:00.000Z",
+    "net_sales_ex_gst": "573.4400",
+    "transactions": "10"
+   },
+   {
+    "business_date": "2026-07-31T14:00:00.000Z",
+    "net_sales_ex_gst": "1086.1900",
+    "transactions": "10"
+   },
+   {
+    "business_date": "2026-08-01T14:00:00.000Z",
+    "net_sales_ex_gst": "749.0400",
+    "transactions": "5"
+   },
+   {
+    "business_date": "2026-08-02T14:00:00.000Z",
+    "net_sales_ex_gst": "654.4600",
+    "transactions": "4"
+   },
+   {
+    "business_date": "2026-08-03T14:00:00.000Z",
+    "net_sales_ex_gst": "621.7100",
+    "transactions": "9"
+   },
+   {
+    "business_date": "2026-08-04T14:00:00.000Z",
+    "net_sales_ex_gst": "9.0900",
+    "transactions": "2"
+   }
+  ],
+  "warnings": [],
+  "checks": [
+   {
+    "checkId": "canonical_mapping_total",
+    "status": "warning",
+    "details": {
+     "measurement": "open_canonical_mapping_quarantine",
+     "staged_rows": 100,
+     "open_records": 665,
+     "rejected_rows": 0,
+     "domain": "canonical"
+    }
+   }
+  ],
+  "ms": 15094
+ },
+ {
+  "id": "gt_workers",
+  "tier": "easy",
+  "ask": "Worker directory",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 13,
+  "sample": "{\"value\":\"Angus McKinnon\"}",
+  "rows": [
+   {
+    "value": "Angus McKinnon"
+   },
+   {
+    "value": "Charles O'Hara"
+   },
+   {
+    "value": "Dan Leader"
+   },
+   {
+    "value": "Employee [2]"
+   },
+   {
+    "value": "Employee [4]"
+   },
+   {
+    "value": "Employee [6]"
+   },
+   {
+    "value": "Harvey Mitchelhill"
+   },
+   {
+    "value": "Jack Alsop"
+   },
+   {
+    "value": "Jack Lidgett"
+   },
+   {
+    "value": "Leigh Phillips"
+   },
+   {
+    "value": "Mai Etchebarne"
+   },
+   {
+    "value": "Tom Lidgett"
+   },
+   {
+    "value": "Tom Wildoer"
+   }
+  ],
+  "warnings": [],
+  "checks": [],
+  "ms": 8350
+ },
+ {
+  "id": "gt_caps",
+  "tier": "easy",
+  "ask": "Capabilities snapshot",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [],
+  "checks": [],
+  "ms": 4002
+ },
+ {
+  "id": "gt_caps_profit",
+  "tier": "easy",
+  "ask": "Profit capability",
+  "state": "verified",
+  "validation": "passed",
+  "rowCount": 0,
+  "sample": "",
+  "rows": [],
+  "warnings": [],
+  "checks": [],
+  "ms": 4295
+ },
+ {
+  "id": "gt_disc_ref",
+  "tier": "medium",
+  "ask": "Discount+refund totals",
+  "state": "ERROR",
+  "validation": "-",
+  "rowCount": 0,
+  "sample": "",
+  "error": "53300: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+  "ms": 5619
+ }
+]

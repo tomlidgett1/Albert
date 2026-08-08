@@ -1,0 +1,170 @@
+{
+  "id": "l50",
+  "tier": "schema",
+  "domain": "inventory",
+  "ask": "Aged inventory again: bands 0-30, 31-60, 61-90, 91-180, 180+ days since last inventory log create_time.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Here are the top results, led by 0-30 days:\n\n| Band Sort | Age Band | Skus | Units | Stock Value |\n| --- | --- | --- | --- | --- |\n| 1 | 0-30 days | 249 | 1562 | $20,635.85 |\n| 2 | 31-60 days | 407 | 1449 | $27,264.95 |\n| 3 | 61-90 days | 54 | 93 | $3,454.46 |\n| 4 | 91-180 days | 159 | 259 | $24,756.59 |\n| 5 | 180+ days | 503 | 720 | $84,093.27 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this ageing breakdown by category?",
+    "Would you like to see the slowest-moving SKUs in the 180+ day band?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:208c4daa001fc962ef7cf699b05f338731bb9820fb4c6eaa00e5fc34352cf60a",
+      "columns": [
+        "band_sort",
+        "age_band",
+        "skus",
+        "units",
+        "stock_value"
+      ],
+      "rowCount": 5,
+      "sample": [
+        {
+          "band_sort": 1,
+          "age_band": "0-30 days",
+          "skus": "249",
+          "units": "1562.0000",
+          "stock_value": "20635.84700000"
+        },
+        {
+          "band_sort": 2,
+          "age_band": "31-60 days",
+          "skus": "407",
+          "units": "1449.0000",
+          "stock_value": "27264.95350000"
+        },
+        {
+          "band_sort": 3,
+          "age_band": "61-90 days",
+          "skus": "54",
+          "units": "93.0000",
+          "stock_value": "3454.45580000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (4,083, 1,372, $160,205.12)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=5",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 72571,
+    "outputTokens": 1957,
+    "totalTokens": 74528,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 1184
+      },
+      {
+        "cache_write_tokens": 34088,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1743,
+        "cached_tokens": 34088
+      },
+      {
+        "cache_write_tokens": 1456,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 430
+      },
+      {
+        "reasoning_tokens": 19
+      },
+      {
+        "reasoning_tokens": 100
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1187,
+        "outputTokens": 138,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1184
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34091,
+        "outputTokens": 1087,
+        "inputTokensDetails": {
+          "cache_write_tokens": 34088,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 430
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35834,
+        "outputTokens": 83,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1743,
+          "cached_tokens": 34088
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 19
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1459,
+        "outputTokens": 649,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1456,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 100
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 22006,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "id": "l06",
+  "tier": "easy",
+  "domain": "catalogue",
+  "ask": "How many active (not archived) products do we have in the catalogue?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "You have 17,005 active, non-archived products in the catalogue.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see these products by category?",
+    "Would you like a list of active products with no stock on hand?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:633d9e42a2a2c3ffe2bf2bf74c1529efa3d782b60f56d7b6cc1ff8a5228ea8bd",
+      "columns": [
+        "active_products"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "active_products": "17005"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70149,
+    "outputTokens": 586,
+    "totalTokens": 70735,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1038,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33714,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 640,
+        "cached_tokens": 33714
+      },
+      {
+        "cache_write_tokens": 1031,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 59
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 65
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1041,
+        "outputTokens": 90,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1038,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33717,
+        "outputTokens": 194,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33714,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 59
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34357,
+        "outputTokens": 80,
+        "inputTokensDetails": {
+          "cache_write_tokens": 640,
+          "cached_tokens": 33714
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1034,
+        "outputTokens": 222,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1031,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 65
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 10089,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

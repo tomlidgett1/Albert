@@ -1,0 +1,191 @@
+{
+  "id": "l39",
+  "tier": "hard",
+  "domain": "catalogue",
+  "ask": "How many items are archived versus active, and what is the on-hand value of active items only?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "As at 7 August 2026, there are 17,005 active items and no archived items; the on-hand value of active items cannot be determined because no cost records are available.\n\n| Status | Items | Units On Hand | Records With Cost | On-hand Value |\n| --- | ---: | ---: | ---: | ---: |\n| Active | 17,005 | 4,083 | 0 | Cannot be determined |\n| Archived | 0 | — | — | — |\n\nThe calculated $0.00 is not a meaningful stock value because all cost values are missing.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by category?",
+    "Would you like to see active items with stock on hand?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:4b2754455fb99d8f853248369118b4bce31e2db22e7023fa09fbc358251c883e",
+      "columns": [
+        "archived_items",
+        "active_items",
+        "active_on_hand_value"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "archived_items": "0",
+          "active_items": "17005",
+          "active_on_hand_value": "0.0000"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:cd2d22d3f34dd19979a102b96a092b85767f53326aca70cb74edc6abe56eb936",
+      "columns": [
+        "archived",
+        "items",
+        "units_on_hand",
+        "records_with_nonzero_qoh",
+        "records_with_cost",
+        "calculated_on_hand_value"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "archived": "false",
+          "items": "17005",
+          "units_on_hand": "4083.0000",
+          "records_with_nonzero_qoh": "1372",
+          "records_with_cost": "0",
+          "calculated_on_hand_value": "0"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 107271,
+    "outputTokens": 2403,
+    "totalTokens": 109674,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1043,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33750,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1092,
+        "cached_tokens": 33750
+      },
+      {
+        "cache_write_tokens": 1299,
+        "cached_tokens": 34842
+      },
+      {
+        "cache_write_tokens": 1480,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 351
+      },
+      {
+        "reasoning_tokens": 431
+      },
+      {
+        "reasoning_tokens": 158
+      },
+      {
+        "reasoning_tokens": 241
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1046,
+        "outputTokens": 120,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1043,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33753,
+        "outputTokens": 607,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33750,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 351
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34845,
+        "outputTokens": 710,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1092,
+          "cached_tokens": 33750
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 431
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36144,
+        "outputTokens": 303,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1299,
+          "cached_tokens": 34842
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 158
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1483,
+        "outputTokens": 663,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1480,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 241
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 27365,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

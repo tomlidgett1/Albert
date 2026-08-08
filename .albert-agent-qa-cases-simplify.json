@@ -1,0 +1,1 @@
+[{"id":"s1","tier":"smoke","domain":"inventory","ask":"give me inventory data"},{"id":"s2","tier":"smoke","domain":"discovery","ask":"hey Albert, what data do you have on our business?"}]

@@ -1,0 +1,178 @@
+{
+  "id": "l40",
+  "tier": "hard",
+  "domain": "sales",
+  "ask": "Gross profit dollars by month for the last 12 months using sale cost versus sales excluding GST.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Gross profit dollars totalled $4,222.27 in August 2026 and peaked at $36,595.37 in December 2025, covering September 2025 to August 2026.\n\n| Month | Sales Ex GST | Sale Cost | Gross Profit Dollars |\n| --- | ---: | ---: | ---: |\n| September 2025 | $49,307.66 | $24,598.02 | $24,709.64 |\n| October 2025 | $58,329.01 | $23,492.93 | $34,836.08 |\n| November 2025 | $52,203.94 | $21,325.44 | $30,878.50 |\n| December 2025 | $58,952.11 | $22,356.74 | $36,595.37 |\n| January 2026 | $45,671.80 | $15,391.34 | $30,280.46 |\n| February 2026 | $59,362.74 | $24,655.78 | $34,706.96 |\n| March 2026 | $47,478.21 | $14,702.73 | $32,775.48 |\n| April 2026 | $48,572.21 | $20,539.31 | $28,032.90 |\n| May 2026 | $52,000.86 | $22,648.63 | $29,352.23 |\n| June 2026 | $37,351.66 | $16,586.35 | $20,765.31 |\n| July 2026 | $42,438.31 | $15,126.58 | $27,311.73 |\n| August 2026 | $6,243.75 | $2,021.48 | $4,222.27 |\n\nGross profit dollars are sales excluding GST less recorded sale cost.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this trend shown as a chart?",
+    "Would you like gross profit broken down by category?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:d52702117288af9a2203158251331fc1f696ed62076d0d15fa4fba4f17165511",
+      "columns": [
+        "month",
+        "sales_ex_gst",
+        "sale_cost",
+        "gross_profit_dollars"
+      ],
+      "rowCount": 12,
+      "sample": [
+        {
+          "month": "2025-09-01T00:00:00.000Z",
+          "sales_ex_gst": "49307.6600",
+          "sale_cost": "24598.0200",
+          "gross_profit_dollars": "24709.6400"
+        },
+        {
+          "month": "2025-10-01T00:00:00.000Z",
+          "sales_ex_gst": "58329.0100",
+          "sale_cost": "23492.9300",
+          "gross_profit_dollars": "34836.0800"
+        },
+        {
+          "month": "2025-11-01T00:00:00.000Z",
+          "sales_ex_gst": "52203.9400",
+          "sale_cost": "21325.4400",
+          "gross_profit_dollars": "30878.5000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=12",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 108375,
+    "outputTokens": 1993,
+    "totalTokens": 110368,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1042,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33763,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1874,
+        "cached_tokens": 33763
+      },
+      {
+        "cache_write_tokens": 216,
+        "cached_tokens": 35637
+      },
+      {
+        "cache_write_tokens": 2065,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 42
+      },
+      {
+        "reasoning_tokens": 58
+      },
+      {
+        "reasoning_tokens": 139
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1045,
+        "outputTokens": 130,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1042,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33766,
+        "outputTokens": 811,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33763,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35640,
+        "outputTokens": 131,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1874,
+          "cached_tokens": 33763
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 42
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35856,
+        "outputTokens": 147,
+        "inputTokensDetails": {
+          "cache_write_tokens": 216,
+          "cached_tokens": 35637
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 58
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2068,
+        "outputTokens": 774,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2065,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 139
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 21282,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "chart",
+    "progress",
+    "answer"
+  ]
+}

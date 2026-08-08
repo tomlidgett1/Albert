@@ -1,0 +1,245 @@
+{
+  "id": "l27",
+  "tier": "hard",
+  "domain": "inventory",
+  "ask": "Within the 180+ day aged stock band, which 20 SKUs tie up the most stock value?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Here are the top results, led by F26 IZALCO MAX 9.7 - Large 56 Soothbrush:\n\n| Unit Cost | Stock Value | Value Rank | Item Id | Sku Name |\n| --- | --- | --- | --- | --- |\n| $6,293.00 | $6,293.00 | $1.00 | 17046 | F26 IZALCO MAX 9.7 - Large 56 Soothbrush |\n| $4,894.00 | $4,894.00 | $2.00 | 15607 | F23 Focus Jam2 6.7 SlateGrey/Moonstone 625Wh 42M |\n| $3,656.55 | $3,656.55 | $3.00 | 16446 | Orbea Vibe MID H30 Medium Blue |\n| $3,496.00 | $3,496.00 | $4.00 | 17047 | F26 IZALCO MAX 8.8 - Medium 54 Azurblue |\n| $3,319.00 | $3,319.00 | $5.00 | 14559 | Apollo Trail D 20 Purple/Black - Large |\n| $3,117.00 | $3,117.00 | $6.00 | 14603 | F22 Planet2 5.9 - Hybrid - Diamondblack - 60/XL, 500Wh |\n| $2,945.00 | $2,945.00 | $7.00 | 14784 | Apollo Scout 31X XL Matte Charcoal/Black |\n| $2,699.00 | $2,699.00 | $8.00 | 13894 | ORBEA KATU E-BIKE- E 30 ETH - Silver |\n| $2,693.00 | $2,693.00 | $9.00 | 16600 | Kalkhoff Endeavour 3.B Move White 500WH Small Wave |\n| $2,216.55 | $2,216.55 | $10.00 | 13316 | ORBEA OPTIMA E50 USA L BLKBERRY |\n| $1,900.00 | $1,900.00 | $11.00 | 16622 | Felt Breed 30 - GRX610 - Putty 58cm |\n| $1,850.00 | $1,850.00 | $12.00 | 14437 | Dyson Hard Tail Evo RTC 17.5Ah |\n| $1,451.40 | $1,451.40 | $13.00 | 16444 | Orbea Avant H30-D Military Green-Gold |\n| $1,425.00 | $1,425.00 | $14.00 | 16557 | 2025 Dyson Adventure 20 Inch Folding Disk - Red |\n| $1,404.56 | $1,404.56 | $15.00 | 16994 | 26' Orbea Alma H30 Large Silver Blue |\n| $1,404.56 | $1,404.56 | $15.00 | 16993 | 26' Orbea Alma H30 Small Silver Blue |\n| $1,404.56 | $1,404.56 | $15.00 | 16946 | 26' Orbea Alma H30 X-Large Green/White |\n| $691.25 | $1,382.50 | $18.00 | 16373 | Wahoo Elemnt Ace GPS Cycling Computer |\n| $1,199.00 | $1,199.00 | $19.00 | 14874 | Orbea Vector 20 - L - Metallic Red |\n| $1,168.00 | $1,168.00 | $20.00 | 16040 | Focus Atlas 6.6 EQP - 60cm - XL - Slategrey |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these aged SKUs grouped by category?",
+    "Would you like a list of the slowest-moving aged stock?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:525111401602a6e5af0c53ca4f0382956c0564e25244005d8b6824c1cde1fc2a",
+      "columns": [
+        "item_id",
+        "sku_name",
+        "qoh",
+        "avg_cost",
+        "stock_value",
+        "last_moved_at",
+        "value_rank"
+      ],
+      "rowCount": 200,
+      "sample": [
+        {
+          "item_id": "3245.0000",
+          "sku_name": null,
+          "qoh": "1.0000",
+          "avg_cost": "0",
+          "stock_value": "0.0000",
+          "last_moved_at": "2025-09-29T02:28:36.000Z",
+          "value_rank": "1"
+        },
+        {
+          "item_id": "3336.0000",
+          "sku_name": null,
+          "qoh": "1.0000",
+          "avg_cost": "0",
+          "stock_value": "0.0000",
+          "last_moved_at": "2025-09-29T02:28:36.000Z",
+          "value_rank": "1"
+        },
+        {
+          "item_id": "3342.0000",
+          "sku_name": null,
+          "qoh": "1.0000",
+          "avg_cost": "0",
+          "stock_value": "0.0000",
+          "last_moved_at": "2025-09-29T02:28:36.000Z",
+          "value_rank": "1"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:35f94693f26506122b7f8431526d563d7d4008d33fb432617a9b9f069b4b236c",
+      "columns": [
+        "item_id",
+        "sku_name",
+        "qoh",
+        "unit_cost",
+        "stock_value",
+        "last_moved_at",
+        "value_rank"
+      ],
+      "rowCount": 20,
+      "sample": [
+        {
+          "item_id": "17046.0000",
+          "sku_name": "F26 IZALCO MAX 9.7 - Large 56 Soothbrush",
+          "qoh": "1.0000",
+          "unit_cost": "6293.0000",
+          "stock_value": "6293.00000000",
+          "last_moved_at": "2026-01-15T22:45:07.000Z",
+          "value_rank": "1"
+        },
+        {
+          "item_id": "15607.0000",
+          "sku_name": "F23 Focus Jam2 6.7 SlateGrey/Moonstone 625Wh 42M",
+          "qoh": "1.0000",
+          "unit_cost": "4894.0000",
+          "stock_value": "4894.00000000",
+          "last_moved_at": "2025-09-29T05:35:28.000Z",
+          "value_rank": "2"
+        },
+        {
+          "item_id": "16446.0000",
+          "sku_name": "Orbea Vibe MID H30 Medium Blue",
+          "qoh": "1.0000",
+          "unit_cost": "3656.5500",
+          "stock_value": "3656.55000000",
+          "last_moved_at": "2026-01-29T02:07:14.000Z",
+          "value_rank": "3"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "numeric_grounding",
+      "outcome": "qualified",
+      "detail": "A model-authored figure was blocked before it reached the answer because no governed cell supports it (9.7)."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=200",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=20",
+    "progress:planning",
+    "validation:numeric_grounding:qualified"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 138329,
+    "outputTokens": 2965,
+    "totalTokens": 141294,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1045,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33752,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 13734,
+        "cached_tokens": 33752
+      },
+      {
+        "cache_write_tokens": 3204,
+        "cached_tokens": 47486
+      },
+      {
+        "cache_write_tokens": 5341,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 206
+      },
+      {
+        "reasoning_tokens": 80
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1048,
+        "outputTokens": 120,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1045,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33755,
+        "outputTokens": 968,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33752,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 47489,
+        "outputTokens": 1051,
+        "inputTokensDetails": {
+          "cache_write_tokens": 13734,
+          "cached_tokens": 33752
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 50693,
+        "outputTokens": 296,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3204,
+          "cached_tokens": 47486
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 206
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 5344,
+        "outputTokens": 530,
+        "inputTokensDetails": {
+          "cache_write_tokens": 5341,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 80
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 30075,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

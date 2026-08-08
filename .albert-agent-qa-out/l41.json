@@ -1,0 +1,170 @@
+{
+  "id": "l41",
+  "tier": "schema",
+  "domain": "inventory",
+  "ask": "Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "The aged inventory table below shows 25 supplied non-zero stock items at shop 0, all in the 0–30 days band, based on latest movement through 7 August 2026; item names and average costs are unavailable, so each stock value is $0.00.\n\n| Item Id | Item Name | Quantity On Hand | Avg Cost | Stock Value At Avg Cost | Last Moved At | Age Band |\n| --- | --- | ---: | ---: | ---: | --- | --- |\n| 113 | n/a | 1 | n/a | $0.00 | 11 July 2026 | 0–30 days |\n| 627 | n/a | 2 | n/a | $0.00 | 2 August 2026 | 0–30 days |\n| 845 | n/a | 8 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 885 | n/a | 6 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 907 | n/a | 47 | n/a | $0.00 | 29 July 2026 | 0–30 days |\n| 984 | n/a | 81 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 987 | n/a | 17 | n/a | $0.00 | 20 July 2026 | 0–30 days |\n| 1944 | n/a | 2 | n/a | $0.00 | 15 July 2026 | 0–30 days |\n| 2645 | n/a | 1 | n/a | $0.00 | 6 August 2026 | 0–30 days |\n| 2937 | n/a | 1 | n/a | $0.00 | 14 July 2026 | 0–30 days |\n| 2974 | n/a | 1 | n/a | $0.00 | 19 July 2026 | 0–30 days |\n| 2980 | n/a | 1 | n/a | $0.00 | 14 July 2026 | 0–30 days |\n| 3051 | n/a | 2 | n/a | $0.00 | August 2026 | 0–30 days |\n| 7478 | n/a | 4 | n/a | $0.00 | 17 July 2026 | 0–30 days |\n| 7555 | n/a | 8 | n/a | $0.00 | 22 July 2026 | 0–30 days |\n| 7557 | n/a | 2 | n/a | $0.00 | 26 July 2026 | 0–30 days |\n| 7568 | n/a | 5 | n/a | $0.00 | 16 July 2026 | 0–30 days |\n| 7600 | n/a | 6 | n/a | $0.00 | 18 July 2026 | 0–30 days |\n| 7810 | n/a | 1 | n/a | $0.00 | 26 July 2026 | 0–30 days |\n| 8624 | n/a | 40 | n/a | $0.00 | 6 August 2026 | 0–30 days |\n| 9582 | n/a | 13 | n/a | $0.00 | 5 August 2026 | 0–30 days |\n| 9598 | n/a | 1 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 9639 | n/a | 14 | n/a | $0.00 | 7 August 2026 | 0–30 days |\n| 9655 | n/a | 3 | n/a | $0.00 | 22 July 2026 | 0–30 days |\n| 9719 | n/a | 2 | n/a | $0.00 | 5 August 2026 | 0–30 days |\n\nThe supplied extract contains 200 result rows in total; only the 25 rows provided here are displayed.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like the full 200-row aged inventory table?",
+    "Would you like this split by category or slow movers?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:5f6a3bd80d1c16956a75d781f1127e4c4fb1b04afde32bfbc7ee2369a145fdbd",
+      "columns": [
+        "item_id",
+        "item_name",
+        "quantity_on_hand",
+        "avg_cost",
+        "stock_value_at_avg_cost",
+        "last_moved_at",
+        "age_band"
+      ],
+      "rowCount": 200,
+      "sample": [
+        {
+          "item_id": "113.0000",
+          "item_name": null,
+          "quantity_on_hand": "1.0000",
+          "avg_cost": null,
+          "stock_value_at_avg_cost": "0.0000",
+          "last_moved_at": "2026-07-11T02:39:23.000Z",
+          "age_band": "0-30 days"
+        },
+        {
+          "item_id": "627.0000",
+          "item_name": null,
+          "quantity_on_hand": "2.0000",
+          "avg_cost": null,
+          "stock_value_at_avg_cost": "0.0000",
+          "last_moved_at": "2026-08-02T02:31:44.000Z",
+          "age_band": "0-30 days"
+        },
+        {
+          "item_id": "845.0000",
+          "item_name": null,
+          "quantity_on_hand": "8.0000",
+          "avg_cost": null,
+          "stock_value_at_avg_cost": "0.0000",
+          "last_moved_at": "2026-08-07T01:04:57.000Z",
+          "age_band": "0-30 days"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=200",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 88044,
+    "outputTokens": 3208,
+    "totalTokens": 91252,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 26,
+        "cached_tokens": 1143
+      },
+      {
+        "cache_write_tokens": 33991,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 15033,
+        "cached_tokens": 33991
+      },
+      {
+        "cache_write_tokens": 3848,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 69
+      },
+      {
+        "reasoning_tokens": 354
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 177
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1172,
+        "outputTokens": 249,
+        "inputTokensDetails": {
+          "cache_write_tokens": 26,
+          "cached_tokens": 1143
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 69
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33994,
+        "outputTokens": 846,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33991,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 354
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 49027,
+        "outputTokens": 637,
+        "inputTokensDetails": {
+          "cache_write_tokens": 15033,
+          "cached_tokens": 33991
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 3851,
+        "outputTokens": 1476,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3848,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 177
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 32612,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

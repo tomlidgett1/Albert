@@ -1,0 +1,144 @@
+{
+  "id": "l36",
+  "tier": "hard",
+  "domain": "workshop",
+  "ask": "For workorders booked in over the last 90 days, how many are archived versus still open, by status name?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the lookup for workorders booked in over the last 90 days. Please try again.",
+  "claims": [],
+  "followUps": [
+    "Would you like the results grouped by status name?",
+    "Would you like archived and still-open workorders shown separately?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 104688,
+    "outputTokens": 1724,
+    "totalTokens": 106412,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1047,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33744,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 446,
+        "cached_tokens": 33744
+      },
+      {
+        "cache_write_tokens": 638,
+        "cached_tokens": 34190
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 59
+      },
+      {
+        "reasoning_tokens": 118
+      },
+      {
+        "reasoning_tokens": 293
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 28
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1050,
+        "outputTokens": 171,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1047,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 59
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33747,
+        "outputTokens": 356,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33744,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 118
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34193,
+        "outputTokens": 548,
+        "inputTokensDetails": {
+          "cache_write_tokens": 446,
+          "cached_tokens": 33744
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 293
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34831,
+        "outputTokens": 548,
+        "inputTokensDetails": {
+          "cache_write_tokens": 638,
+          "cached_tokens": 34190
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 867,
+        "outputTokens": 101,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 28
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 22641,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

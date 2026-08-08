@@ -1,0 +1,36 @@
+{
+  "summaryPath": "/Users/user/Documents/Albert/.albert-agent-qa-out/summary-1786084646354.json",
+  "conversationId": "01KZDEYCAA0D4EVJK0TTGHCT9P",
+  "preferences": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
+    "fastMode": false
+  },
+  "results": [
+    {
+      "id": "s1",
+      "tier": "smoke",
+      "domain": "inventory",
+      "ok": true,
+      "state": "Unavailable",
+      "ms": 40693,
+      "queries": 5,
+      "tables": 5,
+      "claims": 0,
+      "answerPreview": "Sorry, there are no results for that. The Lightspeed inventory snapshot contains no rows. The merchandising dataset has 77 records from 7 July to 7 August 2026, but none contains a non-zero stock-on-hand quantity or valu"
+    },
+    {
+      "id": "s2",
+      "tier": "smoke",
+      "domain": "discovery",
+      "ok": true,
+      "state": "Exploratory",
+      "ms": 63801,
+      "queries": 5,
+      "tables": 5,
+      "claims": 0,
+      "answerPreview": "You currently have **Lightspeed operational data covering 7 July–7 August 2026**. The main usable areas are sales, products, customers, payments, staff attribution and reconciliation.\n\n### Current data snapshot\n- **790 s"
+    }
+  ]
+}
+EXIT:0

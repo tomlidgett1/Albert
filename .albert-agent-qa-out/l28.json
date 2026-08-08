@@ -1,0 +1,207 @@
+{
+  "id": "l28",
+  "tier": "hard",
+  "domain": "sales+margin",
+  "ask": "Over the last 90 days, which categories have high net sales but weak gross margin percent?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the category sales and gross-margin lookup for the last 90 days. Please try again, and I can compare high-sales categories with weak gross margins.",
+  "claims": [],
+  "followUps": [
+    "Would you like the comparison by category?",
+    "Would you like a chart of sales against gross margin?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 7,
+    "inputTokens": 191178,
+    "outputTokens": 7195,
+    "totalTokens": 198373,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 23,
+        "cached_tokens": 1093
+      },
+      {
+        "cache_write_tokens": 33761,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1960,
+        "cached_tokens": 33761
+      },
+      {
+        "cache_write_tokens": 1712,
+        "cached_tokens": 35721
+      },
+      {
+        "cache_write_tokens": 2043,
+        "cached_tokens": 37433
+      },
+      {
+        "cache_write_tokens": 3174,
+        "cached_tokens": 39476
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 104
+      },
+      {
+        "reasoning_tokens": 1006
+      },
+      {
+        "reasoning_tokens": 718
+      },
+      {
+        "reasoning_tokens": 34
+      },
+      {
+        "reasoning_tokens": 1000
+      },
+      {
+        "reasoning_tokens": 358
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1119,
+        "outputTokens": 224,
+        "inputTokensDetails": {
+          "cache_write_tokens": 23,
+          "cached_tokens": 1093
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 104
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33764,
+        "outputTokens": 1870,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33761,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1006
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35724,
+        "outputTokens": 1617,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1960,
+          "cached_tokens": 33761
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 718
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 37436,
+        "outputTokens": 934,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1712,
+          "cached_tokens": 35721
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 34
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 39479,
+        "outputTokens": 2068,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2043,
+          "cached_tokens": 37433
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1000
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 42653,
+        "outputTokens": 402,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3174,
+          "cached_tokens": 39476
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 358
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1003,
+        "outputTokens": 80,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 55671,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "progress",
+    "progress",
+    "validation",
+    "progress",
+    "answer"
+  ]
+}

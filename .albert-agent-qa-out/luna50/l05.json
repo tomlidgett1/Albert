@@ -1,0 +1,34 @@
+{
+  "id": "l05",
+  "tier": "easy",
+  "domain": "inventory",
+  "ask": "Give me an aged inventory report",
+  "ok": false,
+  "attempt": 1,
+  "answerState": "ERROR",
+  "answerText": null,
+  "error": "Error: The model did not return a structured answer for this turn.",
+  "events": [
+    {
+      "type": "progress",
+      "status": "running",
+      "stage": "planning",
+      "label": "Working out what you need",
+      "detail": "",
+      "progress": 0.03
+    },
+    {
+      "type": "progress",
+      "status": "complete",
+      "stage": "planning",
+      "label": "I can prepare an aged inventory report, but need to know how you want inventory age measured.",
+      "detail": "Confirm the ageing basis and reporting bands · Match current stock to the latest inventory movements · Show quantities and stock value by ageing band and product",
+      "progress": 0.08
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning"
+  ],
+  "ms": 17085
+}

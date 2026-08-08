@@ -1,0 +1,257 @@
+{
+  "id": "h8",
+  "tier": "hard",
+  "domain": "cross:daily+category",
+  "ask": "Show daily net sales for the last 14 days. Identify the weakest days, then for those weak days tell me which product categories underperformed versus the period average.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t safely complete the governed daily-sales and category comparison in this response, so I’m not reporting unverified figures. Please retry the request.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Retry the 14-day daily net-sales analysis."
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:5c57dbca793b90242ac41fed6420e7e1b9912d5df58bf00347f81906eb3aa845",
+      "columns": [
+        "today",
+        "latest_sales_date"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "today": "2026-08-07T00:00:00.000Z",
+          "latest_sales_date": "2026-08-07T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified",
+    "progress:data_health",
+    "progress:data_health"
+  ],
+  "usage": {
+    "requests": 8,
+    "inputTokens": 78874,
+    "outputTokens": 4469,
+    "totalTokens": 83343,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 37,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 1714,
+        "cached_tokens": 5763
+      },
+      {
+        "cache_write_tokens": 1196,
+        "cached_tokens": 7477
+      },
+      {
+        "cache_write_tokens": 1091,
+        "cached_tokens": 8673
+      },
+      {
+        "cache_write_tokens": 264,
+        "cached_tokens": 9764
+      },
+      {
+        "cache_write_tokens": 582,
+        "cached_tokens": 10028
+      },
+      {
+        "cache_write_tokens": 2481,
+        "cached_tokens": 10610
+      },
+      {
+        "cache_write_tokens": 353,
+        "cached_tokens": 13091
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 156
+      },
+      {
+        "reasoning_tokens": 634
+      },
+      {
+        "reasoning_tokens": 750
+      },
+      {
+        "reasoning_tokens": 75
+      },
+      {
+        "reasoning_tokens": 353
+      },
+      {
+        "reasoning_tokens": 388
+      },
+      {
+        "reasoning_tokens": 12
+      },
+      {
+        "reasoning_tokens": 1034
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5766,
+        "outputTokens": 204,
+        "inputTokensDetails": {
+          "cache_write_tokens": 37,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 156
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7480,
+        "outputTokens": 710,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1714,
+          "cached_tokens": 5763
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 634
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8676,
+        "outputTokens": 1050,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1196,
+          "cached_tokens": 7477
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 750
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9767,
+        "outputTokens": 180,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1091,
+          "cached_tokens": 8673
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 75
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10031,
+        "outputTokens": 503,
+        "inputTokensDetails": {
+          "cache_write_tokens": 264,
+          "cached_tokens": 9764
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 353
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10613,
+        "outputTokens": 409,
+        "inputTokensDetails": {
+          "cache_write_tokens": 582,
+          "cached_tokens": 10028
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 388
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 13094,
+        "outputTokens": 312,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2481,
+          "cached_tokens": 10610
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 12
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 13447,
+        "outputTokens": 1101,
+        "inputTokensDetails": {
+          "cache_write_tokens": 353,
+          "cached_tokens": 13091
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1034
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 81008,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

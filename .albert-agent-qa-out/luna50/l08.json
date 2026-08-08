@@ -1,0 +1,150 @@
+{
+  "id": "l08",
+  "tier": "easy",
+  "domain": "sales",
+  "ask": "Show a simple table of daily sales totals for the last 7 days.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Daily completed sales, including GST, totalled between $0.00 and $2,648.75 per day from 2 to 8 August 2026.\n\n| Sales Day | Sales Inc GST |\n| --- | ---: |\n| 2 August 2026 | $823.94 |\n| 3 August 2026 | $719.92 |\n| 4 August 2026 | $683.91 |\n| 5 August 2026 | $10.00 |\n| 6 August 2026 | $544.91 |\n| 7 August 2026 | $2,648.75 |\n| 8 August 2026 | $0.00 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like sales broken down by category?",
+    "Would you like a chart of the daily sales?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:0be387f779888ed73eda36ca990caef1027b0ea016ca853cd62b27163d6a70f9",
+      "columns": [
+        "sales_day",
+        "sales_inc_gst"
+      ],
+      "rowCount": 7,
+      "sample": [
+        {
+          "sales_day": "2026-08-02T00:00:00.000Z",
+          "sales_inc_gst": "823.9400"
+        },
+        {
+          "sales_day": "2026-08-03T00:00:00.000Z",
+          "sales_inc_gst": "719.9200"
+        },
+        {
+          "sales_day": "2026-08-04T00:00:00.000Z",
+          "sales_inc_gst": "683.9100"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=7",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 71094,
+    "outputTokens": 1541,
+    "totalTokens": 72635,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1038,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33722,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1234,
+        "cached_tokens": 33722
+      },
+      {
+        "cache_write_tokens": 1366,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 230
+      },
+      {
+        "reasoning_tokens": 41
+      },
+      {
+        "reasoning_tokens": 74
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1041,
+        "outputTokens": 97,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1038,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33725,
+        "outputTokens": 563,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33722,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 230
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34959,
+        "outputTokens": 121,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1234,
+          "cached_tokens": 33722
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 41
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1369,
+        "outputTokens": 760,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1366,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 74
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 16872,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

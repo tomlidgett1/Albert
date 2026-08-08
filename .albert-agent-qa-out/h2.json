@@ -1,0 +1,921 @@
+{
+  "id": "h2",
+  "tier": "hard",
+  "domain": "cross:sales+inventory",
+  "ask": "Take our top 10 products by units sold in the last 90 days. For those same products, which ones look inventory-stressed (high days out of stock or thin stock cover)? I need sell-through winners that we keep running out of.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "I ran out of room to finish writing this answer, but the analysis completed: 4 governed tables covering SQL-first statement, Units sold, Days out of stock, Stock on hand units, Stock cover days, SQL-first statement, SQL-first statement, Units sold are shown above with full provenance. Ask me for any part of it and I'll take it further.\n\nFigures cover 2026-05-09 to 2026-08-07 from Ashburton Cycles, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [],
+  "clarification": null,
+  "queryCount": 4,
+  "tableCount": 4,
+  "tables": [
+    {
+      "resultId": "sql:fa5af971231a1dbfe2522a3e2894429a992b5bcf15fff712d96b87fe1112fada",
+      "columns": [
+        "product_variant",
+        "sales_rank",
+        "units_sold_90d",
+        "days_out_of_stock_90d",
+        "stock_on_hand_units",
+        "stock_cover_days",
+        "stress_assessment"
+      ],
+      "rowCount": 10,
+      "sample": [
+        {
+          "product_variant": "CUSTOM CUT SPOKE - J Hook,14G PILLAR BLACK - CUT TO SPECIFIC SIZE FROM 295MM",
+          "sales_rank": "1",
+          "units_sold_90d": "6.0000",
+          "days_out_of_stock_90d": "1",
+          "stock_on_hand_units": null,
+          "stock_cover_days": null,
+          "stress_assessment": "Not currently stressed"
+        },
+        {
+          "product_variant": "Ciclovation Advanced Seitex Carbon Black Bar Tape / wshop",
+          "sales_rank": "2",
+          "units_sold_90d": "5.0000",
+          "days_out_of_stock_90d": "5",
+          "stock_on_hand_units": null,
+          "stock_cover_days": null,
+          "stress_assessment": "Not currently stressed"
+        },
+        {
+          "product_variant": "Schwalbe Marathon Plus 700 x 32C SmartGuard Endurance Compound Reflective Sidewall E-25",
+          "sales_rank": "3",
+          "units_sold_90d": "4.0000",
+          "days_out_of_stock_90d": "2",
+          "stock_on_hand_units": null,
+          "stock_cover_days": null,
+          "stress_assessment": "Not currently stressed"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:19fa11eb6a2dcfce30fe6a613fa55af694918b2f67ec3a36f6f6fc154b0e13a3",
+      "columns": [
+        "latest_snapshot_date",
+        "earliest_snapshot_date",
+        "snapshot_rows"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "latest_snapshot_date": null,
+          "earliest_snapshot_date": null,
+          "snapshot_rows": "0"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:89bb7c02e391c0cbcc3bdf9b1779cec4bdc9d6337fb742fb0723943ca437490b",
+      "columns": [
+        "min_snapshot_date",
+        "max_snapshot_date",
+        "min_business_date",
+        "max_business_date",
+        "inventory_rows"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "min_snapshot_date": null,
+          "max_snapshot_date": null,
+          "min_business_date": null,
+          "max_business_date": null,
+          "inventory_rows": "0"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:272dd794727e69397a57108c86e4e05f22ab70a68d8da735b77739bf5726d101",
+      "columns": [
+        "product_variant",
+        "sales_rank",
+        "units_sold_90d"
+      ],
+      "rowCount": 34,
+      "sample": [
+        {
+          "product_variant": "CUSTOM CUT SPOKE - J Hook,14G PILLAR BLACK - CUT TO SPECIFIC SIZE FROM 295MM",
+          "sales_rank": "1",
+          "units_sold_90d": "6.0000"
+        },
+        {
+          "product_variant": "Ciclovation Advanced Seitex Carbon Black Bar Tape / wshop",
+          "sales_rank": "2",
+          "units_sold_90d": "5.0000"
+        },
+        {
+          "product_variant": "Schwalbe Marathon Plus 700 x 32C SmartGuard Endurance Compound Reflective Sidewall E-25",
+          "sales_rank": "3",
+          "units_sold_90d": "4.0000"
+        }
+      ]
+    }
+  ],
+  "narratives": [
+    "CUSTOM CUT SPOKE - J Hook,14G PILLAR BLACK - CUT TO SPECIFIC SIZE FROM 295MM: Units Sold 90d 6. Based on this evidence, I’ll inspect the governed exception next.",
+    "Snapshot Rows: 0. Based on this evidence, I’ll inspect the governed exception next.",
+    "Inventory Rows: 0. Based on this evidence, I’ll prepare the answer next.",
+    "CUSTOM CUT SPOKE - J Hook,14G PILLAR BLACK - CUT TO SPECIFIC SIZE FROM 295MM: Units Sold 90d 6. Based on this evidence, I’ll prepare the answer next."
+  ],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "qualified",
+      "detail": "Sql Lint: warning."
+    },
+    {
+      "name": "claim_attested:commerce.units_sold",
+      "outcome": "qualified",
+      "detail": "Claim Attested:Commerce Units Sold: warning."
+    },
+    {
+      "name": "claim_attested:inventory.days_out_of_stock",
+      "outcome": "qualified",
+      "detail": "Claim Attested:Inventory Days Out Of Stock: warning."
+    },
+    {
+      "name": "claim_attested:inventory.stock_on_hand_units",
+      "outcome": "failed",
+      "detail": "Claim Attested:Inventory Stock On Hand Units: blocked."
+    },
+    {
+      "name": "claim_attested:inventory.stock_cover_days",
+      "outcome": "failed",
+      "detail": "Claim Attested:Inventory Stock Cover Days: blocked."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "passed",
+      "detail": "No Fanout: passed."
+    },
+    {
+      "name": "grain_compatible_ratios",
+      "outcome": "passed",
+      "detail": "Grain Compatible Ratios: passed."
+    },
+    {
+      "name": "snapshot_not_summed",
+      "outcome": "passed",
+      "detail": "Snapshot Not Summed: passed."
+    },
+    {
+      "name": "authority_respected",
+      "outcome": "passed",
+      "detail": "Authority Respected: passed."
+    },
+    {
+      "name": "golden_fixture_match",
+      "outcome": "passed",
+      "detail": "Golden Fixture Match: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "commerce.units_sold: the statement produced 29 where the governed contract computes 855 over the declared window (Δ 826.0000)."
+    },
+    {
+      "name": "warning_2",
+      "outcome": "qualified",
+      "detail": "inventory.days_out_of_stock: the statement produced 20 where the governed contract computes 0 over the declared window (Δ 20.0000)."
+    },
+    {
+      "name": "warning_3",
+      "outcome": "qualified",
+      "detail": "The statement returned no numeric column named stock_on_hand_units to attest against inventory.stock_on_hand_units."
+    },
+    {
+      "name": "warning_4",
+      "outcome": "qualified",
+      "detail": "The statement returned no numeric column named stock_cover_days to attest against inventory.stock_cover_days."
+    },
+    {
+      "name": "warning_5",
+      "outcome": "qualified",
+      "detail": "commerce.units_sold subtracts refunds, but the statement neither aggregates a signed_* column of commerce_sales_event nor addresses refunds; the figure may be gross of returns."
+    },
+    {
+      "name": "warning_6",
+      "outcome": "qualified",
+      "detail": "Source 01KZ54B1PCKM1MHSNHY4XT6DEX is 126 minutes old; this Topic requires freshness within 120 minutes."
+    },
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    },
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    },
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "claim_attested:commerce.units_sold",
+      "outcome": "qualified",
+      "detail": "Claim Attested:Commerce Units Sold: warning."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "passed",
+      "detail": "No Fanout: passed."
+    },
+    {
+      "name": "grain_compatible_ratios",
+      "outcome": "passed",
+      "detail": "Grain Compatible Ratios: passed."
+    },
+    {
+      "name": "snapshot_not_summed",
+      "outcome": "passed",
+      "detail": "Snapshot Not Summed: passed."
+    },
+    {
+      "name": "authority_respected",
+      "outcome": "passed",
+      "detail": "Authority Respected: passed."
+    },
+    {
+      "name": "golden_fixture_match",
+      "outcome": "passed",
+      "detail": "Golden Fixture Match: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "commerce.units_sold could not be recomputed through its governed contract, so the claim stays unattested."
+    },
+    {
+      "name": "warning_2",
+      "outcome": "qualified",
+      "detail": "Source 01KZ54B1PCKM1MHSNHY4XT6DEX is 127 minutes old; this Topic requires freshness within 120 minutes."
+    },
+    {
+      "name": "answer_state_guard",
+      "outcome": "qualified",
+      "detail": "The proposed Qualified state was reduced to Exploratory to match governed evidence."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:definition",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=10",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:qualified",
+    "validation:claim_attested:commerce.units_sold:qualified",
+    "validation:claim_attested:inventory.days_out_of_stock:qualified",
+    "validation:claim_attested:inventory.stock_on_hand_units:failed",
+    "validation:claim_attested:inventory.stock_cover_days:failed",
+    "validation:evidence_tier:passed",
+    "validation:no_fanout:passed",
+    "validation:grain_compatible_ratios:passed",
+    "validation:snapshot_not_summed:passed",
+    "validation:authority_respected:passed",
+    "validation:golden_fixture_match:passed",
+    "validation:warning_1:qualified",
+    "validation:warning_2:qualified",
+    "validation:warning_3:qualified",
+    "validation:warning_4:qualified",
+    "validation:warning_5:qualified",
+    "validation:warning_6:qualified",
+    "progress:definition",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified",
+    "progress:capabilities",
+    "progress:capabilities",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:passed",
+    "validation:warning_1:qualified",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=34",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:claim_attested:commerce.units_sold:qualified",
+    "validation:evidence_tier:passed",
+    "validation:no_fanout:passed",
+    "validation:grain_compatible_ratios:passed",
+    "validation:snapshot_not_summed:passed",
+    "validation:authority_respected:passed",
+    "validation:golden_fixture_match:passed",
+    "validation:warning_1:qualified",
+    "validation:warning_2:qualified",
+    "validation:answer_state_guard:qualified"
+  ],
+  "usage": {
+    "requests": 22,
+    "inputTokens": 395325,
+    "outputTokens": 6505,
+    "totalTokens": 401830,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 54,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 252,
+        "cached_tokens": 5780
+      },
+      {
+        "cache_write_tokens": 73,
+        "cached_tokens": 6032
+      },
+      {
+        "cache_write_tokens": 2298,
+        "cached_tokens": 6105
+      },
+      {
+        "cache_write_tokens": 2117,
+        "cached_tokens": 8403
+      },
+      {
+        "cache_write_tokens": 2963,
+        "cached_tokens": 10520
+      },
+      {
+        "cache_write_tokens": 341,
+        "cached_tokens": 13483
+      },
+      {
+        "cache_write_tokens": 2310,
+        "cached_tokens": 13824
+      },
+      {
+        "cache_write_tokens": 3478,
+        "cached_tokens": 16134
+      },
+      {
+        "cache_write_tokens": 406,
+        "cached_tokens": 19612
+      },
+      {
+        "cache_write_tokens": 311,
+        "cached_tokens": 20018
+      },
+      {
+        "cache_write_tokens": 309,
+        "cached_tokens": 20329
+      },
+      {
+        "cache_write_tokens": 321,
+        "cached_tokens": 20638
+      },
+      {
+        "cache_write_tokens": 624,
+        "cached_tokens": 20959
+      },
+      {
+        "cache_write_tokens": 229,
+        "cached_tokens": 21583
+      },
+      {
+        "cache_write_tokens": 169,
+        "cached_tokens": 21812
+      },
+      {
+        "cache_write_tokens": 1028,
+        "cached_tokens": 21981
+      },
+      {
+        "cache_write_tokens": 783,
+        "cached_tokens": 23009
+      },
+      {
+        "cache_write_tokens": 338,
+        "cached_tokens": 23792
+      },
+      {
+        "cache_write_tokens": 484,
+        "cached_tokens": 24130
+      },
+      {
+        "cache_write_tokens": 366,
+        "cached_tokens": 24614
+      },
+      {
+        "cache_write_tokens": 2541,
+        "cached_tokens": 24980
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 195
+      },
+      {
+        "reasoning_tokens": 12
+      },
+      {
+        "reasoning_tokens": 138
+      },
+      {
+        "reasoning_tokens": 24
+      },
+      {
+        "reasoning_tokens": 587
+      },
+      {
+        "reasoning_tokens": 118
+      },
+      {
+        "reasoning_tokens": 16
+      },
+      {
+        "reasoning_tokens": 1071
+      },
+      {
+        "reasoning_tokens": 200
+      },
+      {
+        "reasoning_tokens": 151
+      },
+      {
+        "reasoning_tokens": 52
+      },
+      {
+        "reasoning_tokens": 68
+      },
+      {
+        "reasoning_tokens": 8
+      },
+      {
+        "reasoning_tokens": 68
+      },
+      {
+        "reasoning_tokens": 27
+      },
+      {
+        "reasoning_tokens": 10
+      },
+      {
+        "reasoning_tokens": 153
+      },
+      {
+        "reasoning_tokens": 201
+      },
+      {
+        "reasoning_tokens": 219
+      },
+      {
+        "reasoning_tokens": 99
+      },
+      {
+        "reasoning_tokens": 210
+      },
+      {
+        "reasoning_tokens": 21
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5783,
+        "outputTokens": 216,
+        "inputTokensDetails": {
+          "cache_write_tokens": 54,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 195
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6035,
+        "outputTokens": 35,
+        "inputTokensDetails": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 5780
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 12
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6108,
+        "outputTokens": 159,
+        "inputTokensDetails": {
+          "cache_write_tokens": 73,
+          "cached_tokens": 6032
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 138
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8406,
+        "outputTokens": 45,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2298,
+          "cached_tokens": 6105
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 24
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10523,
+        "outputTokens": 634,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2117,
+          "cached_tokens": 8403
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 587
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 13486,
+        "outputTokens": 141,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2963,
+          "cached_tokens": 10520
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 118
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 13827,
+        "outputTokens": 52,
+        "inputTokensDetails": {
+          "cache_write_tokens": 341,
+          "cached_tokens": 13483
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 16
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 16137,
+        "outputTokens": 1683,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2310,
+          "cached_tokens": 13824
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1071
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 19615,
+        "outputTokens": 223,
+        "inputTokensDetails": {
+          "cache_write_tokens": 3478,
+          "cached_tokens": 16134
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 200
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20021,
+        "outputTokens": 270,
+        "inputTokensDetails": {
+          "cache_write_tokens": 406,
+          "cached_tokens": 19612
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 151
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20332,
+        "outputTokens": 251,
+        "inputTokensDetails": {
+          "cache_write_tokens": 311,
+          "cached_tokens": 20018
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 52
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20641,
+        "outputTokens": 255,
+        "inputTokensDetails": {
+          "cache_write_tokens": 309,
+          "cached_tokens": 20329
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 68
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20962,
+        "outputTokens": 127,
+        "inputTokensDetails": {
+          "cache_write_tokens": 321,
+          "cached_tokens": 20638
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 8
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 21586,
+        "outputTokens": 187,
+        "inputTokensDetails": {
+          "cache_write_tokens": 624,
+          "cached_tokens": 20959
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 68
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 21815,
+        "outputTokens": 130,
+        "inputTokensDetails": {
+          "cache_write_tokens": 229,
+          "cached_tokens": 21583
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 27
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 21984,
+        "outputTokens": 32,
+        "inputTokensDetails": {
+          "cache_write_tokens": 169,
+          "cached_tokens": 21812
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 10
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 23012,
+        "outputTokens": 256,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1028,
+          "cached_tokens": 21981
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 153
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 23795,
+        "outputTokens": 300,
+        "inputTokensDetails": {
+          "cache_write_tokens": 783,
+          "cached_tokens": 23009
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 201
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 24133,
+        "outputTokens": 446,
+        "inputTokensDetails": {
+          "cache_write_tokens": 338,
+          "cached_tokens": 23792
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 219
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 24617,
+        "outputTokens": 328,
+        "inputTokensDetails": {
+          "cache_write_tokens": 484,
+          "cached_tokens": 24130
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 99
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 24983,
+        "outputTokens": 529,
+        "inputTokensDetails": {
+          "cache_write_tokens": 366,
+          "cached_tokens": 24614
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 210
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 27524,
+        "outputTokens": 206,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2541,
+          "cached_tokens": 24980
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 21
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 180176,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "narrative",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "narrative",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "narrative",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "narrative",
+    "validation",
+    "answer"
+  ]
+}

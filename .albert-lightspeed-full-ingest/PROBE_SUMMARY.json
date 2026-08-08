@@ -1,0 +1,20 @@
+{
+  "at": "2026-08-07T04:00:00Z",
+  "connectionId": "01KZ54B1PCKM1MHSNHY4XT6DEX",
+  "accountId": "168990",
+  "probe": {
+    "ok": ["Discount", "InventoryLog", "ItemAttributeSet", "Manufacturer", "Option", "PaymentType", "Quote", "Register", "Serialized", "Tag", "TagGroup", "TaxClass"],
+    "empty_200": ["CCCharge", "CurrencyRate", "EmployeeHours", "ProcessingFee", "Shipment"],
+    "unavailable_404": ["Account(collection)", "CustomField", "DiscountsByDay", "Locale", "OrdersByTaxClass", "OrderShipmentItem", "PaymentsByDay", "Session", "TaxClassSalesByDay", "TaxesByDay"],
+    "unavailable_403_insufficient_rights": ["Industry", "InventoryCountCalc", "InventoryCountItem", "InventoryCountReconcile", "PriceLevel", "SaleVoid", "Season", "SpecialOrder", "Transfer", "VendorReturn", "Workorder", "WorkorderStatus"],
+    "relation_errors_before_fix": ["Sale", "Item", "Customer", "Employee", "Shop", "Vendor", "Order", "RegisterCount", "ItemFee", "RegisterWithdraw", "ShipTo", "TaxCategory", "CreditAccount", "CatalogVendorItem", "Category", "Image", "ItemMatrix"]
+  },
+  "auth": {
+    "status": "broken",
+    "reason": "First probe refreshed the Lightspeed token but vault CAS failed without a refresh lease, so the rotated refresh token was not persisted. Subsequent refresh returns invalid_grant."
+  },
+  "staging_before": {
+    "nonemptyTables": 47,
+    "emptyTables": 43
+  }
+}

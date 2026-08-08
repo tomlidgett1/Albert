@@ -1,0 +1,305 @@
+[
+  {
+    "id": "s1",
+    "tier": "smoke",
+    "domain": "inventory",
+    "ask": "give me inventory data",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I can't answer for “Inventory” on its own. I could not narrow the governed data to it, and reporting the whole business instead would answer a different question. Tell me which product department, category, location or channel it maps to and I'll report exactly that.",
+    "claims": [],
+    "followUps": [
+      "Try again shortly for the latest stock units and value by category and location."
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "answer_scope_guard",
+        "outcome": "failed",
+        "detail": "The answer described Inventory but no governed query was filtered to it."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:definition",
+      "validation:answer_scope_guard:failed"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 23144,
+      "outputTokens": 1041,
+      "totalTokens": 24185,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 3914,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 514,
+          "cached_tokens": 3914
+        },
+        {
+          "cache_write_tokens": 319,
+          "cached_tokens": 4428
+        },
+        {
+          "cache_write_tokens": 182,
+          "cached_tokens": 4747
+        },
+        {
+          "cache_write_tokens": 182,
+          "cached_tokens": 4929
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 87
+        },
+        {
+          "reasoning_tokens": 35
+        },
+        {
+          "reasoning_tokens": 36
+        },
+        {
+          "reasoning_tokens": 121
+        },
+        {
+          "reasoning_tokens": 57
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 3917,
+          "outputTokens": 425,
+          "inputTokensDetails": {
+            "cache_write_tokens": 3914,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 87
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4431,
+          "outputTokens": 230,
+          "inputTokensDetails": {
+            "cache_write_tokens": 514,
+            "cached_tokens": 3914
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 35
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4750,
+          "outputTokens": 93,
+          "inputTokensDetails": {
+            "cache_write_tokens": 319,
+            "cached_tokens": 4428
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 36
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4932,
+          "outputTokens": 143,
+          "inputTokensDetails": {
+            "cache_write_tokens": 182,
+            "cached_tokens": 4747
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 121
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5114,
+          "outputTokens": 150,
+          "inputTokensDetails": {
+            "cache_write_tokens": 182,
+            "cached_tokens": 4929
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 57
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 28160,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "s2",
+    "tier": "smoke",
+    "domain": "discovery",
+    "ask": "hey Albert, what data do you have on our business?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "I’m configured to analyse these parts of your business:\n\n- **Sales:** transactions, net/gross sales, GST, discounts, refunds, units, costs and gross margin\n- **Products & stock:** variants, categories/departments, stock on hand, stock value, receipts, sell-through and stocktake variance\n- **Customers:** customer accounts, order history, order frequency, last order and spend\n- **Locations & channels:** stores, registers and sales channels\n- **Team & workshop:** workers, rostered/worked/overtime hours, labour cost and sales productivity where recorded\n- **Xero finance:** revenue, expenses, cost of sales, cash receipts, bank transactions, GST, receivables and payables\n- **Reconciliation:** POS sales/tenders compared with ledger revenue and bank settlements\n\nI couldn’t inspect the live records just now because the governed query service failed before execution, so I can’t yet confirm record counts, date coverage, latest activity or top categories.",
+    "claims": [],
+    "followUps": [
+      "Would you like me to retry and produce a live data-coverage summary?",
+      "Or ask about a specific area such as sales, stock, customers, staff or cash flow."
+    ],
+    "clarification": null,
+    "queryCount": 0,
+    "tableCount": 0,
+    "tables": [],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "answer_state_guard",
+        "outcome": "failed",
+        "detail": "The proposed Qualified state was reduced to Unavailable to match governed evidence."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "progress:query",
+      "validation:answer_state_guard:failed"
+    ],
+    "usage": {
+      "requests": 5,
+      "inputTokens": 22829,
+      "outputTokens": 1297,
+      "totalTokens": 24126,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 16,
+          "cached_tokens": 3906
+        },
+        {
+          "cache_write_tokens": 493,
+          "cached_tokens": 3922
+        },
+        {
+          "cache_write_tokens": 196,
+          "cached_tokens": 4415
+        },
+        {
+          "cache_write_tokens": 211,
+          "cached_tokens": 4611
+        },
+        {
+          "cache_write_tokens": 222,
+          "cached_tokens": 4822
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 120
+        },
+        {
+          "reasoning_tokens": 37
+        },
+        {
+          "reasoning_tokens": 36
+        },
+        {
+          "reasoning_tokens": 71
+        },
+        {
+          "reasoning_tokens": 265
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 3925,
+          "outputTokens": 404,
+          "inputTokensDetails": {
+            "cache_write_tokens": 16,
+            "cached_tokens": 3906
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 120
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4418,
+          "outputTokens": 107,
+          "inputTokensDetails": {
+            "cache_write_tokens": 493,
+            "cached_tokens": 3922
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 37
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4614,
+          "outputTokens": 122,
+          "inputTokensDetails": {
+            "cache_write_tokens": 196,
+            "cached_tokens": 4415
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 36
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4825,
+          "outputTokens": 133,
+          "inputTokensDetails": {
+            "cache_write_tokens": 211,
+            "cached_tokens": 4611
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 71
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5047,
+          "outputTokens": 531,
+          "inputTokensDetails": {
+            "cache_write_tokens": 222,
+            "cached_tokens": 4822
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 265
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 29113,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "progress",
+      "validation",
+      "answer"
+    ]
+  }
+]

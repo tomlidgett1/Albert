@@ -1,0 +1,999 @@
+[
+  {
+    "id": "s1",
+    "tier": "smoke",
+    "domain": "inventory",
+    "ask": "give me inventory data",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Unavailable",
+    "answerText": "Sorry, there are no results for that. The Lightspeed inventory snapshot contains no rows. The merchandising dataset has 77 records from 7 July to 7 August 2026, but none contains a non-zero stock-on-hand quantity or value, so I can’t provide a reliable inventory balance.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+    "claims": [],
+    "followUps": [
+      "Would you like sales-by-product data instead while the inventory feed is unavailable?"
+    ],
+    "clarification": null,
+    "queryCount": 5,
+    "tableCount": 5,
+    "tables": [
+      {
+        "resultId": "sql:e827599477aa62833c456e4aada7eb38d6ef85d2e172ebabb7c47d2bd73aaeb4",
+        "columns": [
+          "snapshot_date",
+          "units_on_hand",
+          "stock_value",
+          "variants_in_stock",
+          "variants_not_in_stock",
+          "trailing_daily_units_sold"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "snapshot_date": null,
+            "units_on_hand": null,
+            "stock_value": null,
+            "variants_in_stock": "0",
+            "variants_not_in_stock": "0",
+            "trailing_daily_units_sold": null
+          }
+        ]
+      },
+      {
+        "resultId": "sql:19c5d63a1150001c9df17c81dff8189bc82278d221c63e775e6588aa407f2b21",
+        "columns": [
+          "inventory_rows",
+          "first_business_date",
+          "latest_business_date",
+          "first_snapshot_date",
+          "latest_snapshot_date",
+          "product_variants",
+          "stock_locations"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "inventory_rows": "0",
+            "first_business_date": null,
+            "latest_business_date": null,
+            "first_snapshot_date": null,
+            "latest_snapshot_date": null,
+            "product_variants": "0",
+            "stock_locations": "0"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:7253fe97506d9c1e593272ce70d85423368273bef9618b67589b6c43875a17c3",
+        "columns": [
+          "merchandising_rows",
+          "first_business_date",
+          "latest_business_date",
+          "product_variants",
+          "product_categories"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "merchandising_rows": "77",
+            "first_business_date": "2026-07-07T00:00:00.000Z",
+            "latest_business_date": "2026-08-07T00:00:00.000Z",
+            "product_variants": "34",
+            "product_categories": "11"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:25e2a66bdf21caabe92ff1fcd1a133ad75483ca4ecc38ab26785cff63d277a45",
+        "columns": [
+          "business_date",
+          "category",
+          "stock_on_hand_units",
+          "stock_on_hand_value",
+          "units_sold",
+          "net_sales_ex_gst",
+          "gross_margin"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "business_date": "2026-08-07T00:00:00.000Z",
+            "category": "Uncategorised",
+            "stock_on_hand_units": "0.0000",
+            "stock_on_hand_value": "0.0000",
+            "units_sold": "4.0000",
+            "net_sales_ex_gst": "172.7100",
+            "gross_margin": "172.7100"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:e26affd175e02d233324ab27456915e6d6ab3fee41a98cd33740494fa0abc414",
+        "columns": [
+          "snapshot_date",
+          "stock_on_hand_units",
+          "stock_on_hand_value",
+          "product_variants",
+          "product_categories"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "snapshot_date": null,
+            "stock_on_hand_units": null,
+            "stock_on_hand_value": null,
+            "product_variants": "0",
+            "product_categories": "0"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "runtime_fanout_canary:inventory_health_day",
+        "outcome": "passed",
+        "detail": "Runtime Fanout Canary:Inventory Health Day: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "runtime_fanout_canary:merchandising_aligned",
+        "outcome": "passed",
+        "detail": "Runtime Fanout Canary:Merchandising Aligned: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "runtime_fanout_canary:merchandising_aligned",
+        "outcome": "passed",
+        "detail": "Runtime Fanout Canary:Merchandising Aligned: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:runtime_fanout_canary:inventory_health_day:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:runtime_fanout_canary:merchandising_aligned:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:runtime_fanout_canary:merchandising_aligned:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified"
+    ],
+    "usage": {
+      "requests": 6,
+      "inputTokens": 35968,
+      "outputTokens": 1496,
+      "totalTokens": 37464,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 3979,
+          "cached_tokens": 0
+        },
+        {
+          "cache_write_tokens": 876,
+          "cached_tokens": 3979
+        },
+        {
+          "cache_write_tokens": 726,
+          "cached_tokens": 4855
+        },
+        {
+          "cache_write_tokens": 680,
+          "cached_tokens": 5581
+        },
+        {
+          "cache_write_tokens": 943,
+          "cached_tokens": 6261
+        },
+        {
+          "cache_write_tokens": 866,
+          "cached_tokens": 7204
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 88
+        },
+        {
+          "reasoning_tokens": 21
+        },
+        {
+          "reasoning_tokens": 14
+        },
+        {
+          "reasoning_tokens": 24
+        },
+        {
+          "reasoning_tokens": 71
+        },
+        {
+          "reasoning_tokens": 86
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 3982,
+          "outputTokens": 295,
+          "inputTokensDetails": {
+            "cache_write_tokens": 3979,
+            "cached_tokens": 0
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 88
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 4858,
+          "outputTokens": 160,
+          "inputTokensDetails": {
+            "cache_write_tokens": 876,
+            "cached_tokens": 3979
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 21
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5584,
+          "outputTokens": 132,
+          "inputTokensDetails": {
+            "cache_write_tokens": 726,
+            "cached_tokens": 4855
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 14
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 6264,
+          "outputTokens": 270,
+          "inputTokensDetails": {
+            "cache_write_tokens": 680,
+            "cached_tokens": 5581
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 24
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7207,
+          "outputTokens": 303,
+          "inputTokensDetails": {
+            "cache_write_tokens": 943,
+            "cached_tokens": 6261
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 71
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 8073,
+          "outputTokens": 336,
+          "inputTokensDetails": {
+            "cache_write_tokens": 866,
+            "cached_tokens": 7204
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 86
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 40693,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "answer"
+    ]
+  },
+  {
+    "id": "s2",
+    "tier": "smoke",
+    "domain": "discovery",
+    "ask": "hey Albert, what data do you have on our business?",
+    "ok": true,
+    "attempt": 1,
+    "answerState": "Exploratory",
+    "answerText": "You currently have **Lightspeed operational data covering 7 July–7 August 2026**. The main usable areas are sales, products, customers, payments, staff attribution and reconciliation.\n\n### Current data snapshot\n- **790 sales-event records**, representing **302 orders**\n- **$38,290.40 net sales ex GST** and **859 net units**\n- **349 POS payment records** through 6 August\n- **47 identified customers**, **34 products sold**, **6 workers** and **1 location** represented\n- **16 customer-order activity records**\n- Daily sales, merchandising, workforce/sales and reconciliation summaries are also populated\n\n### Product data quality\nMost sales are currently **uncategorised**: **$35,615.70** of net sales. Among named categories, *Wheels & Tyres* leads with **$1,013.55**.\n\n### Current gaps\n- Detailed inventory snapshots contain no records. The merchandising snapshot for 7 August reports zero populated stock units/value.\n- Xero finance-day and bank-transaction tables currently contain no records.\n- Detailed roster, worked-hours and labour-cost records are not populated.\n\nSo, at present I can analyse sales performance, products/categories, customers, payments, sales by worker/location and POS reconciliation. Finance, stock-on-hand and labour analysis will remain limited until those feeds populate.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+    "claims": [],
+    "followUps": [
+      "Would you like a sales-performance dashboard for the available period?",
+      "Would you like me to check which products or transactions are causing the large uncategorised share?"
+    ],
+    "clarification": null,
+    "queryCount": 5,
+    "tableCount": 5,
+    "tables": [
+      {
+        "resultId": "sql:67fee694462ad0e2917ab8402c8436ce2ec7d34e58917aeae64a4fc151266c20",
+        "columns": [
+          "dataset",
+          "row_count",
+          "earliest_date",
+          "latest_date"
+        ],
+        "rowCount": 7,
+        "sample": [
+          {
+            "dataset": "Sales events",
+            "row_count": "790",
+            "earliest_date": "2026-07-07T00:00:00.000Z",
+            "latest_date": "2026-08-07T00:00:00.000Z"
+          },
+          {
+            "dataset": "Inventory snapshots",
+            "row_count": "0",
+            "earliest_date": null,
+            "latest_date": null
+          },
+          {
+            "dataset": "Finance by day/location",
+            "row_count": "0",
+            "earliest_date": null,
+            "latest_date": null
+          }
+        ]
+      },
+      {
+        "resultId": "sql:73736291d48c2177b7399282d6f079cc98836b100e2f939c25b8fe3af26957a5",
+        "columns": [
+          "orders",
+          "net_units",
+          "net_sales_ex_gst",
+          "net_sales_inc_gst",
+          "refunds_inc_gst",
+          "identified_customers",
+          "products_sold",
+          "locations",
+          "workers"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "orders": "302",
+            "net_units": "859.0000",
+            "net_sales_ex_gst": "38290.4000",
+            "net_sales_inc_gst": "42119.7900",
+            "refunds_inc_gst": "254.9300",
+            "identified_customers": "47",
+            "products_sold": "34",
+            "locations": "1",
+            "workers": "6"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:90a53c72443b9a554e418ea834a5297c770ff04141a24a9607953aa11cd44231",
+        "columns": [
+          "category",
+          "orders",
+          "net_units",
+          "net_sales_ex_gst"
+        ],
+        "rowCount": 5,
+        "sample": [
+          {
+            "category": "Uncategorised",
+            "orders": "292",
+            "net_units": "819.0000",
+            "net_sales_ex_gst": "35615.7000"
+          },
+          {
+            "category": "Wheels & Tyres",
+            "orders": "7",
+            "net_units": "11.0000",
+            "net_sales_ex_gst": "1013.5500"
+          },
+          {
+            "category": "Cockpit",
+            "orders": "8",
+            "net_units": "8.0000",
+            "net_sales_ex_gst": "372.6600"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:1a78379c79b8582ee09dfaf121edfe4cf0c8f5bcb0605964551caff29e7ae256",
+        "columns": [
+          "dataset",
+          "row_count",
+          "earliest_date",
+          "latest_date"
+        ],
+        "rowCount": 5,
+        "sample": [
+          {
+            "dataset": "Merchandising aligned",
+            "row_count": "77",
+            "earliest_date": "2026-07-07T00:00:00.000Z",
+            "latest_date": "2026-08-07T00:00:00.000Z"
+          },
+          {
+            "dataset": "Daily sales summary",
+            "row_count": "32",
+            "earliest_date": "2026-07-07T00:00:00.000Z",
+            "latest_date": "2026-08-07T00:00:00.000Z"
+          },
+          {
+            "dataset": "Sales/finance reconciliation",
+            "row_count": "32",
+            "earliest_date": "2026-07-07T00:00:00.000Z",
+            "latest_date": "2026-08-07T00:00:00.000Z"
+          }
+        ]
+      },
+      {
+        "resultId": "sql:0efc7e6deeb423ecc112d11893bb979769a11f636bf5515ed10041302fde5735",
+        "columns": [
+          "snapshot_date",
+          "stock_on_hand_units",
+          "stock_on_hand_value",
+          "stocked_products"
+        ],
+        "rowCount": 1,
+        "sample": [
+          {
+            "snapshot_date": "2026-08-07T00:00:00.000Z",
+            "stock_on_hand_units": "0.0000",
+            "stock_on_hand_value": "0.0000",
+            "stocked_products": "0"
+          }
+        ]
+      }
+    ],
+    "narratives": [],
+    "validations": [
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      },
+      {
+        "name": "read_only_transaction",
+        "outcome": "passed",
+        "detail": "Read Only Transaction: passed."
+      },
+      {
+        "name": "tenant_row_level_security",
+        "outcome": "passed",
+        "detail": "Tenant Row Level Security: passed."
+      },
+      {
+        "name": "sql_lint",
+        "outcome": "passed",
+        "detail": "Sql Lint: passed."
+      },
+      {
+        "name": "runtime_fanout_canary:merchandising_aligned",
+        "outcome": "passed",
+        "detail": "Runtime Fanout Canary:Merchandising Aligned: passed."
+      },
+      {
+        "name": "evidence_tier",
+        "outcome": "passed",
+        "detail": "Evidence Tier: passed."
+      },
+      {
+        "name": "warning_1",
+        "outcome": "qualified",
+        "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+      }
+    ],
+    "toolChain": [
+      "progress:planning",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=7",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=5",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=5",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified",
+      "progress:query",
+      "query:sql_first",
+      "table:rows=1",
+      "validation:read_only_transaction:passed",
+      "validation:tenant_row_level_security:passed",
+      "validation:sql_lint:passed",
+      "validation:runtime_fanout_canary:merchandising_aligned:passed",
+      "validation:evidence_tier:passed",
+      "validation:warning_1:qualified"
+    ],
+    "usage": {
+      "requests": 6,
+      "inputTokens": 38983,
+      "outputTokens": 2808,
+      "totalTokens": 41791,
+      "inputTokensDetails": [
+        {
+          "cache_write_tokens": 16,
+          "cached_tokens": 3971
+        },
+        {
+          "cache_write_tokens": 1085,
+          "cached_tokens": 3987
+        },
+        {
+          "cache_write_tokens": 1033,
+          "cached_tokens": 5072
+        },
+        {
+          "cache_write_tokens": 897,
+          "cached_tokens": 6105
+        },
+        {
+          "cache_write_tokens": 1017,
+          "cached_tokens": 7002
+        },
+        {
+          "cache_write_tokens": 761,
+          "cached_tokens": 8019
+        }
+      ],
+      "outputTokensDetails": [
+        {
+          "reasoning_tokens": 115
+        },
+        {
+          "reasoning_tokens": 87
+        },
+        {
+          "reasoning_tokens": 0
+        },
+        {
+          "reasoning_tokens": 76
+        },
+        {
+          "reasoning_tokens": 43
+        },
+        {
+          "reasoning_tokens": 207
+        }
+      ],
+      "requestUsageEntries": [
+        {
+          "inputTokens": 3990,
+          "outputTokens": 378,
+          "inputTokensDetails": {
+            "cache_write_tokens": 16,
+            "cached_tokens": 3971
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 115
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 5075,
+          "outputTokens": 405,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1085,
+            "cached_tokens": 3987
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 87
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 6108,
+          "outputTokens": 243,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1033,
+            "cached_tokens": 5072
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 0
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 7005,
+          "outputTokens": 291,
+          "inputTokensDetails": {
+            "cache_write_tokens": 897,
+            "cached_tokens": 6105
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 76
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 8022,
+          "outputTokens": 209,
+          "inputTokensDetails": {
+            "cache_write_tokens": 1017,
+            "cached_tokens": 7002
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 43
+          },
+          "endpoint": "responses.create"
+        },
+        {
+          "inputTokens": 8783,
+          "outputTokens": 1282,
+          "inputTokensDetails": {
+            "cache_write_tokens": 761,
+            "cached_tokens": 8019
+          },
+          "outputTokensDetails": {
+            "reasoning_tokens": 207
+          },
+          "endpoint": "responses.create"
+        }
+      ]
+    },
+    "ms": 63801,
+    "eventTypes": [
+      "progress",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "progress",
+      "query",
+      "table",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "validation",
+      "answer"
+    ]
+  }
+]

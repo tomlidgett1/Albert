@@ -1,0 +1,297 @@
+{
+  "id": "h7",
+  "tier": "hard",
+  "domain": "cross:revenue+margin",
+  "ask": "For the last 90 days, is our top category by net sales also our top category by gross margin dollars and by gross margin percent? If not, quantify the mismatch.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t safely retrieve the governed category comparison in this session, so I can’t determine whether the three leaders match without risking an unsupported answer. Retrying the request in a fresh analytical session should unlock the comparison.\n\nFigures cover Defined by the statement from Lightspeed, current to 2026-08-07.",
+  "claims": [],
+  "followUps": [
+    "Retry the last-90-days category comparison."
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:3e67b1a2f648d9a777a4643c8958b6763e247fd1960e59349ceda0a889df904d",
+      "columns": [
+        "period_from",
+        "period_to"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "period_from": "2026-05-09T00:00:00.000Z",
+          "period_to": "2026-08-07T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "qualified",
+      "detail": "Evidence Tier: warning."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "No governed claims were declared for this statement, so its figures are exploratory. Declare claims tying output columns to governed metrics to earn certification."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:definition",
+    "progress:definition",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:evidence_tier:qualified",
+    "validation:warning_1:qualified",
+    "progress:definition"
+  ],
+  "usage": {
+    "requests": 10,
+    "inputTokens": 85083,
+    "outputTokens": 4073,
+    "totalTokens": 89156,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 39,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 312,
+        "cached_tokens": 5765
+      },
+      {
+        "cache_write_tokens": 67,
+        "cached_tokens": 6077
+      },
+      {
+        "cache_write_tokens": 1130,
+        "cached_tokens": 6144
+      },
+      {
+        "cache_write_tokens": 730,
+        "cached_tokens": 7274
+      },
+      {
+        "cache_write_tokens": 1408,
+        "cached_tokens": 8004
+      },
+      {
+        "cache_write_tokens": 462,
+        "cached_tokens": 9412
+      },
+      {
+        "cache_write_tokens": 252,
+        "cached_tokens": 9874
+      },
+      {
+        "cache_write_tokens": 756,
+        "cached_tokens": 10126
+      },
+      {
+        "cache_write_tokens": 613,
+        "cached_tokens": 10882
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 251
+      },
+      {
+        "reasoning_tokens": 10
+      },
+      {
+        "reasoning_tokens": 10
+      },
+      {
+        "reasoning_tokens": 168
+      },
+      {
+        "reasoning_tokens": 1199
+      },
+      {
+        "reasoning_tokens": 159
+      },
+      {
+        "reasoning_tokens": 60
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 310
+      },
+      {
+        "reasoning_tokens": 309
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5768,
+        "outputTokens": 274,
+        "inputTokensDetails": {
+          "cache_write_tokens": 39,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 251
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6080,
+        "outputTokens": 31,
+        "inputTokensDetails": {
+          "cache_write_tokens": 312,
+          "cached_tokens": 5765
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 10
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 6147,
+        "outputTokens": 65,
+        "inputTokensDetails": {
+          "cache_write_tokens": 67,
+          "cached_tokens": 6077
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 10
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7277,
+        "outputTokens": 243,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1130,
+          "cached_tokens": 6144
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 168
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 8007,
+        "outputTokens": 1223,
+        "inputTokensDetails": {
+          "cache_write_tokens": 730,
+          "cached_tokens": 7274
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1199
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9415,
+        "outputTokens": 421,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1408,
+          "cached_tokens": 8004
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 159
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9877,
+        "outputTokens": 168,
+        "inputTokensDetails": {
+          "cache_write_tokens": 462,
+          "cached_tokens": 9412
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 60
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10129,
+        "outputTokens": 677,
+        "inputTokensDetails": {
+          "cache_write_tokens": 252,
+          "cached_tokens": 9874
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 10885,
+        "outputTokens": 572,
+        "inputTokensDetails": {
+          "cache_write_tokens": 756,
+          "cached_tokens": 10126
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 310
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11498,
+        "outputTokens": 399,
+        "inputTokensDetails": {
+          "cache_write_tokens": 613,
+          "cached_tokens": 10882
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 309
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 79990,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "answer"
+  ]
+}

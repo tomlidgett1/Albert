@@ -1,0 +1,146 @@
+{
+  "id": "l01",
+  "tier": "easy",
+  "domain": "sales",
+  "ask": "What were our net sales excluding GST over the last 30 days?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Net sales excluding GST were **$40,235.16** over the 30 days from **9 July to 8 August 2026**, across 307 completed tickets, with refunds netted.\n\n| Period From | Period To | Completed Tickets | Net Sales Ex GST |\n| --- | --- | ---: | ---: |\n| 9 July 2026 | 8 August 2026 | 307 | $40,235.16 |\n\nWould you like to see this by day or by product category?\n\nWould you like to review the refunds included in the total?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see this by day or by product category?",
+    "Would you like to review the refunds included in the total?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:bdb1a20c1c0b824395c423a1678783f89834a8a99f17a595e2d24605beef7f07",
+      "columns": [
+        "period_from",
+        "period_to",
+        "completed_tickets",
+        "net_sales_ex_gst_aud"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "period_from": "2026-07-09T00:00:00.000Z",
+          "period_to": "2026-08-08T00:00:00.000Z",
+          "completed_tickets": "307",
+          "net_sales_ex_gst_aud": "40235.1600"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70734,
+    "outputTokens": 1099,
+    "totalTokens": 71833,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1037,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33728,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1010,
+        "cached_tokens": 33728
+      },
+      {
+        "cache_write_tokens": 1219,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 212
+      },
+      {
+        "reasoning_tokens": 19
+      },
+      {
+        "reasoning_tokens": 72
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1040,
+        "outputTokens": 94,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1037,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33731,
+        "outputTokens": 458,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33728,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 212
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34741,
+        "outputTokens": 115,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1010,
+          "cached_tokens": 33728
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 19
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1222,
+        "outputTokens": 432,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1219,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 72
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 17177,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "e1",
+    "tier": "easy",
+    "domain": "sales",
+    "ask": "What were Ashburton Cycles' net sales excluding GST over the last 30 days?"
+  },
+  {
+    "id": "e2",
+    "tier": "easy",
+    "domain": "employees",
+    "ask": "Who works here? List the employee or worker names from our POS."
+  },
+  {
+    "id": "e3",
+    "tier": "easy",
+    "domain": "sales",
+    "ask": "How many transactions did we process in the last 7 days, and what was average order value?"
+  },
+  {
+    "id": "e4",
+    "tier": "easy",
+    "domain": "inventory",
+    "ask": "What is our current stock on hand in units and dollar value?"
+  },
+  {
+    "id": "m1",
+    "tier": "medium",
+    "domain": "sales",
+    "ask": "Over the last 90 days, which product categories generated the most net sales, and what was the gross margin percent for each? Rank by sales."
+  },
+  {
+    "id": "m2",
+    "tier": "medium",
+    "domain": "employees",
+    "ask": "Who were our top performing staff by net sales in the last 30 days, and how many transactions did each complete?"
+  },
+  {
+    "id": "m3",
+    "tier": "medium",
+    "domain": "customers",
+    "ask": "In the last 90 days, how many new customers did we gain, and what was our returning customer rate?"
+  },
+  {
+    "id": "m4",
+    "tier": "medium",
+    "domain": "sales",
+    "ask": "Compare month-to-date net sales excluding GST with the same period last month. Are we up or down, and by how much?"
+  },
+  {
+    "id": "m5",
+    "tier": "medium",
+    "domain": "inventory",
+    "ask": "By product category, what are stock cover days and sell-through rate over the last 90 days? Which categories look overstocked?"
+  },
+  {
+    "id": "m6",
+    "tier": "medium",
+    "domain": "sales",
+    "ask": "What were our discount amount and discount rate, and our refund amount and refund rate, over the last 90 days?"
+  },
+  {
+    "id": "h1",
+    "tier": "hard",
+    "domain": "cross:sales+margin",
+    "ask": "Over the last 90 days, which categories have high net sales but weak gross margin percent, and which have low sales but strong margin? Give me the trade-off so I know where volume is cheap and where margin is hiding."
+  },
+  {
+    "id": "h2",
+    "tier": "hard",
+    "domain": "cross:sales+inventory",
+    "ask": "Take our top 10 products by units sold in the last 90 days. For those same products, which ones look inventory-stressed (high days out of stock or thin stock cover)? I need sell-through winners that we keep running out of."
+  },
+  {
+    "id": "h3",
+    "tier": "hard",
+    "domain": "cross:period+category",
+    "ask": "Net sales month to date versus the same period last month, then break the gap down by product category so I can see which categories caused the change."
+  },
+  {
+    "id": "h4",
+    "tier": "hard",
+    "domain": "cross:employees+basket",
+    "ask": "Over the last 30 days, which workers have high transaction counts but below-shop average order value? Are they ringing lots of small tickets, and who are the outliers?"
+  },
+  {
+    "id": "h5",
+    "tier": "hard",
+    "domain": "cross:discount+refund",
+    "ask": "Over the last 90 days, which product categories have the highest discount rates, and which have the highest refund rates? Where are we leaving money on the table versus where returns are a problem?"
+  },
+  {
+    "id": "h6",
+    "tier": "hard",
+    "domain": "cross:inventory+capital",
+    "ask": "Which categories have the worst sell-through and the longest stock cover days, and how much stock-on-hand value is tied up there? I want dead or slow capital called out clearly."
+  },
+  {
+    "id": "h7",
+    "tier": "hard",
+    "domain": "cross:revenue+margin",
+    "ask": "For the last 90 days, is our top category by net sales also our top category by gross margin dollars and by gross margin percent? If not, quantify the mismatch."
+  },
+  {
+    "id": "h8",
+    "tier": "hard",
+    "domain": "cross:daily+category",
+    "ask": "Show daily net sales for the last 14 days. Identify the weakest days, then for those weak days tell me which product categories underperformed versus the period average."
+  },
+  {
+    "id": "h9",
+    "tier": "hard",
+    "domain": "cross:customers+value",
+    "ask": "Over the last 365 days, what are active customers, repeat purchase rate, and average customer value? Then tell me whether retention or acquisition looks like the bigger lever right now."
+  },
+  {
+    "id": "h10",
+    "tier": "hard",
+    "domain": "cross:unavailable+unlock",
+    "ask": "What is our gross profit per labour hour by employee for the last 30 days, and what was net profit last month? If you cannot answer, say exactly what connection or data unlocks it."
+  }
+]

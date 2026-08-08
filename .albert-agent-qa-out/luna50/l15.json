@@ -1,0 +1,195 @@
+{
+  "id": "l15",
+  "tier": "medium",
+  "domain": "inventory",
+  "ask": "Show stock value by category for items currently on hand.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Currently held stock is led by Bikes/Mountain at $28,033.34 across 17 units, based on the stock snapshot through 7 August 2026. The evidence also includes a separate Uncategorised result with 4,083 units valued at $0.00.\n\n| Category | Units On Hand | Stock Value |\n| --- | --- | --- |\n| Bikes/Mountain | 17 | $28,033.34 |\n| Parts/Wheels & Tyres | 1214 | $17,468.74 |\n| Bikes/Gravel | 7 | $14,674.00 |\n| Bikes/Kids | 52 | $14,355.30 |\n| Parts/Drivetrain | 563 | $13,572.82 |\n| Bikes/Hybrid | 13 | $12,546.71 |\n| Bikes/Road | 4 | $12,439.40 |\n| Bikes/City | 14 | $5,997.87 |\n| Clothing & Protection/Helmets | 96 | $5,471.13 |\n| Parts/Brakes | 322 | $4,389.04 |\n| Parts/Cockpit | 161 | $3,105.01 |\n| Training & Transport/Indoor Trainers | 4 | $2,542.23 |\n| Electronics & Lights/Computers | 7 | $2,104.48 |\n| Accessories1/Bags & Baskets | 76 | $1,920.84 |\n| Parts/Pedals | 74 | $1,753.60 |\n| Electronics & Lights/Lights | 56 | $1,552.94 |\n| Uncategorised | 75 | $1,397.61 |\n| Accessories1/Bottles & Cages | 133 | $1,348.94 |\n| Electronics & Lights/Radar | 5 | $934.28 |\n| Accessories1/Mounts | 34 | $862.88 |\n| Parts/Saddles & Seatposts | 41 | $813.36 |\n| Tools & Maintenance/Lubes | 64 | $716.16 |\n| Training & Transport/Car Racks | 5 | $714.64 |\n| Accessories1/Mudguards | 46 | $703.23 |\n| Clothing & Protection/Bibs & Shorts | 23 | $685.28 |\n| Clothing & Protection/Gloves | 35 | $685.16 |\n| Tools & Maintenance/Cleaners | 51 | $645.84 |\n| Nutrition/Gels | 205 | $635.27 |\n| Tools & Maintenance/Pumps | 46 | $631.42 |\n| Clothing & Protection/Jackets & Vests | 17 | $611.10 |\n| Tools & Maintenance/Workshop Tools | 37 | $579.33 |\n| Accessories1/Locks | 43 | $565.38 |\n| Nutrition/Drink Mix | 143 | $524.71 |\n| Clothing & Protection/Warmers | 22 | $500.64 |\n| Accessories1/Mirrors | 18 | $496.42 |\n| Nutrition/Recovery | 20 | $455.35 |\n\n…and 24 more rows in the query table above.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by individual product or SKU?",
+    "Would you like the slowest-moving categories identified?"
+  ],
+  "clarification": null,
+  "queryCount": 2,
+  "tableCount": 2,
+  "tables": [
+    {
+      "resultId": "sql:f3cbc2540f2db6b256ce3e736ea4ce48e22cc522a03e4573de7dd6ffed3e1c97",
+      "columns": [
+        "category",
+        "units_on_hand",
+        "stock_value"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "category": "Uncategorised",
+          "units_on_hand": "4083.0000",
+          "stock_value": "0.0000"
+        }
+      ]
+    },
+    {
+      "resultId": "sql:2dece7e5c139370d38e460091ce9ff59866589db08d0067fdd15bcfbc588d729",
+      "columns": [
+        "category",
+        "units_on_hand",
+        "stock_value"
+      ],
+      "rowCount": 60,
+      "sample": [
+        {
+          "category": "Bikes/Mountain",
+          "units_on_hand": "17.0000",
+          "stock_value": "28033.34000000"
+        },
+        {
+          "category": "Parts/Wheels & Tyres",
+          "units_on_hand": "1214.0000",
+          "stock_value": "17468.73590000"
+        },
+        {
+          "category": "Bikes/Gravel",
+          "units_on_hand": "7.0000",
+          "stock_value": "14674.00000000"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=60",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 109479,
+    "outputTokens": 1906,
+    "totalTokens": 111385,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1034,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33729,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 915,
+        "cached_tokens": 33729
+      },
+      {
+        "cache_write_tokens": 2807,
+        "cached_tokens": 34644
+      },
+      {
+        "cache_write_tokens": 2606,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 135
+      },
+      {
+        "reasoning_tokens": 382
+      },
+      {
+        "reasoning_tokens": 100
+      },
+      {
+        "reasoning_tokens": 142
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1037,
+        "outputTokens": 107,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1034,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33732,
+        "outputTokens": 403,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33729,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 135
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34647,
+        "outputTokens": 704,
+        "inputTokensDetails": {
+          "cache_write_tokens": 915,
+          "cached_tokens": 33729
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 382
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 37454,
+        "outputTokens": 223,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2807,
+          "cached_tokens": 34644
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 100
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2609,
+        "outputTokens": 469,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2606,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 142
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 26940,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

@@ -1,0 +1,158 @@
+{
+  "id": "l25",
+  "tier": "medium",
+  "domain": "sales",
+  "ask": "Top 15 products by units sold in the last 60 days.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "In the last 60 days, Service - Change Tyre, Cass, Rotor led sales with 85 units sold, followed by Service - General Service with 71 and Gear Inner Wire - Stainless Steel, 1.2x2000mm with 39.\n\n| Item Id | Product | Units Sold | Sales Inc GST |\n| --- | --- | ---: | ---: |\n| 1004 | Service - Change Tyre, Cass, Rotor | 85 | $1,680.00 |\n| 9 | Service - General Service | 71 | $9,139.80 |\n| 9687 | Gear Inner Wire - Stainless Steel, 1.2x2000mm | 39 | $387.11 |\n| 1037 | BRAKE CABLE INNER - Road/MTB | 33 | $327.17 |\n| 1009 | Service - Brake Pad Replacement / Clean / Fix | 26 | $530.00 |\n| 1001 | Service - Fit Brake Cable | 25 | $411.25 |\n| 14821 | Brake Pad Shimano Resin Disc B03s/B05s Black | 24 | $719.76 |\n| 1002 | Service - Fit Gear Cable | 24 | $550.00 |\n| 999 | Service - Brake Bleed | 20 | $1,005.00 |\n| 10973 | Service - Full Service | 20 | $4,028.82 |\n| 984 | TIOGA TUBE 700 X 35/42 SV 48MM | 20 | $284.81 |\n| 16499 | Pirelli Sportube 700 x 32-40mm Presta 48mm | 16 | $240.00 |\n| 8624 | TIOGA TUBE 26 X 1.9/2.125 SV 48MM | 15 | $214.46 |\n| 16724 | Pirelli Sportube 700 x 23-30 Presta 48mm | 14 | $210.00 |\n| 1028 | Service - Fit Chain/Cass | 14 | $363.75 |\n\nWould you like these top sellers grouped by product category? Would you like a chart of units sold for these products?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like these top sellers grouped by product category?",
+    "Would you like a chart of units sold for these products?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:e3062cbaff3041460e3f5f624341274748892b99bd5b5ae6e5c71ee15e934cae",
+      "columns": [
+        "item_id",
+        "product",
+        "units_sold",
+        "sales_inc_gst"
+      ],
+      "rowCount": 15,
+      "sample": [
+        {
+          "item_id": "1004.0000",
+          "product": "Service - Change Tyre, Cass, Rotor",
+          "units_sold": "85.0000",
+          "sales_inc_gst": "1680.0000"
+        },
+        {
+          "item_id": "9.0000",
+          "product": "Service - General Service",
+          "units_sold": "71.0000",
+          "sales_inc_gst": "9139.8000"
+        },
+        {
+          "item_id": "9687.0000",
+          "product": "Gear Inner Wire - Stainless Steel, 1.2x2000mm",
+          "units_sold": "39.0000",
+          "sales_inc_gst": "387.1100"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=15",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 72328,
+    "outputTokens": 1617,
+    "totalTokens": 73945,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 18,
+        "cached_tokens": 1093
+      },
+      {
+        "cache_write_tokens": 33732,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1605,
+        "cached_tokens": 33732
+      },
+      {
+        "cache_write_tokens": 2136,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 132
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 153
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1114,
+        "outputTokens": 108,
+        "inputTokensDetails": {
+          "cache_write_tokens": 18,
+          "cached_tokens": 1093
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33735,
+        "outputTokens": 470,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33732,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 132
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35340,
+        "outputTokens": 85,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1605,
+          "cached_tokens": 33732
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2139,
+        "outputTokens": 954,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2136,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 153
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 21953,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

@@ -1,0 +1,7 @@
+[
+ {"id":"v1","tier":"hard","ask":"Net sales by category 365d (cross-check for the Drivetrain filter)","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst"],"dimensions":["product.category"],"filters":[],"time":{"field":"business_date","range":{"type":"last_n_days","days":365},"compare":"none"},"sort":[{"metric":"net_sales_ex_gst","dir":"desc"}],"limit":30}},
+ {"id":"v2","tier":"hard","ask":"Unfiltered total 365d","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst"],"filters":[],"time":{"field":"business_date","range":{"type":"last_n_days","days":365},"compare":"none"}}},
+ {"id":"t1","tier":"medium","ask":"Quarter to date sales","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst"],"filters":[],"time":{"field":"business_date","range":{"type":"quarter_to_date"},"compare":"none"}}},
+ {"id":"t2","tier":"medium","ask":"Absolute range sales","tool":"run_semantic_query","input":{"topic":"sales_performance","metrics":["net_sales_ex_gst"],"filters":[],"time":{"field":"business_date","range":{"type":"absolute","from":"2026-07-01T00:00:00.000Z","to":"2026-08-01T00:00:00.000Z"},"compare":"none"}}},
+ {"id":"d1","tier":"medium","ask":"Worker directory search","tool":"list_field_values","input":{"field":"worker","query":"lei","limit":10}}
+]

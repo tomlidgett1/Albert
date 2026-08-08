@@ -1,0 +1,948 @@
+[
+ {
+  "id": "cap-sales_performance",
+  "tier": "easy",
+  "ask": "Is sales_performance answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "sales_performance"
+  }
+ },
+ {
+  "id": "health-sales_performance",
+  "tier": "easy",
+  "ask": "Health for sales_performance",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "sales_performance"
+  }
+ },
+ {
+  "id": "cap-customers_retention",
+  "tier": "easy",
+  "ask": "Is customers_retention answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "customers_retention"
+  }
+ },
+ {
+  "id": "health-customers_retention",
+  "tier": "easy",
+  "ask": "Health for customers_retention",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "customers_retention"
+  }
+ },
+ {
+  "id": "cap-inventory_health",
+  "tier": "easy",
+  "ask": "Is inventory_health answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "inventory_health"
+  }
+ },
+ {
+  "id": "health-inventory_health",
+  "tier": "easy",
+  "ask": "Health for inventory_health",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "inventory_health"
+  }
+ },
+ {
+  "id": "cap-workforce_labour",
+  "tier": "easy",
+  "ask": "Is workforce_labour answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "workforce_labour"
+  }
+ },
+ {
+  "id": "health-workforce_labour",
+  "tier": "easy",
+  "ask": "Health for workforce_labour",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "workforce_labour"
+  }
+ },
+ {
+  "id": "cap-profitability_cash",
+  "tier": "easy",
+  "ask": "Is profitability_cash answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "profitability_cash"
+  }
+ },
+ {
+  "id": "health-profitability_cash",
+  "tier": "easy",
+  "ask": "Health for profitability_cash",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "profitability_cash"
+  }
+ },
+ {
+  "id": "cap-workforce_sales",
+  "tier": "easy",
+  "ask": "Is workforce_sales answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "workforce_sales"
+  }
+ },
+ {
+  "id": "health-workforce_sales",
+  "tier": "easy",
+  "ask": "Health for workforce_sales",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "workforce_sales"
+  }
+ },
+ {
+  "id": "cap-reconciliation",
+  "tier": "easy",
+  "ask": "Is reconciliation answerable?",
+  "tool": "get_capabilities",
+  "input": {
+   "topic": "reconciliation"
+  }
+ },
+ {
+  "id": "health-reconciliation",
+  "tier": "easy",
+  "ask": "Health for reconciliation",
+  "tool": "get_data_health",
+  "input": {
+   "domain": "reconciliation"
+  }
+ },
+ {
+  "id": "cat-sales",
+  "tier": "easy",
+  "ask": "How are sales going this month?",
+  "tool": "search_catalogue",
+  "input": {
+   "question": "How are sales going this month?"
+  }
+ },
+ {
+  "id": "cat-bikes",
+  "tier": "medium",
+  "ask": "Which bike models sell best?",
+  "tool": "search_catalogue",
+  "input": {
+   "question": "Which bike models sell best?"
+  }
+ },
+ {
+  "id": "cat-margin",
+  "tier": "medium",
+  "ask": "Which category has the best margin?",
+  "tool": "search_catalogue",
+  "input": {
+   "question": "Which product category has the best margin?"
+  }
+ },
+ {
+  "id": "def-netsales",
+  "tier": "easy",
+  "ask": "What is net sales?",
+  "tool": "get_definition",
+  "input": {
+   "name": "commerce.net_sales_ex_gst"
+  }
+ },
+ {
+  "id": "def-margin",
+  "tier": "easy",
+  "ask": "What is gross margin pct?",
+  "tool": "get_definition",
+  "input": {
+   "name": "commerce.gross_margin_pct"
+  }
+ },
+ {
+  "id": "dir-worker",
+  "tier": "medium",
+  "ask": "Who works here?",
+  "tool": "list_field_values",
+  "input": {
+   "field": "worker",
+   "limit": 20
+  }
+ },
+ {
+  "id": "dir-category",
+  "tier": "medium",
+  "ask": "What product categories are there?",
+  "tool": "list_field_values",
+  "input": {
+   "field": "product.category",
+   "limit": 20
+  }
+ },
+ {
+  "id": "e1",
+  "tier": "easy",
+  "ask": "Net sales last 30 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e2",
+  "tier": "easy",
+  "ask": "Gross takings inc GST month to date",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "gross_takings_inc_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "month_to_date"
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e3",
+  "tier": "easy",
+  "ask": "Transactions last 7 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "transactions"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 7
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e4",
+  "tier": "easy",
+  "ask": "Units sold last 30 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "units_sold"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e5",
+  "tier": "easy",
+  "ask": "Average order value last 30 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "avg_order_value"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e6",
+  "tier": "easy",
+  "ask": "Sales today",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "today"
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e7",
+  "tier": "easy",
+  "ask": "Net sales year to date",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "year_to_date"
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "e8",
+  "tier": "easy",
+  "ask": "Items per transaction last 30 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "items_per_transaction"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "m1",
+  "tier": "medium",
+  "ask": "Net sales and margin % by product category (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst",
+    "gross_margin_pct"
+   ],
+   "dimensions": [
+    "product.category"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "sort": [
+    {
+     "metric": "net_sales_ex_gst",
+     "dir": "desc"
+    }
+   ],
+   "limit": 15
+  }
+ },
+ {
+  "id": "m2",
+  "tier": "medium",
+  "ask": "Best performing staff by net sales (30d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst",
+    "transactions"
+   ],
+   "dimensions": [
+    "worker"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   },
+   "sort": [
+    {
+     "metric": "net_sales_ex_gst",
+     "dir": "desc"
+    }
+   ],
+   "limit": 10
+  }
+ },
+ {
+  "id": "m3",
+  "tier": "medium",
+  "ask": "Daily sales trend last 14 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst",
+    "transactions"
+   ],
+   "dimensions": [
+    "business_date"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 14
+    },
+    "compare": "none"
+   },
+   "sort": [
+    {
+     "metric": "net_sales_ex_gst",
+     "dir": "desc"
+    }
+   ],
+   "limit": 20
+  }
+ },
+ {
+  "id": "m4",
+  "tier": "medium",
+  "ask": "Discount amount and rate (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "discount_amount",
+    "discount_rate"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "m5",
+  "tier": "medium",
+  "ask": "Refunds and refund rate (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "refund_amount",
+    "refund_rate"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "m6",
+  "tier": "medium",
+  "ask": "Sales by channel (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst",
+    "transactions"
+   ],
+   "dimensions": [
+    "channel"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 10
+  }
+ },
+ {
+  "id": "m7",
+  "tier": "medium",
+  "ask": "Weekly sales last 90 days",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "dimensions": [
+    "calendar_week"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 20
+  }
+ },
+ {
+  "id": "m8",
+  "tier": "medium",
+  "ask": "Top selling products by units (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "units_sold",
+    "net_sales_ex_gst"
+   ],
+   "dimensions": [
+    "product.variant"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "sort": [
+    {
+     "metric": "units_sold",
+     "dir": "desc"
+    }
+   ],
+   "limit": 15
+  }
+ },
+ {
+  "id": "m9",
+  "tier": "medium",
+  "ask": "Sales by location and register (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "dimensions": [
+    "location",
+    "register"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 10
+  }
+ },
+ {
+  "id": "m10",
+  "tier": "medium",
+  "ask": "Stock on hand units and value",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "inventory_health",
+   "metrics": [
+    "stock_on_hand_units",
+    "stock_on_hand_value"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h1",
+  "tier": "hard",
+  "ask": "Sales month to date vs same period last month",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "month_to_date"
+    },
+    "compare": "same_period_prior_month"
+   }
+  }
+ },
+ {
+  "id": "h2",
+  "tier": "hard",
+  "ask": "Sales this year vs last year",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "net_sales_ex_gst"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "year_to_date"
+    },
+    "compare": "same_period_prior_year"
+   }
+  }
+ },
+ {
+  "id": "h3",
+  "tier": "hard",
+  "ask": "Gross margin by category, best first (365d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "gross_margin",
+    "gross_margin_pct",
+    "net_sales_ex_gst"
+   ],
+   "dimensions": [
+    "product.category"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 365
+    },
+    "compare": "none"
+   },
+   "sort": [
+    {
+     "metric": "gross_margin",
+     "dir": "desc"
+    }
+   ],
+   "limit": 20
+  }
+ },
+ {
+  "id": "h4",
+  "tier": "hard",
+  "ask": "Sell price realisation by category (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "sell_price_realisation"
+   ],
+   "dimensions": [
+    "product.category"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 15
+  }
+ },
+ {
+  "id": "h5",
+  "tier": "hard",
+  "ask": "Stock cover days and sell-through by category",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "inventory_health",
+   "metrics": [
+    "stock_cover_days",
+    "sell_through_rate",
+    "inventory_turns"
+   ],
+   "dimensions": [
+    "product.category"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 15
+  }
+ },
+ {
+  "id": "h6",
+  "tier": "hard",
+  "ask": "Days out of stock by variant",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "inventory_health",
+   "metrics": [
+    "days_out_of_stock"
+   ],
+   "dimensions": [
+    "product.variant"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   },
+   "limit": 15
+  }
+ },
+ {
+  "id": "h7",
+  "tier": "hard",
+  "ask": "Stocktake variance",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "inventory_health",
+   "metrics": [
+    "stocktake_variance"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h8",
+  "tier": "hard",
+  "ask": "New and returning customers (90d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "customers_retention",
+   "metrics": [
+    "new_customers",
+    "returning_customer_rate"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h9",
+  "tier": "hard",
+  "ask": "Repeat purchase rate and customer value (365d)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "customers_retention",
+   "metrics": [
+    "repeat_purchase_rate",
+    "avg_customer_value",
+    "active_customers"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 365
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h10",
+  "tier": "hard",
+  "ask": "Labour hours and cost (Deputy not connected)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "workforce_labour",
+   "metrics": [
+    "worked_hours",
+    "labour_cost"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h11",
+  "tier": "hard",
+  "ask": "Net profit (Xero not connected)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "profitability_cash",
+   "metrics": [
+    "net_profit",
+    "gross_profit_accounting"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h12",
+  "tier": "hard",
+  "ask": "POS to bank variance (Xero not connected)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "reconciliation",
+   "metrics": [
+    "pos_to_bank_variance"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h13",
+  "tier": "hard",
+  "ask": "Gross profit per labour hour (composite, Deputy missing)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "workforce_sales",
+   "metrics": [
+    "gross_profit_per_labour_hour"
+   ],
+   "dimensions": [
+    "worker"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 30
+    },
+    "compare": "none"
+   },
+   "limit": 10
+  }
+ },
+ {
+  "id": "h14",
+  "tier": "hard",
+  "ask": "Lapsed customers (windowed parameter)",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "customers_retention",
+   "metrics": [
+    "lapsed_customers"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 365
+    },
+    "compare": "none"
+   }
+  }
+ },
+ {
+  "id": "h15",
+  "tier": "hard",
+  "ask": "Margin % by category compared to prior year",
+  "tool": "run_semantic_query",
+  "input": {
+   "topic": "sales_performance",
+   "metrics": [
+    "gross_margin_pct"
+   ],
+   "dimensions": [
+    "product.category"
+   ],
+   "time": {
+    "field": "business_date",
+    "range": {
+     "type": "last_n_days",
+     "days": 90
+    },
+    "compare": "same_period_prior_year"
+   },
+   "limit": 15
+  }
+ }
+]

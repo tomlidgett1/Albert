@@ -1,0 +1,140 @@
+{
+  "id": "l20",
+  "tier": "medium",
+  "domain": "customers",
+  "ask": "In the last 90 days, how many distinct customers bought from us?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "In the last 90 days, 355 distinct identified customers bought from you. Walk-in sales without a customer record are excluded.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by month?",
+    "Would you like to see the top customers by spend?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:6fc1f044a34de988e455814f8332839fe29a065082fe162183e09ff4e1fd387d",
+      "columns": [
+        "distinct_customers"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "distinct_customers": "355"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70355,
+    "outputTokens": 833,
+    "totalTokens": 71188,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1038,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33738,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 787,
+        "cached_tokens": 33738
+      },
+      {
+        "cache_write_tokens": 1042,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 136
+      },
+      {
+        "reasoning_tokens": 46
+      },
+      {
+        "reasoning_tokens": 89
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1041,
+        "outputTokens": 111,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1038,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33741,
+        "outputTokens": 357,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33738,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 136
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34528,
+        "outputTokens": 125,
+        "inputTokensDetails": {
+          "cache_write_tokens": 787,
+          "cached_tokens": 33738
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 46
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1045,
+        "outputTokens": 240,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1042,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 89
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 11546,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

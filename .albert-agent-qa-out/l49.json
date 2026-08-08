@@ -1,0 +1,170 @@
+{
+  "id": "l49",
+  "tier": "schema",
+  "domain": "sales",
+  "ask": "Monthly sales line chart data: month bucket and sum of calc_total for the last 24 months.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Monthly sales including GST totalled $6,626.28 to $73,288.94 across September 2024 to August 2026, with the highest month in December 2024 and the lowest in August 2026.\n\n| Month | Sales Inc GST |\n| --- | ---: |\n| September 2024 | $29,317.01 |\n| October 2024 | $54,447.08 |\n| November 2024 | $59,756.44 |\n| December 2024 | $73,288.94 |\n| January 2025 | $65,098.67 |\n| February 2025 | $45,906.76 |\n| March 2025 | $42,686.15 |\n| April 2025 | $56,775.04 |\n| May 2025 | $55,662.49 |\n| June 2025 | $31,570.85 |\n| July 2025 | $46,617.92 |\n| August 2025 | $47,320.07 |\n| September 2025 | $52,523.59 |\n| October 2025 | $62,826.55 |\n| November 2025 | $52,613.40 |\n| December 2025 | $61,529.75 |\n| January 2026 | $49,239.12 |\n| February 2026 | $63,188.07 |\n| March 2026 | $51,716.68 |\n| April 2026 | $51,616.29 |\n| May 2026 | $55,223.52 |\n| June 2026 | $40,548.47 |\n| July 2026 | $44,520.09 |\n| August 2026 | $6,626.28 |\n\nThis covers the last 24 calendar months, including months with no sales.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this sales trend split by category?",
+    "Would you like a chart of the monthly sales figures?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:7ffcbe7b3198a200076bf018b1f8a12851f302abb97794cbf196a5ca75a86bbb",
+      "columns": [
+        "month",
+        "sales_inc_gst"
+      ],
+      "rowCount": 24,
+      "sample": [
+        {
+          "month": "2024-09-01T00:00:00.000Z",
+          "sales_inc_gst": "29317.0100"
+        },
+        {
+          "month": "2024-10-01T00:00:00.000Z",
+          "sales_inc_gst": "54447.0800"
+        },
+        {
+          "month": "2024-11-01T00:00:00.000Z",
+          "sales_inc_gst": "59756.4400"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=24",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 108104,
+    "outputTokens": 1712,
+    "totalTokens": 109816,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1043,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33737,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1762,
+        "cached_tokens": 33737
+      },
+      {
+        "cache_write_tokens": 198,
+        "cached_tokens": 35499
+      },
+      {
+        "cache_write_tokens": 2113,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 198
+      },
+      {
+        "reasoning_tokens": 18
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 138
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1046,
+        "outputTokens": 108,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1043,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33740,
+        "outputTokens": 628,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33737,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 198
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35502,
+        "outputTokens": 110,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1762,
+          "cached_tokens": 33737
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 18
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35700,
+        "outputTokens": 83,
+        "inputTokensDetails": {
+          "cache_write_tokens": 198,
+          "cached_tokens": 35499
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 2116,
+        "outputTokens": 783,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2113,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 138
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 16366,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "chart",
+    "progress",
+    "answer"
+  ]
+}

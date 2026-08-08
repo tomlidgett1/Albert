@@ -1,0 +1,392 @@
+{
+  "id": "l30",
+  "tier": "hard",
+  "domain": "period+category",
+  "ask": "Net sales month to date versus the same period last month, broken down by product category.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn't complete that lookup from your connected inventory data. Please ask again and I'll retry.",
+  "claims": [],
+  "followUps": [
+    "Try the aged inventory report again",
+    "Show current stock on hand value instead"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "claim_attested:commerce.net_sales_ex_gst",
+      "outcome": "failed",
+      "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "claim_attested:commerce.net_sales_ex_gst",
+      "outcome": "failed",
+      "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "claim_attested:commerce.net_sales_ex_gst",
+      "outcome": "failed",
+      "detail": "Claim Attested:Commerce Net Sales Ex Gst: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "failed",
+      "detail": "No Fanout: blocked."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:claim_attested:commerce.net_sales_ex_gst:failed",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed",
+    "progress:query",
+    "progress:query",
+    "validation:no_fanout:failed"
+  ],
+  "usage": {
+    "requests": 13,
+    "inputTokens": 538193,
+    "outputTokens": 16423,
+    "totalTokens": 554616,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 22,
+        "cached_tokens": 1093
+      },
+      {
+        "cache_write_tokens": 33747,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 2534,
+        "cached_tokens": 33747
+      },
+      {
+        "cache_write_tokens": 1785,
+        "cached_tokens": 36281
+      },
+      {
+        "cache_write_tokens": 2280,
+        "cached_tokens": 38066
+      },
+      {
+        "cache_write_tokens": 1385,
+        "cached_tokens": 40346
+      },
+      {
+        "cache_write_tokens": 2348,
+        "cached_tokens": 41731
+      },
+      {
+        "cache_write_tokens": 1700,
+        "cached_tokens": 44079
+      },
+      {
+        "cache_write_tokens": 2627,
+        "cached_tokens": 45779
+      },
+      {
+        "cache_write_tokens": 1227,
+        "cached_tokens": 48406
+      },
+      {
+        "cache_write_tokens": 1430,
+        "cached_tokens": 49633
+      },
+      {
+        "cache_write_tokens": 1818,
+        "cached_tokens": 51063
+      },
+      {
+        "cache_write_tokens": 2146,
+        "cached_tokens": 52881
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 1457
+      },
+      {
+        "reasoning_tokens": 672
+      },
+      {
+        "reasoning_tokens": 216
+      },
+      {
+        "reasoning_tokens": 291
+      },
+      {
+        "reasoning_tokens": 268
+      },
+      {
+        "reasoning_tokens": 634
+      },
+      {
+        "reasoning_tokens": 588
+      },
+      {
+        "reasoning_tokens": 460
+      },
+      {
+        "reasoning_tokens": 636
+      },
+      {
+        "reasoning_tokens": 23
+      },
+      {
+        "reasoning_tokens": 342
+      },
+      {
+        "reasoning_tokens": 191
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1118,
+        "outputTokens": 118,
+        "inputTokensDetails": {
+          "cache_write_tokens": 22,
+          "cached_tokens": 1093
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33750,
+        "outputTokens": 2444,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33747,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1457
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36284,
+        "outputTokens": 1700,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2534,
+          "cached_tokens": 33747
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 672
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 38069,
+        "outputTokens": 1236,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1785,
+          "cached_tokens": 36281
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 216
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 40349,
+        "outputTokens": 1295,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2280,
+          "cached_tokens": 38066
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 291
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 41734,
+        "outputTokens": 1306,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1385,
+          "cached_tokens": 40346
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 268
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 44082,
+        "outputTokens": 1610,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2348,
+          "cached_tokens": 41731
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 634
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 45782,
+        "outputTokens": 1589,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1700,
+          "cached_tokens": 44079
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 588
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 48409,
+        "outputTokens": 1094,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2627,
+          "cached_tokens": 45779
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 460
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 49636,
+        "outputTokens": 1335,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1227,
+          "cached_tokens": 48406
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 636
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 51066,
+        "outputTokens": 723,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1430,
+          "cached_tokens": 49633
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 23
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 52884,
+        "outputTokens": 1045,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1818,
+          "cached_tokens": 51063
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 342
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 55030,
+        "outputTokens": 928,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2146,
+          "cached_tokens": 52881
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 191
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 126465,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "progress",
+    "progress",
+    "validation",
+    "progress",
+    "progress",
+    "validation",
+    "answer"
+  ]
+}

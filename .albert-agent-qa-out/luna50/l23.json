@@ -1,0 +1,186 @@
+{
+  "id": "l23",
+  "tier": "medium",
+  "domain": "inventory",
+  "ask": "Which items have zero sellable stock but positive quantity on hand?",
+  "ok": true,
+  "attempt": 2,
+  "answerState": "Unavailable",
+  "answerText": "I could not complete the stock lookup because the query was blocked before it ran. Please try again.",
+  "claims": [],
+  "followUps": [
+    "Would you like the results by shop?",
+    "Would you like to check specific items or categories?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 7,
+    "inputTokens": 176776,
+    "outputTokens": 2713,
+    "totalTokens": 179489,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 1036
+      },
+      {
+        "cache_write_tokens": 33731,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 608,
+        "cached_tokens": 33731
+      },
+      {
+        "cache_write_tokens": 554,
+        "cached_tokens": 34339
+      },
+      {
+        "cache_write_tokens": 657,
+        "cached_tokens": 34893
+      },
+      {
+        "cache_write_tokens": 803,
+        "cached_tokens": 35550
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 293
+      },
+      {
+        "reasoning_tokens": 222
+      },
+      {
+        "reasoning_tokens": 366
+      },
+      {
+        "reasoning_tokens": 484
+      },
+      {
+        "reasoning_tokens": 213
+      },
+      {
+        "reasoning_tokens": 29
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1039,
+        "outputTokens": 108,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1036
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33734,
+        "outputTokens": 518,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33731,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 293
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34342,
+        "outputTokens": 464,
+        "inputTokensDetails": {
+          "cache_write_tokens": 608,
+          "cached_tokens": 33731
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 222
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34896,
+        "outputTokens": 567,
+        "inputTokensDetails": {
+          "cache_write_tokens": 554,
+          "cached_tokens": 34339
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 366
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35553,
+        "outputTokens": 713,
+        "inputTokensDetails": {
+          "cache_write_tokens": 657,
+          "cached_tokens": 34893
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 484
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36356,
+        "outputTokens": 248,
+        "inputTokensDetails": {
+          "cache_write_tokens": 803,
+          "cached_tokens": 35550
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 213
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 856,
+        "outputTokens": 95,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 29
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 30645,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

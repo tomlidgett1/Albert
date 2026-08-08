@@ -1,0 +1,64 @@
+{
+  "id": "l24",
+  "tier": "medium",
+  "domain": "employees",
+  "ask": "List active employees and whether each is archived or not.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Qualified",
+  "answerText": "Here are the 6 workers currently in your connected POS directory:\n- Angus McKinnon\n- Charles O'Hara\n- Jack Lidgett\n- Leigh Phillips\n- Tom Lidgett\n- Tom Wildoer",
+  "claims": [],
+  "followUps": [],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [
+    "I loaded the worker names from your connected POS directory."
+  ],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:directory"
+  ],
+  "usage": {
+    "requests": 1,
+    "inputTokens": 1037,
+    "outputTokens": 85,
+    "totalTokens": 1122,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1034,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1037,
+        "outputTokens": 85,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1034,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 2949,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "narrative",
+    "answer"
+  ]
+}

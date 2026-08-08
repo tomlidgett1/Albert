@@ -1,0 +1,137 @@
+{
+  "id": "l31",
+  "tier": "hard",
+  "domain": "employees",
+  "ask": "Over the last 30 days, which workers have high transaction counts but below-shop average order value?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Over the 30 days from 17 February to 19 March 2026, Leigh Phillips had high transaction volume with 167 transactions and an average order value of $121.50, which was $15.36 below the shop average of $136.87.\n\n| Worker | Transaction Count | Average Order Value Inc GST | Shop Transaction Count | Shop Average Order Value Inc GST | Average Worker Transaction Count | Below Shop Average By |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n| Leigh Phillips | 167 | $121.50 | 307 | $136.87 | 51.17 | $15.36 |\n\nThese figures cover 17 February – 18 March 2026 from Lightspeed (updated through 19 March 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see this by product category?",
+    "Would you like a list of slow-moving workers or products?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:f43a8f8417b91fdb7e658e03ef2ca038e3c544a839482d4bc562d60f7204abd8",
+      "columns": [
+        "employee_id",
+        "worker_name",
+        "transaction_count",
+        "average_order_value_inc_gst",
+        "shop_transaction_count",
+        "shop_average_order_value_inc_gst",
+        "average_worker_transaction_count",
+        "high_transaction_count",
+        "aov_below_shop_by_inc_gst"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "employee_id": "13.0000",
+          "worker_name": "Leigh Phillips",
+          "transaction_count": "167",
+          "average_order_value_inc_gst": "121.5043712574850299",
+          "shop_transaction_count": "307",
+          "shop_average_order_value_inc_gst": "136.8684690553745928",
+          "average_worker_transaction_count": "51.1666666666666667",
+          "high_transaction_count": "true",
+          "aov_below_shop_by_inc_gst": "15.3640977978895629"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 3,
+    "inputTokens": 70596,
+    "outputTokens": 1765,
+    "totalTokens": 72361,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 33744,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1722,
+        "cached_tokens": 33744
+      },
+      {
+        "cache_write_tokens": 1377,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 331
+      },
+      {
+        "reasoning_tokens": 34
+      },
+      {
+        "reasoning_tokens": 110
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 33747,
+        "outputTokens": 984,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33744,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 331
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35469,
+        "outputTokens": 127,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1722,
+          "cached_tokens": 33744
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 34
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1380,
+        "outputTokens": 654,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1377,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 110
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 22549,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

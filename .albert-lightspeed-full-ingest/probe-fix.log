@@ -1,0 +1,6 @@
+{"phase":"start","mode":"probe","connectionId":"01KZ54B1PCKM1MHSNHY4XT6DEX","accountId":"168990","streams":90}
+Error: Token refresh failed HTTP 400: {"error":"invalid_grant","error_description":"The refresh token is invalid.","hint":"Token has been revoked"}
+    at refreshToken (/Users/user/Documents/Albert/scripts/lightspeed-full-ingest.mts:245:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async readAccessToken (/Users/user/Documents/Albert/scripts/lightspeed-full-ingest.mts:215:18)
+    at async main (/Users/user/Documents/Albert/scripts/lightspeed-full-ingest.mts:855:27)

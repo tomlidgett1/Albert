@@ -1,0 +1,146 @@
+{
+  "id": "l43",
+  "tier": "schema",
+  "domain": "sales",
+  "ask": "Sum calc_total for completed non-voided sales in the last 30 days.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Completed, non-voided sales totalled $42,018.62 across 307 tickets from 8 July 2026 to 7 August 2026.\n\n| Period Start | Period End | Completed Non-Voided Tickets | Total Sales |\n| --- | --- | ---: | ---: |\n| 8 July 2026 | 7 August 2026 | 307 | $42,018.62 |\n\nWould you like this broken down by category? Would you like a daily sales chart?\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like this broken down by category?",
+    "Would you like a daily sales chart?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:a4b7c7533635a5efbfe3f1710179253ade45eff09138fb18265693502a7a903f",
+      "columns": [
+        "period_start",
+        "period_end",
+        "completed_non_voided_tickets",
+        "total_calc_total"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "period_start": "2026-07-08T00:00:00.000Z",
+          "period_end": "2026-08-07T00:00:00.000Z",
+          "completed_non_voided_tickets": "307",
+          "total_calc_total": "42018.6200"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70537,
+    "outputTokens": 918,
+    "totalTokens": 71455,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1040,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33729,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 823,
+        "cached_tokens": 33729
+      },
+      {
+        "cache_write_tokens": 1204,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 50
+      },
+      {
+        "reasoning_tokens": 63
+      },
+      {
+        "reasoning_tokens": 37
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1043,
+        "outputTokens": 103,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1040,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33732,
+        "outputTokens": 289,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33729,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 50
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34555,
+        "outputTokens": 145,
+        "inputTokensDetails": {
+          "cache_write_tokens": 823,
+          "cached_tokens": 33729
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 63
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1207,
+        "outputTokens": 381,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1204,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 37
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 15906,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

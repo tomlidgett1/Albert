@@ -1,0 +1,146 @@
+{
+  "id": "l41",
+  "tier": "schema",
+  "domain": "inventory",
+  "ask": "Using ls_item_shops and ls_inventory_logs, produce an aged inventory table. Do not invent column names.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the aged inventory lookup because the query failed before it ran. Please retry the lookup.",
+  "claims": [],
+  "followUps": [
+    "Would you like the aged inventory broken down by category?",
+    "Would you like a list of slow-moving items?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 107432,
+    "outputTokens": 2821,
+    "totalTokens": 110253,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1045,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33777,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1710,
+        "cached_tokens": 33777
+      },
+      {
+        "cache_write_tokens": 689,
+        "cached_tokens": 35487
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 104
+      },
+      {
+        "reasoning_tokens": 1093
+      },
+      {
+        "reasoning_tokens": 102
+      },
+      {
+        "reasoning_tokens": 248
+      },
+      {
+        "reasoning_tokens": 0
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1048,
+        "outputTokens": 248,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1045,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 104
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33780,
+        "outputTokens": 1614,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33777,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 1093
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 35490,
+        "outputTokens": 599,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1710,
+          "cached_tokens": 33777
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 102
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36179,
+        "outputTokens": 292,
+        "inputTokensDetails": {
+          "cache_write_tokens": 689,
+          "cached_tokens": 35487
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 248
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 935,
+        "outputTokens": 68,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 28722,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

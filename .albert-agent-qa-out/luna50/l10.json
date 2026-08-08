@@ -1,0 +1,144 @@
+{
+  "id": "l10",
+  "tier": "easy",
+  "domain": "inventory",
+  "ask": "Which 10 items have the highest quantity on hand right now?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I couldn’t complete the lookup for the 10 items with the highest quantity on hand right now. Please try again, and I’ll return the ranked list.",
+  "claims": [],
+  "followUps": [
+    "Would you like the results grouped by category?",
+    "Would you like a list of slow-moving items instead?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "progress:query",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 104272,
+    "outputTokens": 983,
+    "totalTokens": 105255,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1036,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33732,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 372,
+        "cached_tokens": 33732
+      },
+      {
+        "cache_write_tokens": 427,
+        "cached_tokens": 34104
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 86
+      },
+      {
+        "reasoning_tokens": 141
+      },
+      {
+        "reasoning_tokens": 104
+      },
+      {
+        "reasoning_tokens": 46
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1039,
+        "outputTokens": 99,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1036,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33735,
+        "outputTokens": 282,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33732,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 86
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34107,
+        "outputTokens": 337,
+        "inputTokensDetails": {
+          "cache_write_tokens": 372,
+          "cached_tokens": 33732
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 141
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34534,
+        "outputTokens": 139,
+        "inputTokensDetails": {
+          "cache_write_tokens": 427,
+          "cached_tokens": 34104
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 104
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 857,
+        "outputTokens": 126,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 46
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 15228,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

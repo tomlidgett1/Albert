@@ -1,0 +1,566 @@
+{
+  "id": "e3",
+  "tier": "easy",
+  "domain": "sales",
+  "ask": "How many transactions did we process in the last 7 days, and what was average order value?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Unavailable",
+  "answerText": "I can’t safely report transactions or average order value for **1–7 August 2026**. The Lightspeed sales connection is currently ineligible as an authoritative source, and completed order lines are not available in the canonical model.\n\nRestoring the Lightspeed connection’s eligibility and canonical order-line mapping would unlock both figures.",
+  "claims": [],
+  "followUps": [
+    "Would you like me to check the sales connection’s readiness again later?"
+  ],
+  "clarification": null,
+  "queryCount": 0,
+  "tableCount": 0,
+  "tables": [],
+  "narratives": [],
+  "validations": [
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "qualified",
+      "detail": "Sql Lint: warning."
+    },
+    {
+      "name": "claim_attested:commerce.transactions",
+      "outcome": "passed",
+      "detail": "Claim Attested:Commerce Transactions: passed."
+    },
+    {
+      "name": "claim_attested:commerce.avg_order_value",
+      "outcome": "passed",
+      "detail": "Claim Attested:Commerce Avg Order Value: passed."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "passed",
+      "detail": "No Fanout: passed."
+    },
+    {
+      "name": "grain_compatible_ratios",
+      "outcome": "passed",
+      "detail": "Grain Compatible Ratios: passed."
+    },
+    {
+      "name": "snapshot_not_summed",
+      "outcome": "passed",
+      "detail": "Snapshot Not Summed: passed."
+    },
+    {
+      "name": "authority_respected",
+      "outcome": "failed",
+      "detail": "Authority Respected: blocked."
+    },
+    {
+      "name": "golden_fixture_match",
+      "outcome": "passed",
+      "detail": "Golden Fixture Match: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "commerce.avg_order_value subtracts refunds, but the statement neither aggregates a signed_* column of commerce_sales_event nor addresses refunds; the figure may be gross of returns."
+    },
+    {
+      "name": "read_only_transaction",
+      "outcome": "passed",
+      "detail": "Read Only Transaction: passed."
+    },
+    {
+      "name": "tenant_row_level_security",
+      "outcome": "passed",
+      "detail": "Tenant Row Level Security: passed."
+    },
+    {
+      "name": "sql_lint",
+      "outcome": "passed",
+      "detail": "Sql Lint: passed."
+    },
+    {
+      "name": "claim_attested:commerce.transactions",
+      "outcome": "qualified",
+      "detail": "Claim Attested:Commerce Transactions: warning."
+    },
+    {
+      "name": "claim_attested:commerce.avg_order_value",
+      "outcome": "qualified",
+      "detail": "Claim Attested:Commerce Avg Order Value: warning."
+    },
+    {
+      "name": "evidence_tier",
+      "outcome": "passed",
+      "detail": "Evidence Tier: passed."
+    },
+    {
+      "name": "no_fanout",
+      "outcome": "passed",
+      "detail": "No Fanout: passed."
+    },
+    {
+      "name": "grain_compatible_ratios",
+      "outcome": "passed",
+      "detail": "Grain Compatible Ratios: passed."
+    },
+    {
+      "name": "snapshot_not_summed",
+      "outcome": "passed",
+      "detail": "Snapshot Not Summed: passed."
+    },
+    {
+      "name": "authority_respected",
+      "outcome": "failed",
+      "detail": "Authority Respected: blocked."
+    },
+    {
+      "name": "golden_fixture_match",
+      "outcome": "passed",
+      "detail": "Golden Fixture Match: passed."
+    },
+    {
+      "name": "warning_1",
+      "outcome": "qualified",
+      "detail": "commerce.transactions could not be recomputed through its governed contract, so the claim stays unattested."
+    },
+    {
+      "name": "warning_2",
+      "outcome": "qualified",
+      "detail": "commerce.avg_order_value could not be recomputed through its governed contract, so the claim stays unattested."
+    }
+  ],
+  "toolChain": [
+    "progress:planning",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:data_health",
+    "progress:data_health",
+    "progress:query",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:qualified",
+    "validation:claim_attested:commerce.transactions:passed",
+    "validation:claim_attested:commerce.avg_order_value:passed",
+    "validation:evidence_tier:passed",
+    "validation:no_fanout:passed",
+    "validation:grain_compatible_ratios:passed",
+    "validation:snapshot_not_summed:passed",
+    "validation:authority_respected:failed",
+    "validation:golden_fixture_match:passed",
+    "validation:warning_1:qualified",
+    "progress:capabilities",
+    "progress:capabilities",
+    "progress:definition",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:catalogue",
+    "progress:source_query",
+    "progress:source_query",
+    "progress:source_query",
+    "progress:source_query",
+    "progress:query",
+    "validation:read_only_transaction:passed",
+    "validation:tenant_row_level_security:passed",
+    "validation:sql_lint:passed",
+    "validation:claim_attested:commerce.transactions:qualified",
+    "validation:claim_attested:commerce.avg_order_value:qualified",
+    "validation:evidence_tier:passed",
+    "validation:no_fanout:passed",
+    "validation:grain_compatible_ratios:passed",
+    "validation:snapshot_not_summed:passed",
+    "validation:authority_respected:failed",
+    "validation:golden_fixture_match:passed",
+    "validation:warning_1:qualified",
+    "validation:warning_2:qualified",
+    "progress:catalogue",
+    "progress:catalogue"
+  ],
+  "usage": {
+    "requests": 16,
+    "inputTokens": 257091,
+    "outputTokens": 3233,
+    "totalTokens": 260324,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 24,
+        "cached_tokens": 5726
+      },
+      {
+        "cache_write_tokens": 1557,
+        "cached_tokens": 5750
+      },
+      {
+        "cache_write_tokens": 2405,
+        "cached_tokens": 7307
+      },
+      {
+        "cache_write_tokens": 1497,
+        "cached_tokens": 9712
+      },
+      {
+        "cache_write_tokens": 1580,
+        "cached_tokens": 11209
+      },
+      {
+        "cache_write_tokens": 142,
+        "cached_tokens": 12789
+      },
+      {
+        "cache_write_tokens": 1544,
+        "cached_tokens": 12931
+      },
+      {
+        "cache_write_tokens": 1553,
+        "cached_tokens": 14475
+      },
+      {
+        "cache_write_tokens": 2364,
+        "cached_tokens": 16028
+      },
+      {
+        "cache_write_tokens": 1568,
+        "cached_tokens": 18392
+      },
+      {
+        "cache_write_tokens": 269,
+        "cached_tokens": 19960
+      },
+      {
+        "cache_write_tokens": 197,
+        "cached_tokens": 20229
+      },
+      {
+        "cache_write_tokens": 211,
+        "cached_tokens": 20426
+      },
+      {
+        "cache_write_tokens": 209,
+        "cached_tokens": 20637
+      },
+      {
+        "cache_write_tokens": 1449,
+        "cached_tokens": 20846
+      },
+      {
+        "cache_write_tokens": 1762,
+        "cached_tokens": 22295
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 113
+      },
+      {
+        "reasoning_tokens": 312
+      },
+      {
+        "reasoning_tokens": 250
+      },
+      {
+        "reasoning_tokens": 79
+      },
+      {
+        "reasoning_tokens": 85
+      },
+      {
+        "reasoning_tokens": 14
+      },
+      {
+        "reasoning_tokens": 17
+      },
+      {
+        "reasoning_tokens": 37
+      },
+      {
+        "reasoning_tokens": 50
+      },
+      {
+        "reasoning_tokens": 87
+      },
+      {
+        "reasoning_tokens": 27
+      },
+      {
+        "reasoning_tokens": 28
+      },
+      {
+        "reasoning_tokens": 32
+      },
+      {
+        "reasoning_tokens": 174
+      },
+      {
+        "reasoning_tokens": 163
+      },
+      {
+        "reasoning_tokens": 300
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 5753,
+        "outputTokens": 167,
+        "inputTokensDetails": {
+          "cache_write_tokens": 24,
+          "cached_tokens": 5726
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 113
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 7310,
+        "outputTokens": 333,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1557,
+          "cached_tokens": 5750
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 312
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 9715,
+        "outputTokens": 434,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2405,
+          "cached_tokens": 7307
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 250
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 11212,
+        "outputTokens": 102,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1497,
+          "cached_tokens": 9712
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 79
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 12792,
+        "outputTokens": 106,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1580,
+          "cached_tokens": 11209
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 85
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 12934,
+        "outputTokens": 71,
+        "inputTokensDetails": {
+          "cache_write_tokens": 142,
+          "cached_tokens": 12789
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 14
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 14478,
+        "outputTokens": 70,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1544,
+          "cached_tokens": 12931
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 17
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 16031,
+        "outputTokens": 88,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1553,
+          "cached_tokens": 14475
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 37
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 18395,
+        "outputTokens": 108,
+        "inputTokensDetails": {
+          "cache_write_tokens": 2364,
+          "cached_tokens": 16028
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 50
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 19963,
+        "outputTokens": 229,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1568,
+          "cached_tokens": 18392
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 87
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20232,
+        "outputTokens": 150,
+        "inputTokensDetails": {
+          "cache_write_tokens": 269,
+          "cached_tokens": 19960
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 27
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20429,
+        "outputTokens": 171,
+        "inputTokensDetails": {
+          "cache_write_tokens": 197,
+          "cached_tokens": 20229
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 28
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20640,
+        "outputTokens": 169,
+        "inputTokensDetails": {
+          "cache_write_tokens": 211,
+          "cached_tokens": 20426
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 32
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 20849,
+        "outputTokens": 406,
+        "inputTokensDetails": {
+          "cache_write_tokens": 209,
+          "cached_tokens": 20637
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 174
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 22298,
+        "outputTokens": 221,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1449,
+          "cached_tokens": 20846
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 163
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 24060,
+        "outputTokens": 408,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1762,
+          "cached_tokens": 22295
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 300
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 120847,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "progress",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "validation",
+    "progress",
+    "progress",
+    "answer"
+  ]
+}

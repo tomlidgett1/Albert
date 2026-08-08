@@ -1,0 +1,173 @@
+{
+  "id": "l34",
+  "tier": "hard",
+  "domain": "sales",
+  "ask": "Show daily net sales for the last 14 days and call out the weakest days.",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "Daily net sales were $9.09 on the weakest completed day, 5 August 2026; 8 August is incomplete because the data runs through 7 August 2026.\n\n| Trading Date | Net Sales Ex GST | Completed Tickets |\n| --- | --- | --- |\n| 26 July 2026 | $710.83 | 9 |\n| 27 July 2026 | $1,892.20 | 10 |\n| 28 July 2026 | $653.35 | 8 |\n| 29 July 2026 | $980.73 | 10 |\n| 30 July 2026 | $613.58 | 12 |\n| 31 July 2026 | $573.44 | 10 |\n| August 2026 | $1,086.19 | 11 |\n| 2 August 2026 | $749.04 | 5 |\n| 3 August 2026 | $654.46 | 5 |\n| 4 August 2026 | $621.71 | 9 |\n| 5 August 2026 | $9.09 | 3 |\n| 6 August 2026 | $495.35 | 11 |\n| 7 August 2026 | $2,627.91 | 10 |\n| 8 August 2026 | $0.00 | 0 |\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like the weakest days ranked by completed tickets as well?",
+    "Would you like these daily sales shown as a chart?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:c06931c4cd1cb89d7d11f89ecdf7796acee2fba2bda32ba039c7da304eab5eb4",
+      "columns": [
+        "trading_date",
+        "net_sales_ex_gst",
+        "completed_tickets"
+      ],
+      "rowCount": 14,
+      "sample": [
+        {
+          "trading_date": "2026-07-26T00:00:00.000Z",
+          "net_sales_ex_gst": "710.8300",
+          "completed_tickets": "9"
+        },
+        {
+          "trading_date": "2026-07-27T00:00:00.000Z",
+          "net_sales_ex_gst": "1892.2000",
+          "completed_tickets": "10"
+        },
+        {
+          "trading_date": "2026-07-28T00:00:00.000Z",
+          "net_sales_ex_gst": "653.3500",
+          "completed_tickets": "8"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=14",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 5,
+    "inputTokens": 107742,
+    "outputTokens": 2494,
+    "totalTokens": 110236,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1040,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33746,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 990,
+        "cached_tokens": 33746
+      },
+      {
+        "cache_write_tokens": 1561,
+        "cached_tokens": 34736
+      },
+      {
+        "cache_write_tokens": 1908,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 516
+      },
+      {
+        "reasoning_tokens": 118
+      },
+      {
+        "reasoning_tokens": 349
+      },
+      {
+        "reasoning_tokens": 96
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1043,
+        "outputTokens": 117,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1040,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33749,
+        "outputTokens": 905,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33746,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 516
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34739,
+        "outputTokens": 495,
+        "inputTokensDetails": {
+          "cache_write_tokens": 990,
+          "cached_tokens": 33746
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 118
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 36300,
+        "outputTokens": 466,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1561,
+          "cached_tokens": 34736
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 349
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1911,
+        "outputTokens": 511,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1908,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 96
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 31080,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}

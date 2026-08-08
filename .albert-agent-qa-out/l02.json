@@ -1,0 +1,140 @@
+{
+  "id": "l02",
+  "tier": "easy",
+  "domain": "sales",
+  "ask": "How many completed transactions did we process in the last 7 days?",
+  "ok": true,
+  "attempt": 1,
+  "answerState": "Exploratory",
+  "answerText": "We processed 54 completed transactions in the last 7 days.\n\nFigures from Lightspeed (updated through 7 August 2026).",
+  "claims": [],
+  "followUps": [
+    "Would you like to see these transactions by day?",
+    "Would you like to break them down by product category?"
+  ],
+  "clarification": null,
+  "queryCount": 1,
+  "tableCount": 1,
+  "tables": [
+    {
+      "resultId": "sql:2c42570b2e82c7dd5c67fe15b836142fd314eb955fd768f7d541581703794a28",
+      "columns": [
+        "completed_transactions"
+      ],
+      "rowCount": 1,
+      "sample": [
+        {
+          "completed_transactions": "54"
+        }
+      ]
+    }
+  ],
+  "narratives": [],
+  "validations": [],
+  "toolChain": [
+    "progress:planning",
+    "progress:planning",
+    "progress:query",
+    "query:sql_first",
+    "table:rows=1",
+    "progress:planning"
+  ],
+  "usage": {
+    "requests": 4,
+    "inputTokens": 70513,
+    "outputTokens": 981,
+    "totalTokens": 71494,
+    "inputTokensDetails": [
+      {
+        "cache_write_tokens": 1037,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 33715,
+        "cached_tokens": 0
+      },
+      {
+        "cache_write_tokens": 1018,
+        "cached_tokens": 33715
+      },
+      {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      }
+    ],
+    "outputTokensDetails": [
+      {
+        "reasoning_tokens": 52
+      },
+      {
+        "reasoning_tokens": 421
+      },
+      {
+        "reasoning_tokens": 0
+      },
+      {
+        "reasoning_tokens": 45
+      }
+    ],
+    "requestUsageEntries": [
+      {
+        "inputTokens": 1040,
+        "outputTokens": 145,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1037,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 52
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 33718,
+        "outputTokens": 590,
+        "inputTokensDetails": {
+          "cache_write_tokens": 33715,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 421
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 34736,
+        "outputTokens": 66,
+        "inputTokensDetails": {
+          "cache_write_tokens": 1018,
+          "cached_tokens": 33715
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 0
+        },
+        "endpoint": "responses.create"
+      },
+      {
+        "inputTokens": 1019,
+        "outputTokens": 180,
+        "inputTokensDetails": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "outputTokensDetails": {
+          "reasoning_tokens": 45
+        },
+        "endpoint": "responses.create"
+      }
+    ]
+  },
+  "ms": 14742,
+  "eventTypes": [
+    "progress",
+    "progress",
+    "progress",
+    "query",
+    "table",
+    "progress",
+    "answer"
+  ]
+}
