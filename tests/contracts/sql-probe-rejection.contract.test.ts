@@ -60,9 +60,9 @@ test("real monthly sales aggregates are allowed through", () => {
 
 test("SQL evidence instructions ban diagnose spirals and cap turns", () => {
   assert.match(liveAgent, /Never preflight with SELECT 1/u);
-  assert.match(liveAgent, /Chart questions: one aggregate query, then make_chart/u);
-  assert.match(liveAgent, /last 26 calendar weeks/u);
-  assert.match(liveAgent, /Do not silently LIMIT to 10 buckets/u);
+  assert.match(liveAgent, /chart questions are one aggregate then the chart, never row samples first/u);
+  assert.match(liveAgent, /window that honestly tells the story/u);
+  assert.match(liveAgent, /not an arbitrary handful of rows/u);
   assert.match(liveAgent, /maxTurns: 12/u);
   assert.match(liveAgent, /sqlProbeRejection/u);
   assert.match(liveAgent, /isOwnerTrailValidation/u);
@@ -125,13 +125,15 @@ test("intent planning teaches layered reports, not per-question hardcodes", () =
     new URL("../../services/conversation/src/intent-plan.ts", import.meta.url),
     "utf8",
   );
-  assert.match(intentPlanSource, /REPORTS AND ANALYSES/u);
+  assert.match(intentPlanSource, /PLANNING JUDGMENT/u);
   assert.match(intentPlanSource, /layered deliverable/u);
   // The per-question keyword overrides must not creep back in.
   assert.doesNotMatch(intentPlanSource, /\baged inventory\b/iu);
   assert.doesNotMatch(intentPlanSource, /\bactive customers\b/iu);
-  assert.match(liveAgent, /REPORTS AND ANALYSES/u);
-  assert.match(liveAgent, /REPORT COMPOSITION/u);
+  // Depth and formatting are the analyst's judgment, not a server template.
+  assert.match(liveAgent, /WHAT GREAT EVIDENCE LOOKS LIKE \(your judgment, not a template\)/u);
+  assert.match(liveAgent, /structure and formatting of the answer are yours to judge/u);
+  assert.doesNotMatch(liveAgent, /REPORT COMPOSITION|PRESENTATION \(mandatory\)|exactly two short follow-up questions|you MUST follow that sentence/u);
 });
 
 test("SQL failure answers do not pretend the shop is empty", async () => {
