@@ -4,6 +4,7 @@ export const V2_OWNER_REVIEW_WAIVER_KIND =
   "albert.semantic-v2-owner-review-waiver" as const;
 
 export type V2OwnerReviewWaiverScope =
+  | "semantic_publication_human_review"
   | "semantic_publication_tier_1_second_review"
   | "evaluation_subjective_human_review";
 
@@ -73,6 +74,7 @@ export function assertV2OwnerReviewWaiver(
   const body = { ...waiver };
   delete body.waiverDigest;
   const publicationScope =
+    binding.scope === "semantic_publication_human_review" ||
     binding.scope === "semantic_publication_tier_1_second_review";
   const evaluationScope =
     binding.scope === "evaluation_subjective_human_review";

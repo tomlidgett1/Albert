@@ -6,12 +6,10 @@
 
 ## Context
 
-The first Lightspeed/Xero V2 release has one recorded domain approval for every
-Tier 1 semantic object and the required approval for every Tier 2 object. It
-does not have a second independent Tier 1 reviewer. The locked 200-case model
-evaluation also requires independent subjective scoring of diagnosis and
-recommendation quality, but the product owner explicitly authorized proceeding
-without that human review.
+The first Lightspeed/Xero V2 release has no recorded semantic object reviews.
+The locked 200-case model evaluation also requires independent subjective
+scoring of diagnosis and recommendation quality, but the product owner
+explicitly authorized proceeding without either form of human review.
 
 Treating missing review as completed would falsify release evidence. Removing
 the review controls globally would silently weaken every later publication.
@@ -19,14 +17,18 @@ Neither is acceptable.
 
 ## Decision
 
-Albert supports two narrowly scoped owner-review waivers:
+Albert supports three narrowly scoped owner-review waivers:
 
-1. `semantic_publication_tier_1_second_review` replaces only the second
+1. `semantic_publication_human_review` replaces semantic object review for one
+   exact draft revision and publication hash. It records that human review was
+   absent; it does not create object approvals. Deterministic validation,
+   unresolved change requests and all semantic safety checks remain mandatory.
+2. `semantic_publication_tier_1_second_review` replaces only the second
    independent Tier 1 approval for one exact draft revision and publication
    hash. Every Tier 1 object must still have one real approval. Tier 2 approval,
    deterministic validation, unresolved change requests and all semantic
    safety checks remain mandatory.
-2. `evaluation_subjective_human_review` replaces only subjective human scoring
+3. `evaluation_subjective_human_review` replaces only subjective human scoring
    for one exact publication, 40-character commit and evaluation run. It does
    not create human ratings. The grade records `owner_waived`, leaves human
    coverage and quality metrics truthful, and still requires every numerical,
@@ -42,7 +44,8 @@ binding.
 
 ## Consequences
 
-- The first V2 release can proceed without fabricating a reviewer or a score.
+- The first V2 release can proceed without fabricating object approvals,
+  reviewers or scores.
 - Release evidence explicitly discloses the accepted subjective-review gap.
 - The waiver cannot bypass deterministic correctness or security gates.
 - Later releases remain subject to normal review unless the owner records a

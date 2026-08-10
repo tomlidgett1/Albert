@@ -114,14 +114,14 @@ candidate/target and mapping-version proof. Release qualification requires zero 
 relationship candidates and one valid `profile_receipt:` reference on every
 supported relationship.
 
-If the product owner explicitly accepts the missing second independent Tier 1
-review, register an exact-draft
-`semantic_publication_tier_1_second_review` waiver with
-`npm run register:v2:owner-review-waiver`. The waiver requires one real Tier 1
-approval per affected object and never replaces Tier 2 review, validation,
-relationship evidence or unresolved-change checks. Preserve its receipt with
-the release evidence; publication records `owner_waived_second_review` rather
-than pretending that two people reviewed it.
+If the product owner explicitly accepts absent semantic human review, register
+an exact-draft `semantic_publication_human_review` waiver with
+`npm run register:v2:owner-review-waiver`. A narrower
+`semantic_publication_tier_1_second_review` scope is available when one real
+Tier 1 approval exists. Neither scope replaces validation, relationship
+evidence or unresolved-change checks. Preserve the receipt with the release
+evidence; publication records `owner_waived_human_review` or
+`owner_waived_second_review` rather than inventing object approvals.
 
 ## 4. Prepare evaluation assets outside the repository
 

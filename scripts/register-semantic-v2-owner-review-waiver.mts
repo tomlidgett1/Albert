@@ -74,6 +74,7 @@ export async function registerSemanticV2OwnerReviewWaiver(): Promise<void> {
   }
   const scope = argument("scope") as V2OwnerReviewWaiverScope;
   if (
+    scope !== "semantic_publication_human_review" &&
     scope !== "semantic_publication_tier_1_second_review" &&
     scope !== "evaluation_subjective_human_review"
   ) {
@@ -88,7 +89,9 @@ export async function registerSemanticV2OwnerReviewWaiver(): Promise<void> {
   const draftRevision = draftRevisionValue ? Number(draftRevisionValue) : undefined;
   const commit = optionalArgument("commit");
   const runId = optionalArgument("run-id");
-  const publicationScope = scope === "semantic_publication_tier_1_second_review";
+  const publicationScope =
+    scope === "semantic_publication_human_review" ||
+    scope === "semantic_publication_tier_1_second_review";
   if (
     !SHA256.test(publicationHash) ||
     !UUID.test(authorizedBy) ||
