@@ -22,6 +22,7 @@ concurrency:
 env:
   ALBERT_RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
   ALBERT_SEMANTIC_V2_PUBLICATION_HASH: ${{ inputs.publication_hash }}
+  ALBERT_ANALYTICAL_PROJECT_REF: ${{ vars.ALBERT_ANALYTICAL_PROJECT_REF }}
   ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
   ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
 

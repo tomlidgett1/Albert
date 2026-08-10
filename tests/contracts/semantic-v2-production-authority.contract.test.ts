@@ -18,6 +18,7 @@ test("V2 production verification is protected, exact-candidate, and non-mutating
   assert.match(workflow, /ref:\s*\$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /assert-semantic-v2-production-authority\.mjs/u);
   assert.match(workflow, /ALBERT_RELEASE_AUTHORITY_SIGNER_EMAIL/u);
+  assert.match(workflow, /ALBERT_ANALYTICAL_PROJECT_REF/u);
   assert.match(workflow, /verify-semantic-v2-production\.mjs/u);
   assert.doesNotMatch(workflow, /ref:\s*\$\{\{ inputs\.candidate_sha \}\}/u);
   assert.doesNotMatch(workflow, /working-directory:\s*candidate/u);
@@ -33,6 +34,8 @@ test("production verifier requires active qualification, exact Luna Max, and Ver
   assert.match(verifier, /fastMode, false/u);
   assert.match(verifier, /proMode, false/u);
   assert.match(verifier, /caseCount, 200/u);
+  assert.match(verifier, /deterministic\?\.analyticalProjectRef/u);
+  assert.match(verifier, /ALBERT_ANALYTICAL_PROJECT_REF/u);
   assert.match(verifier, /analyticalRuntime, "v2"/u);
   assert.match(verifier, /v2PublicationHash/u);
   assert.match(verifier, /collectVercelPlatformProvenance/u);

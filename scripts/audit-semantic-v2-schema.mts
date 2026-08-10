@@ -9,7 +9,9 @@ import {
 } from "../packages/semantic-registry/src/v2.js";
 import {
   auditSemanticV2Schema,
+  bindSemanticV2LiveProject,
   type LiveStagingColumn,
+  type SemanticV2LiveProjectBinding,
 } from "./lib/semantic-v2-schema-audit.js";
 import { normalizePostgresDataType } from "./lib/staging-schema-contract.js";
 
@@ -40,6 +42,7 @@ if (
   );
 
 let liveColumns: LiveStagingColumn[] | undefined;
+let liveProject: SemanticV2LiveProjectBinding | undefined;
 if (process.argv.includes("--live")) {
   const connectionString =
     process.env.OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL?.trim() ||
@@ -47,6 +50,17 @@ if (process.argv.includes("--live")) {
   if (!connectionString)
     throw new Error(
       "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL or ANALYTICAL_ADMIN_DATABASE_URL is required for --live.",
+    );
+  const expectedProjectRef =
+    process.env.ALBERT_ANALYTICAL_PROJECT_REF?.trim();
+  if (process.argv.includes("--require-project-ref") && !expectedProjectRef)
+    throw new Error(
+      "ALBERT_ANALYTICAL_PROJECT_REF is required for a release-bound live audit.",
+    );
+  if (expectedProjectRef)
+    liveProject = bindSemanticV2LiveProject(
+      connectionString,
+      expectedProjectRef,
     );
   const client = new pg.Client({
     connectionString,
@@ -90,6 +104,7 @@ const audit = auditSemanticV2Schema({
 const receipt = {
   schemaVersion: 1,
   publicationHash: publication.publicationHash,
+  ...(liveProject ? { liveProject } : {}),
   ...audit,
 };
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);

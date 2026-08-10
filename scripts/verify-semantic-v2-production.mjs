@@ -7,6 +7,7 @@ import { collectVercelPlatformProvenance } from "./collect-vercel-platform-prove
 const { Client } = pg;
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
+const SUPABASE_PROJECT_REF = /^[a-z0-9]{20}$/u;
 const DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u;
 
 function required(source, name, pattern) {
@@ -50,7 +51,7 @@ async function boundedReadiness(fetchImpl, url, label) {
   return value;
 }
 
-function verifyQualification(row, publicationHash, candidateSha) {
+function verifyQualification(row, publicationHash, candidateSha, analyticalProjectRef) {
   assert.equal(row.status, "passed", "Semantic V2 activation qualification did not pass.");
   assert.equal(row.publication_hash, publicationHash);
   assert.equal(row.commit_sha, candidateSha);
@@ -59,6 +60,11 @@ function verifyQualification(row, publicationHash, candidateSha) {
   assert.equal(deterministic?.status, "passed");
   assert.equal(deterministic?.publicationHash, publicationHash);
   assert.equal(deterministic?.commit, candidateSha);
+  assert.equal(
+    deterministic?.analyticalProjectRef,
+    analyticalProjectRef,
+    "The deterministic qualification was not run against the required analytical project.",
+  );
   assert.ok(
     Array.isArray(deterministic?.suites) &&
       deterministic.suites.every((suite) => suite?.status === "passed"),
@@ -100,6 +106,11 @@ export async function verifySemanticV2Production({
 } = {}) {
   const candidateSha = required(source, "ALBERT_RELEASE_CANDIDATE_SHA", SHA);
   const publicationHash = required(source, "ALBERT_SEMANTIC_V2_PUBLICATION_HASH", DIGEST);
+  const analyticalProjectRef = required(
+    source,
+    "ALBERT_ANALYTICAL_PROJECT_REF",
+    SUPABASE_PROJECT_REF,
+  );
   const controlPlaneUrl = required(source, "CONTROL_PLANE_ADMIN_DATABASE_URL");
   const semanticOrigin = new URL(required(source, "SEMANTIC_QUERY_SERVICE_URL"));
   const publicOrigin = new URL(required(source, "ALBERT_PUBLIC_ORIGIN"));
@@ -130,7 +141,12 @@ export async function verifySemanticV2Production({
       publicationHash,
       "The qualified Semantic V2 publication is not active.",
     );
-    qualification = verifyQualification(result.rows[0], publicationHash, candidateSha);
+    qualification = verifyQualification(
+      result.rows[0],
+      publicationHash,
+      candidateSha,
+      analyticalProjectRef,
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -160,6 +176,7 @@ export async function verifySemanticV2Production({
     verifiedAt: now.toISOString(),
     candidateSha,
     publicationHash,
+    analyticalProjectRef,
     qualification,
     vercelProvenanceDigest: vercel.provenanceDigest,
     web: Object.freeze({ deploymentId: web.deploymentId, releaseSha: web.releaseSha }),

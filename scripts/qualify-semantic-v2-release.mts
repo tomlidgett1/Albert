@@ -17,12 +17,17 @@ function argument(name: string): string {
 const publicationHash = argument("publication");
 const commit = argument("commit");
 const actorUserId = argument("actor-user-id");
+const analyticalProjectRef = process.env.ALBERT_ANALYTICAL_PROJECT_REF?.trim();
 if (
   !/^[a-f0-9]{64}$/u.test(publicationHash) ||
   !/^[a-f0-9]{40}$/u.test(commit) ||
-  !/^[a-f0-9-]{36}$/iu.test(actorUserId)
+  !/^[a-f0-9-]{36}$/iu.test(actorUserId) ||
+  !analyticalProjectRef ||
+  !/^[a-z0-9]{20}$/u.test(analyticalProjectRef)
 )
-  throw new Error("Publication, commit, or actor identifiers are invalid.");
+  throw new Error(
+    "Publication, commit, actor, or ALBERT_ANALYTICAL_PROJECT_REF identifiers are invalid.",
+  );
 const deterministic = JSON.parse(
   readFileSync(argument("deterministic-receipt"), "utf8"),
 ) as Record<string, unknown>;
@@ -48,10 +53,11 @@ const deterministicReceiptHash = createHash("sha256")
 if (
   deterministic.status !== "passed" ||
   deterministic.publicationHash !== publicationHash ||
-  deterministic.commit !== commit
+  deterministic.commit !== commit ||
+  deterministic.analyticalProjectRef !== analyticalProjectRef
 )
   throw new Error(
-    "The deterministic receipt does not pass for this exact publication and commit.",
+    "The deterministic receipt does not pass for this exact publication, commit, and analytical project.",
   );
 if (
   launch.publicationHash !== publicationHash ||
@@ -150,5 +156,5 @@ try {
   await client.end();
 }
 process.stdout.write(
-  `${JSON.stringify({ status: "passed", publicationHash, commit })}\n`,
+  `${JSON.stringify({ status: "passed", publicationHash, commit, analyticalProjectRef })}\n`,
 );

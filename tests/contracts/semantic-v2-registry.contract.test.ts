@@ -11,7 +11,10 @@ import {
   semanticRegistryDocumentV2Schema,
   validateSemanticRegistryV2,
 } from "../../packages/semantic-registry/src/v2.js";
-import { auditSemanticV2Schema } from "../../scripts/lib/semantic-v2-schema-audit.js";
+import {
+  auditSemanticV2Schema,
+  bindSemanticV2LiveProject,
+} from "../../scripts/lib/semantic-v2-schema-audit.js";
 
 const registry = semanticRegistryDocumentV2Schema.parse(
   JSON.parse(
@@ -178,6 +181,36 @@ test("the physical-schema audit includes canonical and mart semantic views", () 
         code === "MISSING_MIGRATION_VIEW" &&
         objectId === "commerce_sales_event",
     ),
+  );
+});
+
+test("release live audits bind the exact Supabase analytical project", () => {
+  assert.deepEqual(
+    bindSemanticV2LiveProject(
+      "postgresql://postgres:secret@db.ndncknjodgoovbojedaa.supabase.co:5432/postgres?sslmode=require",
+      "ndncknjodgoovbojedaa",
+    ),
+    {
+      projectRef: "ndncknjodgoovbojedaa",
+      endpointKind: "direct",
+      endpointHost: "db.ndncknjodgoovbojedaa.supabase.co",
+      database: "postgres",
+    },
+  );
+  assert.equal(
+    bindSemanticV2LiveProject(
+      "postgresql://albert_operator.ndncknjodgoovbojedaa:secret@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres",
+      "ndncknjodgoovbojedaa",
+    ).endpointKind,
+    "pooler",
+  );
+  assert.throws(
+    () =>
+      bindSemanticV2LiveProject(
+        "postgresql://postgres:secret@db.qthltvbbgnhprsflmzfj.supabase.co:5432/postgres",
+        "ndncknjodgoovbojedaa",
+      ),
+    /does not belong/u,
   );
 });
 

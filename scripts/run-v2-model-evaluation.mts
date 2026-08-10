@@ -172,10 +172,15 @@ const deterministicReceipt = JSON.parse(
 const deterministicSuites = Array.isArray(deterministicReceipt.suites)
   ? (deterministicReceipt.suites as Record<string, unknown>[])
   : [];
+const analyticalProjectRef =
+  effectiveEnvironment.ALBERT_ANALYTICAL_PROJECT_REF?.trim();
 if (
+  !analyticalProjectRef ||
+  !/^[a-z0-9]{20}$/u.test(analyticalProjectRef) ||
   deterministicReceipt.status !== "passed" ||
   deterministicReceipt.publicationHash !== publicationHash ||
   deterministicReceipt.commit !== commit ||
+  deterministicReceipt.analyticalProjectRef !== analyticalProjectRef ||
   !deterministicSuites.some(
     ({ name, status }) =>
       name === "physical-staging-contract" && status === "passed",

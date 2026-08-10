@@ -36,6 +36,16 @@ export type SemanticV2SchemaAudit = Readonly<{
   issues: readonly SemanticV2SchemaAuditIssue[];
 }>;
 
+export type SemanticV2LiveProjectBinding = Readonly<{
+  projectRef: string;
+  endpointKind: "direct" | "pooler";
+  endpointHost: string;
+  database: string;
+}>;
+
+const SUPABASE_PROJECT_REF = /^[a-z0-9]{20}$/u;
+const SUPABASE_POOLER_HOST = /(?:^|\.)pooler\.supabase\.com$/u;
+
 const REQUIRED_ENVELOPE_COLUMNS = [
   "tenant_id",
   "connection_id",
@@ -283,6 +293,48 @@ export function auditSemanticV2Schema(args: Readonly<{
   liveColumns?: readonly LiveStagingColumn[];
 }>): SemanticV2SchemaAudit {
   return auditColumns(args.registry, args.migrationsDirectory, args.liveColumns);
+}
+
+export function bindSemanticV2LiveProject(
+  connectionString: string,
+  expectedProjectRef: string,
+): SemanticV2LiveProjectBinding {
+  if (!SUPABASE_PROJECT_REF.test(expectedProjectRef))
+    throw new Error("ALBERT_ANALYTICAL_PROJECT_REF is invalid.");
+
+  let connection: URL;
+  try {
+    connection = new URL(connectionString);
+  } catch {
+    throw new Error("The analytical audit database URL is invalid.");
+  }
+  if (!new Set(["postgres:", "postgresql:"]).has(connection.protocol))
+    throw new Error("The analytical audit database URL must use PostgreSQL.");
+
+  const directHost = `db.${expectedProjectRef}.supabase.co`;
+  const endpointKind =
+    connection.hostname === directHost
+      ? "direct"
+      : SUPABASE_POOLER_HOST.test(connection.hostname) &&
+          decodeURIComponent(connection.username).endsWith(
+            `.${expectedProjectRef}`,
+          )
+        ? "pooler"
+        : null;
+  if (!endpointKind)
+    throw new Error(
+      "The live schema audit database URL does not belong to ALBERT_ANALYTICAL_PROJECT_REF.",
+    );
+
+  const database = decodeURIComponent(connection.pathname.replace(/^\//u, ""));
+  if (!database)
+    throw new Error("The analytical audit database URL has no database name.");
+  return {
+    projectRef: expectedProjectRef,
+    endpointKind,
+    endpointHost: connection.hostname,
+    database,
+  };
 }
 
 export function isPlatformStagingColumn(name: string): boolean {

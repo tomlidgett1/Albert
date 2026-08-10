@@ -49,6 +49,13 @@ Provider project references, endpoints, role passwords and deployment tokens
 remain environment-owned configuration. This ADR records the provider and
 security model, not credential material.
 
+Every release-bound live schema audit must receive the expected analytical
+project ref and prove that its database URL belongs to that project, using the
+direct hostname or the project-qualified Supavisor login. The deterministic
+qualification receipt records that non-secret ref, and the model-backed
+evaluation rejects a receipt from any other analytical cell. A compatible
+schema in a development or predecessor project is not production evidence.
+
 ## Consequences
 
 - Control and analytical workloads remain physically isolated even though the

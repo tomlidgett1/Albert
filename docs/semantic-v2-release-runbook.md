@@ -136,7 +136,9 @@ controllability judgements.
 ## 5. Run deterministic qualification
 
 Point the release environment at the exact publication and migrated control
-plane. From the clean release commit run:
+plane. Set `ALBERT_ANALYTICAL_PROJECT_REF` to the exact production analytical
+Supabase project ref; the live audit rejects a direct endpoint or pooler login
+owned by any other project. From the clean release commit run:
 
 ```sh
 npm run qualify:v2:deterministic -- --execute --publication=<publication-hash>
@@ -146,7 +148,9 @@ This reruns the live physical-schema audit, generated-artifact checks, contract
 and evaluation-unit suites, V2-scoped lint, typecheck, service/application
 builds, rendered HTML, and browser accessibility. It writes a content-addressed
 receipt under `.albert-agent-qa-out/qualification/` only when every suite
-passes. Set `ALBERT_V2_DETERMINISTIC_RECEIPT_PATH` to that receipt.
+passes. The receipt records the analytical project ref, and the model-backed
+runner rejects a receipt from another cell. Set
+`ALBERT_V2_DETERMINISTIC_RECEIPT_PATH` to that receipt.
 
 Repository-wide `npm run lint` remains a separate health signal. The V2 release
 receipt uses `npm run lint:v2`, whose explicit surface includes every V2

@@ -35,6 +35,12 @@ const commit = spawnSync("git", ["rev-parse", "HEAD"], {
 }).stdout.trim();
 if (!/^[a-f0-9]{40}$/u.test(commit))
   throw new Error("An exact Git commit is required for qualification.");
+const analyticalProjectRef =
+  process.env.ALBERT_ANALYTICAL_PROJECT_REF?.trim();
+if (!analyticalProjectRef || !/^[a-z0-9]{20}$/u.test(analyticalProjectRef))
+  throw new Error(
+    "ALBERT_ANALYTICAL_PROJECT_REF must pin the exact analytical release project.",
+  );
 const dirty = spawnSync("git", ["status", "--porcelain"], {
   encoding: "utf8",
 }).stdout.trim();
@@ -319,6 +325,7 @@ const suites = [
       "tsx",
       "scripts/audit-semantic-v2-schema.mts",
       "--live",
+      "--require-project-ref",
       `--publication=${publicationArgument}`,
     ],
   ],
@@ -365,6 +372,7 @@ for (const [name, executable, arguments_] of suites) {
       status: "failed",
       publicationHash: publicationArgument,
       commit,
+      analyticalProjectRef,
       createdAt: new Date().toISOString(),
       suites: results,
     };
@@ -388,6 +396,7 @@ const receipt = {
   status: "passed",
   publicationHash: publicationArgument,
   commit,
+  analyticalProjectRef,
   createdAt: new Date().toISOString(),
   suites: results,
 };

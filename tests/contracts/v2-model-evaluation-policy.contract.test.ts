@@ -128,6 +128,10 @@ test("model-backed runner requires an explicit 200-case budget confirmation", ()
   assert.match(runner, /ALBERT_V2_EVALUATION_GOLD_PATH/u);
   assert.match(runner, /ALBERT_V2_DETERMINISTIC_RECEIPT_PATH/u);
   assert.match(runner, /physical-staging-contract/u);
+  assert.match(
+    runner,
+    /deterministicReceipt\.analyticalProjectRef !== analyticalProjectRef/u,
+  );
   assert.match(runner, /\/models\/\$\{V2_EVALUATION_RUNTIME\.model\}/u);
   assert.match(runner, /modelIdentity\.id !== V2_EVALUATION_RUNTIME\.model/u);
   assert.match(runner, /ALBERT_V2_DETERMINISTIC_RECEIPT_HASH/u);

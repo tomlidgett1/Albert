@@ -128,6 +128,8 @@ test("activation is bound to the exact publication and full release commit after
   assert.match(deterministicQualifier, /"semantic-v2-static-lint"/u);
   assert.match(deterministicQualifier, /"lint:v2"/u);
   assert.match(deterministicQualifier, /"physical-staging-contract"/u);
+  assert.match(deterministicQualifier, /--require-project-ref/u);
+  assert.match(deterministicQualifier, /analyticalProjectRef/u);
   assert.match(deterministicQualifier, /unresolvedRelationships\.length/u);
   assert.match(deterministicQualifier, /semantic_v2_publications/u);
   assert.match(
