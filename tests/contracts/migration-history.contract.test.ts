@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertExactMigrationPrefix } from "../../scripts/migrate.js";
+import {
+  analyticalMigrationBody,
+  assertExactMigrationPrefix,
+} from "../../scripts/migrate.js";
 
 const local = [
   { id: "0001_first.sql", checksum: "a".repeat(64) },
@@ -33,4 +36,23 @@ test("migration history rejects retrograde insertion, removal, gaps, and checksu
   for (const history of invalid) {
     assert.throws(() => assertExactMigrationPrefix(local, history, "control-plane"));
   }
+});
+
+test("a fresh analytical bootstrap skips only the reviewed predecessor-pack data migration", () => {
+  const migration = {
+    id: "0129_m5_retire_renamed_predecessor_pack_surface.sql",
+    checksum:
+      "e7a2633e5e9df29982dd4ac2031a4f6774a60def7aad6a7a17ef21079723ae6c",
+    body: "INSERT INTO historical_rows SELECT * FROM predecessor_rows;",
+  };
+  assert.match(analyticalMigrationBody(migration, true), /no predecessor pack rows/u);
+  assert.equal(analyticalMigrationBody(migration, false), migration.body);
+  assert.throws(
+    () =>
+      analyticalMigrationBody(
+        { ...migration, checksum: "f".repeat(64) },
+        true,
+      ),
+    /changed after its fresh-bootstrap data-migration review/u,
+  );
 });

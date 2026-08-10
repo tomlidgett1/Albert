@@ -63,10 +63,26 @@ test("compatibility conversion rejects unknown, changed, and count-drifted migra
     ...foundation,
     body: `${foundation.body}\nSELECT auth.uid();`,
   }), /reviewed auth\.uid\(\) count/u);
+
+  const authorizationProviders = await migration(
+    "0085_m1_authorization_only_connector_providers.sql",
+  );
+  assert.equal(
+    controlPlaneMigrationBody(authorizationProviders),
+    "SELECT extensions.albert_install_authorization_connector_providers();",
+  );
+  assert.throws(
+    () =>
+      controlPlaneMigrationBody({
+        ...authorizationProviders,
+        checksum: "e".repeat(64),
+      }),
+    /administrator-ownership compatibility review/u,
+  );
 });
 
 test("administrator managed-service bridges are fixed, private, and consumed by migrations", async () => {
-  const [upgrade, storageUpgrade, storageAuthority, receiptReference, receiptMigration, boundary, authorityBoundary, runner, provisioner, roleDelegation, ci] = await Promise.all([
+  const [upgrade, storageUpgrade, storageAuthority, receiptReference, receiptMigration, authorizationProviderBridge, boundary, authorityBoundary, runner, provisioner, roleDelegation, ci] = await Promise.all([
     readFile(new URL(
       "infra/bootstrap-upgrades/control-plane/0002_supabase_auth_compatibility_boundary.sql",
       root,
@@ -85,6 +101,10 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
     ), "utf8"),
     readFile(new URL(
       "infra/migrations/control-plane/0053_m8_user_bound_tenant_deletion_receipts.sql",
+      root,
+    ), "utf8"),
+    readFile(new URL(
+      "infra/bootstrap-upgrades/control-plane/0012_authorization_connector_provider_bridge.sql",
       root,
     ), "utf8"),
     readFile(new URL(
@@ -136,6 +156,20 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.match(receiptReference, /REVOKE EXECUTE ON FUNCTION[\s\S]*FROM albert_control_migration_owner/u);
   assert.doesNotMatch(receiptReference, /albert_install_tenant_deletion_receipt_auth_reference\([^)]*[a-z_]+[^)]*\)/u);
   assert.match(receiptMigration, /SELECT extensions\.albert_install_tenant_deletion_receipt_auth_reference\(\)/u);
+
+  assert.match(authorizationProviderBridge, /SECURITY DEFINER/u);
+  assert.match(
+    authorizationProviderBridge,
+    /pg_has_role\(session_user,'albert_control_migration_owner','MEMBER'\)/u,
+  );
+  assert.match(
+    authorizationProviderBridge,
+    /migration_id='0085_m1_authorization_only_connector_providers\.sql'/u,
+  );
+  assert.match(
+    authorizationProviderBridge,
+    /REVOKE ALL ON FUNCTION extensions\.albert_install_authorization_connector_providers\(\) FROM albert_control_migration_owner/u,
+  );
 
   assert.match(boundary, /SELECT extensions\.albert_install_raw_payload_bucket\(\)/u);
   assert.match(boundary, /SELECT extensions\.albert_install_auth_user_foreign_keys\(\)/u);

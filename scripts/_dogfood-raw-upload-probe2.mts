@@ -1,11 +1,15 @@
 
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  PutObjectCommand,
+  S3Client,
+  type PutObjectCommandInput,
+} from "@aws-sdk/client-s3";
 import { gzipSync } from "node:zlib";
 import { loadRawStorageS3Config } from "../packages/storage/src/s3.js";
 import { SupabaseMachineSessionCredentialProvider } from "../packages/storage/src/session-credentials.js";
 import { S3RawIngestionObjectStore } from "../packages/storage/src/s3-ingestion.js";
 
-const config = loadRawStorageS3Config(process.env as any, {
+const config = loadRawStorageS3Config(process.env, {
   machinePurpose: "sync",
   passwordEnvironmentName: "ALBERT_RAW_STORAGE_SYNC_PASSWORD",
 });
@@ -28,16 +32,24 @@ const batchId = "01KZTESTPROBE00000000000001";
 const key = `tenant/${tenantId}/connection/${connectionId}/stream/shops/date/2026-08-04/batch-${batchId}.jsonl.gz`;
 const body = gzipSync(Buffer.from('{"probe":true}\n'), { level: 9 });
 
-async function tryPut(label: string, cmd: any) {
+function errorRecord(error: unknown): Record<string, unknown> {
+  return error && typeof error === "object"
+    ? (error as Record<string, unknown>)
+    : {};
+}
+
+async function tryPut(label: string, cmd: PutObjectCommandInput) {
   try {
     await client.send(new PutObjectCommand(cmd));
     console.log(label, "OK");
-  } catch (e: any) {
+  } catch (error: unknown) {
+    const caught = errorRecord(error);
+    const metadata = errorRecord(caught.$metadata);
     console.error(label, {
-      name: e?.name,
-      message: e?.message,
-      status: e?.$metadata?.httpStatusCode,
-      code: e?.Code,
+      name: caught.name,
+      message: caught.message,
+      status: metadata.httpStatusCode,
+      code: caught.Code,
     });
   }
 }
@@ -84,7 +96,7 @@ try {
     },
   });
   console.log("scoped putIfAbsent", result);
-} catch (e: any) {
-  console.error("scoped putIfAbsent failed", e?.message);
+} catch (error: unknown) {
+  console.error("scoped putIfAbsent failed", errorRecord(error).message);
 }
 store.destroy();

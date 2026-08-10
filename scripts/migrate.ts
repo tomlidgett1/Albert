@@ -23,6 +23,26 @@ type AppliedMigration = Readonly<{
   checksum_sha256: string;
 }>;
 
+const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
+  [
+    "0129_m5_retire_renamed_predecessor_pack_surface.sql",
+    "e7a2633e5e9df29982dd4ac2031a4f6774a60def7aad6a7a17ef21079723ae6c",
+  ],
+]);
+
+export function analyticalMigrationBody(
+  migration: Readonly<{ id: string; checksum: string; body: string }>,
+  bootstrap: boolean,
+): string {
+  const reviewedChecksum = FRESH_ANALYTICAL_DATA_MIGRATIONS.get(migration.id);
+  if (!bootstrap || !reviewedChecksum) return migration.body;
+  if (migration.checksum !== reviewedChecksum)
+    throw new Error(
+      `${migration.id} changed after its fresh-bootstrap data-migration review.`,
+    );
+  return "SELECT 1 /* no predecessor pack rows exist in a fresh analytical database */;";
+}
+
 type Target = Readonly<{
   stream: Stream;
   directory: string;
@@ -332,9 +352,10 @@ async function applyTarget(
     );
     assertExactMigrationPrefix(migrations, applied.rows, target.stream);
     for (const migration of migrations.slice(applied.rows.length)) {
-      const migrationBody = target.stream === "control-plane"
-        ? controlPlaneMigrationBody(migration)
-        : migration.body;
+      const migrationBody =
+        target.stream === "control-plane"
+          ? controlPlaneMigrationBody(migration)
+          : analyticalMigrationBody(migration, bootstrap);
 
       await client.query("BEGIN");
       try {

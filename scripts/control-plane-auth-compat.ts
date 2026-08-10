@@ -48,6 +48,11 @@ const LEGACY_STORAGE_COMPATIBILITY = new Map<string, StorageCompatibilitySpec>([
   })],
 ]);
 
+const AUTHORIZATION_CONNECTOR_BRIDGE = Object.freeze({
+  id: "0085_m1_authorization_only_connector_providers.sql",
+  checksum: "570efd8ac294890cb9808d1ab5b70164e412aeb4bae5ea54c30c3e554d8462ba",
+});
+
 const AUTH_USER_REFERENCE = /\s+REFERENCES\s+auth\.users\s*\(\s*id\s*\)\s+ON\s+DELETE\s+(?:SET\s+NULL|CASCADE|RESTRICT)/giu;
 const AUTH_USER_DIRECTORY_JOIN = /JOIN\s+auth\.users\s+AS\s+auth_user\s+ON\s+auth_user\.id\s*=\s*member\.user_id/giu;
 const AUTH_USER_EMAIL_LOOKUP = /SELECT\s+id\s+INTO\s+invited_user\s+FROM\s+auth\.users\s+WHERE\s+lower\(email\)\s*=\s*normalized_email\s+AND\s+email_confirmed_at\s+IS\s+NOT\s+NULL\s+LIMIT\s+1;/giu;
@@ -91,6 +96,13 @@ function assertCount(id: string, dependency: string, actual: number, expected: n
 export function controlPlaneMigrationBody(
   migration: MigrationForAuthCompatibility,
 ): string {
+  if (migration.id === AUTHORIZATION_CONNECTOR_BRIDGE.id) {
+    if (migration.checksum !== AUTHORIZATION_CONNECTOR_BRIDGE.checksum)
+      throw new Error(
+        `${migration.id} changed after its administrator-ownership compatibility review.`,
+      );
+    return "SELECT extensions.albert_install_authorization_connector_providers();";
+  }
   const specification = LEGACY_AUTH_COMPATIBILITY.get(migration.id);
   const storageSpecification = LEGACY_STORAGE_COMPATIBILITY.get(migration.id);
   if (!specification && DIRECT_AUTH_DEPENDENCY.test(migration.body)) {

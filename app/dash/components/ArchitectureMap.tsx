@@ -1064,7 +1064,7 @@ export default function ArchitectureMap({
         <header>
           <div>
             <span>SEMANTIC LAYER</span>
-            <h3 id="arch-semantic-title">Albert's dictionary of business meaning</h3>
+            <h3 id="arch-semantic-title">Albert&apos;s dictionary of business meaning</h3>
             <p>
               {formatNumber(overview.semantic.metric_count)} metric contracts across{" "}
               {formatNumber(overview.semantic.topic_count)} Topics and{" "}
@@ -1147,9 +1147,9 @@ export default function ArchitectureMap({
       <section className={styles.archCta} aria-labelledby="arch-cta-title">
         <div>
           <span>LIVE OPERATIONS</span>
-          <h3 id="arch-cta-title">See the fleet and each tenant's pipeline</h3>
+          <h3 id="arch-cta-title">See the fleet and each tenant&apos;s pipeline</h3>
           <p>
-            The architecture above is the map. Fleet view shows every connection's health.
+            The architecture above is the map. Fleet view shows every connection&apos;s health.
             Open a tenant to walk the live pipeline from connection to readiness.
           </p>
         </div>
