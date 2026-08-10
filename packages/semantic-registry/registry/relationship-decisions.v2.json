@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "basePublicationHash": "c8f2725acb5979e1eb21536058c1427db5d45bb6d3f2d4197f870897d239851d",
-  "profileReceiptHash": "6d02526e11309605ed0c5ed3df803225b4c3c409cf269a8621036993360069de",
+  "profileReceiptHash": "587f176c5cdaae48f9e72f2ebd27846aee4c5c7f523596e3476a32b4d97811a1",
   "certifiedSourceObjectIds": [
     "lightspeed.ls_account",
     "lightspeed.ls_account_purchasing_currencies",
@@ -2991,5 +2991,5 @@
       "reason": "Launch review leaves this relationship unsupported because the qualification tenant contained no non-null source keys. Sparse data is not treated as evidence that a reusable join is safe."
     }
   ],
-  "reviewDigest": "e103ee4e0cc2bca3fd5a63509cf72e03a9e1470ca21d5c9031f020999ae87716"
+  "reviewDigest": "d6b5a8105943b06e1918b4ba6742f43d99a0a5cc6ee25a4db014a62026ffac4a"
 }
