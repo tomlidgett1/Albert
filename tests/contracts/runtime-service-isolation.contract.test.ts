@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
@@ -47,12 +47,40 @@ test("sync and webhook control identities are NOLOGIN and explicitly assumed", a
   assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
   assert.match(
     finalServiceRoleDeny,
-    /REVOKE EXECUTE ON FUNCTION[\s\S]*enqueue_due_incremental_syncs\(timestamptz\)[\s\S]*is_known_connector\(text\)[\s\S]*FROM service_role/i,
+    /REVOKE EXECUTE ON FUNCTION[\s\S]*enqueue_due_incremental_syncs\(timestamptz\)[\s\S]*renew_albert_turn_lease\(text,integer\)[\s\S]*is_known_connector\(text\)[\s\S]*FROM service_role/i,
   );
   assert.doesNotMatch(
     finalServiceRoleDeny,
     /ALL (?:TABLES|SEQUENCES|FUNCTIONS) IN SCHEMA control_plane/u,
   );
+});
+
+test("every post-isolation service_role grant is explicitly retired", async () => {
+  const directory = new URL("infra/migrations/control-plane/", root);
+  const files = (await readdir(directory))
+    .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/u.test(name) && name >= "0007_")
+    .sort((left, right) => left.localeCompare(right));
+  const grants: string[] = [];
+  for (const file of files) {
+    const sql = await readFile(new URL(file, directory), "utf8");
+    for (const statement of sql.split(";")) {
+      if (/^\s*GRANT\b/iu.test(statement) && /\bservice_role\b/iu.test(statement))
+        grants.push(`${file}:${statement.replace(/\s+/gu, " ").trim()}`);
+    }
+  }
+  assert.deepEqual(
+    grants.map((grant) => grant.slice(0, 4)),
+    ["0073", "0084", "0086"],
+  );
+  const finalDeny = await source(
+    "infra/migrations/control-plane/0105_m0_service_role_final_deny.sql",
+  );
+  for (const routine of [
+    "enqueue_due_incremental_syncs(timestamptz)",
+    "renew_albert_turn_lease(text,integer)",
+    "is_known_connector(text)",
+  ])
+    assert.match(finalDeny, new RegExp(routine.replace(/[()]/gu, "\\$&"), "u"));
 });
 
 test("public webhook identity cannot read encrypted credentials or user analytics", async () => {
