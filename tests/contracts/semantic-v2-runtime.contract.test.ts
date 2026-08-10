@@ -10,8 +10,16 @@ import {
   rebindCachedExecutionV2,
   type ExecutedWorkspaceV2,
 } from "../../packages/analytics-v2/src/executor.js";
+import {
+  createSemanticHttpHandler,
+  signSemanticHttpRequest,
+} from "../../services/semantic-query/src/http.js";
+import type { SemanticToolExecutor } from "../../services/semantic-query/src/types.js";
 import { analyticalRuntimeRouteV2 } from "../../services/semantic-query/src/v2-runtime.js";
-import { compileOperatorInput } from "../../services/semantic-query/src/v2-service.js";
+import {
+  compileOperatorInput,
+  type SemanticV2ToolExecutor,
+} from "../../services/semantic-query/src/v2-service.js";
 
 const v2Service = readFileSync(
   "services/semantic-query/src/v2-service.ts",
@@ -225,6 +233,51 @@ test("the server analytical route defaults to V1 and accepts only an explicit V2
     () => analyticalRuntimeRouteV2({ ALBERT_ANALYTICAL_RUNTIME: "canary" }),
     /must be v1 or v2/iu,
   );
+});
+
+test("the signed HTTP boundary routes V2 tool names containing their version suffix", async () => {
+  const secret = "semantic-v2-http-contract-secret-at-least-32-bytes";
+  const now = Date.parse("2026-08-10T00:00:00.000Z");
+  const path = "/v2/tools/get_semantic_context_v2";
+  const body = JSON.stringify({
+    tenantId: "01KZN20VTX2EWW1TQ2AA3MCPW6",
+    conversationId: "01KZN20VTX2EWW1TQ2AA3MCPW7",
+    turnId: "01KZN20VTX2EWW1TQ2AA3MCPW8",
+    role: "owner",
+    input: { question: "What were sales?", limit: 1 },
+  });
+  let invoked = false;
+  const v1Executor: SemanticToolExecutor = {
+    async execute() {
+      throw new Error("V1 tool route was not expected.");
+    },
+  };
+  const v2Executor: SemanticV2ToolExecutor = {
+    async execute(name) {
+      invoked = true;
+      assert.equal(name, "get_semantic_context_v2");
+      return { publicationHash: "a".repeat(64) };
+    },
+  };
+  const handler = createSemanticHttpHandler(v1Executor, {
+    hmacSecret: secret,
+    clock: () => now,
+    analyticalRuntime: "v2",
+    v2Executor,
+  });
+  const headers = await signSemanticHttpRequest(path, body, secret, now);
+  const response = await handler(
+    new Request(`http://semantic.invalid${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body,
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(invoked, true);
+  assert.deepEqual(await response.json(), {
+    result: { publicationHash: "a".repeat(64) },
+  });
 });
 
 test("V2 readiness verifies its pinned publication without depending on the V1 catalogue", () => {

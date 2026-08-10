@@ -49,7 +49,7 @@ export function createSemanticHttpHandler(executor:SemanticToolExecutor,options:
     if(request.method!=="POST")return json({error:{code:"METHOD_NOT_ALLOWED",message:"Use POST."}},405,correlationId);
     const url=new URL(request.url);
     const match=/^\/v1\/tools\/([a-z_]+)$/.exec(url.pathname);
-    const v2Match=/^\/v2\/tools\/([a-z_]+)$/.exec(url.pathname);
+    const v2Match=/^\/v2\/tools\/([a-z0-9_]+)$/.exec(url.pathname);
     const finalizationRequest=url.pathname==="/v1/answer-artifacts/finalize";
     const finalizationV2Request=url.pathname==="/v2/answer-artifacts/finalize";
     const semanticFinalizationV2Request=url.pathname==="/v2/analytical-answer-artifacts/finalize";
