@@ -20,7 +20,10 @@ import {
   compileOperatorInput,
   type SemanticV2ToolExecutor,
 } from "../../services/semantic-query/src/v2-service.js";
-import { assertSemanticV2OpenAISchemaCompatibility } from "../../services/conversation/src/v2-live.js";
+import {
+  assertSemanticV2OpenAISchemaCompatibility,
+  SEMANTIC_V2_MAX_TURNS,
+} from "../../services/conversation/src/v2-live.js";
 
 const v2Service = readFileSync(
   "services/semantic-query/src/v2-service.ts",
@@ -184,6 +187,11 @@ test("V2 tools expose only semantic workspaces, investigations, results, and gov
 
 test("every V2 model tool and final output compiles to an OpenAI strict schema", () => {
   assert.doesNotThrow(() => assertSemanticV2OpenAISchemaCompatibility());
+});
+
+test("V2 orchestration can use the 800-second Luna Max evaluation window", () => {
+  assert.equal(SEMANTIC_V2_MAX_TURNS, 64);
+  assert.match(v2Live, /maxTurns: SEMANTIC_V2_MAX_TURNS/u);
 });
 
 test("workspace and investigation evidence mutations are scoped to the current turn", () => {

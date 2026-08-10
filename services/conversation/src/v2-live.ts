@@ -51,6 +51,13 @@ import {
 import type { SemanticServiceClient } from "./semantic-client.js";
 import type { ContextualConversationMessage } from "./conversation-understanding.js";
 
+// This limits model/tool round-trips, not governed query executions. Query
+// count, cost, duration, fan-out, and investigation budgets remain enforced by
+// the semantic service. At observed Luna Max latency, 64 turns fits within the
+// locked 800-second release-evaluation window while 32 prematurely terminates
+// valid multi-step investigations at roughly half that duration.
+export const SEMANTIC_V2_MAX_TURNS = 64 as const;
+
 type TraceEventInput = TraceEvent extends infer Event
   ? Event extends TraceEvent
     ? Omit<Event, "id" | "sequence" | "occurredAt">
@@ -1286,7 +1293,7 @@ export async function runLiveAlbertV2Turn(
       buildModelInput(options.modelContext, options.message),
       {
         context,
-        maxTurns: 32,
+        maxTurns: SEMANTIC_V2_MAX_TURNS,
         signal: options.abortSignal,
         toolNotFoundBehavior: "raise_error",
         toolExecution: { maxFunctionToolConcurrency: 8 },
