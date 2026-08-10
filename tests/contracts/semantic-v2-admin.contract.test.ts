@@ -182,6 +182,14 @@ test("semantic review batches are explicit, bounded, atomic, and preserve indepe
   );
   assert.match(
     atomicReviewBatches,
+    /extensions\.albert_auth_uid\(\),p_notes/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /length\(btrim\(item->>'notes'\)\) NOT BETWEEN 10 AND 2000/u,
+  );
+  assert.match(
+    atomicReviewBatches,
     /public\.albert_semantic_v2_record_review\([\s\S]*v_review->>'objectId'/u,
   );
   assert.match(

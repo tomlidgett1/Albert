@@ -87,6 +87,14 @@ SELECT pg_temp.assert_true(
   'one reviewer must record exactly one decision per selected object'
 );
 SELECT pg_temp.assert_true(
+  (SELECT count(*)=2
+     FROM control_plane.semantic_v2_object_reviews
+    WHERE draft_id='01K1ZZZZZZ0000000000000210'
+      AND reviewer_id='93000000-0000-4000-8000-000000000009'
+      AND notes='Reviewed against the governed fixture.'),
+  'the review writer must persist the submitted evidence notes'
+);
+SELECT pg_temp.assert_true(
   (public.albert_semantic_v2_admin_draft_reviews(
     '01K1ZZZZZZ0000000000000210',1
   )->>'count')::integer=2
@@ -111,13 +119,15 @@ BEGIN
           "reviewId":"01K1ZZZZZZ0000000000000213",
           "objectId":"measure.fixture.atomic",
           "riskTier":"tier_1",
-          "disposition":"approved"
+          "disposition":"approved",
+          "notes":"Reviewed against the governed fixture."
         },
         {
           "reviewId":"01K1ZZZZZZ0000000000000214",
           "objectId":"measure.fixture.not_reviewable",
           "riskTier":"tier_1",
-          "disposition":"approved"
+          "disposition":"approved",
+          "notes":"Reviewed against the governed fixture."
         }
       ]'::jsonb
     );
@@ -145,13 +155,15 @@ BEGIN
           "reviewId":"01K1ZZZZZZ0000000000000215",
           "objectId":"measure.fixture.atomic",
           "riskTier":"tier_1",
-          "disposition":"approved"
+          "disposition":"approved",
+          "notes":"Reviewed against the governed fixture."
         },
         {
           "reviewId":"01K1ZZZZZZ0000000000000216",
           "objectId":"measure.fixture.atomic",
           "riskTier":"tier_1",
-          "disposition":"approved"
+          "disposition":"approved",
+          "notes":"Reviewed against the governed fixture."
         }
       ]'::jsonb
     );
