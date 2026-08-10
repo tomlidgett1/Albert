@@ -79,6 +79,31 @@ test("compatibility conversion rejects unknown, changed, and count-drifted migra
       }),
     /administrator-ownership compatibility review/u,
   );
+
+  const streamExpectations = await migration(
+    "0091_m3_spec_driven_stream_expectations.sql",
+  );
+  const streamExpectationsExecutable = controlPlaneMigrationBody(streamExpectations);
+  assert.doesNotMatch(
+    streamExpectationsExecutable,
+    /REVOKE ALL ON FUNCTION[\s\S]*capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\)[\s\S]*FROM PUBLIC/iu,
+  );
+  assert.doesNotMatch(
+    streamExpectationsExecutable,
+    /GRANT EXECUTE ON FUNCTION control_plane\.capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\)/iu,
+  );
+  assert.match(
+    streamExpectationsExecutable,
+    /CREATE OR REPLACE FUNCTION control_plane\.capture_protected_dogfood_acceptance_v2/u,
+  );
+  assert.throws(
+    () =>
+      controlPlaneMigrationBody({
+        ...streamExpectations,
+        checksum: "d".repeat(64),
+      }),
+    /protected-dogfood ACL compatibility review/u,
+  );
 });
 
 test("administrator managed-service bridges are fixed, private, and consumed by migrations", async () => {
