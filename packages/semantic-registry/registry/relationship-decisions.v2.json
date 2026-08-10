@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "basePublicationHash": "c8f2725acb5979e1eb21536058c1427db5d45bb6d3f2d4197f870897d239851d",
-  "profileReceiptHash": "587f176c5cdaae48f9e72f2ebd27846aee4c5c7f523596e3476a32b4d97811a1",
+  "profileReceiptHash": "ee086d58d388d93804478f637c164bb29550a15e64b6e3c51b9d7dabbf0ebe90",
   "certifiedSourceObjectIds": [
     "lightspeed.ls_account",
     "lightspeed.ls_account_purchasing_currencies",
@@ -923,7 +923,7 @@
     {
       "candidateId": "candidate.lightspeed.ls_inventory_logs.customer_id",
       "disposition": "reject",
-      "reason": "Launch review leaves this relationship unsupported because none of the observed non-null source keys matched a declared governed target."
+      "reason": "Launch review rejected this otherwise profile-safe candidate because it would create a second semantic path between already connected views. The source field remains discoverable, but this redundant join is unsupported to preserve deterministic path selection."
     },
     {
       "candidateId": "candidate.lightspeed.ls_inventory_logs.vendor_return_id",
@@ -2991,5 +2991,5 @@
       "reason": "Launch review leaves this relationship unsupported because the qualification tenant contained no non-null source keys. Sparse data is not treated as evidence that a reusable join is safe."
     }
   ],
-  "reviewDigest": "d6b5a8105943b06e1918b4ba6742f43d99a0a5cc6ee25a4db014a62026ffac4a"
+  "reviewDigest": "13afbe924037cc18a215d37d334d0a94f794147b979810481e1447a8870d8996"
 }
