@@ -7,9 +7,11 @@ const publicationHash = "b".repeat(64);
 const projectId = "prj_l5faWCnDWxw7QB7nBWgr9zaKFxuL";
 const teamId = "team_wx7OlK7ikXNuFcOSaewRxonA";
 const deploymentId = "dpl_9rT2LFnsfT2RGbzwkgcvTzd8vcdH";
+const analyticalProjectRef = "ndncknjodgoovbojedaa";
 const source = {
   ALBERT_RELEASE_CANDIDATE_SHA: candidateSha,
   ALBERT_SEMANTIC_V2_PUBLICATION_HASH: publicationHash,
+  ALBERT_ANALYTICAL_PROJECT_REF: analyticalProjectRef,
   CONTROL_PLANE_ADMIN_DATABASE_URL: "postgresql://test.invalid/albert",
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.example",
   ALBERT_PUBLIC_ORIGIN: "https://albert-chi.vercel.app",
@@ -32,6 +34,7 @@ function qualification(overrides = {}) {
       status: "passed",
       publicationHash,
       commit: candidateSha,
+      analyticalProjectRef,
       suites: [{ name: "physical-staging-contract", status: "passed" }],
     },
     model_evaluation_receipt: {
@@ -148,6 +151,7 @@ test("production verification binds active qualification, Luna Max, Vercel, and 
   assert.equal(receipt.status, "passed");
   assert.equal(receipt.candidateSha, candidateSha);
   assert.equal(receipt.publicationHash, publicationHash);
+  assert.equal(receipt.analyticalProjectRef, analyticalProjectRef);
   assert.equal(receipt.web.deploymentId, deploymentId);
   assert.match(receipt.verificationDigest, /^[a-f0-9]{64}$/u);
   assert.doesNotMatch(JSON.stringify(receipt), /never-render-this-token/u);
@@ -173,5 +177,16 @@ test("production verification rejects inactive publications and failed independe
       databaseClientFactory: databaseClientFactory(failedGrade),
     }),
     /human-review gate/u,
+  );
+
+  const wrongCell = qualification();
+  wrongCell.deterministic_receipt.analyticalProjectRef = "qthltvbbgnhprsflmzfj";
+  await assert.rejects(
+    verifySemanticV2Production({
+      source,
+      fetchImpl: fetchFixture(),
+      databaseClientFactory: databaseClientFactory(wrongCell),
+    }),
+    /required analytical project/u,
   );
 });

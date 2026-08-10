@@ -195,6 +195,13 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   const suppressInitialBackfill = parseSuppressedInitialBackfillConnectors(
     source.ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL,
   );
+  const deputyClientId = optionalSecret(source, "DEPUTY_CLIENT_ID");
+  const deputyClientSecret = optionalSecret(source, "DEPUTY_CLIENT_SECRET");
+  if (Boolean(deputyClientId) !== Boolean(deputyClientSecret)) {
+    throw new Error(
+      "DEPUTY_CLIENT_ID and DEPUTY_CLIENT_SECRET must be configured together.",
+    );
+  }
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
     analyticalDatabaseUrl: analytical,
@@ -214,8 +221,8 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     xeroClientId: required(source, "XERO_CLIENT_ID"),
     xeroEnableAdvancedJournals: xeroAdvancedJournals === "true",
     xeroDailyRequestLimit: xeroDailyRequestLimit as 1000 | 5000,
-    deputyClientId: required(source, "DEPUTY_CLIENT_ID"),
-    deputyClientSecret: required(source, "DEPUTY_CLIENT_SECRET"),
+    deputyClientId,
+    deputyClientSecret,
     deputyRedirectUri: redirectValues[2]!,
     // The authorization-only providers are optional at startup: a provider
     // without credentials is simply not offered, and requesting it fails with

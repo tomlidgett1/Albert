@@ -65,6 +65,15 @@ export type ConnectorCreateOptions = Readonly<{ vendorAccountHint?: string | nul
 export class ProductionConnectorFactory implements OAuthConnectorFactory {
   constructor(private readonly config: OAuthConnectorConfig) {}
 
+  isConfigured(provider: Provider): boolean {
+    if (provider === "deputy") {
+      return Boolean(
+        this.config.deputyClientId && this.config.deputyClientSecret,
+      );
+    }
+    return true;
+  }
+
   create(
     provider: Provider,
     vault: WorkerCredentialVault,
@@ -144,6 +153,9 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
         vault,
       });
     }
+    if (!this.isConfigured("deputy")) {
+      throw new Error("oauth_provider_not_configured:deputy");
+    }
     return new DeputyConnector({
       clientId: this.config.deputyClientId,
       clientSecret: this.config.deputyClientSecret,
@@ -169,11 +181,14 @@ export class ProductionConnectorRegistry implements ConnectorRegistry {
   private readonly connectors: ReadonlyMap<Provider, OAuthConnectorPack>;
 
   constructor(factory: ProductionConnectorFactory, vault: WorkerCredentialVault) {
-    this.connectors = new Map<Provider, OAuthConnectorPack>([
+    const connectors: [Provider, OAuthConnectorPack][] = [
       ["lightspeed-r", factory.create("lightspeed-r", vault)],
       ["xero", factory.create("xero", vault)],
-      ["deputy", factory.create("deputy", vault)],
-    ]);
+    ];
+    if (factory.isConfigured("deputy")) {
+      connectors.push(["deputy", factory.create("deputy", vault)]);
+    }
+    this.connectors = new Map(connectors);
   }
 
   get(provider: Provider): OAuthConnectorPack {

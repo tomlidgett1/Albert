@@ -48,3 +48,19 @@ test("active web deployment contract is Vercel and legacy Sites evidence is V1-o
   assert.match(adr, /ChatGPT Sites.*not V2 launch evidence/is);
   assert.match(adr, /Deputy.*not V2 launch evidence/is);
 });
+
+test("the V2 sync runtime does not require unavailable Deputy credentials", () => {
+  const parsed = JSON.parse(contract) as {
+    runtimes: Record<
+      string,
+      { requiredSecretNames: string[]; optionalSecretNames: string[] }
+    >;
+  };
+  const sync = parsed.runtimes["sync-worker"]!;
+  assert.ok(sync.requiredSecretNames.includes("LIGHTSPEED_CLIENT_SECRET"));
+  assert.ok(sync.requiredSecretNames.includes("XERO_CLIENT_ID"));
+  assert.ok(!sync.requiredSecretNames.includes("DEPUTY_CLIENT_ID"));
+  assert.ok(!sync.requiredSecretNames.includes("DEPUTY_CLIENT_SECRET"));
+  assert.ok(sync.optionalSecretNames.includes("DEPUTY_CLIENT_ID"));
+  assert.ok(sync.optionalSecretNames.includes("DEPUTY_CLIENT_SECRET"));
+});

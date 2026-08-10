@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { WorkerCredentialVault } from "../../packages/connector-sdk/src/index.js";
+import {
+  ProductionConnectorFactory,
+  ProductionConnectorRegistry,
+} from "./src/connector-factory.js";
 import { loadSyncWorkerConfig } from "./src/config.js";
 
 const legacyAnonKey = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature";
@@ -58,6 +63,42 @@ test("sync worker neither requires nor loads the Xero webhook signing key", () =
     XERO_WEBHOOK_SIGNING_KEY: "must-remain-gateway-only",
   });
   assert.equal(Object.hasOwn(config, "xeroWebhookSigningKey"), false);
+});
+
+test("Deputy OAuth is optional as one atomic provider while Lightspeed and Xero remain required", () => {
+  const withoutDeputy = { ...valid };
+  delete withoutDeputy.DEPUTY_CLIENT_ID;
+  delete withoutDeputy.DEPUTY_CLIENT_SECRET;
+  const config = loadSyncWorkerConfig(withoutDeputy);
+  assert.equal(config.deputyClientId, "");
+  assert.equal(config.deputyClientSecret, "");
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, DEPUTY_CLIENT_ID: "partial" }),
+    /must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, LIGHTSPEED_CLIENT_ID: "" }),
+    /LIGHTSPEED_CLIENT_ID/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, XERO_CLIENT_ID: "" }),
+    /XERO_CLIENT_ID/u,
+  );
+
+  const factory = new ProductionConnectorFactory(config);
+  const vault = {} as WorkerCredentialVault;
+  assert.equal(factory.isConfigured("deputy"), false);
+  assert.throws(
+    () => factory.create("deputy", vault),
+    /oauth_provider_not_configured:deputy/u,
+  );
+  const registry = new ProductionConnectorRegistry(factory, vault);
+  assert.equal(registry.get("lightspeed-r").id, "lightspeed-r");
+  assert.equal(registry.get("xero").id, "xero");
+  assert.throws(
+    () => registry.get("deputy"),
+    /connector_not_configured:deputy/u,
+  );
 });
 
 test("initial-backfill suppression is opt-in, per connector, and fails closed on typos", () => {
