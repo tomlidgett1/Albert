@@ -40,6 +40,10 @@ const adminValidationReplay = readFileSync(
   "infra/migrations/control-plane/0107_m6_semantic_admin_validation_replay.sql",
   "utf8",
 );
+const releaseQualificationRls = readFileSync(
+  "infra/migrations/control-plane/0108_m6_semantic_release_qualification_rls.sql",
+  "utf8",
+);
 
 test("semantic administration is internal-only and uses immutable draft/publication workflows", () => {
   assert.match(route, /isInternalOperator/u);
@@ -127,6 +131,32 @@ test("semantic validation replay is immutable, exact, and idempotent", () => {
   );
   assert.match(route, /semanticAdminValidationResultSchema\.parse\(data\)/u);
   assert.match(route, /idempotentReplay: persistedValidation\.idempotentReplay/u);
+});
+
+test("release qualification can read only immutable semantic evidence and append its receipt", () => {
+  for (const table of [
+    "semantic_v2_drafts",
+    "semantic_v2_draft_revisions",
+    "semantic_v2_profile_receipts",
+    "semantic_v2_publications",
+  ]) {
+    assert.match(
+      releaseQualificationRls,
+      new RegExp(
+        `ON control_plane\\.${table}[\\s\\S]*?FOR SELECT TO albert_control_migration_owner[\\s\\S]*?USING \\(true\\)`,
+        "u",
+      ),
+    );
+  }
+  assert.match(
+    releaseQualificationRls,
+    /ON control_plane\.semantic_v2_activation_qualifications[\s\S]*?FOR INSERT TO albert_control_migration_owner[\s\S]*?WITH CHECK \(true\)/u,
+  );
+  assert.doesNotMatch(
+    releaseQualificationRls,
+    /(?:anon|authenticated|service_role|albert_semantic_control)/u,
+  );
+  assert.doesNotMatch(releaseQualificationRls, /FOR (?:ALL|UPDATE|DELETE)/u);
 });
 
 test("the admin surface can edit every semantic object contract and version tenant context", () => {
