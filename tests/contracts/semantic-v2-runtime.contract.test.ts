@@ -20,6 +20,7 @@ import {
   compileOperatorInput,
   type SemanticV2ToolExecutor,
 } from "../../services/semantic-query/src/v2-service.js";
+import { assertSemanticV2OpenAISchemaCompatibility } from "../../services/conversation/src/v2-live.js";
 
 const v2Service = readFileSync(
   "services/semantic-query/src/v2-service.ts",
@@ -132,6 +133,10 @@ test("V2 tools expose only semantic workspaces, investigations, results, and gov
       associatedAction: "Review the reorder policy next Monday.",
     }),
   );
+});
+
+test("every V2 model tool and final output compiles to an OpenAI strict schema", () => {
+  assert.doesNotThrow(() => assertSemanticV2OpenAISchemaCompatibility());
 });
 
 test("workspace and investigation evidence mutations are scoped to the current turn", () => {

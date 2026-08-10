@@ -26,6 +26,7 @@ import {
 } from "../../../packages/analytics-v2/src/index.js";
 import {
   SEMANTIC_V2_TOOL_NAMES,
+  parseSemanticV2ToolInput,
   semanticV2ToolInputSchemas,
   type SemanticV2ToolName,
 } from "../../../packages/agent/src/semantic-v2-tools.js";
@@ -114,7 +115,7 @@ const resolvedSubjectV2Schema = z
   })
   .strict();
 
-const finalOutputV2Schema = z
+export const finalOutputV2Schema = z
   .object({
     state: z.enum([
       "verified",
@@ -131,6 +132,30 @@ const finalOutputV2Schema = z
   })
   .strict();
 type FinalOutputV2 = z.infer<typeof finalOutputV2Schema>;
+
+function modelJsonSchemaV2(schema: z.ZodType): Record<string, unknown> {
+  const jsonSchema = z.toJSONSchema(schema, {
+    io: "input",
+  }) as Record<string, unknown>;
+  delete jsonSchema.$schema;
+  return jsonSchema;
+}
+
+function finalOutputTypeV2() {
+  const carrier = tool({
+    name: "albert_semantic_v2_output",
+    description: "Albert Semantic V2 final output contract.",
+    parameters: modelJsonSchemaV2(finalOutputV2Schema) as never,
+    strict: true,
+    execute: async () => ({}),
+  });
+  return Object.freeze({
+    type: "json_schema" as const,
+    name: "albert_semantic_v2_output",
+    strict: true,
+    schema: carrier.parameters as never,
+  });
+}
 
 type ExecutionQueryRecord = Readonly<{
   executionId: string;
@@ -546,7 +571,9 @@ function createV2Tools(): readonly Tool<V2AgentContext>[] {
         tool({
           name,
           description: descriptions[name],
-          parameters: semanticV2ToolInputSchemas[name] as never,
+          parameters: modelJsonSchemaV2(
+            semanticV2ToolInputSchemas[name],
+          ) as never,
           strict: true,
           timeoutMs: name === "execute_workspace_v2" ? 150_000 : 120_000,
           execute: async (input: unknown, runContext: { context: unknown }) => {
@@ -570,9 +597,10 @@ function createV2Tools(): readonly Tool<V2AgentContext>[] {
               label: toolLabel(name),
               detail: operationDetail,
             });
+            const parsedInput = parseSemanticV2ToolInput(name, input);
             const result = await context.semantic.executeV2(
               name,
-              input,
+              parsedInput,
               context,
             );
             await recordToolResult(name, result, context);
@@ -594,6 +622,17 @@ function createV2Tools(): readonly Tool<V2AgentContext>[] {
         } as never) as Tool<V2AgentContext>,
     ),
   );
+}
+
+/**
+ * Fail before any provider request or evaluation-budget reservation when a V2
+ * tool or final-output contract cannot be represented as an OpenAI strict
+ * schema. Constructing the tools and output format performs the same schema
+ * conversion used by the production runner without making a network call.
+ */
+export function assertSemanticV2OpenAISchemaCompatibility(): void {
+  createV2Tools();
+  finalOutputTypeV2();
 }
 
 function buildModelInput(
@@ -993,7 +1032,8 @@ export async function runLiveAlbertV2Turn(
     );
   try {
     const runConfig = buildOpenAIAgentRunConfig(options.preferences);
-    const agent = new Agent<V2AgentContext, typeof finalOutputV2Schema>({
+    const outputType = finalOutputTypeV2();
+    const agent = new Agent<V2AgentContext, typeof outputType>({
       name: "Albert analytical architecture V2",
       instructions: v2Instructions(),
       model: runConfig.model,
@@ -1010,7 +1050,7 @@ export async function runLiveAlbertV2Turn(
         },
       },
       tools: [...createV2Tools()],
-      outputType: finalOutputV2Schema,
+      outputType,
     });
     const runner = new Runner({
       modelProvider: provider,

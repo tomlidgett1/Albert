@@ -124,6 +124,11 @@ test("model-backed runner requires an explicit 200-case budget confirmation", ()
   assert.match(runner, /readiness\.v2PublicationHash !== publicationHash/u);
   assert.match(runner, /openSync\(lockPath, "wx"\)/u);
   assert.match(runner, /Automatic reruns are prohibited/u);
+  assert.ok(
+    runner.indexOf("assertSemanticV2OpenAISchemaCompatibility();") <
+      runner.indexOf('openSync(lockPath, "wx")'),
+    "strict tool/output schema compatibility must pass before the one-time budget is reserved",
+  );
   assert.match(runner, /grade-v2-model-evaluation\.mts/u);
   assert.match(runner, /ALBERT_V2_EVALUATION_HOLDOUT_PATH/u);
   assert.match(runner, /ALBERT_V2_EVALUATION_GOLD_PATH/u);

@@ -223,6 +223,10 @@ if (ownerReviewWaiverPathValue) {
     runId,
   });
 }
+const { assertSemanticV2OpenAISchemaCompatibility } = await import(
+  "../services/conversation/src/v2-live.js"
+);
+assertSemanticV2OpenAISchemaCompatibility();
 mkdirSync(resolve(".albert-agent-qa-out"), { recursive: true });
 const lockPath = resolve(
   ".albert-agent-qa-out",
