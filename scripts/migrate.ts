@@ -242,6 +242,53 @@ async function applyBootstrap(
   process.stdout.write(`bootstrapped ${target.stream}\n`);
 }
 
+async function ensureBootstrapMigrationRoleActivation(
+  client: Client,
+  target: Target,
+  requested: boolean,
+): Promise<void> {
+  if (!requested) return;
+  const access = await client.query<{
+    can_set: boolean;
+    current_user: string;
+    session_user: string;
+  }>(
+    `SELECT pg_has_role(session_user,$1,'SET') AS can_set,
+            current_user,session_user`,
+    [target.defaultRole],
+  );
+  const identity = access.rows[0];
+  if (identity?.can_set) return;
+
+  // Supabase's protected postgres identity is intentionally not a superuser,
+  // so unlike a conventional managed-Postgres administrator it cannot SET a
+  // newly-created NOLOGIN role until membership is explicit. The control
+  // bootstrap already records this same bounded grant. Reconcile it here for
+  // the separately isolated analytical project without changing the immutable
+  // bootstrap checksum or granting any runtime identity additional authority.
+  if (
+    target.stream !== "analytical" ||
+    identity?.current_user !== "postgres" ||
+    identity.session_user !== "postgres"
+  ) {
+    throw new Error(
+      `${target.stream} bootstrap administrator cannot activate ${target.defaultRole}.`,
+    );
+  }
+  await client.query(
+    `GRANT ${quoteIdentifier(target.defaultRole)} TO ${quoteIdentifier(identity.session_user)}`,
+  );
+  const verified = await client.query<{ can_set: boolean }>(
+    "SELECT pg_has_role(session_user,$1,'SET') AS can_set",
+    [target.defaultRole],
+  );
+  if (!verified.rows[0]?.can_set) {
+    throw new Error(
+      `${target.stream} bootstrap administrator still cannot activate ${target.defaultRole}.`,
+    );
+  }
+}
+
 async function applyTarget(
   target: Target,
   environment: NodeJS.ProcessEnv,
@@ -280,6 +327,7 @@ async function applyTarget(
       await assertControlPlaneAdminIdentity(client);
     }
     await applyBootstrap(client, target, bootstrap);
+    await ensureBootstrapMigrationRoleActivation(client, target, bootstrap);
     if (bootstrap && target.stream === "control-plane") {
       // Fresh databases apply the same immutable administrator stream used by
       // upgrades of existing databases. This happens before migration 0035,

@@ -205,6 +205,18 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.match(authorityBoundary, /service_role must not enter the raw Storage policy boundary/u);
   assert.match(runner, /controlPlaneMigrationBody\(migration\)/u);
   assert.match(runner, /managed-service compatibility helpers are missing/u);
+  assert.match(
+    runner,
+    /ensureBootstrapMigrationRoleActivation\(client, target, bootstrap\)/u,
+  );
+  assert.match(
+    runner,
+    /target\.stream !== "analytical"[\s\S]*identity\?\.current_user !== "postgres"[\s\S]*identity\.session_user !== "postgres"/u,
+  );
+  assert.match(
+    runner,
+    /GRANT \$\{quoteIdentifier\(target\.defaultRole\)\} TO \$\{quoteIdentifier\(identity\.session_user\)\}/u,
+  );
   const roleActivation = runner.indexOf("await client.query(`SET ROLE");
   const bridgePreflight = runner.indexOf("const authBridge");
   assert.ok(

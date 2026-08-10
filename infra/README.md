@@ -1,6 +1,8 @@
 # Albert infrastructure
 
-Production uses two Sydney PostgreSQL cells: Supabase for Auth, control, queues, semantic catalogue, and raw Storage; and a separate managed PostgreSQL 17 analytical host.
+Production uses two isolated Sydney Supabase PostgreSQL projects: one for Auth,
+control, queues, semantic governance and raw Storage, and one for analytical
+staging, canonical, mart, evidence and query workloads. See ADR 0079.
 
 For a new environment, enable `pgmq`, `pg_cron`, and `vector` in Supabase, then run the one-time administrator bootstrap:
 
@@ -25,6 +27,9 @@ removes unexpected memberships, and grants exactly one group per credential.
 On managed Supabase it fails closed on any pre-existing privileged login and
 uses only the ordinary role alterations permitted to protected `postgres`;
 dangerous attributes are verified false after every reconciliation.
+For a fresh analytical project, the migration runner also verifies and, only
+for the exact protected `postgres` identity, reconciles the bounded ability to
+activate `albert_migration_owner` before applying any analytical migration.
 The administrator stream also owns Albert's fixed Supabase Auth compatibility
 bridge. Managed `postgres` cannot delegate its non-grantable Auth privileges,
 so immutable legacy migrations redirect only their exact checksum-reviewed Auth

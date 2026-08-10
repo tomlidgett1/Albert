@@ -244,6 +244,14 @@ type SemanticAdminPayload = Readonly<{
       | "changes_requested"
       | "sampled"
       | null;
+    reviewDetails: {
+      contractFingerprint: string;
+      semanticState: string;
+      riskReason: string;
+      summary: string;
+      checks: string[];
+      evidence: string[];
+    };
   }> | null;
   error?: string;
 }>;
@@ -2584,25 +2592,72 @@ export default function SemanticAdminWorkspace({
                 <p>No review objects match these filters.</p>
               ) : (
                 visibleReviewQueue.map((item) => (
-                  <label key={item.objectId} role="listitem">
-                    <input
-                      type="checkbox"
-                      checked={selectedReviewIds.includes(item.objectId)}
-                      onChange={() => toggleReviewSelection(item.objectId)}
-                      aria-label={`Select ${item.objectId}`}
-                    />
-                    <span>
-                      <b>{item.label}</b>
-                      <small>
-                        {item.objectId} · {humanize(item.objectType)}
-                      </small>
-                    </span>
-                    <em>{humanize(item.riskTier)}</em>
-                    <span>
-                      {item.approvalCount}/{item.requiredApprovals} approvals
-                      {item.changesRequested ? " · changes requested" : ""}
-                    </span>
-                  </label>
+                  <article key={item.objectId} role="listitem">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={selectedReviewIds.includes(item.objectId)}
+                        onChange={() => toggleReviewSelection(item.objectId)}
+                        aria-label={`Select ${item.objectId}`}
+                      />
+                      <span>
+                        <b>{item.label}</b>
+                        <small>
+                          {item.objectId} · {humanize(item.objectType)}
+                        </small>
+                      </span>
+                      <em>{humanize(item.riskTier)}</em>
+                      <span>
+                        {item.approvalCount}/{item.requiredApprovals} approvals
+                        {item.changesRequested ? " · changes requested" : ""}
+                      </span>
+                    </label>
+                    <details>
+                      <summary>
+                        Inspect governed contract · {" "}
+                        <code>
+                          {compactHash(
+                            item.reviewDetails.contractFingerprint,
+                          )}
+                        </code>
+                      </summary>
+                      <div>
+                        <p>{item.reviewDetails.summary}</p>
+                        <dl>
+                          <div>
+                            <dt>Semantic state</dt>
+                            <dd>
+                              {humanize(item.reviewDetails.semanticState)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Why this tier</dt>
+                            <dd>{item.reviewDetails.riskReason}</dd>
+                          </div>
+                        </dl>
+                        <section aria-label={`Checks for ${item.objectId}`}>
+                          <b>Contract checks</b>
+                          <ul>
+                            {item.reviewDetails.checks.map((check) => (
+                              <li key={check}>{check}</li>
+                            ))}
+                          </ul>
+                        </section>
+                        <section aria-label={`Evidence for ${item.objectId}`}>
+                          <b>Evidence</b>
+                          {item.reviewDetails.evidence.length ? (
+                            <ul>
+                              {item.reviewDetails.evidence.map((evidence) => (
+                                <li key={evidence}>{evidence}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>No external evidence references were declared.</p>
+                          )}
+                        </section>
+                      </div>
+                    </details>
+                  </article>
                 ))
               )}
             </div>

@@ -707,6 +707,23 @@ function semanticAdminFixture(
             changesRequested: false,
             complete: false,
             currentReviewerDisposition: null,
+            reviewDetails: {
+              contractFingerprint:
+                "c823a4e4b3593e3f67d64df3345fdfb0b8ef81155f9dcf1dff6f2f990686b2d2",
+              semanticState: "verified",
+              riskReason:
+                "Financial semantics can materially change reported money or interpretation.",
+              summary:
+                "Gross margin from governed net sales and cost-of-goods evidence.",
+              checks: [
+                "View and grain: commerce_sales_event · one_sales_or_refund_event",
+                "Authority: operational_sales",
+                'Expression: {"op":"subtract","left":{"op":"measure","measureId":"commerce.net_sales"},"right":{"op":"measure","measureId":"commerce.cogs"}}',
+              ],
+              evidence: [
+                "Contract test: commerce.gross_margin.test_1.fixture",
+              ],
+            },
           },
           {
             objectId: "commerce.net_sales",
@@ -719,6 +736,23 @@ function semanticAdminFixture(
             changesRequested: false,
             complete: false,
             currentReviewerDisposition: null,
+            reviewDetails: {
+              contractFingerprint:
+                "39116526456945781bdc708cddf82f6a2f42a5b272186d1f9056f3f326327aa6",
+              semanticState: "verified",
+              riskReason:
+                "Reusable operational semantics require domain review plus deterministic contract tests.",
+              summary:
+                "Completed sales net of refunds at the governed sales-event grain.",
+              checks: [
+                "View and grain: commerce_sales_event · one_sales_or_refund_event",
+                "Authority: operational_sales",
+                'Expression: {"op":"aggregate","fn":"sum","fieldId":"signed_net_amount_ex_tax"}',
+              ],
+              evidence: [
+                "Contract test: commerce.net_sales.test_1.fixture",
+              ],
+            },
           },
         ]
       : null,

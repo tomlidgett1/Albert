@@ -286,6 +286,25 @@ test("semantic publication review presents an object-aware risk-tiered draft dif
     reviewDialog.getByText(/Tier 1 still requires a second independent reviewer/iu),
   ).toBeVisible();
   await reviewDialog
+    .getByText(/Inspect governed contract/iu)
+    .first()
+    .click();
+  await expect(
+    reviewDialog.getByText(
+      "Financial semantics can materially change reported money or interpretation.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    reviewDialog.getByText(/commerce\.net_sales.*commerce\.cogs/iu),
+  ).toBeVisible();
+  await expect(
+    reviewDialog.getByText(
+      "Contract test: commerce.gross_margin.test_1.fixture",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await reviewDialog
     .getByRole("button", { name: "Select up to 100 visible" })
     .click();
   await reviewDialog

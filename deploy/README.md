@@ -21,7 +21,9 @@ at the end passes.
 Record these decisions in the protected deployment environment before provisioning:
 
 1. A new Supabase project in Sydney (`ap-southeast-2`). The currently linked Tokyo development project is not a valid production target for the V1 residency contract.
-2. A separate managed PostgreSQL 17 provider and Sydney region for the analytical cell. The founding specification deliberately leaves the provider to the operator; do not silently place analytics in Supabase or another region.
+2. A second, isolated Supabase PostgreSQL project in Sydney for the analytical
+   cell, as accepted by ADR 0079. It must never share a project, administrator
+   credential, runtime login or connection budget with the control plane.
 3. Lightspeed Retail **R-Series** registrations. X-Series fails closed because its APIs and semantics are different.
 4. An OpenAI project eligible for Modified Abuse Monitoring or Zero Data Retention, using `https://au.api.openai.com/v1`. Regional storage alone is not the V1 privacy approval.
 5. Xero application certification/capacity and, if enabled, Advanced Journals approval. Keep `XERO_ENABLE_ADVANCED_JOURNALS=false` until both are documented.
@@ -47,7 +49,11 @@ secret deployment material and never belongs in Sites or browser code.
 
 ### Analytical Postgres
 
-Create a private PostgreSQL 17 database in Sydney with encrypted connections, point-in-time recovery, automated backups, deletion protection, and alerts for storage, connections, replication/backup failure, and CPU. The runtime must not share the Supabase database or administrator credential.
+Create the separate analytical Supabase project in Sydney with encrypted
+connections, point-in-time recovery, automated backups, deletion protection,
+and alerts for storage, connections, backup failure and CPU. Albert does not use
+that project's Auth, Storage or Data API. The runtime must not share the control
+project or any administrator credential.
 
 Use direct or pooled endpoints according to the provider, but retain transaction semantics and require TLS. Semantic statements have an application timeout; configure a database-side maximum as a second boundary.
 

@@ -624,6 +624,28 @@ async function loadDraftReviews(loaded: LoadedSemanticDraft) {
 
 type SemanticReviewTier = "tier_1" | "tier_2";
 type SemanticReviewObjectType = "measure" | "relationship" | "topic" | "field";
+type SemanticReviewDetails = Readonly<{
+  contractFingerprint: string;
+  semanticState: string;
+  riskReason: string;
+  summary: string;
+  checks: readonly string[];
+  evidence: readonly string[];
+}>;
+
+function semanticReviewDetails(
+  contract: unknown,
+  input: Omit<SemanticReviewDetails, "contractFingerprint">,
+): SemanticReviewDetails {
+  return Object.freeze({
+    contractFingerprint: createHash("sha256")
+      .update(JSON.stringify(contract))
+      .digest("hex"),
+    ...input,
+    checks: Object.freeze([...input.checks]),
+    evidence: Object.freeze([...input.evidence].slice(0, 12)),
+  });
+}
 
 function semanticReviewQueue(
   document: SemanticRegistryDocumentV2,
@@ -639,6 +661,7 @@ function semanticReviewQueue(
       objectType: SemanticReviewObjectType;
       label: string;
       riskTier: SemanticReviewTier;
+      reviewDetails: SemanticReviewDetails;
     }
   >();
   const add = (
@@ -646,6 +669,7 @@ function semanticReviewQueue(
     objectType: SemanticReviewObjectType,
     label: string,
     riskTier: SemanticReviewTier,
+    reviewDetails: SemanticReviewDetails,
   ) => {
     const existing = requirements.get(objectId);
     if (existing && existing.objectType !== objectType)
@@ -653,7 +677,13 @@ function semanticReviewQueue(
         `Semantic review identity ${objectId} is not globally unique.`,
         409,
       );
-    requirements.set(objectId, { objectId, objectType, label, riskTier });
+    requirements.set(objectId, {
+      objectId,
+      objectType,
+      label,
+      riskTier,
+      reviewDetails,
+    });
   };
 
   for (const measure of document.measures) {
@@ -661,7 +691,28 @@ function semanticReviewQueue(
       ["verified", "derived"].includes(measure.semanticState) &&
       (measure.riskTier === "tier_1" || measure.riskTier === "tier_2")
     )
-      add(measure.id, "measure", measure.label, measure.riskTier);
+      add(
+        measure.id,
+        "measure",
+        measure.label,
+        measure.riskTier,
+        semanticReviewDetails(measure, {
+          semanticState: measure.semanticState,
+          riskReason:
+            measure.riskTier === "tier_1"
+              ? "Financial or cross-grain semantics can materially change reported money or interpretation."
+              : "Reusable operational semantics require domain review plus deterministic contract tests.",
+          summary: measure.description,
+          checks: [
+            `View and grain: ${measure.viewId} · ${measure.grain}`,
+            `Unit and aggregation: ${measure.unit} · ${measure.aggregation}`,
+            `Additivity: ${measure.additivity}`,
+            `Authority: ${measure.authority}`,
+            `Expression: ${JSON.stringify(measure.expression)}`,
+          ],
+          evidence: measure.testIds.map((testId) => `Contract test: ${testId}`),
+        }),
+      );
   }
   for (const relationship of document.relationships) {
     if (["verified", "derived"].includes(relationship.semanticState))
@@ -670,6 +721,20 @@ function semanticReviewQueue(
         "relationship",
         relationship.id,
         "tier_1",
+        semanticReviewDetails(relationship, {
+          semanticState: relationship.semanticState,
+          riskReason:
+            "Join keys, cardinality, optionality, and direction can change grain or inflate analytical results.",
+          summary: `${relationship.fromViewId} joins to ${relationship.toViewId} through governed keys.`,
+          checks: [
+            `Keys: ${relationship.fromFieldId} → ${relationship.toFieldId}`,
+            `Cardinality: ${relationship.cardinality}`,
+            `Optional: ${String(relationship.optional)}`,
+            `Directions: ${relationship.supportedDirections.join(", ")}`,
+            `Temporal behavior: ${relationship.temporalBehavior}`,
+          ],
+          evidence: relationship.evidence,
+        }),
       );
   }
   for (const topic of document.topics) {
@@ -677,12 +742,52 @@ function semanticReviewQueue(
       topic.layer === "composite" &&
       ["verified", "derived"].includes(topic.semanticState)
     )
-      add(topic.id, "topic", topic.label, "tier_1");
+      add(
+        topic.id,
+        "topic",
+        topic.label,
+        "tier_1",
+        semanticReviewDetails(topic, {
+          semanticState: topic.semanticState,
+          riskReason:
+            "Composite Topics align independently aggregated facts across sources and therefore require financial and grain review.",
+          summary: topic.description,
+          checks: [
+            `Default root: ${topic.defaultRootViewId}`,
+            `Exposures: ${topic.viewIds.length} views · ${topic.measureIds.length} measures · ${topic.dimensionIds.length} dimensions`,
+            `Relationships: ${topic.relationshipIds.length}`,
+            `Alignment dimensions: ${topic.alignOnDimensionIds.join(", ") || "none"}`,
+            `Guardrails: ${topic.ambiguityNotes.length} ambiguity notes · ${topic.unsupportedQuestions.length} unsupported-question rules`,
+          ],
+          evidence: topic.sampleQuestions.map(
+            (question) => `Sample question: ${question}`,
+          ),
+        }),
+      );
   }
   for (const source of document.sourceObjects) {
     for (const field of source.fields) {
       if (field.pii || field.disposition === "sensitive_metadata")
-        add(field.id, "field", `${source.label} · ${field.name}`, "tier_1");
+        add(
+          field.id,
+          "field",
+          `${source.label} · ${field.name}`,
+          "tier_1",
+          semanticReviewDetails(field, {
+            semanticState: field.semanticState,
+            riskReason:
+              "Sensitive or identifying source metadata requires explicit classification and exposure review.",
+            summary: field.description,
+            checks: [
+              `Source: ${source.connector} · ${source.id}`,
+              `Mapping version: ${source.mappingVersion}`,
+              `Type and disposition: ${field.dataType} · ${field.disposition}`,
+              `Nullable / primary key: ${String(field.nullable)} / ${String(field.primaryKey)}`,
+              `PII classified: ${String(field.pii)}`,
+            ],
+            evidence: field.evidence,
+          }),
+        );
     }
   }
 

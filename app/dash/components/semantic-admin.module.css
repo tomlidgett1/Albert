@@ -1125,26 +1125,28 @@
 .reviewQueueRows > p {
   padding: 14px;
 }
-.modal .reviewQueueRows > label {
+.reviewQueueRows > article {
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.reviewQueueRows > article:last-child {
+  border-bottom: 0;
+}
+.modal .reviewQueueRows article > label {
   display: grid;
   min-height: 52px;
   grid-template-columns: 18px minmax(260px, 1fr) auto minmax(130px, auto);
   align-items: center;
   gap: 10px;
   margin: 0;
-  border-bottom: 1px solid var(--dash-border-soft);
   padding: 7px 11px;
   cursor: pointer;
 }
-.modal .reviewQueueRows > label:last-child {
-  border-bottom: 0;
-}
-.modal .reviewQueueRows > label > input {
+.modal .reviewQueueRows article > label > input {
   width: 16px;
   height: 16px;
   padding: 0;
 }
-.reviewQueueRows label > span:nth-of-type(1) {
+.reviewQueueRows article > label > span:nth-of-type(1) {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1158,7 +1160,7 @@
   white-space: nowrap;
 }
 .reviewQueueRows small,
-.reviewQueueRows label > span:last-child {
+.reviewQueueRows article > label > span:last-child {
   color: var(--dash-text-faint);
   font-size: calc(8px * var(--text-scale));
 }
@@ -1169,6 +1171,77 @@
   font-size: calc(8px * var(--text-scale));
   font-style: normal;
   padding: 4px 7px;
+}
+.reviewQueueRows details {
+  border-top: 1px solid var(--dash-border-soft);
+  background: var(--dash-surface-soft);
+}
+.reviewQueueRows summary {
+  min-height: var(--dash-control-height);
+  box-sizing: border-box;
+  padding: 10px 12px 10px 39px;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  font-size: calc(9px * var(--text-scale));
+  font-weight: 560;
+}
+.reviewQueueRows summary:focus-visible {
+  border-radius: 8px;
+  outline: 2px solid var(--dash-focus);
+  outline-offset: -3px;
+}
+.reviewQueueRows summary code {
+  color: var(--dash-text-faint);
+  font-size: calc(8px * var(--text-scale));
+}
+.reviewQueueRows details > div {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 13px 39px;
+}
+.reviewQueueRows details p {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: calc(9px * var(--text-scale));
+  line-height: 1.5;
+}
+.reviewQueueRows details dl {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+.reviewQueueRows details dl > div {
+  display: contents;
+}
+.reviewQueueRows details :is(dt, dd) {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: calc(8px * var(--text-scale));
+  line-height: 1.45;
+}
+.reviewQueueRows details dt {
+  color: var(--dash-text-faint);
+  font-weight: 620;
+  text-transform: uppercase;
+}
+.reviewQueueRows details section {
+  min-width: 0;
+}
+.reviewQueueRows details section > b {
+  color: var(--dash-text-muted);
+  font-size: calc(8px * var(--text-scale));
+  text-transform: uppercase;
+}
+.reviewQueueRows details ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--dash-text-muted);
+  font-size: calc(8px * var(--text-scale));
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 .reviewDecisionFields {
   display: grid;
@@ -2005,11 +2078,17 @@
   .reviewDecisionFields .inlineToggle {
     grid-column: auto;
   }
-  .modal .reviewQueueRows > label {
+  .modal .reviewQueueRows article > label {
     grid-template-columns: 18px minmax(0, 1fr) auto;
   }
-  .reviewQueueRows label > span:last-child {
+  .reviewQueueRows article > label > span:last-child {
     grid-column: 2 / -1;
+  }
+  .reviewQueueRows details > div {
+    padding-left: 12px;
+  }
+  .reviewQueueRows summary {
+    padding-left: 12px;
   }
   .modal {
     border-radius: 24px;
