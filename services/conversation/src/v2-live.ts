@@ -138,7 +138,192 @@ function modelJsonSchemaV2(schema: z.ZodType): Record<string, unknown> {
     io: "input",
   }) as Record<string, unknown>;
   delete jsonSchema.$schema;
-  return jsonSchema;
+  return normalizeOpenAIJsonSchemaV2(jsonSchema) as Record<string, unknown>;
+}
+
+const OPERATOR_COLUMN_BINDING_KEYS = Object.freeze([
+  "key",
+  "label",
+  "value",
+  "revenue",
+  "cost",
+  "price",
+  "volume",
+  "period",
+  "grossSales",
+  "discounts",
+  "approvedDiscounts",
+  "returnValue",
+  "soldUnits",
+  "returnedUnits",
+  "cohort",
+  "acquired",
+  "retained",
+  "unavailableDays",
+  "averageDailyUnits",
+  "unitMargin",
+  "availabilityFactor",
+  "orderedUnits",
+  "receivedUnits",
+  "leadTimeDays",
+  "targetLeadTimeDays",
+  "posRevenue",
+  "xeroRevenue",
+  "unmatchedPos",
+  "unmatchedXero",
+  "sales",
+  "bankSettlements",
+  "timingDifference",
+  "fees",
+  "cogs",
+  "operatingExpenses",
+  "baseline",
+  "attainableImprovementRate",
+  "confidence",
+  "implementationCost",
+  "controllability",
+  "constrained",
+  "constraint",
+] as const);
+
+const UNSUPPORTED_OPENAI_SCHEMA_KEYWORDS = new Set([
+  "oneOf",
+  "allOf",
+  "not",
+  "dependentRequired",
+  "dependentSchemas",
+  "if",
+  "then",
+  "else",
+]);
+
+function nullableSchema(type: "string" | "number" | "boolean") {
+  return Object.freeze({
+    anyOf: Object.freeze([
+      Object.freeze({ type }),
+      Object.freeze({ type: "null" }),
+    ]),
+  });
+}
+
+function closedRecordSchema(
+  properties: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    type: "object",
+    properties: Object.freeze({ ...properties }),
+    required: Object.freeze(Object.keys(properties)),
+    additionalProperties: false,
+  });
+}
+
+/**
+ * Zod 4 emits `oneOf` for discriminated unions and JSON-Schema records for
+ * dynamic maps. OpenAI strict Structured Outputs supports nested `anyOf`, but
+ * rejects `oneOf`, defaults, and open/dynamic objects. Lower those constructs
+ * to a closed model-facing schema; the original Zod contract is still applied
+ * again immediately before trusted tool execution.
+ */
+function normalizeOpenAIJsonSchemaV2(
+  value: unknown,
+  path: readonly string[] = [],
+): unknown {
+  if (Array.isArray(value))
+    return value.map((item, index) =>
+      normalizeOpenAIJsonSchemaV2(item, [...path, String(index)]),
+    );
+  if (!value || typeof value !== "object") return value;
+
+  const source = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === "$schema" || key === "default") continue;
+    if (key === "oneOf") {
+      if (source.anyOf !== undefined)
+        throw new Error(
+          `OpenAI schema ${path.join(".") || "<root>"} cannot contain both oneOf and anyOf.`,
+        );
+      normalized.anyOf = normalizeOpenAIJsonSchemaV2(entry, [
+        ...path,
+        "anyOf",
+      ]);
+      continue;
+    }
+    normalized[key] = normalizeOpenAIJsonSchemaV2(entry, [...path, key]);
+  }
+
+  if (
+    normalized.type === "object" &&
+    normalized.additionalProperties &&
+    typeof normalized.additionalProperties === "object"
+  ) {
+    const propertyName = path.at(-1);
+    if (propertyName === "parameters") return closedRecordSchema({});
+    if (propertyName === "columns")
+      return closedRecordSchema(
+        Object.fromEntries(
+          OPERATOR_COLUMN_BINDING_KEYS.map((key) => [
+            key,
+            nullableSchema("string"),
+          ]),
+        ),
+      );
+    if (propertyName === "outcome")
+      return closedRecordSchema({
+        summary: nullableSchema("string"),
+        measuredValue: nullableSchema("number"),
+        unit: nullableSchema("string"),
+        observedAt: nullableSchema("string"),
+      });
+    throw new Error(
+      `OpenAI schema contains an unsupported dynamic object at ${path.join(".") || "<root>"}.`,
+    );
+  }
+  return normalized;
+}
+
+function assertOpenAIJsonSchemaV2(
+  schema: unknown,
+  label: string,
+  path: readonly string[] = [],
+): void {
+  if (Array.isArray(schema)) {
+    schema.forEach((item, index) =>
+      assertOpenAIJsonSchemaV2(item, label, [...path, String(index)]),
+    );
+    return;
+  }
+  if (!schema || typeof schema !== "object") return;
+  const record = schema as Record<string, unknown>;
+  if (path.length === 0 && record.type !== "object")
+    throw new Error(`${label} must have an object root.`);
+  for (const keyword of UNSUPPORTED_OPENAI_SCHEMA_KEYWORDS)
+    if (Object.prototype.hasOwnProperty.call(record, keyword))
+      throw new Error(
+        `${label} contains unsupported ${keyword} at ${path.join(".") || "<root>"}.`,
+      );
+  if (Object.prototype.hasOwnProperty.call(record, "default"))
+    throw new Error(
+      `${label} contains unsupported default at ${path.join(".") || "<root>"}.`,
+    );
+  if (record.type === "object") {
+    const properties =
+      record.properties && typeof record.properties === "object"
+        ? Object.keys(record.properties as Record<string, unknown>)
+        : [];
+    const required = Array.isArray(record.required)
+      ? new Set(record.required)
+      : new Set<unknown>();
+    if (
+      record.additionalProperties !== false ||
+      properties.some((key) => !required.has(key))
+    )
+      throw new Error(
+        `${label} contains a non-strict object at ${path.join(".") || "<root>"}.`,
+      );
+  }
+  for (const [key, entry] of Object.entries(record))
+    assertOpenAIJsonSchemaV2(entry, label, [...path, key]);
 }
 
 function finalOutputTypeV2() {
@@ -631,8 +816,16 @@ function createV2Tools(): readonly Tool<V2AgentContext>[] {
  * conversion used by the production runner without making a network call.
  */
 export function assertSemanticV2OpenAISchemaCompatibility(): void {
-  createV2Tools();
-  finalOutputTypeV2();
+  for (const modelTool of createV2Tools()) {
+    if (modelTool.type !== "function")
+      throw new Error("V2 model tools must use strict function schemas.");
+    assertOpenAIJsonSchemaV2(
+      modelTool.parameters,
+      `V2 tool ${modelTool.name}`,
+    );
+  }
+  const outputType = finalOutputTypeV2();
+  assertOpenAIJsonSchemaV2(outputType.schema, "V2 final output");
 }
 
 function buildModelInput(

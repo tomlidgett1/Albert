@@ -133,6 +133,49 @@ test("V2 tools expose only semantic workspaces, investigations, results, and gov
       associatedAction: "Review the reorder policy next Monday.",
     }),
   );
+  assert.deepEqual(
+    parseSemanticV2ToolInput("create_workspace_v2", {
+      blocks: [
+        {
+          id: "sales",
+          topicIds: ["business.sales_performance"],
+          rootViewId: "lightspeed.sales",
+          dimensionIds: null,
+          measureIds: ["lightspeed.net_sales"],
+          filters: null,
+          time: { range: { type: "current_snapshot" } },
+          comparison: null,
+          sort: null,
+          limit: null,
+          parameters: null,
+        },
+      ],
+    }).blocks[0],
+    {
+      id: "sales",
+      topicIds: ["business.sales_performance"],
+      rootViewId: "lightspeed.sales",
+      dimensionIds: [],
+      measureIds: ["lightspeed.net_sales"],
+      filters: [],
+      time: { range: { type: "current_snapshot" } },
+      sort: [],
+      limit: 100,
+      parameters: {},
+    },
+  );
+  assert.deepEqual(
+    parseSemanticV2ToolInput("apply_workspace_patch_v2", {
+      workspaceId: "workspace",
+      patch: {
+        expectedRevision: 1,
+        operations: [
+          { op: "set_comparison", blockId: "sales", comparison: null },
+        ],
+      },
+    }).patch.operations[0],
+    { op: "set_comparison", blockId: "sales", comparison: null },
+  );
 });
 
 test("every V2 model tool and final output compiles to an OpenAI strict schema", () => {

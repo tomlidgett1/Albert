@@ -275,7 +275,29 @@ export function parseSemanticV2ToolInput<Name extends SemanticV2ToolName>(
   input: unknown,
 ): SemanticV2ToolInput<Name> {
   assertSemanticV2ModelPayloadSafe(input);
-  return semanticV2ToolInputSchemas[name].parse(
-    input,
-  ) as SemanticV2ToolInput<Name>;
+  const schema = semanticV2ToolInputSchemas[name];
+  const direct = schema.safeParse(input);
+  if (direct.success) return direct.data as SemanticV2ToolInput<Name>;
+
+  // OpenAI strict schemas require every property to be present. The SDK
+  // represents optional Zod inputs as nullable required properties, so omit
+  // those null placeholders before reapplying the authoritative Zod schema.
+  // Array nulls remain untouched, and set_comparison:null remains a deliberate
+  // semantic mutation rather than an omitted optional value.
+  const omitNullPlaceholders = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(omitNullPlaceholders);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(record).flatMap(([key, entry]) => {
+        if (
+          entry === null &&
+          !(record.op === "set_comparison" && key === "comparison")
+        )
+          return [];
+        return [[key, omitNullPlaceholders(entry)]];
+      }),
+    );
+  };
+  return schema.parse(omitNullPlaceholders(input)) as SemanticV2ToolInput<Name>;
 }
