@@ -4,6 +4,7 @@
  */
 
 import { ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST } from "./blocking-questions.js";
+import { withWebReleaseIdentity } from "./vercel-runtime.js";
 
 export type RuntimeMode =
   | "web"
@@ -44,6 +45,7 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "LIGHTSPEED_CLIENT_ID",
     "XERO_CLIENT_ID",
     "DEPUTY_CLIENT_ID",
+    "ALBERT_ANALYTICAL_RUNTIME",
   ],
   worker: [
     "SUPABASE_STORAGE_S3_ENDPOINT",
@@ -107,6 +109,7 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "ANALYTICAL_DATABASE_URL",
     "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
     "ALBERT_SEMANTIC_SIGNING_SECRET",
+    "ALBERT_ANALYTICAL_RUNTIME",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
   ],
@@ -471,8 +474,10 @@ function encodedJsonKeyValues(value: string | undefined): readonly string[] {
 
 export function inspectRuntimeEnvironment(
   mode: RuntimeMode,
-  source: Readonly<Record<string, string | undefined>> = process.env,
+  inputSource: Readonly<Record<string, string | undefined>> = process.env,
 ): RuntimeReadiness {
+  const source =
+    mode === "web" ? withWebReleaseIdentity(inputSource) : inputSource;
   const production = source.NODE_ENV === "production";
   const requiredNames = runtimeEnvironmentRequirementNames(mode, production);
   const missing = requiredNames.filter((name) => !source[name]?.trim());
@@ -504,6 +509,21 @@ export function inspectRuntimeEnvironment(
     !["true", "false"].includes(source.ALBERT_OPENAI_TRACING_ENABLED)
   ) {
     invalid.push("ALBERT_OPENAI_TRACING_ENABLED");
+  }
+  if (
+    source.ALBERT_ANALYTICAL_RUNTIME !== undefined &&
+    !["v1", "v2"].includes(source.ALBERT_ANALYTICAL_RUNTIME.trim())
+  ) {
+    invalid.push("ALBERT_ANALYTICAL_RUNTIME");
+  }
+  if (
+    mode === "semantic-query" &&
+    source.ALBERT_ANALYTICAL_RUNTIME?.trim() === "v2" &&
+    !/^[a-f0-9]{64}$/u.test(
+      source.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim() ?? "",
+    )
+  ) {
+    invalid.push("ALBERT_SEMANTIC_V2_PUBLICATION_HASH");
   }
   if (source.ALBERT_TURN_TIMEOUT_MS !== undefined) {
     const timeout = Number(source.ALBERT_TURN_TIMEOUT_MS);

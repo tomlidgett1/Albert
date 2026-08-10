@@ -13,7 +13,8 @@ const execFileAsync = promisify(execFile);
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 const PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/u;
-const SITES_PROJECT_PATTERN = /^appgprj_[a-f0-9]{32}$/u;
+const VERCEL_PROJECT_PATTERN = /^prj_[A-Za-z0-9]{16,}$/u;
+const VERCEL_TEAM_PATTERN = /^team_[A-Za-z0-9]{16,}$/u;
 const FLY_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 const SYDNEY_REGION = "ap-southeast-2";
 const DEFAULT_BRANCH = "main";
@@ -189,9 +190,10 @@ function assertLegacyReleaseDisabled(workflow) {
 }
 
 export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY) {
-  const [releaseBody, authorityBody, dogfoodBody, dogfoodOnboardingBody, vendorBody, ciBody] = await Promise.all([
+  const [releaseBody, authorityBody, semanticV2Body, dogfoodBody, dogfoodOnboardingBody, vendorBody, ciBody] = await Promise.all([
     readFile(path.join(rootDirectory, ".github/workflows/release.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/release-authority.yml"), "utf8"),
+    readFile(path.join(rootDirectory, ".github/workflows/semantic-v2-production.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/dogfood-acceptance.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/dogfood-onboarding-journey.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/vendor-connection-attestor.yml"), "utf8"),
@@ -199,6 +201,7 @@ export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY)
   ]);
   const release = parseWorkflowYaml(releaseBody, ".github/workflows/release.yml");
   const authority = parseWorkflowYaml(authorityBody, ".github/workflows/release-authority.yml");
+  const semanticV2 = parseWorkflowYaml(semanticV2Body, ".github/workflows/semantic-v2-production.yml");
   const dogfood = parseWorkflowYaml(dogfoodBody, ".github/workflows/dogfood-acceptance.yml");
   const dogfoodOnboarding = parseWorkflowYaml(
     dogfoodOnboardingBody,
@@ -208,7 +211,10 @@ export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY)
   const ci = parseWorkflowYaml(ciBody, ".github/workflows/ci.yml");
   assertLegacyReleaseDisabled(release);
   const environments = Object.fromEntries(RELEASE_ENVIRONMENTS.map((entry) => {
-    const workflows = entry.workflow === "authority" ? [authority]
+    const workflows = entry.workflow === "authority"
+      ? entry.name === "production"
+        ? [authority, semanticV2]
+        : [authority]
       : entry.workflow === "dogfood" ? [dogfood, dogfoodOnboarding] : [vendor];
     const derived = workflows.map((workflow) => (
       deriveEnvironmentRequirements(workflow, entry.name, entry.target)
@@ -383,37 +389,44 @@ export function createSupabaseClient(
   });
 }
 
-export function parseSitesInventoryNames(body) {
-  const inventory = { projectId: null, runtimeNames: new Set(), buildNames: new Set() };
+export function parseVercelInventoryNames(body) {
+  const inventory = {
+    projectId: null,
+    teamId: null,
+    runtimeNames: new Set(),
+  };
   for (const rawLine of body.split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     if (line.includes("=")) {
-      throw safeFailure("unsafe_sites_inventory", "Sites inventory must contain names only; assignments are forbidden.");
+      throw safeFailure("unsafe_vercel_inventory", "Vercel inventory must contain names only; assignments are forbidden.");
     }
     const separator = line.indexOf(":");
     if (separator < 1 || line.indexOf(":", separator + 1) !== -1) {
-      throw safeFailure("invalid_sites_inventory", "Sites inventory contains an invalid names-only record.");
+      throw safeFailure("invalid_vercel_inventory", "Vercel inventory contains an invalid names-only record.");
     }
     const kind = line.slice(0, separator);
     const name = line.slice(separator + 1);
-    if (kind === "project" && SITES_PROJECT_PATTERN.test(name)) {
+    if (kind === "project" && VERCEL_PROJECT_PATTERN.test(name)) {
       if (inventory.projectId && inventory.projectId !== name) {
-        throw safeFailure("invalid_sites_inventory", "Sites inventory names more than one project.");
+        throw safeFailure("invalid_vercel_inventory", "Vercel inventory names more than one project.");
       }
       inventory.projectId = name;
+    } else if (kind === "team" && VERCEL_TEAM_PATTERN.test(name)) {
+      if (inventory.teamId && inventory.teamId !== name) {
+        throw safeFailure("invalid_vercel_inventory", "Vercel inventory names more than one team.");
+      }
+      inventory.teamId = name;
     } else if (kind === "runtime" && ENVIRONMENT_NAME_PATTERN.test(name)) {
       inventory.runtimeNames.add(name);
-    } else if (kind === "build" && ENVIRONMENT_NAME_PATTERN.test(name)) {
-      inventory.buildNames.add(name);
     } else {
-      throw safeFailure("invalid_sites_inventory", "Sites inventory contains an invalid names-only record.");
+      throw safeFailure("invalid_vercel_inventory", "Vercel inventory contains an invalid names-only record.");
     }
   }
   return Object.freeze({
     projectId: inventory.projectId,
+    teamId: inventory.teamId,
     runtimeNames: Object.freeze([...inventory.runtimeNames].sort()),
-    buildNames: Object.freeze([...inventory.buildNames].sort()),
   });
 }
 
@@ -755,23 +768,36 @@ async function auditSupabase({ client, projectRef, publicOrigin, findings }) {
   return section;
 }
 
-async function auditSites({ rootDirectory, inventory, findings }) {
+async function auditVercel({ rootDirectory, inventory, findings }) {
   const section = {
     status: "fail",
     projectId: null,
+    teamId: null,
     staticContract: null,
     runtimeInventory: inventory ?? null,
   };
   try {
-    const [hostingBody, runtimeBody] = await Promise.all([
-      readFile(path.join(rootDirectory, ".openai/hosting.json"), "utf8"),
+    const [projectBody, vercelBody, runtimeBody] = await Promise.all([
+      readFile(path.join(rootDirectory, "deploy/vercel-project.json"), "utf8"),
+      readFile(path.join(rootDirectory, "vercel.json"), "utf8"),
       readFile(path.join(rootDirectory, "deploy/runtime-contract.json"), "utf8"),
     ]);
-    const hosting = JSON.parse(hostingBody);
+    const project = JSON.parse(projectBody);
+    const vercel = JSON.parse(vercelBody);
     const runtimeContract = JSON.parse(runtimeBody);
     const web = runtimeContract?.runtimes?.web;
-    if (!SITES_PROJECT_PATTERN.test(hosting?.project_id ?? "") || web?.platform !== "sites") {
-      addFinding(findings, "sites_static_contract_invalid", "sites", "Sites project or web runtime metadata is invalid.");
+    if (
+      !VERCEL_PROJECT_PATTERN.test(project?.projectId ?? "") ||
+      !VERCEL_TEAM_PATTERN.test(project?.teamId ?? "") ||
+      project?.productionBranch !== "main" ||
+      vercel?.framework !== "nextjs" ||
+      vercel?.buildCommand !== "next build --webpack" ||
+      vercel?.installCommand !== "npm ci" ||
+      web?.platform !== "vercel" ||
+      web?.manifest !== "vercel.json" ||
+      web?.project !== "deploy/vercel-project.json"
+    ) {
+      addFinding(findings, "vercel_static_contract_invalid", "vercel", "Vercel project or web runtime metadata is invalid.");
       return section;
     }
     const requiredRuntimeNames = Array.isArray(web.requiredRuntimeValues) ? [...web.requiredRuntimeValues].sort() : [];
@@ -780,41 +806,36 @@ async function auditSites({ rootDirectory, inventory, findings }) {
       ...(Array.isArray(web.forbiddenRuntimeValues) ? web.forbiddenRuntimeValues : []),
       ...(Array.isArray(runtimeContract.globallyForbiddenRuntimeValues) ? runtimeContract.globallyForbiddenRuntimeValues : []),
     ])].sort();
-    const requiredBuildNames = Array.isArray(web.requiredBuildValues) ? [...web.requiredBuildValues].sort() : [];
-    section.projectId = hosting.project_id;
-    section.staticContract = { requiredRuntimeNames, optionalRuntimeNames, forbiddenRuntimeNames, requiredBuildNames };
+    const requiredPlatformNames = Array.isArray(web.requiredPlatformValues) ? [...web.requiredPlatformValues].sort() : [];
+    section.projectId = project.projectId;
+    section.teamId = project.teamId;
+    section.staticContract = { requiredRuntimeNames, optionalRuntimeNames, forbiddenRuntimeNames, requiredPlatformNames };
     if (!inventory) {
-      addFinding(findings, "sites_runtime_inventory_unverified", "sites", "A names-only Sites environment inventory is required.");
+      addFinding(findings, "vercel_runtime_inventory_unverified", "vercel", "A names-only Vercel production environment inventory is required.");
       return section;
     }
     const runtimeSet = new Set(inventory.runtimeNames);
-    const buildSet = new Set(inventory.buildNames);
     const missingRuntimeNames = requiredRuntimeNames.filter((name) => !runtimeSet.has(name));
-    const missingBuildNames = requiredBuildNames.filter((name) => !buildSet.has(name));
-    const forbiddenPresent = forbiddenRuntimeNames.filter((name) => runtimeSet.has(name) || buildSet.has(name));
-    if (inventory.projectId !== hosting.project_id) {
-      addFinding(findings, "sites_project_mismatch", "sites", "The names-only inventory belongs to a different Sites project.");
+    const forbiddenPresent = forbiddenRuntimeNames.filter((name) => runtimeSet.has(name));
+    if (inventory.projectId !== project.projectId || inventory.teamId !== project.teamId) {
+      addFinding(findings, "vercel_project_mismatch", "vercel", "The names-only inventory belongs to a different Vercel project or team.");
     }
     if (missingRuntimeNames.length > 0) {
-      addFinding(findings, "sites_runtime_names_missing", "sites", `Missing required Sites runtime names: ${missingRuntimeNames.join(", ")}.`);
-    }
-    if (missingBuildNames.length > 0) {
-      addFinding(findings, "sites_build_names_missing", "sites", `Missing required Sites build names: ${missingBuildNames.join(", ")}.`);
+      addFinding(findings, "vercel_runtime_names_missing", "vercel", `Missing required Vercel runtime names: ${missingRuntimeNames.join(", ")}.`);
     }
     if (forbiddenPresent.length > 0) {
-      addFinding(findings, "sites_forbidden_names_present", "sites", `Forbidden Sites names are present: ${forbiddenPresent.join(", ")}.`);
+      addFinding(findings, "vercel_forbidden_names_present", "vercel", `Forbidden Vercel names are present: ${forbiddenPresent.join(", ")}.`);
     }
     section.runtimeInventory = {
       ...inventory,
       missingRuntimeNames,
-      missingBuildNames,
       forbiddenNamesPresent: forbiddenPresent,
     };
   } catch (error) {
     if (error instanceof SafeAuditError) throw error;
-    addFinding(findings, "sites_static_contract_unavailable", "sites", "Sites static project or runtime metadata is unavailable.");
+    addFinding(findings, "vercel_static_contract_unavailable", "vercel", "Vercel static project or runtime metadata is unavailable.");
   }
-  section.status = findings.some(({ scope }) => scope === "sites" || scope.startsWith("sites.")) ? "fail" : "pass";
+  section.status = findings.some(({ scope }) => scope === "vercel" || scope.startsWith("vercel.")) ? "fail" : "pass";
   return section;
 }
 
@@ -823,7 +844,7 @@ export async function auditProductionEnvironment({
   repository,
   source = process.env,
   projectRef,
-  sitesInventory = null,
+  vercelInventory = null,
   githubClient = createGithubClient(),
   flyClient = createFlyClient(),
   supabaseClient = null,
@@ -835,7 +856,7 @@ export async function auditProductionEnvironment({
   const selectedProjectRef = projectRef?.trim() || source.ALBERT_CONTROL_PLANE_PROJECT_REF?.trim() || null;
   const selectedSupabaseClient = supabaseClient
     ?? supabaseClientFactory(safeCommandRunner, fetch, source);
-  const [github, fly, supabase, sites] = await Promise.all([
+  const [github, fly, supabase, vercel] = await Promise.all([
     auditGithub({
       client: githubClient,
       repository,
@@ -851,7 +872,7 @@ export async function auditProductionEnvironment({
       publicOrigin: source.ALBERT_PUBLIC_ORIGIN,
       findings,
     }),
-    auditSites({ rootDirectory, inventory: sitesInventory, findings }),
+    auditVercel({ rootDirectory, inventory: vercelInventory, findings }),
   ]);
   findings.sort((left, right) => `${left.scope}:${left.code}`.localeCompare(`${right.scope}:${right.code}`));
   return Object.freeze({
@@ -859,7 +880,7 @@ export async function auditProductionEnvironment({
     generatedAt: now.toISOString(),
     audit: "albert-production-environment",
     ok: findings.length === 0,
-    sections: Object.freeze({ github, fly, supabase, sites }),
+    sections: Object.freeze({ github, fly, supabase, vercel }),
     findings: Object.freeze(findings),
   });
 }
@@ -909,7 +930,7 @@ export function formatHumanSummary(result) {
     `GitHub: ${result.sections.github.status}; ${result.sections.github.environments.filter(({ exists }) => exists).length}/${RELEASE_ENVIRONMENTS.length} environments available`,
     `Fly: ${result.sections.fly.status}; ${result.sections.fly.apps.filter(({ accessible }) => accessible).length}/${FLY_APP_VARIABLES.length} apps accessible`,
     `Supabase: ${result.sections.supabase.status}; region=${result.sections.supabase.region ?? "unverified"}; status=${result.sections.supabase.projectStatus ?? "unverified"}; auth=${result.sections.supabase.authPolicy?.status ?? "unverified"}`,
-    `Sites: ${result.sections.sites.status}; project=${result.sections.sites.projectId ?? "unverified"}`,
+    `Vercel: ${result.sections.vercel.status}; project=${result.sections.vercel.projectId ?? "unverified"}`,
   ];
   if (result.findings.length > 0) {
     lines.push("Findings:");
@@ -925,7 +946,7 @@ function usage() {
     "Options:",
     "  --repo <owner/repository>              GitHub repository (defaults to gh repo view)",
     "  --supabase-project-ref <20-char-ref>   Selected control-plane project metadata",
-    "  --sites-inventory-names <path>         Names-only Sites inventory proof",
+    "  --vercel-inventory-names <path>        Names-only Vercel production inventory proof",
     "  --github-authority-only                Audit only live GitHub release authority controls",
     "  --help                                 Show this help",
     "",
@@ -937,7 +958,7 @@ function parseArguments(args) {
   const options = {
     repository: null,
     projectRef: null,
-    sitesInventoryPath: null,
+    vercelInventoryPath: null,
     githubAuthorityOnly: false,
     help: false,
   };
@@ -946,7 +967,7 @@ function parseArguments(args) {
     if (argument === "--help" || argument === "-h") options.help = true;
     else if (argument === "--repo") options.repository = args[++index] ?? null;
     else if (argument === "--supabase-project-ref") options.projectRef = args[++index] ?? null;
-    else if (argument === "--sites-inventory-names") options.sitesInventoryPath = args[++index] ?? null;
+    else if (argument === "--vercel-inventory-names") options.vercelInventoryPath = args[++index] ?? null;
     else if (argument === "--github-authority-only") options.githubAuthorityOnly = true;
     else throw safeFailure("invalid_argument", "Production audit received an unsupported argument.");
   }
@@ -978,16 +999,16 @@ async function main() {
       if (!result.ok) process.exitCode = 1;
       return;
     }
-    let sitesInventory = null;
-    const inventoryPath = options.sitesInventoryPath ?? process.env.ALBERT_SITES_ENVIRONMENT_NAMES_FILE?.trim();
-    if (inventoryPath) sitesInventory = parseSitesInventoryNames(await readFile(path.resolve(inventoryPath), "utf8"));
+    let vercelInventory = null;
+    const inventoryPath = options.vercelInventoryPath ?? process.env.ALBERT_VERCEL_ENVIRONMENT_NAMES_FILE?.trim();
+    if (inventoryPath) vercelInventory = parseVercelInventoryNames(await readFile(path.resolve(inventoryPath), "utf8"));
     const projectRef = options.projectRef
       ?? process.env.ALBERT_CONTROL_PLANE_PROJECT_REF?.trim()
       ?? await localLinkedProjectRef(ROOT_DIRECTORY);
     result = await auditProductionEnvironment({
       repository: options.repository ?? process.env.GITHUB_REPOSITORY?.trim(),
       projectRef,
-      sitesInventory,
+      vercelInventory,
     });
   } catch (error) {
     const code = error instanceof SafeAuditError ? error.code : "audit_failed";
@@ -1001,7 +1022,7 @@ async function main() {
         github: { status: "fail", environments: [] },
         fly: { status: "fail", apps: [] },
         supabase: { status: "fail", region: null, projectStatus: null, authPolicy: null },
-        sites: { status: "fail", projectId: null },
+        vercel: { status: "fail", projectId: null, teamId: null },
       },
       findings: [{ code, scope: "audit", message }],
     };

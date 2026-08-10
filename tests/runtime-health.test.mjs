@@ -35,6 +35,7 @@ const webEnvironment = Object.freeze({
   LIGHTSPEED_CLIENT_ID: "lightspeed",
   XERO_CLIENT_ID: "xero",
   DEPUTY_CLIENT_ID: "deputy",
+  ALBERT_ANALYTICAL_RUNTIME: "v1",
   ALBERT_BUILD_SHA: "a".repeat(40),
   ALBERT_SERVICE_VERSION: "a".repeat(40),
   ALBERT_DEPLOYMENT_ID: "release-1",
@@ -60,7 +61,10 @@ const productionWebEnvironment = Object.freeze({
 test("runtime requirements match each production process boundary", () => {
   assert.deepEqual(
     [...runtimeEnvironmentRequirementNames("web", true)].sort(),
-    [...deploymentContract.runtimes.web.requiredRuntimeValues].sort(),
+    [
+      ...deploymentContract.runtimes.web.requiredRuntimeValues,
+      ...Object.keys(deploymentContract.runtimes.web.platformValueAliases),
+    ].sort(),
   );
   assert.equal(inspectRuntimeEnvironment("web", webEnvironment).ready, true);
   const semantic = inspectRuntimeEnvironment("semantic-query", {
@@ -69,6 +73,7 @@ test("runtime requirements match each production process boundary", () => {
     ALBERT_SEMANTIC_METADATA_DATABASE_URL:
       "postgresql://semantic-metadata.invalid/albert",
     ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(32),
+    ALBERT_ANALYTICAL_RUNTIME: "v1",
     OPENAI_API_KEY: "test-only",
     OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   });
@@ -190,6 +195,7 @@ test("Anthropic analytics requires the approved AU Bedrock boundary in productio
       "postgresql://albert_anthropic_control_runtime.abcdefghijklmnopqrst:secret@control.example/postgres?sslmode=verify-full",
     ALBERT_ANTHROPIC_SIGNING_SECRET: "a".repeat(32),
     ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(32),
+    ALBERT_ANALYTICAL_RUNTIME: "v1",
     SEMANTIC_QUERY_SERVICE_URL: "https://semantic.example",
     ALBERT_SERVICE_VERSION: "a".repeat(40),
     ALBERT_DEPLOYMENT_ID: "release-1",
@@ -357,6 +363,7 @@ test("production web and semantic runtimes bind Sydney, AU data residency, live 
     ALBERT_SEMANTIC_METADATA_DATABASE_URL:
       "postgresql://albert_semantic_metadata_runtime:secret@analytics.example/postgres?sslmode=verify-full",
     ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(32),
+    ALBERT_ANALYTICAL_RUNTIME: "v1",
     OPENAI_API_KEY: "test-only",
     OPENAI_BASE_URL: "https://au.api.openai.com/v1",
     ALBERT_CONTROL_PLANE_REGION: "ap-southeast-2",
@@ -472,7 +479,7 @@ test("web readiness rejects runtime relabelling and mixed service deployments", 
           ? "b".repeat(40)
           : "a".repeat(40),
         deploymentId: String(input).includes("diagnostic")
-          ? "older-release"
+          ? "invalid deployment id"
           : "release-1",
       });
     },

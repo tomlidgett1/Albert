@@ -63,7 +63,10 @@ test("the authenticated client contains only implemented V1 workspaces", () => {
 
 test("fixture analytics fail closed in production and are not a public route", () => {
   assert.match(conversationRoute, /ALBERT_CONVERSATION_RUNTIME \?\? "live"/u);
-  assert.match(conversationRoute, /process\.env\.NODE_ENV === "production"[\s\S]*inspectRuntimeEnvironment\("web"\)[\s\S]*!readiness\.ready/u);
+  assert.match(
+    conversationRoute,
+    /process\.env\.NODE_ENV === "production"[\s\S]*inspectRuntimeEnvironment\([\s\S]*"web",[\s\S]*withWebReleaseIdentity\(process\.env\)[\s\S]*!readiness\.ready/u,
+  );
   assert.match(
     conversationRoute,
     /process\.env\.NODE_ENV === "production" \|\| process\.env\.ALBERT_ALLOW_FIXTURE_RUNTIME !== "true"/u,

@@ -6,6 +6,10 @@ dirty development worktree, never place secrets or the hidden holdout in the
 repository, and never run the Luna evaluation until every deterministic gate
 has passed for the exact commit and publication.
 
+ADR 0078 is also authoritative: V2 deploys the web application on Vercel and
+uses only Lightspeed/Xero qualification. The legacy V1 protected-dogfood Sites
+envelope and Deputy onboarding journey are not V2 launch evidence.
+
 ## 1. Freeze the release identity
 
 1. Review and commit the intended V2 change set on a release branch.
@@ -160,6 +164,18 @@ must report:
 - the expected `v2PublicationHash`
 
 Keep customer turns on V1. There is no within-answer fallback from V2 to V1.
+
+Deploy the web candidate through the Git-connected Vercel project. Confirm
+system environment variables are exposed and collect candidate-bound metadata:
+
+```sh
+npm run provenance:vercel > "$VERCEL_PROVENANCE_RECEIPT"
+```
+
+The collector must prove one ready production deployment for the exact commit,
+from protected `main`, in the project/team recorded by
+`deploy/vercel-project.json`, owning `ALBERT_PUBLIC_ORIGIN`. Never use a mutable
+`ALBERT_SERVICE_VERSION` value as Vercel deployment proof.
 
 ## 7. Spend the one-time Luna budget
 

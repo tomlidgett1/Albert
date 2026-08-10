@@ -42,6 +42,9 @@ export async function startSemanticServiceFromEnvironment(environment:NodeJS.Pro
 
 async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEnv):Promise<SemanticServiceComposition>{
   const pg=await loadPg();
+  const analyticalRuntime=analyticalRuntimeRouteV2(environment);
+  const v2PublicationHash=environment.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim();
+  if(analyticalRuntime==="v2"&&!/^[a-f0-9]{64}$/u.test(v2PublicationHash??""))throw new Error("ALBERT_SEMANTIC_V2_PUBLICATION_HASH must pin an exact publication when V2 is enabled.");
   const analyticalDatabaseUrl=required(environment,"ANALYTICAL_DATABASE_URL");
   const controlPlanePool=guardPool(new pg.Pool({connectionString:required(environment,"CONTROL_PLANE_DATABASE_URL"),max:integerEnvironment(environment.ALBERT_CONTROL_PLANE_POOL_SIZE,4),application_name:"albert-semantic-control"}),"control_plane");
   const analyticalReadPool=guardPool(new pg.Pool({connectionString:analyticalDatabaseUrl,max:integerEnvironment(environment.ALBERT_ANALYTICAL_READ_POOL_SIZE,10),application_name:"albert-semantic-read"}),"analytical_read");
@@ -62,8 +65,8 @@ async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEn
       promotionRelayTenantBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_TENANT_BATCH_SIZE,10),
       promotionRelayCandidateBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_CANDIDATE_BATCH_SIZE,20),
       promotionRelayLeaseSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_LEASE_SECONDS,90),
-      analyticalRuntime:analyticalRuntimeRouteV2(environment),
-      ...(environment.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim()?{v2PublicationHash:environment.ALBERT_SEMANTIC_V2_PUBLICATION_HASH.trim()}:{}),
+      analyticalRuntime,
+      ...(v2PublicationHash?{v2PublicationHash}:{}),
     });
   }catch(error){await Promise.all([controlPlanePool.end?.(),analyticalReadPool.end?.(),semanticMetadataPool.end?.()]);throw error;}
 }

@@ -106,7 +106,10 @@ test("activation is bound to the exact publication and full release commit after
     migration,
     /WHERE publication_hash=p_publication_hash AND commit_sha=p_commit_sha AND status='passed'/u,
   );
-  assert.match(adminRoute, /ALBERT_RELEASE_SHA/u);
+  assert.match(
+    adminRoute,
+    /resolveWebReleaseIdentity\(process\.env\)\.releaseSha/u,
+  );
   assert.match(adminRoute, /\^\[a-f0-9\]\{40\}\$/u);
   assert.match(
     releaseQualifier,

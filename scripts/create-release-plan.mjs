@@ -19,6 +19,7 @@ const MAX_SURFACE_BYTES = 256 * 1024 * 1024;
 
 export const RELEASE_AUTHORITY_SURFACE_PATHS = Object.freeze([
   ".github/workflows/ci.yml",
+  ".github/workflows/semantic-v2-production.yml",
   "Dockerfile.services",
   "connectors",
   "contracts",

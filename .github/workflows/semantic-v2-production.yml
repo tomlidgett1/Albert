@@ -1,0 +1,90 @@
+name: Verify Semantic V2 production cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact protected-main commit deployed to Vercel and Fly
+        required: true
+        type: string
+      publication_hash:
+        description: Exact active Semantic Registry V2 publication
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: albert-semantic-v2-production
+  cancel-in-progress: false
+
+env:
+  ALBERT_RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+  ALBERT_SEMANTIC_V2_PUBLICATION_HASH: ${{ inputs.publication_hash }}
+  ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
+  ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
+
+jobs:
+  verify:
+    name: semantic-v2-production
+    if: github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: authority
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: authority/package-lock.json
+      - name: Require the immutable signed Semantic V2 authority
+        working-directory: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SIGNER_EMAIL: ${{ vars.ALBERT_RELEASE_AUTHORITY_SIGNER_EMAIL }}
+        run: |
+          node scripts/assert-semantic-v2-production-authority.mjs
+          test -n "$EXPECTED_SIGNER_EMAIL"
+          tag_name="${GITHUB_REF#refs/tags/}"
+          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag_name")"
+          tag_object_sha="$(jq -r '.object.sha' <<<"$ref_json")"
+          test "$(jq -r '.object.type' <<<"$ref_json")" = tag
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          test "$(jq -r '.tag' <<<"$tag_json")" = "$tag_name"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.verification.verified' <<<"$tag_json")" = true
+          test "$(jq -r '.verification.reason' <<<"$tag_json")" = valid
+          test "$(jq -r '.tagger.email' <<<"$tag_json")" = "$EXPECTED_SIGNER_EMAIL"
+      - name: Require the exact protected-main candidate without executing it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+      - name: Install immutable authority dependencies
+        working-directory: authority
+        run: npm ci --ignore-scripts
+      - name: Verify exact active V2 qualification and deployed runtimes
+        working-directory: authority
+        env:
+          CONTROL_PLANE_ADMIN_DATABASE_URL: ${{ secrets.CONTROL_PLANE_ADMIN_DATABASE_URL }}
+          SEMANTIC_QUERY_SERVICE_URL: ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+          ALBERT_PUBLIC_ORIGIN: ${{ vars.ALBERT_PUBLIC_ORIGIN }}
+          ALBERT_VERCEL_READ_TOKEN: ${{ secrets.ALBERT_VERCEL_READ_TOKEN }}
+          ALBERT_VERCEL_PROJECT_ID: ${{ vars.ALBERT_VERCEL_PROJECT_ID }}
+          ALBERT_VERCEL_TEAM_ID: ${{ vars.ALBERT_VERCEL_TEAM_ID }}
+          ALBERT_VERCEL_PROJECT_NAME: ${{ vars.ALBERT_VERCEL_PROJECT_NAME }}
+          ALBERT_VERCEL_PRODUCTION_BRANCH: main
+        run: node scripts/verify-semantic-v2-production.mjs > "$RUNNER_TEMP/semantic-v2-production.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: semantic-v2-production-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/semantic-v2-production.json
+          if-no-files-found: error
+          retention-days: 90

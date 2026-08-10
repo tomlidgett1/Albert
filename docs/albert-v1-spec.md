@@ -8,6 +8,12 @@ August 2026. This document is the complete context for building Albert v1. It is
 > signed read-only execution remain constitutional. In V2 the model selects
 > semantic objects and analytical operations; trusted code alone constructs
 > executable SQL. V1 remains available only as the bounded migration rollback.
+>
+> **Deployment and V2 release authority.** ADR 0078 makes the Git-connected
+> Vercel Next.js project the production web runtime. Vercel's immutable Git and
+> deployment system identities bind the web bundle to a release; the earlier
+> ChatGPT Sites path is legacy V1 history. V2 release evidence covers only real
+> Lightspeed and Xero data and cannot require or claim Deputy qualification.
 
 **Initial build scope: three connectors (Lightspeed Retail R-Series, Xero, Deputy), the Supabase control plane, and the complete semantic operating system underneath them.** The architecture is designed for 150+ connectors and 20,000 tenants; the initial build implements the final boundaries with the simplest correct implementation behind each.
 
@@ -78,7 +84,7 @@ These are constitutional. Any implementation choice that contradicts them is wro
                   │ answer artefacts | identity review tasks | semantic    │
                   │ inbox | audit log | placement registry (cell 01)       │
                   └────────────────────────────────────────────────────────┘
-web app ─► conversation service ─► agent runtime ─► semantic query service ─► analytical Postgres (cell 01)
+Vercel web app ─► conversation service ─► agent runtime ─► semantic query service ─► analytical Postgres (cell 01)
                                                                               schemas: source_lightspeed |
                                                                               source_xero | source_deputy |
                                                                               core | mart | quality
@@ -88,6 +94,10 @@ webhook gateway ─► job queue (pg-boss, control plane) ─► sync workers
 ```
 
 - **Modular monolith plus background workers**, TypeScript throughout, one repository. The web/API app and the workers share modules and deploy as separate processes. The web app is the existing /dash application: every surface in this specification (chat, onboarding, readiness, identity review, and the admin console) is built inside it, from its established component library and design principles. Never introduce a second design system.
+- **Web deployment:** the Next.js web/API surface deploys through the pinned
+  Vercel project from protected `main`. Vercel system commit/deployment identity
+  is authoritative; a mutable environment value cannot relabel a deployment.
+  Fly remains the runtime for the separately built service processes.
 - **Control plane:** the existing Supabase project (Sydney). Supabase Auth for users. No substantial source or analytical data lives here.
 - **Analytical database:** a separate Postgres database from the control plane (a second Supabase project in Sydney is acceptable; any managed Postgres is; the requirement is workload separation plus the role model in section 8). Ingestion and analytical queries must never contend with login and chat.
 - **Raw payloads:** a Supabase Storage bucket (`raw-payloads`), S3-compatible, encrypted, immutable, accessed by workers via service credentials only. Keying: `tenant/{tenant_id}/connection/{connection_id}/stream/{stream}/date/{yyyy-mm-dd}/batch-{ulid}.jsonl.gz`.

@@ -2,6 +2,7 @@ import { ulid } from "ulid";
 import { z } from "zod";
 import { normalizeAgentPreferences } from "@/packages/shared/src";
 import { inspectRuntimeEnvironment } from "@/packages/config/src/env";
+import { withWebReleaseIdentity } from "@/packages/config/src/vercel-runtime";
 import { ALBERT_PREFERENCE_OPTION_IDS } from "@/packages/agent/src/semantic-tools";
 import { meterOpenAIUsage, toModelUsageRpcPayload } from "@/packages/usage-metering/src";
 import {
@@ -279,7 +280,10 @@ export async function POST(request: Request) {
   if (configuredRuntime !== "live") return jsonError("Unknown conversation runtime configuration.", 503, correlationId);
 
   if (process.env.NODE_ENV === "production") {
-    const readiness = inspectRuntimeEnvironment("web");
+    const readiness = inspectRuntimeEnvironment(
+      "web",
+      withWebReleaseIdentity(process.env),
+    );
     if (!readiness.ready) {
       logger.error("conversation.production_boundary_invalid", {
         missing: readiness.missing,

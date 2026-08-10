@@ -1,5 +1,12 @@
 # Albert production runbook
 
+> **V2 authority:** ADR 0078 supersedes the web-platform and launch-evidence
+> portions of this V1 runbook. The production web runtime is Vercel and the V2
+> cutover is gated by the reviewed Lightspeed/Xero publication, deterministic
+> qualification, the sealed 200-case Luna Max evaluation, active-publication
+> receipt, and exact Vercel/Fly readiness. Sections describing ChatGPT Sites or
+> a mandatory Deputy dogfood connection apply only to the V1 rollback path.
+
 This is a desired-state provisioning and release runbook. The repository does
 not prove that any Supabase project, Fly app, Sites release, GitHub environment,
 attestor, or production cell currently exists or is live. Only a passing remote
@@ -581,13 +588,13 @@ app name variables `FLY_SEMANTIC_APP`, `FLY_SYNC_APP`, `FLY_TRANSFORM_APP`,
 `FLY_SYNC_AUTOSCALER_APP`, `FLY_TRANSFORM_AUTOSCALER_APP`, and
 `FLY_VENDOR_ATTESTOR_APP`.
 
-Export a names-only Sites inventory from the production Sites project through
-the Sites environment UI or API. The file is deliberately not an env file and
+Export a names-only Vercel inventory from the production Vercel project through
+the Vercel API. The file is deliberately not an env file and
 must use one record per line; assignments and values are rejected:
 
 ```text
-project:appgprj_6a6da1d589608191b95650ffb3aad67f
-build:ALBERT_BUILD_SHA
+project:prj_l5faWCnDWxw7QB7nBWgr9zaKFxuL
+team:team_wx7OlK7ikXNuFcOSaewRxonA
 runtime:NEXT_PUBLIC_SUPABASE_URL
 runtime:NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 # Continue with every installed runtime name; never include a value.
@@ -599,7 +606,7 @@ Then run:
 npm run --silent audit:production-environment -- \
   --repo tomlidgett1/Albert \
   --supabase-project-ref <sydney-control-plane-ref> \
-  --sites-inventory-names <absolute-path-to-names-only-inventory>
+  --vercel-inventory-names <absolute-path-to-names-only-inventory>
 ```
 
 The command derives required GitHub secret and variable names directly from the

@@ -426,37 +426,47 @@ for (const [name, metricPrefix, targetFloor] of [
   }
 }
 
-const hosting = JSON.parse(
-  await readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
-);
+const [vercelManifest, vercelProject] = await Promise.all([
+  readFile(new URL("../vercel.json", import.meta.url), "utf8").then(JSON.parse),
+  readFile(new URL("../deploy/vercel-project.json", import.meta.url), "utf8").then(JSON.parse),
+]);
 assert.deepEqual(
-  Object.keys(hosting).sort(),
-  ["d1", "project_id", "r2"],
-  "Sites hosting metadata must not contain runtime configuration.",
+  vercelManifest,
+  {
+    $schema: "https://openapi.vercel.sh/vercel.json",
+    framework: "nextjs",
+    buildCommand: "next build --webpack",
+    installCommand: "npm ci",
+  },
+  "Vercel project configuration drifted.",
 );
-assert.match(
-  hosting.project_id,
-  /^appgprj_[a-f0-9]{32}$/,
-  "Sites project ID is invalid.",
-);
-assert.equal(
-  hosting.d1,
-  null,
-  "Albert must not attach a second control-plane database through Sites D1.",
-);
-assert.equal(
-  hosting.r2,
-  null,
-  "Albert raw payloads must remain in governed Supabase Storage, not Sites R2.",
-);
+assert.equal(vercelProject.schemaVersion, 1);
+assert.match(vercelProject.projectId, /^prj_[A-Za-z0-9]{16,}$/u);
+assert.match(vercelProject.teamId, /^team_[A-Za-z0-9]{16,}$/u);
+assert.equal(vercelProject.projectName, "albert");
+assert.equal(vercelProject.productionBranch, "main");
 
 const web = contract.runtimes.web;
-assert.equal(web.platform, "sites");
-assert.equal(web.manifest, ".openai/hosting.json");
-assert.equal(web.buildCommand, "npm run build");
-assert.equal(web.artifact, "dist/server/index.js");
+assert.equal(web.platform, "vercel");
+assert.equal(web.manifest, "vercel.json");
+assert.equal(web.project, "deploy/vercel-project.json");
+assert.equal(web.buildCommand, "next build --webpack");
+assert.equal(web.artifact, ".next/BUILD_ID");
 assert.equal(web.healthPath, "/api/health");
-assert.deepEqual(web.requiredBuildValues, ["ALBERT_BUILD_SHA"]);
+assert.deepEqual(web.requiredBuildValues, []);
+assert.deepEqual(web.requiredPlatformValues, [
+  "VERCEL",
+  "VERCEL_ENV",
+  "VERCEL_DEPLOYMENT_ID",
+  "VERCEL_PROJECT_ID",
+  "VERCEL_GIT_PROVIDER",
+  "VERCEL_GIT_COMMIT_REF",
+  "VERCEL_GIT_COMMIT_SHA",
+]);
+assert.deepEqual(web.platformValueAliases, {
+  ALBERT_SERVICE_VERSION: "VERCEL_GIT_COMMIT_SHA",
+  ALBERT_DEPLOYMENT_ID: "VERCEL_DEPLOYMENT_ID",
+});
 assert.ok(web.requiredRuntimeValues.includes("ALBERT_ALLOW_FIXTURE_RUNTIME"));
 assert.ok(
   web.requiredRuntimeValues.includes(
@@ -474,7 +484,9 @@ assert.ok(
 assert.ok(
   web.requiredRuntimeValues.includes("ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET"),
 );
-assert.ok(web.requiredRuntimeValues.includes("ALBERT_SERVICE_VERSION"));
+assert.ok(web.requiredRuntimeValues.includes("ALBERT_ANALYTICAL_RUNTIME"));
+assert.ok(!web.requiredRuntimeValues.includes("ALBERT_SERVICE_VERSION"));
+assert.ok(!web.requiredRuntimeValues.includes("ALBERT_DEPLOYMENT_ID"));
 assert.ok(web.forbiddenRuntimeValues.includes("CONTROL_PLANE_DATABASE_URL"));
 assert.ok(
   web.forbiddenRuntimeValues.includes(
@@ -550,11 +562,7 @@ assert.match(
   /__ALBERT_SERVICE_BUILD_SHA__:\s*JSON\.stringify\(buildSha\)/u,
   "Service bundles must receive a compile-time code identity.",
 );
-assert.match(
-  packageJson.scripts.build,
-  /vinext build/u,
-  "Sites requires the production web build.",
-);
+assert.equal(vercelManifest.buildCommand, web.buildCommand);
 for (const { command } of Object.values(services)) {
   const artifact = command.replace(/^services\//u, "").replace(/\.js$/u, "");
   assert.match(
@@ -622,11 +630,11 @@ assert.match(webHealth, /status:\s*readiness\.ready\s*\?\s*200\s*:\s*503/u);
 assert.match(
   webHealth,
   /releaseSha/u,
-  "Sites health must identify the exact release SHA.",
+  "Vercel health must identify the exact release SHA.",
 );
 assert.match(
   nextConfig,
-  /process\.env\.GITHUB_SHA[\s\S]*process\.env\.ALBERT_BUILD_SHA/u,
+  /process\.env\.VERCEL === "1"[\s\S]*process\.env\.VERCEL_GIT_COMMIT_SHA[\s\S]*process\.env\.GITHUB_SHA[\s\S]*process\.env\.ALBERT_BUILD_SHA/u,
 );
 assert.match(
   nextConfig,
@@ -635,17 +643,17 @@ assert.match(
 assert.match(
   webDependencyHealth,
   /process\.env\.ALBERT_BUILD_SHA/u,
-  "Sites health must report the compile-time bundle identity.",
+  "Vercel health must report the compile-time bundle identity.",
 );
 assert.match(
   webDependencyHealth,
   /buildSha === runtimeSha/u,
-  "Sites readiness must reject runtime relabelling of an old bundle.",
+  "Vercel readiness must reject runtime relabelling of an old bundle.",
 );
 assert.match(
   webDependencyHealth,
-  /readiness\.releaseSha === expectedSha[\s\S]*readiness\.deploymentId === expectedDeploymentId/u,
-  "Sites readiness must bind dependency code and deployment identity.",
+  /readiness\.releaseSha === expectedSha[\s\S]*typeof readiness\.deploymentId === "string"/u,
+  "Vercel readiness must bind dependency code and require each platform deployment identity.",
 );
 assert.match(
   webProxy,

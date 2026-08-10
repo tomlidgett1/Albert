@@ -2,7 +2,11 @@ import type { NextConfig } from "next";
 
 const publicSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const declaredBuildSha = (
-  process.env.GITHUB_SHA?.trim() || process.env.ALBERT_BUILD_SHA?.trim() || ""
+  process.env.VERCEL === "1"
+    ? process.env.VERCEL_GIT_COMMIT_SHA?.trim() || ""
+    : process.env.GITHUB_SHA?.trim() ||
+      process.env.ALBERT_BUILD_SHA?.trim() ||
+      ""
 ).toLowerCase();
 const embeddedBuildSha = /^[a-f0-9]{40}$/u.test(declaredBuildSha)
   ? declaredBuildSha

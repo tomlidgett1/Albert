@@ -12,7 +12,7 @@ import {
   formatHumanSummary,
   loadProductionRequirements,
   parseWorkflowYaml,
-  parseSitesInventoryNames,
+  parseVercelInventoryNames,
 } from "../scripts/audit-production-environment.mjs";
 import {
   ALBERT_AUTH_PASSWORD_MIN_LENGTH,
@@ -49,7 +49,7 @@ function validAuthConfig() {
 
 async function validFixture() {
   const requirements = await loadProductionRequirements(rootDirectory);
-  const hosting = JSON.parse(await readFile(path.join(rootDirectory, ".openai/hosting.json"), "utf8"));
+  const vercelProject = JSON.parse(await readFile(path.join(rootDirectory, "deploy/vercel-project.json"), "utf8"));
   const contract = JSON.parse(await readFile(path.join(rootDirectory, "deploy/runtime-contract.json"), "utf8"));
   const source = {
     FLY_ORGANIZATION_SLUG: flyOrganization,
@@ -162,10 +162,10 @@ async function validFixture() {
     async projects() { return [{ ref: projectRef, region: "ap-southeast-2", status: "ACTIVE_HEALTHY", password: "NEVER-OUTPUT" }]; },
     async authConfig() { return { ...validAuthConfig(), ignored_secret: "NEVER-OUTPUT-AUTH-SECRET" }; },
   };
-  const sitesInventory = {
-    projectId: hosting.project_id,
+  const vercelInventory = {
+    projectId: vercelProject.projectId,
+    teamId: vercelProject.teamId,
     runtimeNames: [...contract.runtimes.web.requiredRuntimeValues],
-    buildNames: [...contract.runtimes.web.requiredBuildValues],
   };
   return {
     requirements,
@@ -176,16 +176,18 @@ async function validFixture() {
     githubClient,
     flyClient,
     supabaseClient,
-    sitesInventory,
+    vercelInventory,
   };
 }
 
 test("production audit derives every protected workflow inventory and passes complete metadata", async () => {
   const fixture = await validFixture();
   assert.ok(fixture.requirements.environments.production.secrets.includes("SUPABASE_MANAGEMENT_TOKEN"));
+  assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_VERCEL_READ_TOKEN"));
+  assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_VERCEL_PROJECT_ID"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_CONTROL_PLANE_PROJECT_REF"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
-  assert.ok(fixture.sitesInventory.runtimeNames.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
+  assert.ok(fixture.vercelInventory.runtimeNames.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
   assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64"));
   assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_KEY_BASE64"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_VENDOR_ATTESTOR_EXPECTED_BUILD_DIGEST"));
@@ -210,7 +212,7 @@ test("production audit derives every protected workflow inventory and passes com
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -258,7 +260,7 @@ test("production audit fails closed on live Supabase Auth drift without disclosi
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -306,7 +308,7 @@ test("production audit binds its default Supabase client to the injected source"
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClientFactory(_runner, _fetchImpl, source) {
@@ -337,15 +339,15 @@ test("production audit fails closed across every authority boundary", async () =
   });
   fixture.source.FLY_SEMANTIC_APP = fixture.source.FLY_SYNC_APP;
   fixture.supabaseClient.projects = async () => [{ ref: projectRef, region: "ap-northeast-1", status: "ACTIVE_HEALTHY" }];
-  fixture.sitesInventory.runtimeNames.push("CONTROL_PLANE_DATABASE_URL");
-  fixture.sitesInventory.runtimeNames = fixture.sitesInventory.runtimeNames.filter((name) => name !== "OPENAI_API_KEY");
+  fixture.vercelInventory.runtimeNames.push("CONTROL_PLANE_DATABASE_URL");
+  fixture.vercelInventory.runtimeNames = fixture.vercelInventory.runtimeNames.filter((name) => name !== "OPENAI_API_KEY");
 
   const result = await auditProductionEnvironment({
     rootDirectory,
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -363,8 +365,8 @@ test("production audit fails closed across every authority boundary", async () =
   assert.ok(codes.has("github_environment_admin_bypass_allowed"));
   assert.ok(codes.has("fly_app_names_not_unique"));
   assert.ok(codes.has("supabase_control_plane_not_sydney"));
-  assert.ok(codes.has("sites_runtime_names_missing"));
-  assert.ok(codes.has("sites_forbidden_names_present"));
+  assert.ok(codes.has("vercel_runtime_names_missing"));
+  assert.ok(codes.has("vercel_forbidden_names_present"));
 });
 
 test("deployment environments reject broader branch and tag policy sets", async () => {
@@ -387,7 +389,7 @@ test("deployment environments reject broader branch and tag policy sets", async 
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -442,7 +444,7 @@ test("ruleset-only main protection fails closed when administrator bypass safety
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -461,7 +463,7 @@ test("non-running Fly application metadata fails the production audit", async ()
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -567,7 +569,7 @@ test("release-authority tag rules fail closed if creation or immutability contro
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -596,7 +598,7 @@ test("vendor-attestor trust requires split creation and no-bypass immutability r
     repository,
     source: fixture.source,
     projectRef,
-    sitesInventory: fixture.sitesInventory,
+    vercelInventory: fixture.vercelInventory,
     githubClient: fixture.githubClient,
     flyClient: fixture.flyClient,
     supabaseClient: fixture.supabaseClient,
@@ -682,16 +684,16 @@ test("GitHub environment inventory reads protected-branch state from the deploym
   assert.match(jq, /can_admins_bypass/u);
 });
 
-test("Sites inventory accepts names only and rejects assignments without echoing them", () => {
-  const inventory = parseSitesInventoryNames([
-    "project:appgprj_6a6da1d589608191b95650ffb3aad67f",
+test("Vercel inventory accepts names only and rejects assignments without echoing them", () => {
+  const inventory = parseVercelInventoryNames([
+    "project:prj_l5faWCnDWxw7QB7nBWgr9zaKFxuL",
+    "team:team_wx7OlK7ikXNuFcOSaewRxonA",
     "runtime:OPENAI_API_KEY",
-    "build:ALBERT_BUILD_SHA",
   ].join("\n"));
   assert.deepEqual(inventory.runtimeNames, ["OPENAI_API_KEY"]);
   const canary = "OPENAI_API_KEY=do-not-disclose-this-value";
   assert.throws(
-    () => parseSitesInventoryNames(canary),
-    (error) => error.code === "unsafe_sites_inventory" && !error.message.includes("do-not-disclose"),
+    () => parseVercelInventoryNames(canary),
+    (error) => error.code === "unsafe_vercel_inventory" && !error.message.includes("do-not-disclose"),
   );
 });

@@ -24,6 +24,7 @@ import {
   type MeasureExpressionV2,
   type SemanticRegistryDocumentV2,
 } from "@/packages/semantic-registry/src/v2";
+import { resolveWebReleaseIdentity } from "@/packages/config/src/vercel-runtime";
 import { diffSemanticRegistryV2 } from "@/packages/semantic-registry/src/v2-diff";
 import {
   planSemanticRelationshipResolutionsV2,
@@ -1973,7 +1974,7 @@ export async function POST(request: Request) {
     }
     if (input.action === "activate_publication") {
       const { supabase } = await requireUser();
-      const releaseSha = process.env.ALBERT_RELEASE_SHA?.trim();
+      const releaseSha = resolveWebReleaseIdentity(process.env).releaseSha;
       if (!releaseSha || !/^[a-f0-9]{40}$/u.test(releaseSha))
         throw new ControlPlaneError(
           "Activation requires the exact deployed 40-character release SHA.",

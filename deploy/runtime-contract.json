@@ -8,13 +8,27 @@
   },
   "runtimes": {
     "web": {
-      "platform": "sites",
-      "manifest": ".openai/hosting.json",
-      "buildCommand": "npm run build",
-      "artifact": "dist/server/index.js",
+      "platform": "vercel",
+      "manifest": "vercel.json",
+      "project": "deploy/vercel-project.json",
+      "buildCommand": "next build --webpack",
+      "artifact": ".next/BUILD_ID",
       "exposure": "public",
       "healthPath": "/api/health",
-      "requiredBuildValues": ["ALBERT_BUILD_SHA"],
+      "requiredBuildValues": [],
+      "requiredPlatformValues": [
+        "VERCEL",
+        "VERCEL_ENV",
+        "VERCEL_DEPLOYMENT_ID",
+        "VERCEL_PROJECT_ID",
+        "VERCEL_GIT_PROVIDER",
+        "VERCEL_GIT_COMMIT_REF",
+        "VERCEL_GIT_COMMIT_SHA"
+      ],
+      "platformValueAliases": {
+        "ALBERT_SERVICE_VERSION": "VERCEL_GIT_COMMIT_SHA",
+        "ALBERT_DEPLOYMENT_ID": "VERCEL_DEPLOYMENT_ID"
+      },
       "requiredRuntimeValues": [
         "NEXT_PUBLIC_SUPABASE_URL",
         "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
@@ -41,10 +55,9 @@
         "XERO_CLIENT_ID",
         "DEPUTY_CLIENT_ID",
         "ALBERT_CONVERSATION_RUNTIME",
+        "ALBERT_ANALYTICAL_RUNTIME",
         "ALBERT_ALLOW_FIXTURE_RUNTIME",
-        "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST",
-        "ALBERT_SERVICE_VERSION",
-        "ALBERT_DEPLOYMENT_ID"
+        "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"
       ],
       "optionalRuntimeValues": [
         "ALBERT_OPENAI_TRACING_ENABLED",
@@ -52,6 +65,10 @@
         "ALBERT_EMBEDDING_TIMEOUT_MS"
       ],
       "forbiddenRuntimeValues": [
+        "ALBERT_BUILD_SHA",
+        "ALBERT_SERVICE_VERSION",
+        "ALBERT_DEPLOYMENT_ID",
+        "ALBERT_RELEASE_SHA",
         "CONTROL_PLANE_DATABASE_URL",
         "ANALYTICAL_DATABASE_URL",
         "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
@@ -183,10 +200,12 @@
         "ANALYTICAL_DATABASE_URL",
         "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
         "ALBERT_SEMANTIC_SIGNING_SECRET",
+        "ALBERT_ANALYTICAL_RUNTIME",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL"
       ],
       "optionalSecretNames": [
+        "ALBERT_SEMANTIC_V2_PUBLICATION_HASH",
         "ALBERT_EMBEDDING_TIMEOUT_MS",
         "ALBERT_SEMANTIC_CACHE_TTL_SECONDS",
         "ALBERT_SEMANTIC_STATEMENT_TIMEOUT_MS",
