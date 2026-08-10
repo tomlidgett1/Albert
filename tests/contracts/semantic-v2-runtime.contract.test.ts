@@ -39,6 +39,10 @@ const followUpWorkspaceBoundary = readFileSync(
   "infra/migrations/control-plane/0113_semantic_v2_followup_workspace_boundary.sql",
   "utf8",
 );
+const terminalEventTurnReadBoundary = readFileSync(
+  "infra/migrations/control-plane/0114_semantic_v2_terminal_event_turn_read.sql",
+  "utf8",
+);
 
 test("V2 tools expose only semantic workspaces, investigations, results, and governed operator bindings", () => {
   assert.deepEqual(SEMANTIC_V2_TOOL_NAMES, [
@@ -218,6 +222,21 @@ test("follow-up workspace discovery uses a lease-bound projection instead of con
   assert.doesNotMatch(
     followUpWorkspaceBoundary,
     /GRANT (?:SELECT|ALL)[^;]*conversation_turns/iu,
+  );
+});
+
+test("terminal-state telemetry can read only the current tenant's conversation turn", () => {
+  assert.match(
+    terminalEventTurnReadBoundary,
+    /GRANT SELECT ON TABLE control_plane\.conversation_turns\s+TO albert_semantic_control/u,
+  );
+  assert.match(
+    terminalEventTurnReadBoundary,
+    /FOR SELECT\s+TO albert_semantic_control\s+USING \(tenant_id = current_setting\('albert\.tenant_id', true\)\)/u,
+  );
+  assert.doesNotMatch(
+    terminalEventTurnReadBoundary,
+    /GRANT (?:INSERT|UPDATE|DELETE|ALL)[^;]*conversation_turns/iu,
   );
 });
 

@@ -124,6 +124,7 @@ export const V2_EVALUATION_RUNTIME = Object.freeze({
   fastMode: false,
   proMode: false,
   maximumAttempts: 1,
+  turnTimeoutMs: 800_000,
   analyticalRuntime: "v2",
 } as const);
 
@@ -572,6 +573,7 @@ export function assertNoConflictingV2EvaluationEnvironment(
     ALBERT_AGENT_QA_FAST_MODE: "false",
     ALBERT_AGENT_QA_PRO_MODE: "false",
     ALBERT_AGENT_QA_MAX_ATTEMPTS: String(V2_EVALUATION_RUNTIME.maximumAttempts),
+    ALBERT_TURN_TIMEOUT_MS: String(V2_EVALUATION_RUNTIME.turnTimeoutMs),
     ALBERT_ANALYTICAL_RUNTIME: V2_EVALUATION_RUNTIME.analyticalRuntime,
   };
   for (const [name, value] of Object.entries(expected)) {
@@ -594,6 +596,7 @@ export function v2EvaluationEnvironment(): Readonly<Record<string, string>> {
     ALBERT_AGENT_QA_FAST_MODE: String(V2_EVALUATION_RUNTIME.fastMode),
     ALBERT_AGENT_QA_PRO_MODE: String(V2_EVALUATION_RUNTIME.proMode),
     ALBERT_AGENT_QA_MAX_ATTEMPTS: String(V2_EVALUATION_RUNTIME.maximumAttempts),
+    ALBERT_TURN_TIMEOUT_MS: String(V2_EVALUATION_RUNTIME.turnTimeoutMs),
     ALBERT_ANALYTICAL_RUNTIME: V2_EVALUATION_RUNTIME.analyticalRuntime,
   });
 }

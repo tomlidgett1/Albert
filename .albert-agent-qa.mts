@@ -103,7 +103,7 @@ const preferences = normalizeAgentPreferences({
     process.env.ALBERT_AGENT_QA_FAST_MODE ?? "false",
   ),
 });
-const turnTimeoutMs = Number(process.env.ALBERT_TURN_TIMEOUT_MS ?? 240_000);
+const turnTimeoutMs = Number(process.env.ALBERT_TURN_TIMEOUT_MS ?? 800_000);
 const pauseMs = Number(process.env.ALBERT_AGENT_QA_PAUSE_MS ?? 2_500);
 const semanticClient = new SemanticServiceClient(
   env.SEMANTIC_QUERY_SERVICE_URL!,

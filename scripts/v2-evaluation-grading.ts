@@ -1,4 +1,7 @@
-import type { V2EvaluationCase } from "./v2-evaluation-policy.js";
+import {
+  V2_EVALUATION_RUNTIME,
+  type V2EvaluationCase,
+} from "./v2-evaluation-policy.js";
 import {
   assertV2OwnerReviewWaiver,
   type V2OwnerReviewWaiver,
@@ -506,7 +509,8 @@ export function gradeV2ModelEvaluation(
     analyticalLatency:
       Number(latency.diagnosis) <= 90_000 &&
       Number(latency.recommendation) <= 90_000,
-    hardTimeout: metrics.maximumLatencyMs <= 120_000,
+    hardTimeout:
+      metrics.maximumLatencyMs <= V2_EVALUATION_RUNTIME.turnTimeoutMs,
   };
   const failedGates = Object.entries(gates)
     .filter(([, passed]) => !passed)

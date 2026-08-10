@@ -84,7 +84,9 @@ removed.
 The only qualifying model-backed corpus contains 200 question executions:
 80 Lightspeed, 80 Xero and 40 Lightspeed-Xero. It uses the exact model
 `gpt-5.6-luna`, `reasoning.effort: "max"`, standard reasoning mode and no Fast
-processing tier. The unsuffixed `gpt-5.6` alias, Sol, Terra, Pro mode and Deputy
+processing tier. Each execution has an 800-second hard timeout so Max-reasoning
+investigations are measured rather than prematurely aborted. The unsuffixed
+`gpt-5.6` alias, Sol, Terra, Pro mode and Deputy
 questions are rejected before a run begins. Forty cases are hidden holdout.
 The repository commits their identifiers and allocation metadata but only sealed
 prompt placeholders. The qualifying runner must bind the separately controlled

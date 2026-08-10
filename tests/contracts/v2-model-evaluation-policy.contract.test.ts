@@ -80,6 +80,7 @@ test("release evaluation is pinned to Luna Max in standard non-Fast non-Pro mode
     fastMode: false,
     proMode: false,
     maximumAttempts: 1,
+    turnTimeoutMs: 800_000,
     analyticalRuntime: "v2",
   });
   assert.deepEqual(v2EvaluationEnvironment(), {
@@ -88,6 +89,7 @@ test("release evaluation is pinned to Luna Max in standard non-Fast non-Pro mode
     ALBERT_AGENT_QA_FAST_MODE: "false",
     ALBERT_AGENT_QA_PRO_MODE: "false",
     ALBERT_AGENT_QA_MAX_ATTEMPTS: "1",
+    ALBERT_TURN_TIMEOUT_MS: "800000",
     ALBERT_ANALYTICAL_RUNTIME: "v2",
   });
   assert.throws(
@@ -150,6 +152,7 @@ test("model-backed runner requires an explicit 200-case budget confirmation", ()
   assert.match(harness, /providerRuntime\.reasoningEffort !== "max"/u);
   assert.match(harness, /providerRuntime\.reasoningMode !== "standard"/u);
   assert.match(harness, /providerRuntime\.serviceTier !== "default"/u);
+  assert.match(harness, /ALBERT_TURN_TIMEOUT_MS \?\? 800_000/u);
   assert.match(harness, /createTraceEmitter/u);
   assert.match(harness, /insert into control_plane\.conversation_turn_events/u);
   assert.ok(
