@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     ".albert-build/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".dlt/**",
+    ".venv/**",
     "next-env.d.ts",
   ]),
 ]);

@@ -111,7 +111,7 @@
       ],
       "gotchas": [
         "Every money question needs BOTH `completed = true` AND `voided = false`. Open tickets carry totals but no payments; voided tickets keep their money columns fully populated. Omitting either filter inflates revenue.",
-        "VERIFIED LIVE (2026-08-01, Ashburton Cycles): Sale.json ACCEPTS `archived=true` but SILENTLY IGNORES it \u2014 identical sale ids return with and without the filter. Do not schedule a second archived pass; it is a full duplicate history walk (thousands of rate-limited requests) for zero new rows.",
+        "Sale.json may accept `archived=true` without applying it. Do not schedule an automatic second archived pass unless the current connection proves that it returns a distinct population; otherwise it can duplicate the full history walk.",
         "VERIFIED LIVE: walk-in sales store customerID = 0, not NULL. Normalise 0 to NULL or COUNT(DISTINCT customer_id) collapses every anonymous sale in history into one phantom customer.",
         "VERIFIED LIVE: the live payload and query parameter are `updateTime` (camel case) even though the reference field table prints `updatetime`. A mirror keyed on the documented spelling silently fetches nothing.",
         "VERIFIED LIVE: `Note` is NOT an allowed load_relation on account-level Sale.json, so sale notes cannot be bulk-mirrored from this endpoint at all.",
@@ -644,7 +644,7 @@
         "Refund lines are NEGATIVE unit_quantity at a POSITIVE unit_price. Never flip the price sign \u2014 quantity * price already yields negative revenue, and doing both turns returns into extra sales.",
         "VERIFIED LIVE: avg_cost and fifo_cost behave as LINE totals, not per-unit costs, despite the reference calling them unit costs. Multiplying either by unit_quantity double counts COGS. Validate against one known line on your account before trusting either reading.",
         "The reference defines calc_subtotal as unitQuantity * unitPrice (gross of discount) while displayable_subtotal explicitly subtracts the discount. Confirm which one your account returns net before using it as the margin base; the difference is exactly calc_line_discount.",
-        "discount_percent is a FRACTION (0.2 = 20%), matching the Discount object's documented <= 1.00 cap. VERIFIED LIVE across every 20% rule at the reference store. This is the single easiest 100x error in the domain.",
+        "discount_percent is a FRACTION (0.2 = 20%), matching the Discount object's documented <= 1.00 cap. This is the single easiest 100x error in the domain.",
         "customer_id on the LINE is set only for layaway, special-order and workorder lines. The buyer of an ordinary line is on the parent Sale. Grouping revenue by ls_sale_lines.customer_id silently drops nearly all sales.",
         "VERIFIED LIVE: item_id is 0/absent on miscellaneous and some labour lines. Product rankings must filter item_id IS NOT NULL or an unnamed bucket wins.",
         "line_type is documented as NOT distinguishing layaway / special order / workorder \u2014 those need the is_* booleans. line_type only ever carries item-fee style values.",
@@ -747,7 +747,7 @@
           "name": "discount_percent",
           "type": "numeric",
           "api": "SaleLine.discountPercent",
-          "description": "Percentage discount on the line, expressed as a FRACTION of 1 (0.2 = 20%), matching the Discount object's documented <= 1.00 cap. VERIFIED LIVE across every 20% rule at the reference store. Reading 0.2 as 0.2% is a 100x error. Mutually exclusive with discount_amount.",
+          "description": "Percentage discount on the line, expressed as a FRACTION of 1 (0.2 = 20%), matching the Discount object's documented <= 1.00 cap. Reading 0.2 as 0.2% is a 100x error. Mutually exclusive with discount_amount.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -1800,7 +1800,7 @@
         "commerce_payment"
       ],
       "gotchas": [
-        "VERIFIED LIVE: the reference store (Ashburton Cycles) has ZERO rows here because cards run on an external EFTPOS terminal, never Lightspeed's integrated processing. Empty is NORMAL \u2014 answer card questions from ls_sale_payments plus the PaymentType reference, and say the gateway data is unavailable rather than reporting zero card sales.",
+        "This table is empty when the merchant uses an external terminal rather than Lightspeed's integrated processing. Establish tenant coverage before using it. If empty, tender totals may still be available from ls_sale_payments plus PaymentType, but gateway outcomes and fees are unavailable.",
         "Rows include failures and holds. Settled card money requires declined = false AND voided = false AND auth_only = false. Any one omitted overstates card volume.",
         "`refunded` is a cumulative running total restated on the row, not an event. Never sum it across sync snapshots of the same charge.",
         "entry_method's documented description ('The card type: Visa, Mastercard, etc.') contradicts its name. Do not build a card-brand mix on it without live verification.",
@@ -2026,7 +2026,7 @@
       "gotchas": [
         "`amount` is the PAYMENT amount the fee was assessed on, NOT the fee. The fee is fixed_fee + variable_fee. This is the single most common misread on this table and it silently reports card volume as card cost.",
         "interchange_* and scheme_* columns are BREAKDOWNS of the total fee, not extra charges. Adding every fee column together roughly doubles the reported cost.",
-        "VERIFIED LIVE: the reference store has ZERO rows (external EFTPOS, so processor fees never reach Lightspeed). Report 'not available in this data' rather than estimating card costs from a rate.",
+        "This table is empty when processing occurs outside Lightspeed. Establish tenant coverage first; if it is absent, report processing fees as unavailable rather than estimating them from a rate.",
         "The *_pct columns' fraction-versus-percentage format is unverified live. Always sanity-check variable_fee / amount before using any pct column in arithmetic.",
         "processing_time (processor-side settlement) lags create_time (Lightspeed-side ingest). Statement reconciliation must use processing_time.",
         "Fees can be RESTATED by the processor \u2014 update_time moving on a closed period is expected, so a re-run of last month's cost report can legitimately differ."
@@ -2113,7 +2113,7 @@
           "name": "variable_pct",
           "type": "numeric",
           "api": "ProcessingFee.variablePct",
-          "description": "The rate used to calculate variable_fee. Whether it is stored as a fraction (0.017) or a percentage (1.7) is NOT verified live \u2014 no rows exist at the reference store. Sanity-check it against variable_fee / amount before using it in any arithmetic, or you are 100x out.",
+          "description": "The rate used to calculate variable_fee. Storage as a fraction (0.017) versus a percentage (1.7) is not guaranteed by the field name; sanity-check it against variable_fee / amount in the current tenant before using it in arithmetic, or you can be 100x out.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -2372,7 +2372,7 @@
       ],
       "canonicalTargets": [],
       "gotchas": [
-        "discount_percent is a FRACTION (0.2 = 20%). VERIFIED LIVE at the reference store on every 20% rule, and the docs cap it at <= 1.00. This is the easiest 100x error in the domain.",
+        "discount_percent is a FRACTION (0.2 = 20%), and the docs cap it at <= 1.00. This is the easiest 100x error in the domain.",
         "Exactly one of discount_amount / discount_percent is non-zero per rule \u2014 branch on which side is > 0 rather than assuming one shape.",
         "source_id separates price rule (0) from loyalty (1) from discount rule (2). Loyalty redemptions are the cost of a loyalty programme, not a promotional markdown; blending them misstates both margin and programme cost.",
         "VERIFIED LIVE: names carry trailing whitespace \u2014 TRIM before grouping or one rule appears twice.",
@@ -2396,7 +2396,7 @@
           "name": "name",
           "type": "text",
           "api": "Discount.name",
-          "description": "The description/name staff see when applying the rule (e.g. 'ARC Riders 20% SERVICE DISCOUNT'). VERIFIED LIVE: names can carry trailing whitespace \u2014 TRIM before grouping or the same rule splits into two rows in every report.",
+          "description": "The merchant-defined description/name staff see when applying the rule. Names can carry trailing whitespace \u2014 TRIM before grouping or the same rule splits into two rows in every report.",
           "key": false,
           "pii": false,
           "loadBearing": false,
@@ -2418,7 +2418,7 @@
           "name": "discount_percent",
           "type": "numeric",
           "api": "Discount.discountPercent",
-          "description": "Percentage off stored as a FRACTION of 1 \u2014 the docs cap it at <= 1.00 (100%), and VERIFIED LIVE every 20% rule at the reference store stores 0.2. Multiply by 100 for display. Reading 0.2 as 0.2% is the single easiest 100x error in this domain.",
+          "description": "Percentage off stored as a FRACTION of 1 \u2014 the docs cap it at <= 1.00 (100%). Multiply by 100 for display. Reading 0.2 as 0.2% is the single easiest 100x error in this domain.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -2462,7 +2462,7 @@
           "name": "time_stamp",
           "type": "timestamp",
           "api": "Discount.timeStamp",
-          "description": "When the rule record was last modified, store-local. It moves on every edit, so it is NOT 'when the discount was introduced' \u2014 and at the reference store record dates were bulk-set during a platform migration, making them useless for rule-age analysis.",
+          "description": "When the rule record was last modified, store-local. It moves on every edit and can be bulk-set during a platform migration, so it is NOT reliable evidence of when the discount was introduced.",
           "key": false,
           "pii": false,
           "loadBearing": false,
@@ -3127,7 +3127,7 @@
     {
       "id": "ls_item_shops",
       "domain": "catalogue",
-      "grain": "one item's stock record in one shop. The row with shop_id = 0 is not a shop: it is Lightspeed's account-wide aggregate record for that item.",
+      "grain": "one item's stock record at one location; shop_id = 0 is the account-wide aggregate, so use it alone for whole-business stock and only shop_id > 0 for per-shop breakdowns.",
       "description": "The current stock position per item per shop: quantity on hand, what is sellable, what is on order, and the reorder thresholds. This is a point-in-time snapshot that the API overwrites in place \u2014 it is the source of truth for 'how much do we have RIGHT NOW'. It is NOT a history: 'how much stock did we hold in March' cannot be answered here and belongs to the inventory movement log.",
       "additivity": "last_value_over_time",
       "additivityAxis": "time \u2014 qoh/sellable/backorder are levels, never flows, so they must never be summed across dates; additionally never sum real shop rows together with the shop_id = 0 aggregate row, which already contains them",
@@ -4454,7 +4454,7 @@
       "gotchas": [
         "Serials are owned by items OR customers (documented). A NULL item_id with a populated customer_id is a customer's own machine, not a data error, and it is the normal case at a service-led store.",
         "VERIFIED LIVE: serial is very often an empty string; identity lives in description. Never require a non-empty serial when listing a customer's units.",
-        "VERIFIED LIVE: one customer can accumulate junk placeholder rows ('Service', 'Gen Serv') left by old workflows, so COUNT(*) per customer overstates units owned \u2014 eyeball descriptions before quoting a number.",
+        "One customer can accumulate junk placeholder rows left by old workflows, so COUNT(*) per customer can overstate units owned. Inspect description quality before quoting a number.",
         "No server-side filters are documented for this endpoint, so customer and serial lookups scan pages. Acceptable at small-store volume; plan differently for large accounts.",
         "The record does not track possession or status \u2014 there is no 'sold', 'in for service' or 'returned' flag. sale_line_id being NULL is the only hint the unit never went through the POS."
       ],
@@ -4591,7 +4591,7 @@
         "The item-to-tag EDGE is not modelled. Item exposes TagRelations / TagRelations.Tag as load_relations but the ground truth publishes no field table for TagRelation, so 'which items are tagged X' is unanswerable from this layer \u2014 only 'what tags exist'.",
         "VERIFIED LIVE: the tag relation on Item returns a denormalised shape unsuited to columns, which is the practical reason the edge is not staged.",
         "VERIFIED LIVE: live Tag responses also carry an undocumented readOnly flag (system-managed tags); it is absent from the published field table so it is not staged.",
-        "VERIFIED LIVE: tag names contain staff typos ('size:universall'); match loosely and never treat the vocabulary as controlled.",
+        "Tag names contain staff typos and near-duplicates; match cautiously and never treat the vocabulary as controlled.",
         "The docs publish no timestamps on Tag, so there is no way to tell when a tag was created or last used."
       ],
       "columns": [
@@ -5032,7 +5032,7 @@
       "gotchas": [
         "The docs' sortable-fields line for this endpoint reads 'orderLineID, name' \u2014 orderLineID is not a PriceLevel field, so that is a documentation copy-paste error. Do not attempt to sort by it.",
         "The endpoint path in the docs is misspelt for the single read ('/PriceLeve/{priceLevelID}'); use the plural collection endpoint and filter, or expect a 404.",
-        "VERIFIED LIVE: on a real account the level ids ran 1 = Default, 2 = MSRP, 3 = Online. These are ACCOUNT-SPECIFIC \u2014 never hardcode them; resolve names through this table.",
+        "Price-level ids are account-specific. Never hardcode an id-to-name mapping; resolve names through this table.",
         "canBeArchived is documented as having no effect when set; it describes a constraint, it does not enforce one.",
         "No amounts here. A price level with a calculation but no per-item override still produces a price at the register \u2014 absence of a row in ls_item_prices does not mean the item is unpriced at that level."
       ],
@@ -6194,7 +6194,7 @@
         "The docs type note as integer and archived as integer; both are documentation errors (note is text, archived is a flag). Cast defensively.",
         "archived means done/filed, not cancelled. There is no documented cancelled state, so abandoned transfers look identical to fresh unsent ones \u2014 age them with updated_at to find the stale ones.",
         "updated_at is last-modified on the header, not a movement date. Period reporting on transfers must use sent_on (outbound) or need_by-with-is_received (inbound), or better, ls_inventory_logs.created_at.",
-        "VERIFIED LIVE (bike repo, ItemMatrix.attribute1Values): Lightspeed's JSON collapses single-element arrays into a bare object, so TransferItems.TransferItem can arrive as an object rather than a list. Normalise to an array when exploding or every single-line transfer silently loses its line.",
+        "Lightspeed's JSON can collapse single-element arrays into a bare object, so TransferItems.TransferItem may arrive as an object rather than a list. Normalise to an array when exploding or every single-line transfer silently loses its line.",
         "Origin and destination are reached through TransferFrom/TransferTo records rather than direct shop ids. A one-hop join to ls_shops will silently return nothing."
       ],
       "columns": [
@@ -6968,7 +6968,7 @@
           "name": "ref_number",
           "type": "text",
           "api": "Order.refNum",
-          "description": "Free-text external reference \u2014 in practice the vendor's own order or invoice number (VERIFIED LIVE: values like '87344', 'WEB5730'). Not unique, not validated, frequently blank. Never use as a key.",
+          "description": "Free-text external reference, often the vendor's own order or invoice number. Not unique, not validated, frequently blank. Never use as a key.",
           "key": false,
           "pii": false,
           "loadBearing": false,
@@ -7221,7 +7221,7 @@
           "name": "has_shipments",
           "type": "boolean",
           "api": "Order.hasShipments",
-          "description": "True when the PO has any shipment records. False does NOT mean nothing arrived \u2014 POs received before the shipments workflow existed have no shipment rows at all (VERIFIED LIVE: shipment history on the probed store only begins March 2023), and their receiving lives solely in the line-level check-in counters.",
+          "description": "True when the PO has any shipment records. False does NOT mean nothing arrived \u2014 POs received before the merchant adopted the shipments workflow can have no shipment rows, with receiving represented only in line-level check-in counters.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -7733,7 +7733,7 @@
         "shipping_cost_order_full_value, shipping_cost_order_full_vendor_value, discount_order_full_money_value and discount_order_full_money_vendor_value are WHOLE-PO figures repeated on every shipment of that order. Sum the per-shipment shipping_cost / discount_money_value instead, or freight and discounts inflate by the number of deliveries.",
         "cost/vendor_cost are pre-freight, pre-discount goods; total_cost/total_vendor_cost are landed. Picking the wrong pair shifts gross margin by the entire freight bill in whichever direction flatters the report.",
         "received_at (receptionDate) is the goods-inwards date; created_at is when the record was keyed. Use received_at for any period, lead-time or ageing calculation.",
-        "VERIFIED LIVE: shipment history on the probed store only starts around March 2023 \u2014 purchase orders received before the shipments workflow have NO rows here at all even though the goods arrived. Pre-workflow receiving exists only as ls_purchase_order_lines.qty_checked_in, so a receiving time series built from this table shows a false zero for earlier years.",
+        "Shipment history begins when each merchant adopted the shipments workflow. Earlier purchase orders can have no rows here even though goods arrived; check ls_purchase_order_lines receiving counters and establish the tenant-specific coverage floor before building a time series.",
         "One PO, many shipments: SUM(total_qty_received) GROUP BY order_id is what has arrived; COUNT(*) is how many times the supplier split the delivery.",
         "payment_due_date is a bare date and only present when someone typed the invoice terms, so 'payables due' reports systematically miss the deliveries where it was skipped.",
         "If the parent order has costs_modified_after_shipment = true, the freight and discount splits stored on these rows predate the change and no longer reconcile to the header.",
@@ -8129,7 +8129,7 @@
         "item_description is frozen at receipt time; grouping a multi-year cost history by it splits one product into several rows after a rename. Group by item_id.",
         "The currency triplet is frozen at shipment creation. Historic landed costs must be read at the rate that was captured, never re-converted at today's rate.",
         "Sort keys documented here are description, orderShipmentItemID, qtyReceived and vendorCost \u2014 note that `description` is the sort name for the itemDescription field, and there is no sort by date at all.",
-        "VERIFIED LIVE (parent table): no rows exist for purchase orders received before the shipments workflow (~March 2023 on the probed store), so landed-cost analysis has a hard historical floor and earlier receipts must fall back to ls_purchase_order_lines."
+        "No rows exist for purchase orders received before a merchant adopted the shipments workflow, so landed-cost analysis has a tenant-specific historical floor. Establish it from evidence and use ls_purchase_order_lines as the disclosed fallback when defensible."
       ],
       "columns": [
         {
@@ -8655,7 +8655,7 @@
       ],
       "canonicalTargets": [],
       "gotchas": [
-        "VERIFIED LIVE: the probed store has ZERO vendor returns, so an empty result set here is normal and not a broken query or a permissions problem. Say 'no vendor returns recorded' rather than reporting an error.",
+        "This table can legitimately be empty. Verify connector coverage before distinguishing 'no vendor returns recorded' from unavailable return data; never import another tenant's availability conclusion.",
         "Money on this table is inventory COST credited back by a supplier. It is not a customer refund \u2014 customer refunds are negative sales in the commerce domain \u2014 and it is not retail value.",
         "The line items are NOT modelled: the ground truth documents the VendorReturnItems relation (and VendorReturnItems.Item / VendorReturnItems.VendorReturnItemReason) but no member fields, so per-item quantities, costs and return reasons cannot be queried. Only header subtotal/total are available, which means 'why are we returning stock' is unanswerable from this layer.",
         "status is documented by example only ('open', 'sent'), not as a closed enum. Do not assume a completed/credited state exists, and do not treat an unexpected value as an error.",
@@ -10550,7 +10550,7 @@
         "NO REVENUE LIVES IN THIS DOMAIN. Prices on workorder lines and items are quoted charges on a job sheet. Recognised workshop revenue is on the Sale created at checkout (reachable via sale_id) \u2014 the Checkout endpoint copies every WorkorderItem and WorkorderLine into SaleLines. Summing workorder charges and sale lines together double-counts every completed job.",
         "VERIFIED LIVE: eta_out is defaulted to time_in when staff never enter an ETA. Any due/overdue report must exclude eta_out = time_in or it invents overdue work that was never promised.",
         "VERIFIED LIVE: the header-level tax flag can be false while all of the job's lines are taxed. Never read tax treatment from ls_workorders.tax.",
-        "VERIFIED LIVE: status names are store-configured \u2014 the reference store has 13 statuses including custom boards named TODAY, TO ORDER, VAN, Nest, Staff, Non-Bike and 'Finished + Text Sent'. Never hardcode a status name; resolve it through ls_workorder_statuses.system_value.",
+        "Status names are merchant-configured and can include arbitrary custom boards. Never hardcode a display name; resolve it through ls_workorder_statuses and prefer system_value when it represents the requested state.",
         "VERIFIED LIVE: unset foreign keys come back as 0, not null (customer_id, employee_id, sale_id, discount_id, serialized_id). Normalise 0 to NULL on ingest, otherwise 'jobs with no customer' all aggregate under a fictitious customer 0 and 'unbilled' tests written as sale_id IS NULL match nothing.",
         "VERIFIED LIVE: live responses carry an undocumented systemSku field (e.g. 250000000022) \u2014 the job number printed on the tag and the number staff quote. It is absent from the published field reference so it is deliberately NOT a column here; if humans reference job numbers you will need to source it outside this spec.",
         "archived = true is the store's 'done and filed' state, not deletion. Because Lightspeed itself excludes archived jobs from its totals, a dashboard that includes them will disagree with the POS.",
@@ -10794,7 +10794,7 @@
           "name": "status_name",
           "type": "text",
           "api": "Workorder.WorkorderStatus.name",
-          "description": "Denormalised current status display name. STORE-CONFIGURED free text: VERIFIED LIVE the reference store runs custom boards (TODAY, TO ORDER, VAN, Nest, Staff, Non-Bike, 'Finished + Text Sent') alongside the system ones, so filtering on a guessed name silently returns zero rows. Read ls_workorder_statuses first, or filter status_system_value.",
+          "description": "Denormalised current status display name. Merchant-configured free text can include custom boards alongside system states, so filtering on a guessed name silently returns zero rows. Read ls_workorder_statuses first, or filter status_system_value.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -10903,7 +10903,7 @@
       ],
       "gotchas": [
         "There is NO amount/total column. Line value = unit_price_override * unit_quantity when the override is set; when it is 0 the intended charge is (hours * 60 + minutes) priced at the shop's hourly service rate, and that rate is NOT exposed by this API \u2014 such lines cannot be valued from this table alone.",
-        "VERIFIED LIVE: the reference store flat-prices every task through unit_price_override with hours and minutes at 0. Any 'labour hours booked' metric therefore returns zero there, and any 'shop rate x hours' formula returns zero everywhere it is used.",
+        "Merchants can flat-price tasks through unit_price_override while leaving hours and minutes at 0. Verify duration-field coverage before reporting labour hours; never infer worked time from price.",
         "This table and ls_workorder_items use DIFFERENT price column names (unit_price_override vs unit_price) and ls_workorder_items has no cost column at all. A naive UNION ALL of the two for 'total job value' will null out one side \u2014 alias explicitly.",
         "VERIFIED LIVE: approved is routinely left false on work that was completed and paid. Never treat approved = false as customer refusal.",
         "Quoted, not recognised. Sums here are what the job sheet says; recognised labour revenue lives on the linked sale's lines. Never add these to sales figures.",
@@ -10949,7 +10949,7 @@
           "name": "hours",
           "type": "integer",
           "api": "WorkorderLine.hours",
-          "description": "Whole-hours component of the task's duration. Documented ambiguously as time the task 'took, or is expected to take' \u2014 it is a single mutable field serving as both estimate and actual, so it can never be treated as verified worked time. Total duration = hours * 60 + minutes. VERIFIED LIVE: left at 0 at the reference store, which flat-prices tasks instead \u2014 labour-utilisation maths built on it silently returns zero.",
+          "description": "Whole-hours component of the task's duration. Documented ambiguously as time the task 'took, or is expected to take' \u2014 it is a single mutable field serving as both estimate and actual, so it can never be treated as verified worked time. Total duration = hours * 60 + minutes. Merchants that flat-price tasks may leave it at 0, so verify coverage before labour-utilisation analysis.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -10971,7 +10971,7 @@
           "name": "unit_price_override",
           "type": "numeric",
           "api": "WorkorderLine.unitPriceOverride",
-          "description": "Per-unit retail price for this charge. When set (> 0) it OVERRIDES the shop's hourly service rate; when 0 the charge is meant to be hours/minutes priced at the shop rate, which is not stored on this row. VERIFIED LIVE: every priced task at the reference store uses this field as a flat price with hours/minutes at 0, so line value = unit_price_override * unit_quantity. Tax-exclusive or inclusive per the tax flag and the line's tax class \u2014 this is not a total and not a tax-resolved figure.",
+          "description": "Per-unit retail price for this charge. When set (> 0) it OVERRIDES the shop's hourly service rate; when 0 the charge is meant to be hours/minutes priced at the shop rate, which is not stored on this row. For flat-priced tasks, line value = unit_price_override * unit_quantity. Tax-exclusive or inclusive per the tax flag and the line's tax class \u2014 this is not a total and not a tax-resolved figure.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -11358,7 +11358,7 @@
       "id": "ls_workorder_statuses",
       "domain": "workshop",
       "grain": "one row per workorder status configured on the account (system-defined and store-created)",
-      "description": "The lookup for the workshop pipeline: every status a job can be in, system ones plus whatever boards the store invented. Tiny (the reference store has 13 rows) and the single most important table to read BEFORE writing any status filter, because display names are store-configured free text while only system_value is stable across accounts. It defines the pipeline; it holds no jobs, dates or money.",
+      "description": "The lookup for the workshop pipeline: every status a job can be in, including system states and merchant-defined boards. Read it BEFORE writing any status filter because display names are free text while system_value is the more stable cross-account field. It defines the pipeline; it holds no jobs, dates or money.",
       "additivity": "reference",
       "additivityAxis": null,
       "primaryKey": [
@@ -11390,7 +11390,7 @@
       "gotchas": [
         "Read this table FIRST for any question that names a status. Filtering ls_workorders.status_name on a guessed literal returns an empty result set that looks like a real answer ('no jobs are waiting') rather than an error.",
         "VERIFIED LIVE: system_value is '' (empty string) for custom statuses, not NULL. Use system_value <> '' for 'system-defined' and system_value = '' for 'store invented'.",
-        "VERIFIED LIVE: custom boards carry operational meaning invented by the store (TODAY = do it today, TO ORDER = awaiting parts, VAN = mobile/on-site work, Nest, Staff, Non-Bike). Cross-store reporting must map them to system_value semantics manually or exclude them.",
+        "Custom boards carry operational meaning invented by each merchant. Cross-store reporting must map tenant values to shared semantics explicitly or exclude them; never import another store's display-name mapping.",
         "Multiple statuses can share the same sort_order, so add workorder_status_id as a tiebreaker for a deterministic listing.",
         "There is no 'is terminal/closed' flag. The closest reliable end-of-pipeline test is system_value IN ('finished','paid'), reinforced by ls_workorders.sale_id IS NOT NULL for genuinely billed work.",
         "This endpoint documents no timeStamp, so statuses cannot be incrementally synced \u2014 refetch the whole (tiny) list each run."
@@ -11411,7 +11411,7 @@
           "name": "name",
           "type": "text",
           "api": "WorkorderStatus.name",
-          "description": "Display name shown in the POS. Fully store-configurable free text: VERIFIED LIVE the reference store runs Open, Estimate, Waiting, Finished, 'Done & Paid', Quote, Non-Bike, TODAY, 'TO ORDER', VAN, Staff, 'Finished + Text Sent' and Nest. Matching on a guessed name returns zero rows silently rather than erroring.",
+          "description": "Display name shown in the POS. Fully merchant-configurable free text. Matching on a guessed name returns zero rows silently rather than erroring, so inspect tenant values first.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -11658,7 +11658,7 @@
         "VERIFIED LIVE: live Shop payloads return extra keys the V3 field table omits entirely -- companyRegistrationNumber, vatNumber, zebraBrowserPrint, gatewayConfigID (a UUID string, not a number) and networkHealthTool. They are deliberately NOT modelled here because they are not in the published field table; if you need the VAT/ABN number or the modern payments config, read the raw payload and treat it as unversioned.",
         "VERIFIED LIVE: cc_gateway_id is 0 on modern accounts because the real payments configuration moved to the undocumented gatewayConfigID UUID. Never conclude 'this shop cannot take credit cards' from a null cc_gateway_id.",
         "VERIFIED LIVE: every foreign key on this object (contactID, taxCategoryID, receiptSetupID, ccGatewayID, priceLevelID) arrives as integer 0 rather than null when unset. Normalise 0 -> NULL on ingest or LEFT JOINs will silently match nothing while INNER JOINs silently drop rows.",
-        "VERIFIED LIVE: single-shop accounts are the common case (the probed store has exactly shop_id 1). shop_id filters and GROUP BYs are then no-ops -- keep them in generated SQL anyway so the same query stays correct when the merchant opens a second store.",
+        "Keep shop_id filters and GROUP BYs even when the current account has one location, so analysis remains correct for multi-shop merchants and when a new location is added.",
         "time_zone is the single most load-bearing value in the whole org domain. Mixing raw API offsets with SQL date_trunc in server time shifts sales across day boundaries and is the classic source of 'yesterday's total changed'.",
         "Shops are not stock locations in the ShelfLocations sense. ShelfLocations is a separate load_relation (bins/shelves inside a shop); the shop is the inventory OWNER, the shelf location is where it physically sits.",
         "Shop.name is merchant-editable and not unique. Always group and join on shop_id, never on name."
@@ -11701,7 +11701,7 @@
           "name": "time_zone",
           "type": "text",
           "api": "Shop.timeZone",
-          "description": "The store's timezone (IANA-style, e.g. Australia/Sydney). Load-bearing for the entire layer: every datetime the API returns is offset-stamped and every 'today', 'this week' and daily bucket must be computed in THIS zone, not UTC and not the querier's zone. On multi-shop accounts spanning zones, a single account-wide date bucket is arithmetically wrong.",
+          "description": "The store's IANA timezone. Load-bearing for the entire layer: every 'today', 'this week' and daily bucket must be computed in THIS tenant value, not UTC, server time, the querier's zone, or an example timezone. On multi-shop accounts spanning zones, a single account-wide date bucket is arithmetically wrong.",
           "key": false,
           "pii": false,
           "loadBearing": true,
@@ -11856,7 +11856,7 @@
         "register"
       ],
       "gotchas": [
-        "VERIFIED LIVE: tipEnabled is documented but was ABSENT from the live Register payload on the probed store. Expect NULL on many accounts and never write `WHERE tip_enabled = false` expecting to catch non-tipping tills -- use `IS NOT TRUE`.",
+        "tipEnabled can be absent from live Register payloads. Expect NULL on some accounts and never write `WHERE tip_enabled = false` expecting to catch every non-tipping till -- use `IS NOT TRUE` when that is the intended population.",
         "VERIFIED LIVE: live Register payloads return two keys the field table omits -- `archived` (boolean) and `ccTerminalID` (UUID of the paired card terminal). They are not modelled here because they are not in the published field table, but it means this table has NO documented way to hide retired tills: a register that shows in ls_registers may be long dead.",
         "VERIFIED LIVE: register foreign keys (openEmployeeID, shopID) arrive as 0 rather than null when unset; normalise on ingest.",
         "is_open and opened_at describe only the CURRENT session. Every question of the form 'when were tills opened/closed', 'how long was the average session', 'who closed the drawer' belongs on RegisterCount, not here.",
@@ -12413,7 +12413,7 @@
         "workforce_time_entry"
       ],
       "gotchas": [
-        "VERIFIED LIVE: the probed store returned ZERO rows from this endpoint -- the merchant did not use the Lightspeed time clock (rostering lived in a separate system). An empty result here is NORMAL, not a sync failure. Report 'the store does not use the built-in time clock' rather than reporting zero hours worked.",
+        "This endpoint is empty when a merchant does not use Lightspeed's time clock. Establish tenant coverage before reporting hours; an empty or absent population is not evidence of zero hours worked.",
         "VERIFIED LIVE: shift length in hours = EXTRACT(EPOCH FROM (check_out - check_in)) / 3600.0, and rows with check_out IS NULL must be excluded from every duration sum.",
         "VERIFIED LIVE: Lightspeed stores no pay rate, wage or salary anywhere in the API, so wage cost cannot be computed from this table however you join it. Shop.serviceRate is a customer BILLING rate, not a wage -- multiplying hours by it produces a fabricated number.",
         "Forgotten clock-outs create both NULL check_out rows and absurd multi-day durations once someone belatedly closes them. Sanity-check for shifts over ~14 hours before averaging.",
@@ -13680,7 +13680,7 @@
       "gotchas": [
         "VERIFIED LIVE: there are NO money columns on this table at all. Any question about cash amounts, floats or over/short must join ls_register_count_amounts on register_count_id.",
         "createTime is the CLOSE time and openTime is the OPEN time. Treating createTime as 'when the record was created' and using it as the session start produces negative or nonsensical durations.",
-        "VERIFIED LIVE: sessions can span months. The Ashburton production account contains counts opened 2018-04 and closed 2019-01 because a till was simply never closed. Sanity-filter (closed_at - opened_at) before averaging 'typical session length' or the mean is meaningless.",
+        "Sessions can remain open for implausibly long periods when a till is never closed. Inspect the duration distribution and sanity-filter outliers before averaging typical session length.",
         "Session length in hours = EXTRACT(EPOCH FROM (closed_at - opened_at)) / 3600.0.",
         "VERIFIED LIVE: page size 100 is the production-safe pageLimit for this endpoint.",
         "There is NO timeStamp field on RegisterCount, unlike most R-Series objects. You cannot ask for 'counts modified since X'. Incremental sync must page by registerCountID ascending and re-poll the tail; edits to old counts will be missed.",
@@ -13813,7 +13813,7 @@
         "Over/short = actual - calculated. POSITIVE means the drawer held MORE than expected (overage); NEGATIVE means it was short. Getting the subtraction backwards flips every accusation.",
         "VERIFIED LIVE: staff routinely skip counting non-cash tenders, leaving actual = 0 against a large calculated value. A huge apparent card 'shortage' almost always means 'not counted', not missing money. Filter actual <> 0 before ranking or summing variances, or you will report fiction as theft.",
         "calculated ALREADY includes register adds and payouts. Do not add ls_register_withdraws.amount on top of it to build an expected total \u2014 that double-counts the opening float.",
-        "VERIFIED LIVE: no live sample was captured for this endpoint on the Ashburton production account; the field list follows the official reference only. Run a small scan and eyeball real values before building anything load-bearing on it.",
+        "Run a bounded coverage and value-shape check before building anything load-bearing on this endpoint; documented fields do not prove that the current tenant populates them.",
         "Summing actual across all rows of ONE close-out gives total drawer contents at that close. Summing across close-outs over time is meaningless because the float carries over \u2014 see additivityAxis.",
         "Rows are emitted per CONFIGURED tender, so a store with nine payment types can produce nine rows per close-out, most of them zero on both sides. COUNT(*) here counts tender lines, never close-outs.",
         "The docs type calculated and actual as float. Stage them as numeric(12,2)-style numeric: accumulating binary floats over thousands of lines produces cent-level phantom variances.",
@@ -14138,7 +14138,7 @@
       ],
       "gotchas": [
         "VERIFIED LIVE: rates are fractions of 1, not percentages - tax1_rate = 0.1 means 10%. Rendering the raw value as a percent understates by 100x and is the single most common error against this table.",
-        "VERIFIED LIVE: an AU store (Ashburton) runs exactly two categories, 'Sales Tax' and 'Labor Tax', both 10% and both tax-inclusive, which makes GST maths uniform there. Do not generalise that to other accounts - is_tax_inclusive may differ per category on the same account.",
+        "Tax-category names, rates and inclusive/exclusive treatment are merchant-defined and can differ within one account. Read the current tenant's rows; never assume a reference merchant's GST or sales-tax setup.",
         "No rate history exists. timeStamp only says when the row last changed, so historical tax cannot be reconstructed from this table. ls_report_taxes_by_day is the only source for tax actually collected on a past date.",
         "The effective rate for a line is the ls_tax_category_classes override when one exists for that line's tax class, otherwise tax1_rate/tax2_rate here. Reading this table alone overstates tax for zero-rated classes such as gift cards.",
         "At most two component rates are representable (tax1/tax2). Accounts in three-component jurisdictions have their taxes folded by Lightspeed before they reach the API, so component-level reconciliation is impossible.",
@@ -14355,7 +14355,7 @@
       ],
       "gotchas": [
         "VERIFIED LIVE: expect junk rows. A real store carried a tail of auto-created classes with empty names alongside the three real ones. Filter `name <> ''` before listing classes to a human, but do NOT filter them out of report joins - unnamed classes can still carry money.",
-        "VERIFIED LIVE: only 'Item', 'Labor' and 'Gift Card' were named at the probed AU store. 'Labor' is the hook for every service-vs-goods question in this domain.",
+        "Tax-class names are tenant data. Inspect the current rows before using a class name as the service-vs-goods hook; do not assume another merchant's vocabulary.",
         "VERIFIED LIVE: an undocumented `classType` field is returned live with values 'item' and 'service'. It is the cleanest labour/goods discriminator, but it is not in the published field list, so it is not modelled here; falling back to name = 'Labor' is the documented-only route.",
         "TaxClass.SaleLines and TaxClass.Items are documented as type string with URL bodies (/API/V3/Account/{accountID}/SaleLine and .../Item). They are relation pointers, not values - see fieldCoverage.unmapped.",
         "A tax class carries NO rate of its own. Answering 'what rate does Labor attract' requires ls_tax_category_classes joined to ls_tax_categories, and the answer differs per category.",

@@ -64,6 +64,10 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 - The chat is the primary analytical surface.
 - Stream an ordered execution trace, not private chain-of-thought. Allowed events are concise plan summaries, capability/data-health checks, semantic-query calls, returned tables, chart specs over those tables, named validations, and the governed answer.
 - Preserve event order exactly as emitted by the backend.
+- Render governed bar and line events with Nivo's responsive SVG components.
+  Bars compare or rank distinct categories; lines require an ordered time or
+  numeric axis. Keep the referenced exact-value table before its chart in the
+  detailed trace and available from the compact response trace.
 - Reuse the existing trace rail, dashboard table, chart, drawer, and status patterns.
 - A completed answer displays one of: Verified, Qualified, Exploratory, Clarification, or Unavailable.
 - Numerical artefacts display source, time range, definition, freshness, result identifier, and validation outcome. “Explain this number” opens lineage and semantic metadata; it never exposes hidden reasoning or creates an agent-facing SQL surface.

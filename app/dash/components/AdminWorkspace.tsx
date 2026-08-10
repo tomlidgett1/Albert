@@ -10,9 +10,10 @@ import type {
   OperatorRowSample,
 } from "@/services/control-plane/src/operator-repository";
 import ArchitectureMap, { type ArchitectureOverview } from "./ArchitectureMap";
+import SemanticAdminWorkspace from "./SemanticAdminWorkspace";
 import styles from "../dash.module.css";
 
-type AdminView = "architecture" | "fleet";
+type AdminView = "architecture" | "fleet" | "semantic";
 
 type DetailRow = Readonly<Record<string, unknown>>;
 type CellKind = "text" | "state" | "time" | "number" | "percent" | "bytes" | "boolean" | "code" | "json" | "connector" | "quality";
@@ -574,6 +575,7 @@ function parseArchitecture(value: unknown): ArchitectureOverview | null {
 const ADMIN_TABS = Object.freeze([
   { key: "architecture" as const, label: "Architecture" },
   { key: "fleet" as const, label: "Fleet" },
+  { key: "semantic" as const, label: "Semantic layer" },
 ]);
 
 export default function AdminWorkspace() {
@@ -585,9 +587,10 @@ export default function AdminWorkspace() {
   const [activeStage, setActiveStage] = useState<OperatorPipelineStage>("connections");
   const [loadingScope, setLoadingScope] = useState<"architecture" | "fleet" | "pipeline" | "detail" | null>("architecture");
   const [error, setError] = useState("");
+  const [semanticRefresh, setSemanticRefresh] = useState(0);
   const detailRequest = useRef(0);
   const pipelineRequest = useRef(0);
-  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ architecture: null, fleet: null });
+  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ architecture: null, fleet: null, semantic: null });
   const tabRowRef = useRef<HTMLDivElement | null>(null);
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
 
@@ -740,6 +743,10 @@ export default function AdminWorkspace() {
       void loadFleet();
       return;
     }
+    if (view === "semantic") {
+      setSemanticRefresh((value) => value + 1);
+      return;
+    }
     void loadFleet();
   };
 
@@ -749,12 +756,16 @@ export default function AdminWorkspace() {
     ? pipeline.tenant.name
     : view === "architecture"
       ? "How Albert works"
-      : "Albert fleet";
+      : view === "semantic"
+        ? "Semantic layer"
+        : "Albert fleet";
   const subtitle = pipeline
     ? `Trace ${pipeline.tenant.timezone} operational metadata from source edge to query-ready domains.`
     : view === "architecture"
       ? "A plain-English map of the backend: tools, sync, business truth, the semantic dictionary, and chat."
-      : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
+      : view === "semantic"
+        ? "Author, validate, review and publish the governed Lightspeed and Xero analytical model."
+        : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
 
   return (
     <section className={styles.opsWorkspace} aria-labelledby="admin-workspace-title">
@@ -770,7 +781,9 @@ export default function AdminWorkspace() {
             ? `Pipeline snapshot ${formatTime(pipeline.latest_pipeline_snapshot_at)} · Console refreshed ${formatTime(pipeline.generated_at)}`
             : view === "architecture"
               ? `Architecture refreshed ${formatTime(architecture?.generated_at)}`
-              : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
+              : view === "semantic"
+                ? "Immutable publications · optimistic draft revisions · no customer runtime change"
+                : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
         </div>
         <div className={styles.opsHeaderActions}>
           {pipeline ? <button type="button" onClick={leavePipeline}>Back to fleet</button> : null}
@@ -898,6 +911,8 @@ export default function AdminWorkspace() {
           </div>
         </>
       ) : null}
+
+      {!pipeline && view === "semantic" ? <SemanticAdminWorkspace refreshToken={semanticRefresh} /> : null}
 
       {pipeline ? (
         <>

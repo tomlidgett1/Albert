@@ -59,6 +59,9 @@ type NumericToken = Readonly<{
   value: number;
   decimals: number;
   scale: number;
+  /** An explicit percent sign may faithfully render either a ratio cell
+   * (0.0265 -> 2.65%) or an already-percent-scaled cell (2.65 -> 2.65%). */
+  percent: boolean;
   /** Whether the author wrote an explicit sign, rather than carrying direction
    * in words ("down $2,219.31"). Unsigned figures may match a cell magnitude. */
   signed: boolean;
@@ -98,6 +101,7 @@ function parseNumericToken(token: string): NumericToken | null {
     value,
     decimals: fractionPart?.length ?? 0,
     scale,
+    percent: normalizedSuffix === "%",
     signed: sign === "-" || sign === "+",
   });
 }
@@ -120,7 +124,10 @@ function tokenMatchesCellValue(token: NumericToken, cell: number): boolean {
   // business prose carries direction in words: "sales are down $2,219.31"
   // reports the cell -2219.31 faithfully. Typed comparison claims, not the
   // narrative, are what prove direction.
-  const candidates = token.signed ? [cell] : [cell, Math.abs(cell)];
+  const signedCandidates = token.signed ? [cell] : [cell, Math.abs(cell)];
+  const candidates = token.percent
+    ? [...signedCandidates, ...signedCandidates.map((candidate) => candidate * 100)]
+    : signedCandidates;
   return candidates.some((candidate) => {
     const scaled = candidate / token.scale;
     if (scaled === token.value) return true;
@@ -210,11 +217,17 @@ function quantitativeWordClaims(
   for (const match of narrative.matchAll(numberWordPattern)) {
     const token = match[0];
     const offset = match.index ?? 0;
-    const before = narrative.slice(Math.max(0, offset - 16), offset).toLowerCase();
+    const before = narrative.slice(Math.max(0, offset - 64), offset).toLowerCase();
     const after = narrative.slice(offset + token.length, offset + token.length + 16).toLowerCase();
     if (
       token.toLowerCase() === "one" &&
-      (/(?:\bno\s+|\bsome\s*)$/u.test(before) || /^\s+(?:of|another|off)\b/u.test(after))
+      (/(?:\bno\s+|\bsome\s*)$/u.test(before)
+        || /^\s+(?:of|another|off)\b/u.test(after)
+        // "Cannot identify one owner" expresses unresolved uniqueness; it
+        // does not assert that the evidence contains one record. Treating the
+        // determiner as a quantitative finding can erase an honest ambiguity
+        // warning and replace it with a misleading ranked result.
+        || /\b(?:cannot|can't|could not|couldn't|unable to)\s+(?:safely\s+)?(?:identify|choose|select|name)\s*$/u.test(before))
     ) continue;
     if (copiedSourceLabel(narrative, token, copiedLabels)) continue;
     const parsed = parseNumberWords(token);
@@ -355,8 +368,32 @@ export function normalizedQuantitativeClaims(
  */
 const listMarkerPattern = /^[ \t]*(?:[-*]\s*)?\d+[.)](?=\s)/gmu;
 
+/** Rank/# cells are presentation ordinals, like ordered-list markers. */
+function withoutMarkdownRankCells(narrative: string): string {
+  const lines = narrative.split("\n");
+  let rankColumn = -1;
+  let inTable = false;
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) {
+      rankColumn = -1;
+      inTable = false;
+      return line;
+    }
+    const cells = trimmed.slice(1, -1).split("|").map((cell) => cell.trim());
+    if (!inTable) {
+      rankColumn = cells.findIndex((cell) => /^(?:rank|#|position)$/iu.test(cell));
+      inTable = true;
+      return line;
+    }
+    if (rankColumn < 0 || !cells[rankColumn] || !/^\d+$/u.test(cells[rankColumn]!)) return line;
+    cells[rankColumn] = "";
+    return `| ${cells.join(" | ")} |`;
+  }).join("\n");
+}
+
 function numericTokens(narrative: string): readonly NumericToken[] {
-  const withoutListMarkers = narrative.replace(listMarkerPattern, "");
+  const withoutListMarkers = withoutMarkdownRankCells(narrative.replace(listMarkerPattern, ""));
   numericTokenPattern.lastIndex = 0;
   return (withoutListMarkers.match(numericTokenPattern) ?? [])
     .map(parseNumericToken)

@@ -4,6 +4,7 @@ import {
   type AlbertPreferenceOptionId,
 } from "../../../packages/agent/src/semantic-tools.js";
 import type {
+  ResolvedConversationSubject,
   TraceEvent,
 } from "../../../packages/shared/src/index.js";
 import { ControlPlaneError, requireUser } from "../../control-plane/src/web-repository.js";
@@ -22,8 +23,13 @@ const modelContextSchema = z.array(z.object({
   status: z.string(),
   assistant_event: z.object({
     type: z.enum(["answer", "clarification"]),
-    text: z.string().min(1).max(4_000).optional(),
+    text: z.string().min(1).max(16_000).optional(),
     question: z.string().min(1).max(300).optional(),
+    resolvedSubject: z.object({
+      label: z.string().trim().min(1).max(160),
+      kind: z.string().trim().min(1).max(80),
+      resolvedQuestion: z.string().trim().min(1).max(2_000),
+    }).strict().optional(),
   }).passthrough().nullable(),
 }));
 
@@ -49,6 +55,7 @@ export type ConversationTitleAssignment = Readonly<{
 export type ConversationModelMessage = Readonly<{
   role: "user" | "assistant";
   text: string;
+  resolvedSubject?: ResolvedConversationSubject;
 }>;
 
 /** Supabase client captured before an SSE response starts streaming. */
@@ -211,7 +218,11 @@ export async function loadConversationModelContext(
   const messages = parsed.data.flatMap((turn): ConversationModelMessage[] => {
     const values: ConversationModelMessage[] = [{ role: "user", text: turn.user_message }];
     const event = turn.assistant_event;
-    if (event?.type === "answer" && event.text) values.push({ role: "assistant", text: event.text });
+    if (event?.type === "answer" && event.text) values.push({
+      role: "assistant",
+      text: event.text,
+      ...(event.resolvedSubject ? { resolvedSubject: Object.freeze({ ...event.resolvedSubject }) } : {}),
+    });
     if (event?.type === "clarification" && event.question) values.push({ role: "assistant", text: event.question });
     return values;
   });

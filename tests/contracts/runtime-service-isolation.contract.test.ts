@@ -145,6 +145,7 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
 
   const memberships = [...provisioner.matchAll(/group: "([a-z_]+)"/g)].map((match) => match[1]);
   assert.deepEqual(memberships.sort(), [
+    "albert_anthropic_control",
     "albert_control_migration_owner",
     "albert_deletion_control",
     "albert_migration_owner",

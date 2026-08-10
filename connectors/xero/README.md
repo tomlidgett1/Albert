@@ -134,11 +134,14 @@ Facts from a full backfill of a real organisation, recorded because two of them
 contradict the vendor documentation and all four change how a backfill is
 planned:
 
-- **The daily allowance did not reset at midnight UTC.** Xero documents a
-  midnight-UTC reset; `X-DayLimit-Remaining` was observed decrementing straight
-  through 00:00 UTC without refilling, so it behaves as a rolling window. Plan a
-  backfill against a budget that refills gradually, not one that returns in full
-  at a known hour, and probe before spending.
+- **The daily allowance does not reset at midnight UTC.** Xero documents a
+  midnight-UTC reset. `X-DayLimit-Remaining` was observed decrementing straight
+  through 00:00 UTC (999 -> 4 across the boundary, still 4 at 01:10 UTC), and
+  then found fully restored to 999 at 22:36 UTC the same day. The reset is real
+  but happens on some other schedule — most likely the organisation's own
+  billing/locale day — and this pack does not know which. Do not plan a backfill
+  around an assumed reset hour in either direction: read
+  `X-DayLimit-Remaining` and act on what it says.
 - **The daily allowance is 1,000, not 5,000.** This is the uncertified-app tier.
   A complete pull is therefore budget-bound, not latency-bound: walking each of
   the 197 streams separately would spend ~800 calls on page verification alone

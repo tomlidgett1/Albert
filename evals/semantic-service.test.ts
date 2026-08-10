@@ -13,6 +13,17 @@ test("service executes only through semantic read boundary, caches by bundle and
   let databaseCalls=0;let healthCalls=0;const audits:Array<{cacheHit:boolean;resultDigest:string}>=[];
   const dependencies:SemanticServiceDependencies={registry,contextProvider:{async load(){return{timezone:"Australia/Melbourne",tradingDayCutoff:"00:00",fiscalYearStartMonth:7,fiscalYearStartDay:1,weekStartsOn:1,tenantParameters:{active_customer_days:90,lapsed_customer_days:180,stock_velocity_days:30},capabilities:allCapabilities,overlayVersion:"overlay-1",identityGraphVersion:0,identityGraphHash:"d41d8cd98f00b204e9800998ecf8427e",defaults:{},dossier:{},packVersions:{lightspeed:"1"},sourceWatermarks:{"connection-1":"2026-03-15T11:00:00Z"},sourceDetails:[{connectorId:"lightspeed",connectionId:"connection-1",label:"Lightspeed",dataThrough:"2026-03-15T11:00:00Z"}],authorityByConcept:{operational_sales:"connection-1"}};}},database:{async queryAsSemanticRole(request){databaseCalls+=1;assert.equal(request.tenantId,FIXTURE_TENANT_ID);assert.equal(request.parameters[0],FIXTURE_TENANT_ID);return{rows:[{__key_worker:"01J00000000000000000000004",worker:"Sam",net_sales_ex_gst:"210.0000"}],durationMs:12};}},cache:new MemorySemanticResultCache(()=>Date.parse(FIXTURE_NOW)),sourceCatalogue:{async listFields(){return[];}},dataHealth:{async getForTopic(){healthCalls+=1;return healthCalls===1?{status:"passed",checks:[{checkId:"line_maths",status:"passed"}]}:{status:"warning",checks:[{checkId:"line_maths",status:"warning"}]};}},audit:{async append(record){audits.push(record);},async promoteSourceField(){return"promotion-1";}},publicationEvidence:{async inspect(){return{registryVersion:registry.version,registryHash:"f".repeat(64),activePublicationMatches:true};}},clock:()=>new Date(FIXTURE_NOW)};
   const service=new DefaultSemanticToolExecutor(dependencies);const input={topic:"sales_performance",metrics:["net_sales_ex_gst"],dimensions:["worker"],filters:[],time:{field:"business_date",range:{type:"absolute",from:"2026-03-01T00:00:00.000Z",to:"2026-04-01T00:00:00.000Z"},compare:"none"},sort:[],limit:20};
+  const factDefinition=await service.execute("get_definition",{name:"commerce_sales_event"},trusted);
+  assert.deepEqual(
+    factDefinition.definition && typeof factDefinition.definition === "object"
+      ? {
+          id:(factDefinition.definition as Record<string,unknown>).id,
+          table:(factDefinition.definition as Record<string,unknown>).table,
+          grainKey:(factDefinition.definition as Record<string,unknown>).grainKey,
+        }
+      : null,
+    {id:"commerce_sales_event",table:"mart.commerce_sales_event",grainKey:"id"},
+  );
   const first=await service.execute("run_semantic_query",input,trusted);const second=await service.execute("run_semantic_query",input,trusted);
   assert.equal(first.state,"verified");assert.equal(first.performance.cacheHit,false);assert.equal(second.state,"qualified");assert.equal(second.performance.cacheHit,true);assert.equal(databaseCalls,1);assert.equal(healthCalls,2);assert.deepEqual(audits.map(({cacheHit})=>cacheHit),[false,true]);assert.match(audits[0]!.resultDigest,/^[a-f0-9]{64}$/);assert.equal(audits[1]!.resultDigest,audits[0]!.resultDigest);
   assert.deepEqual(first.data?.rows,[{worker:"Sam",net_sales_ex_gst:"210.0000"}]);assert.deepEqual(first.data?.filterRefs,[{worker:"01J00000000000000000000004"}]);assert.deepEqual(second.data?.filterRefs,first.data?.filterRefs);

@@ -192,6 +192,44 @@ export function normalizeXeroValue(value: unknown): unknown {
   return value;
 }
 
+
+/**
+ * A synthetic column carries something real that simply is not in the response
+ * body: a constant the endpoint implies, a request parameter the scan chose, or
+ * the fan-out parent a sub-response belongs to. Left unresolved these columns
+ * are null, and where one is part of the declared key the rows collide — four
+ * yearly 1099 passes overwrite each other into a single identity.
+ *
+ * Resolution order, all stated by the citation itself:
+ *   1. a quoted constant  — synthetic:constant 'AU_PAYROLL' ...
+ *   2. a named value the caller supplied (reportYear, EmployeeID, parentId ...)
+ *   3. the explode branch, for a discriminator between sibling arrays
+ */
+export function resolveSyntheticValue(
+  column: XeroSpecColumn,
+  explodePath: string | null,
+  synthetics: Readonly<Record<string, unknown>>,
+): unknown {
+  const citation = column.api;
+
+  const quoted = /'([^']+)'/u.exec(citation);
+  if (quoted) return quoted[1];
+
+  // Longest name first so `EmployeeID` wins over a bare `id`.
+  const names = Object.keys(synthetics).sort((left, right) => right.length - left.length);
+  for (const name of names) {
+    const value = synthetics[name];
+    if (value === undefined || value === null) continue;
+    const pattern = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\b`, "iu");
+    if (pattern.test(citation) || pattern.test(column.name)) return value;
+  }
+
+  if (explodePath && /discriminator|branch|scope/u.test(citation)) {
+    return explodePath.split(".").pop() ?? null;
+  }
+  return undefined;
+}
+
 function resolveSegments(record: unknown, segments: readonly string[]): unknown {
   let current: unknown = record;
   for (const segment of segments) {
@@ -269,13 +307,19 @@ export function resolveColumnValue(input: {
   ordinal: number;
   /** The table's explode path, when its rows are elements of a nested array. */
   explodePath?: string | null;
+  /**
+   * Values the response body cannot carry but the request knows: the parameters
+   * the scan issued (reportYear, AsOfDate, EmployeeID), the fan-out parent it
+   * was issued for, and the organisation it belongs to.
+   */
+  synthetics?: Readonly<Record<string, unknown>>;
 }): unknown {
-  const { column, levels, ordinal, explodePath } = input;
+  const { column, levels, ordinal, explodePath, synthetics } = input;
   if (column.api.startsWith("synthetic:")) {
     if (/(_index|_ordinal|position)$/u.test(column.name) || /position|index|ordinal/u.test(column.api)) {
       return ordinal;
     }
-    return undefined;
+    return resolveSyntheticValue(column, explodePath ?? null, synthetics ?? {});
   }
   const body = column.api.slice(column.api.indexOf(":") + 1).replace(/\[\]( index)?$/u, "");
 
@@ -327,6 +371,7 @@ export function projectRowFields(
   row: ExplodedRow,
   walkedRecord: unknown,
   fanOutParent: Readonly<{ record: unknown; table: XeroSpecTable }> | null,
+  synthetics: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
   const chain = table.source.explodeChain ?? [];
   // Levels, innermost first: the element, then each enclosing container named
@@ -350,7 +395,7 @@ export function projectRowFields(
   const fields: Record<string, unknown> = {};
   for (const column of table.columns) {
     const value = resolveColumnValue({
-      column, levels, ordinal: row.ordinal, explodePath: table.source.explodePath,
+      column, levels, ordinal: row.ordinal, explodePath: table.source.explodePath, synthetics,
     });
     if (value !== undefined) fields[xeroSourceField(column)] = value;
   }
@@ -379,8 +424,11 @@ export function projectStreamRows(input: {
    * resolve against it.
    */
   fanOutParent?: Readonly<{ record: unknown; table: XeroSpecTable }>;
+  /** Request-side values for synthetic columns (parameters, parent, org). */
+  synthetics?: Readonly<Record<string, unknown>>;
 }): readonly RawSourceRecord[] {
   const { table, leaderTable, resource, records, recordIdField, fanOutParent } = input;
+  const synthetics = input.synthetics ?? {};
   const explode = table.source.explodePath;
   const rows: RawSourceRecord[] = [];
 
@@ -403,6 +451,7 @@ export function projectStreamRows(input: {
         row,
         record,
         fanOutParent ? { record: fanOutParent.record, table: fanOutParent.table } : null,
+        synthetics,
       );
       const ordinal = row.ordinal;
       // Identity follows the declared grain. A composite primary key means the

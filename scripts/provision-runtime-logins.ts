@@ -23,6 +23,7 @@ const controlPlane: CellSpec = Object.freeze({
     Object.freeze({ login: "albert_sync_control_runtime", group: "albert_sync_control", passwordEnvironmentName: "ALBERT_SYNC_CONTROL_DB_PASSWORD", connectionLimit: 24, statementTimeout: "30s" }),
     Object.freeze({ login: "albert_transform_control_runtime", group: "albert_transform_control", passwordEnvironmentName: "ALBERT_TRANSFORM_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "30s" }),
     Object.freeze({ login: "albert_semantic_control_runtime", group: "albert_semantic_control", passwordEnvironmentName: "ALBERT_SEMANTIC_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "15s" }),
+    Object.freeze({ login: "albert_anthropic_control_runtime", group: "albert_anthropic_control", passwordEnvironmentName: "ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "30s" }),
     Object.freeze({ login: "albert_operator_diagnostic_control_runtime", group: "albert_operator_diagnostic_control", passwordEnvironmentName: "ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD", connectionLimit: 8, statementTimeout: "5s" }),
     Object.freeze({ login: "albert_webhook_control_runtime", group: "albert_webhook_control", passwordEnvironmentName: "ALBERT_WEBHOOK_CONTROL_DB_PASSWORD", connectionLimit: 24, statementTimeout: "15s" }),
     Object.freeze({ login: "albert_deletion_control_runtime", group: "albert_deletion_control", passwordEnvironmentName: "ALBERT_DELETION_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "5min" }),

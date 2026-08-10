@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -20,6 +21,30 @@ const trusted = {
   conversationId: "01J00000000000000000000002",
   turnId: "01J00000000000000000000003",
 };
+
+test("the founding specification and current ADRs confine SQL-first to the V1 rollback window", () => {
+  const spec = readFileSync(resolve("docs/albert-v1-spec.md"), "utf8");
+  const sqlFirstAdr = readFileSync(resolve("docs/adr/0068-sql-first-semantic-architecture.md"), "utf8");
+  const interpretationAdr = readFileSync(
+    resolve("docs/adr/0075-model-owned-interpretation-for-sql-first-analysis.md"),
+    "utf8",
+  );
+  const v2Adr = readFileSync(
+    resolve("docs/adr/0077-semantic-execution-and-analytical-intelligence-v2.md"),
+    "utf8",
+  );
+
+  assert.match(spec, /Semantic execution is the constitutional V2 question-time architecture/u);
+  assert.match(spec, /No V2 tool accepts SQL or physical identifiers/u);
+  assert.doesNotMatch(spec, /model-authored analytical SQL is the primary question-time path/u);
+  assert.match(sqlFirstAdr, /Superseded for the primary question-time path by ADR 0077/u);
+  assert.match(interpretationAdr, /Superseded in part by ADR 0077/u);
+  assert.match(
+    v2Adr,
+    /No model-provided SQL or expression fragment\s+may reach PostgreSQL/u,
+  );
+  assert.match(interpretationAdr, /No regular expression, keyword list, word count or prompt-template matcher/u);
+});
 
 type QueryFn = SemanticServiceDependencies["database"]["queryAsSemanticRole"];
 
@@ -120,6 +145,15 @@ test("an attested claim over contracted substrate earns Verified on the sql_firs
   const envelope = audits[0]!.input as Record<string, unknown>;
   assert.equal(envelope.route, "sql_first");
   assert.match(String(envelope.sqlDigest), /^[a-f0-9]{64}$/u);
+  assert.deepEqual(envelope.scopeReceipt, response.scopeReceipt);
+  assert.ok(response.scopeReceipt?.relations.some((relation) =>
+    relation.schema === "mart" && relation.relation === "commerce_sales_event"));
+  assert.ok(response.scopeReceipt?.predicates.some((predicate) =>
+    predicate.expression === "f.business_date" && predicate.values.includes("2026-07-01")));
+  assert.deepEqual(
+    response.scopeReceipt?.resultValues.find(({ column }) => column === "net_sales")?.values,
+    ["210.0000"],
+  );
   assert.equal(audits[0]!.state, "verified");
   // The statement itself and the attestation contract both executed.
   assert.ok(statements.length >= 2);
@@ -282,6 +316,32 @@ test("an ordered, limited statement carries an ordering proof; unordered truncat
     limit: 3,
   }, trusted);
   assert.equal(unordered.data?.resultWindow, undefined);
+});
+
+test("an ordering proof never exceeds the governed five-key wire contract", async () => {
+  const service = serviceFor({
+    async query() {
+      return {
+        rows: [{ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 }],
+        durationMs: 1,
+      };
+    },
+  });
+  const response = await service.execute("run_sql", {
+    sql: "SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d, 5 AS e, 6 AS f ORDER BY a, b, c, d, e, f LIMIT 1",
+    purpose: "bounded ordering proof",
+    claims: [],
+    filters: [],
+    limit: 20,
+  }, trusted);
+
+  assert.deepEqual(response.data?.resultWindow?.orderBy, [
+    { columnKey: "a", direction: "asc" },
+    { columnKey: "b", direction: "asc" },
+    { columnKey: "c", direction: "asc" },
+    { columnKey: "d", direction: "asc" },
+    { columnKey: "e", direction: "asc" },
+  ]);
 });
 
 test("identical statements hit the bundle cache and re-audit as cache hits", async () => {

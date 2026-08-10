@@ -35,6 +35,7 @@ const RELEASE_ENVIRONMENTS = Object.freeze([
 ]);
 
 export const FLY_APP_VARIABLES = Object.freeze([
+  "FLY_ANTHROPIC_APP",
   "FLY_SEMANTIC_APP",
   "FLY_SYNC_APP",
   "FLY_TRANSFORM_APP",

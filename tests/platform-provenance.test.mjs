@@ -83,15 +83,16 @@ function flyObservation() {
 
 const flyOptions = { candidateSha, deploymentId, expectedImageDigest: imageDigest };
 
-test("Fly provenance derives all public origins from six exact platform-attested apps", () => {
+test("Fly provenance derives all public origins from seven exact platform-attested apps", () => {
   const evidence = validateFlyPlatformProvenance(flyObservation(), flyOptions);
-  assert.equal(evidence.apps.length, 6);
+  assert.equal(evidence.apps.length, 7);
   assert.equal(evidence.organization.id, "org_01HZZZZZZZZZZZZZZZZZZZZZZZ");
   assert.equal(evidence.imageDigest, imageDigest);
   assert.match(evidence.manifestDigest, /^[a-f0-9]{64}$/u);
   assert.deepEqual(
     evidence.apps.filter(({ exposure }) => exposure === "public").map(({ origin }) => origin),
     [
+      "https://albert-anthropic-analytics.fly.dev",
       "https://albert-operator-diagnostic.fly.dev",
       "https://albert-semantic-query.fly.dev",
       "https://albert-sync-worker.fly.dev",
@@ -109,8 +110,8 @@ test("Fly provenance rejects fake responders and every target-identity substitut
     ["wrong region", (value) => { value.apps[0].machines[0].region = "iad"; }, /outside Sydney/u],
     ["wrong check path", (value) => { value.apps[0].machines[0].readinessConfig.path = "/healthz"; }, /readiness path drifted/u],
     ["failed check", (value) => { value.apps[0].checks[0].status = "critical"; }, /not passing/u],
-    ["public private worker", (value) => { value.apps[0].app.publicServiceCount = 1; }, /Fly Proxy service/u],
-    ["missing runtime", (value) => { value.apps.pop(); }, /exactly six/u],
+    ["public private worker", (value) => { value.apps.find(({ exposure }) => exposure === "private").app.publicServiceCount = 1; }, /Fly Proxy service/u],
+    ["missing runtime", (value) => { value.apps.pop(); }, /exactly 7/u],
     ["self-reported health", (value) => { value.apps[0].reportedHealth = { releaseSha: candidateSha }; }, /shape is invalid/u],
   ];
   for (const [label, mutate, pattern] of mutations) {

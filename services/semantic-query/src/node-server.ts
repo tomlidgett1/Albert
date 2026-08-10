@@ -27,6 +27,8 @@ export async function startSemanticNodeServer(options:Readonly<{
     hmacSecret:options.signingSecret,
     answerArtifactFinalizer:options.composition.answerArtifactFinalizer,
     modelUsageRecorder:options.composition.modelUsageRecorder,
+    v2Executor:options.composition.v2Executor,
+    analyticalRuntime:options.composition.analyticalRuntime??"v1",
   });
   const sockets=new Set<Socket>();let closing=false;
   const server=createServer({maxHeaderSize:16*1024},async(request,response)=>{
@@ -38,8 +40,11 @@ export async function startSemanticNodeServer(options:Readonly<{
         return sendJson(response,!closing&&readiness.ready?200:503,{
           status:!closing&&readiness.ready?"ready":"not_ready",
           runtime:"semantic-query",
+          analyticalRuntime:options.composition.analyticalRuntime??"v1",
+          v2PublicationHash:options.composition.v2PublicationHash??null,
           releaseSha:options.releaseSha??null,
           deploymentId:options.deploymentId??null,
+          checks:readiness.checks,
         },correlationId);
       }
       if(closing)return sendJson(response,503,{error:{code:"SHUTTING_DOWN",message:"Semantic service is stopping."}},correlationId);

@@ -85,6 +85,7 @@ export function resolveTenantTimeRange(
     last_n_complete_days: range.type === "last_n_complete_days"
       ? { start: addDays(currentBusinessDate, -range.days), end: currentBusinessDate }
       : undefined,
+    week_to_date: { start: weekStart, end: addDays(currentBusinessDate, 1) },
     month_to_date: { start: monthStart, end: addDays(currentBusinessDate, 1) },
     quarter_to_date: { start: quarterStart, end: addDays(currentBusinessDate, 1) },
     year_to_date: { start: yearStart, end: addDays(currentBusinessDate, 1) },
@@ -146,6 +147,20 @@ export function shiftRangeStartByDays(
   }
   const calendar = normalizeTenantCalendar(calendarInput);
   return rangeFromBusinessDates(addDays(parseDate(range.toBusinessDate), -days), parseDate(range.toBusinessDate), calendar);
+}
+
+/** The immediately preceding business-date window with exactly the same day count. */
+export function resolvePreviousPeriodTimeRange(
+  current: ResolvedTimeRange,
+  calendarInput: TenantCalendarConfig,
+): ResolvedTimeRange {
+  const calendar = normalizeTenantCalendar(calendarInput);
+  const currentStart = parseDate(current.fromBusinessDate);
+  const currentEnd = parseDate(current.toBusinessDate);
+  const dayCount = Math.round(compareDates(currentEnd, currentStart) / 86_400_000);
+  const previousEnd = currentStart;
+  const previousStart = addDays(previousEnd, -dayCount);
+  return rangeFromBusinessDates(previousStart, previousEnd, calendar);
 }
 
 function rangeFromBusinessDates(start: DateParts, end: DateParts, calendar: TenantCalendarConfig): ResolvedTimeRange {

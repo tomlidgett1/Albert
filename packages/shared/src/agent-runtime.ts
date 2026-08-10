@@ -49,9 +49,9 @@ export type AgentRunPreferences = Readonly<{
 }>;
 
 export const DEFAULT_AGENT_PREFERENCES: AgentRunPreferences = Object.freeze({
-  model: "gpt-5.6-luna",
+  model: "gpt-5.6-sol",
   reasoningEffort: "max",
-  fastMode: false,
+  fastMode: true,
 });
 
 const modelIds = new Set<string>(ALBERT_MODEL_IDS);
@@ -92,13 +92,26 @@ export function normalizeAgentPreferences(input: unknown): AgentRunPreferences {
 
 export const ANSWER_STATES = [
   "Verified",
+  "Derived",
   "Qualified",
   "Exploratory",
   "Clarification",
+  "No data",
   "Unavailable",
 ] as const;
 
 export type AnswerState = (typeof ANSWER_STATES)[number];
+
+/** The exact public terminal contract for Semantic Execution V2. */
+export const SEMANTIC_V2_ANSWER_STATES = [
+  "Verified",
+  "Derived",
+  "Exploratory",
+  "Clarification",
+  "No data",
+  "Unavailable",
+] as const satisfies readonly AnswerState[];
+export type SemanticV2AnswerState = (typeof SEMANTIC_V2_ANSWER_STATES)[number];
 
 export type TraceStatus = "pending" | "running" | "complete" | "warning" | "error";
 
@@ -220,12 +233,26 @@ export interface TraceValidationEvent extends TraceEventBase {
   detail: string;
 }
 
+/**
+ * The model-resolved subject carried between completed turns. This is a
+ * compact interpretation artifact, not a business fact or hidden reasoning.
+ */
+export type ResolvedConversationSubject = Readonly<{
+  label: string;
+  kind: string;
+  resolvedQuestion: string;
+}>;
+
 export interface TraceAnswerEvent extends TraceEventBase {
   type: "answer";
   state: AnswerState;
   text: string;
   provenance: TraceProvenance;
   followUps: readonly string[];
+  /** Persisted continuity state for a later anaphoric or elliptical follow-up. */
+  resolvedSubject?: ResolvedConversationSubject;
+  /** Results the lead explicitly selected for owner-visible tabular detail. */
+  presentedResultIds?: readonly string[];
   /** Server-validated cell associations retained in the immutable artefact. */
   claims?: readonly Readonly<{
     statement: string;

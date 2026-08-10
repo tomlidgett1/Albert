@@ -35,12 +35,17 @@ import {
 import type { SemanticToolExecutor } from "./types.js";
 import { PostgresSemanticPromotionRelay } from "./promotion-relay.js";
 import { createServiceLogger } from "../../../packages/observability/src/index.js";
+import { DefaultSemanticV2ToolExecutor,type SemanticV2ToolExecutor } from "./v2-service.js";
+import { loadSemanticRegistryV2 } from "./v2-runtime.js";
 
 const compositionLogger=createServiceLogger("semantic-query");
 
 export type ClosablePgPool=PgPoolLike&Readonly<{end?:()=>Promise<void>}>;
 export type SemanticServiceComposition=Readonly<{
   executor:SemanticToolExecutor;
+  v2Executor?:SemanticV2ToolExecutor;
+  analyticalRuntime?:"v1"|"v2";
+  v2PublicationHash?:string;
   answerArtifactFinalizer?:AnswerArtifactFinalizer;
   modelUsageRecorder?:ModelUsageRecorder;
   readiness:()=>Promise<Readonly<{ready:boolean;checks:Readonly<Record<string,boolean>>}>>;
@@ -61,6 +66,8 @@ export function createPostgresSemanticComposition(options:Readonly<{
   promotionRelayTenantBatchSize?:number;
   promotionRelayCandidateBatchSize?:number;
   promotionRelayLeaseSeconds?:number;
+  analyticalRuntime?:"v1"|"v2";
+  v2PublicationHash?:string;
 }>):SemanticServiceComposition{
   const registryDocument=parseRegistryDocument(readFileSync(options.registryPath,"utf8"));
   const registry=buildRegistry(registryDocument);
@@ -117,9 +124,19 @@ export function createPostgresSemanticComposition(options:Readonly<{
     if(name!=="run_semantic_query")await publicationVerifier.assertActivePublication();
     return defaultExecutor.execute(name,input,context);
   }};
+  const v2Executor=new DefaultSemanticV2ToolExecutor({
+    controlPlanePool:options.controlPlanePool,
+    database,
+    contextProvider,
+    ...(options.v2PublicationHash?{publicationHashOverride:options.v2PublicationHash}:{}),
+    ...(options.statementTimeoutMs?{statementTimeoutMs:options.statementTimeoutMs}:{}),
+  });
   const pools=[options.controlPlanePool,options.analyticalReadPool,options.semanticMetadataPool];
   return{
     executor,
+    v2Executor,
+    analyticalRuntime:options.analyticalRuntime??"v1",
+    ...(options.v2PublicationHash?{v2PublicationHash:options.v2PublicationHash}:{}),
     answerArtifactFinalizer:new PostgresAnswerArtifactFinalizer(options.controlPlanePool,options.semanticMetadataPool,capabilityIssuer,(timing)=>{
       // Finalization gates the answer that is already written, so its cost is
       // user-visible wait. Logged at warn past a second to separate genuine
@@ -128,13 +145,19 @@ export function createPostgresSemanticComposition(options:Readonly<{
     }),
     modelUsageRecorder:new PostgresModelUsageRecorder(options.controlPlanePool),
     async readiness(){
-      const [controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady]=await Promise.all([
+      const [controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,semanticV2Publication,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady]=await Promise.all([
         ...pools.map(probePostgresPool),publicationVerifier.matchesActivePublication(),catalogueSearch.ready(),
+        options.v2PublicationHash
+          ? loadSemanticRegistryV2(options.controlPlanePool,options.v2PublicationHash).then(()=>true).catch(()=>false)
+          : Promise.resolve(false),
         capabilityIssuer.ready(),probeAnalyticalCapabilityVerifier(options.analyticalReadPool,"semantic_ro"),
         probeAnalyticalCapabilityVerifier(options.semanticMetadataPool,"semantic_meta_rw"),promotionRelay.ready(),
       ]);
-      const checks={controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady};
-      return{ready:Object.values(checks).every(Boolean),checks};
+      const checks={controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,semanticV2Publication,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady};
+      const required=options.analyticalRuntime==="v2"
+        ? {controlPlane,analyticalRead,semanticMetadata,semanticV2Publication,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady}
+        : {controlPlane,analyticalRead,semanticMetadata,semanticPublication,catalogueIndex,capabilityIssuerReady,semanticVerifier,metadataVerifier,promotionRelayReady};
+      return{ready:Object.values(required).every(Boolean),checks};
     },
     async close(){
       await promotionRelay.stop();

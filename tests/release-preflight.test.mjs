@@ -48,6 +48,7 @@ const validRelease = Object.freeze({
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   NEXT_PUBLIC_SUPABASE_URL: `https://${projectRef}.supabase.co`,
   ALBERT_PUBLIC_ORIGIN: "https://albert.example",
+  ANTHROPIC_ANALYTICS_SERVICE_URL: "https://anthropic.albert.example",
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.albert.example",
   OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.albert.example",
   SYNC_WORKER_INTERNAL_URL: "https://sync.albert.example",
@@ -57,6 +58,7 @@ const validRelease = Object.freeze({
   ANALYTICAL_MIGRATION_URL:
     "postgresql://albert_analytical_deployer:secret@analytics.example/postgres?sslmode=require",
   FLY_SEMANTIC_APP: "albert-semantic-prod",
+  FLY_ANTHROPIC_APP: "albert-anthropic-prod",
   FLY_SYNC_APP: "albert-sync-prod",
   FLY_TRANSFORM_APP: "albert-transform-prod",
   FLY_WEBHOOK_APP: "albert-webhook-prod",

@@ -19,10 +19,12 @@ RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=
   && npm cache clean --force
 COPY --from=build --chown=node:node /workspace/.albert-build/services ./services
 COPY --from=build --chown=node:node /workspace/packages/semantic-registry/registry ./packages/semantic-registry/registry
+COPY --from=build --chown=node:node /workspace/connectors/lightspeed-r/tables.json ./connectors/lightspeed-r/tables.json
 USER node
 
 # Deployments override this command for sync-worker.js, transform-worker.js,
-# deletion-worker.js, webhook-gateway.js, and operator-diagnostic.js. The
+# deletion-worker.js, webhook-gateway.js, operator-diagnostic.js, and
+# anthropic-analytics.js. The
 # transform-capacity-harness.js entry is operator-invoked only; it is never a
 # long-running process or an HTTP surface.
 CMD ["node", "--enable-source-maps", "services/semantic-query.js"]

@@ -62,7 +62,7 @@ export function createWebhookAttestor(input: Readonly<{
     throw new Error("WEBHOOK_ATTESTATION_SECRET must encode exactly 32 bytes as unpadded base64url.");
   }
   const now = input.now ?? Date.now;
-  const newNonce = input.nonce ?? (() => randomBytes(16).toString("base64url"));
+  const newNonce = input.nonce ?? (() => Buffer.from(randomBytes(16)).toString("base64url"));
   return Object.freeze({
     keyId: input.keyId,
     attest(operation: string, subject: string, document: string): WebhookAttestation {

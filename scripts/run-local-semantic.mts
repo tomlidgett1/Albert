@@ -26,7 +26,7 @@ function loadEnvFile(path: string): Record<string, string> {
 const root = resolve(import.meta.dirname, "..");
 const local = loadEnvFile(resolve(root, ".env.local"));
 const productionLocal = loadEnvFile(resolve(root, ".env.production.local"));
-const env: NodeJS.ProcessEnv = { ...process.env };
+const env: Record<string, string | undefined> = { ...process.env };
 
 for (const [key, value] of Object.entries(productionLocal)) {
   if (!local[key] && env[key] === undefined) env[key] = value;
@@ -54,7 +54,7 @@ env.ALBERT_PUBLIC_ORIGIN = env.ALBERT_PUBLIC_ORIGIN || "http://localhost:3000";
 const child = spawn(
   process.execPath,
   ["--import", "tsx", resolve(root, "services/semantic-query/src/main.ts")],
-  { cwd: root, env, stdio: "inherit" },
+  { cwd: root, env: env as NodeJS.ProcessEnv, stdio: "inherit" },
 );
 
 child.on("exit", (code, signal) => {

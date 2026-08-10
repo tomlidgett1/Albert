@@ -150,6 +150,63 @@ export class PostgresSemanticReadDatabase implements SemanticReadDatabase {
       client.release();
     }
   }
+
+  async queryBatchAsSemanticRole(request: Readonly<{
+    tenantId: string;
+    statements: readonly Readonly<{ sql: string; parameters: readonly unknown[] }>[];
+    statementTimeoutMs: number;
+    expectedIdentityGraph?: Readonly<{ version: number; hash: string }>;
+    capabilityEvidence?: SemanticCapabilityEvidence;
+  }>): Promise<readonly DatabaseResult[]> {
+    if (request.statements.length < 1 || request.statements.length > 64) throw new Error("Semantic query batches must contain between 1 and 64 statements.");
+    if (request.statements.some(({ parameters }) => parameters[0] !== request.tenantId)) throw new Error("Every compiled query must bind the trusted tenant as parameter one.");
+    if (request.expectedIdentityGraph && (
+      !Number.isSafeInteger(request.expectedIdentityGraph.version)
+      || request.expectedIdentityGraph.version < 0
+      || !/^[a-f0-9]{32}$/.test(request.expectedIdentityGraph.hash)
+    )) throw new Error("Expected identity graph state is invalid.");
+    const capability = this.capabilityIssuer
+      ? await this.capabilityIssuer.issue({
+        tenantId: request.tenantId,
+        scope: "semantic_read",
+        evidence: requiredCapabilityEvidence(request.capabilityEvidence),
+      })
+      : undefined;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await client.query("SET LOCAL ROLE semantic_ro");
+      if (capability) await client.query("SELECT set_config('albert.tenant_capability', $1, true)", [capability]);
+      else await client.query("SELECT set_config('albert.tenant_id', $1, true)", [request.tenantId]);
+      await client.query("SELECT set_config('statement_timeout', $1, true)", [`${request.statementTimeoutMs}ms`]);
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('deletion:'||$1,0))", [request.tenantId]);
+      if (request.expectedIdentityGraph) {
+        const state = await client.query(
+          `SELECT version::text AS version,graph_hash
+           FROM semantic_internal.identity_graph_state
+           WHERE tenant_id=$1`,
+          [request.tenantId],
+        );
+        const row = state.rows[0];
+        const actualVersion = row ? Number(row.version) : 0;
+        const actualHash = row && typeof row.graph_hash === "string" ? row.graph_hash : "d41d8cd98f00b204e9800998ecf8427e";
+        if (actualVersion !== request.expectedIdentityGraph.version || actualHash !== request.expectedIdentityGraph.hash) throw new IdentityGraphChangedError();
+      }
+      const results: DatabaseResult[] = [];
+      for (const statement of request.statements) {
+        const startedAt = this.clock();
+        const result = await client.query(statement.sql, statement.parameters);
+        results.push({ rows: result.rows, durationMs: Math.max(0, this.clock() - startedAt) });
+      }
+      await client.query("COMMIT");
+      return Object.freeze(results);
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* preserve the original failure */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 function requiredCapabilityEvidence(

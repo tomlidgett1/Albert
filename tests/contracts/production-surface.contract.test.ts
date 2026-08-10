@@ -112,13 +112,13 @@ test("onboarding questions appear only when their source evidence can exist", ()
   );
 });
 
-test("connection mutations are role gated and failed optimistic answers roll back", () => {
+test("connection mutations are role gated and never report optimistic success", () => {
   assert.match(dashPage, /canManageConnections/u);
   assert.match(connectionsSurface, /const mutationsEnabled = canManage && status\.kind === "ready"/u);
   assert.match(connectionsSurface, /Owner or manager access is required/u);
-  assert.match(connectionsSurface, /if \(saved === false\)/u);
-  assert.match(connectionsSurface, /delete next\[questionId\]/u);
-  assert.doesNotMatch(connectionsSurface, /if \(!onMatchDecision\)[\s\S]{0,180}projectionStatus/u);
+  assert.match(connectionsSurface, /response\.ok && payload\.accepted && payload\.syncRunId/u);
+  assert.match(connectionsSurface, /setSyncState\(\{ status: "declined"/u);
+  assert.doesNotMatch(connectionsSurface, /setSyncState\(\{ status: "accepted"[^}]*\}\);[\s\S]{0,100}await fetch/u);
 });
 
 test("OAuth return states are translated into truthful first-party notices", () => {
@@ -148,9 +148,10 @@ test("live decimal strings remain exact in tables and chartable without assuming
     formatTraceCell("22.5000", { key: "net_sales", label: "Net sales", type: "currency" }),
     /AUD|\$/u,
   );
-  assert.match(analyticalTrace, /const minValue = Math\.min\(0,/u);
-  assert.match(analyticalTrace, /const zeroY = yFor\(0\)/u);
-  assert.match(analyticalTrace, /traceCellNumber\(rawValue\)/u);
+  assert.match(analyticalTrace, /<ResponsiveBar/u);
+  assert.match(analyticalTrace, /valueScale=\{\{ type: "linear" \}\}/u);
+  assert.match(analyticalTrace, /formatTraceCell\(value, item\.column\)/u);
+  assert.match(analyticalTrace, /traceCellNumber\(/u);
 });
 
 test("validated single-currency evidence reaches presentation metadata", () => {
@@ -244,6 +245,6 @@ test("authentication and trace surfaces retain light, dark, green, system, mobil
   }
   assert.match(dashStyles, /@media \(max-width: 700px\)[\s\S]*\.traceHeader/u);
   assert.match(dashStyles, /\.traceChartScroll[\s\S]{0,120}overflow-x:\s*auto/u);
-  assert.match(dashStyles, /\.traceChartBar[\s\S]{0,220}animation:\s*none/u);
+  assert.match(dashStyles, /\.traceChartTooltip,[\s\S]{0,120}animation:\s*none/u);
   assert.match(loginStyles, /@media \(max-width: 480px\)/u);
 });

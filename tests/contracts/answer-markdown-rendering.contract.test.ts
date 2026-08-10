@@ -65,13 +65,17 @@ test("prose containing a pipe is not mistaken for a table", () => {
   assert.match(html, /<p>Sales rose \| margin fell\. That is the trade-off\.<\/p>/);
 });
 
-test("the runtime sanitizes the answer as prose and asks for a table when the data is tabular", () => {
-  // 12k allows a layered multi-table report; the finalization gate bounds the
-  // persisted narrative at 16k (control-plane migration 0096).
-  assert.match(liveRuntime, /let answerText = sanitizeAnswerText\(output\.text, 12_000\)/u);
+test("the runtime sanitizes prose but leaves owner-visible table selection to the analyst", () => {
+  // Each initial or repaired draft goes through the same 12k transformation
+  // boundary; the persisted narrative remains bounded at 16k.
+  assert.match(
+    liveRuntime,
+    /let answerText = sanitizeAnswerText\(\s*stripRedundantChartMarkup\(draft\.text, chartResultIds\.size > 0\),\s*12_000,\s*\)/u,
+  );
   assert.doesNotMatch(liveRuntime, /answerText = sanitizeTraceText\(output\.text/u);
-  assert.match(liveRuntime, /The answer is rendered markdown/u);
   assert.match(liveRuntime, /markdown pipe table/u);
-  assert.match(liveRuntime, /ensureAnswerIncludesTable/u);
+  assert.doesNotMatch(liveRuntime, /answerText = ensureAnswerIncludesTable\(/u);
+  assert.match(liveRuntime, /Table selection belongs to the analyst's presentation output/u);
+  assert.match(liveRuntime, /draft\.presentation\.resultIds/u);
   assert.match(liveRuntime, /isOwnerTrailValidation/u);
 });

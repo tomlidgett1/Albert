@@ -56,15 +56,12 @@ const followUpIntentPlan = intentPlanSchema.parse({
   grain: "ticket",
   namedEntities: [],
   tables: ["mart.workforce_day_worker_location", "mart.workforce_sales_aligned"],
-  planSteps: [
-    "Look up who was rostered today",
-    "Rank those workers by net sales",
-    "Show the ranking as a table",
-  ],
+  planSteps: ["Look up who was rostered today", "Rank those workers by net sales"],
   summary: "Planning how to rank rostered staff by net sales",
   clarification: null,
   unavailableReason: null,
 });
+
 const bundleHash = "a".repeat(64);
 const identityHash = "b".repeat(32);
 const rosterResultId = "result_workers_rostered_today";
@@ -217,18 +214,22 @@ const performanceSql =
 const rosterSqlArgs = Object.freeze({
   sql: rosterSql,
   purpose: "Rostered hours by worker for today",
-  claims: [{ metricId: "workforce.rostered_hours", column: "rostered_hours" }],
-  time: { from: "2026-08-03", to: "2026-08-04" },
-  filters: [],
   limit: 50,
 });
 const performanceSqlArgs = Object.freeze({
   sql: performanceSql,
   purpose: "Net sales and worked hours by worker over the confirmed period",
-  claims: [{ metricId: "commerce.net_sales_ex_gst", column: "net_sales_ex_gst" }],
-  time: { from: "2026-02-03", to: "2026-08-04" },
-  filters: [],
   limit: 50,
+});
+const rosterSemanticSqlArgs = Object.freeze({
+  ...rosterSqlArgs,
+  claims: [],
+  filters: [],
+});
+const performanceSemanticSqlArgs = Object.freeze({
+  ...performanceSqlArgs,
+  claims: [],
+  filters: [],
 });
 
 const rosterQuery: SemanticQueryIr = semanticQueryIrSchema.parse({
@@ -575,11 +576,11 @@ function semanticClient(calls: SemanticCall[]) {
       if (name === "run_sql") {
         const sql = String(Reflect.get(input as object, "sql"));
         if (sql.includes("workforce_day_worker_location")) {
-          assert.deepEqual(input, rosterSqlArgs);
+          assert.deepEqual(input, rosterSemanticSqlArgs);
           return rosterResponse;
         }
         if (sql.includes("workforce_sales_aligned")) {
-          assert.deepEqual(input, performanceSqlArgs);
+          assert.deepEqual(input, performanceSemanticSqlArgs);
           return performanceResponse;
         }
       }
@@ -595,72 +596,20 @@ function emitter(events: TraceEvent[]) {
   });
 }
 
-test("the flagship employee question clarifies once, then runs the governed composite agent loop", async () => {
-  const clarificationModel = new ScriptedModel([
-    toolStep("clarify", 1, "ask_user", {
-      question: clarificationQuestion,
-      options: [
-        { id: "employee.net_sales" },
-        { id: "employee.gross_margin" },
-        { id: "employee.gross_profit_per_labour_hour" },
-      ],
-    }),
-    finalStep("clarify", 2, {
-      status: "clarification",
-      notes: clarificationQuestion,
-      usedResultIds: [],
-    }),
-  ]);
-  const clarificationEvents: TraceEvent[] = [];
-  const clarificationCalls: SemanticCall[] = [];
-  const clarificationResult = await runLiveAlbertTurn({
-    message: initialQuestion,
-    preferences: { model: "gpt-5.6-sol", reasoningEffort: "high", fastMode: true },
-    tenantId: "tenant_flagship",
-    role: "owner",
-    conversationId: "conversation_flagship",
-    turnId: "turn_flagship_clarification",
-    modelContext: [{ role: "user", text: initialQuestion }],
-    openaiApiKey: "test-only",
-    openaiBaseUrl: "https://api.openai.com/v1",
-    semanticServiceUrl: "https://semantic.test.invalid",
-    semanticSigningSecret: "test-only-signing-secret-with-32-bytes",
-    safetyIdentifier: "flagship_test",
-    modelProvider: { getModel: () => clarificationModel } satisfies ModelProvider,
-    semanticClient: semanticClient(clarificationCalls),
-    resolveIntentPlan: async () => workforceBestIntentPlan,
-    emit: emitter(clarificationEvents),
-  });
-
-  assert.equal(clarificationResult.answerState, "Clarification");
-  assert.equal(clarificationModel.requests.length, 2);
-  assert.deepEqual(
-    clarificationCalls.map(({ name }) => name),
-    [],
-  );
-  assert.equal(clarificationEvents.some(({ type }) => type === "table" || type === "chart" || type === "answer"), false);
-  const clarification = clarificationEvents.find((event) => event.type === "clarification");
-  assert.ok(clarification?.type === "clarification");
-  assert.equal(clarification.question, clarificationQuestion);
-  assert.deepEqual(clarification.options, [
-    { id: "employee.net_sales", label: "Net sales" },
-    { id: "employee.gross_margin", label: "Gross profit" },
-    { id: "employee.gross_profit_per_labour_hour", label: "Gross profit per worked hour" },
-  ]);
-
+test("the flagship employee question uses best judgement and runs the governed composite agent loop", async () => {
   const followUpModel = new ScriptedModel([
-    toolStep("answer", 1, "run_sql", rosterSqlArgs),
-    toolStep("answer", 2, "run_sql", performanceSqlArgs),
-    toolStep("answer", 3, "make_chart", {
+    toolStep("answer", 1, "update_analysis_plan", {
+      summary: "Plan the rostered employee performance comparison",
+      steps: ["Find who is working today", "Rank those workers by net sales", "Chart and explain the ranking"],
+      reason: "initial",
+    }),
+    toolStep("answer", 2, "run_sql", rosterSqlArgs),
+    toolStep("answer", 3, "run_sql", performanceSqlArgs),
+    toolStep("answer", 4, "make_chart", {
       dataRef: performanceResultId,
       chartType: "bar",
       xKey: "worker",
       yKey: "net_sales_ex_gst",
-    }),
-    finalStep("answer", 4, {
-      status: "ready",
-      notes: "Roster and net sales evidence gathered.",
-      usedResultIds: [rosterResultId, performanceResultId],
     }),
     finalStep("answer", 5, {
       state: "Qualified",
@@ -679,30 +628,24 @@ test("the flagship employee question clarifies once, then runs the governed comp
   const followUpEvents: TraceEvent[] = [];
   const followUpCalls: SemanticCall[] = [];
   const followUpResult = await runLiveAlbertTurn({
-    message: followUpMessage,
+    message: initialQuestion,
     preferences: { model: "gpt-5.6-sol", reasoningEffort: "high", fastMode: true },
     tenantId: "tenant_flagship",
     role: "owner",
     conversationId: "conversation_flagship",
     turnId: "turn_flagship_answer",
-    modelContext: [
-      { role: "user", text: initialQuestion },
-      { role: "assistant", text: clarificationQuestion },
-      { role: "user", text: followUpMessage },
-    ],
-    confirmedPreference: {
-      optionId: "employee.net_sales",
-      preference: "employee.performance_default",
-      value: "commerce.net_sales_ex_gst",
-    },
+    modelContext: [{ role: "user", text: initialQuestion }],
     openaiApiKey: "test-only",
     openaiBaseUrl: "https://api.openai.com/v1",
     semanticServiceUrl: "https://semantic.test.invalid",
     semanticSigningSecret: "test-only-signing-secret-with-32-bytes",
     safetyIdentifier: "flagship_test",
     modelProvider: { getModel: () => followUpModel } satisfies ModelProvider,
+    reviewTerminalAnswer: async () => ({ verdict: "pass", reason: "Answer is relevant.", repairInstruction: null }),
     semanticClient: semanticClient(followUpCalls),
-    resolveIntentPlan: async () => followUpIntentPlan,
+    // Even a legacy planner output that requested clarification must be
+    // normalised into an answer turn using disclosed best judgement.
+    resolveIntentPlan: async () => workforceBestIntentPlan,
     emit: emitter(followUpEvents),
   });
 
@@ -739,10 +682,11 @@ test("the flagship employee question clarifies once, then runs the governed comp
 
   const queryCalls = followUpCalls.filter(({ name }) => name === "run_sql");
   assert.equal(queryCalls.length, 2);
-  assert.deepEqual(queryCalls.map(({ input }) => input), [rosterSqlArgs, performanceSqlArgs]);
+  assert.deepEqual(queryCalls.map(({ input }) => input), [rosterSemanticSqlArgs, performanceSemanticSqlArgs]);
   assert.ok(queryCalls.every(({ context }) =>
-    context.confirmedPreference === "employee.performance_default"
-      && context.confirmedValue === "commerce.net_sales_ex_gst"));
+    context.confirmedPreference === undefined
+      && context.confirmedValue === undefined));
+  assert.equal(followUpEvents.some(({ type }) => type === "clarification"), false);
   assert.equal(followUpCalls.some(({ name }) => name === "run_source_query"), false);
   assert.equal(JSON.stringify(queryCalls).includes("overtime"), false);
   const registry = loadRegistryFile(resolve("packages/semantic-registry/registry/registry.yaml"));
@@ -794,13 +738,13 @@ test("the flagship employee question clarifies once, then runs the governed comp
 
 test("a claims-empty final cannot swap a governed value onto another row label", async () => {
   const model = new ScriptedModel([
-    toolStep("swapped", 1, "run_sql", rosterSqlArgs),
-    toolStep("swapped", 2, "run_sql", performanceSqlArgs),
-    finalStep("swapped", 3, {
-      status: "ready",
-      notes: "Evidence gathered.",
-      usedResultIds: [rosterResultId, performanceResultId],
+    toolStep("swapped", 1, "update_analysis_plan", {
+      summary: "Plan the worker comparison",
+      steps: ["Find rostered workers", "Compare their net sales"],
+      reason: "initial",
     }),
+    toolStep("swapped", 2, "run_sql", rosterSqlArgs),
+    toolStep("swapped", 3, "run_sql", performanceSqlArgs),
     finalStep("swapped", 4, {
       state: "Qualified",
       text: "Worker Jo had Net sales of 99999.",
@@ -829,6 +773,7 @@ test("a claims-empty final cannot swap a governed value onto another row label",
     semanticSigningSecret: "test-only-signing-secret-with-32-bytes",
     safetyIdentifier: "swapped_claim_test",
     modelProvider: { getModel: () => model },
+    reviewTerminalAnswer: async () => ({ verdict: "pass", reason: "Answer is relevant.", repairInstruction: null }),
     semanticClient: semanticClient(calls),
     resolveIntentPlan: async () => followUpIntentPlan,
     emit: emitter(events),

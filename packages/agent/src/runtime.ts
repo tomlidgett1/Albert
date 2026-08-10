@@ -11,10 +11,11 @@ export type OpenAIAgentModelSettings = Readonly<{
   reasoning: Readonly<{
     effort: AgentRunPreferences["reasoningEffort"];
     context: "current_turn";
+    mode: "standard";
   }>;
   /** Forwarded by the OpenAI provider adapter, separate from reasoning. */
   providerData: Readonly<{
-    service_tier?: "fast";
+    service_tier: "default" | "fast";
   }>;
 }>;
 
@@ -35,10 +36,16 @@ export function buildOpenAIAgentRunConfig(input: unknown): OpenAIAgentRunConfig 
       reasoning: Object.freeze({
         effort: preferences.reasoningEffort,
         context: "current_turn" as const,
+        mode: "standard" as const,
       }),
-      providerData: Object.freeze(
-        preferences.fastMode ? { service_tier: "fast" as const } : {},
-      ),
+      // Make the processing contract observable in the provider response.
+      // Omitting service_tier means `auto`, which cannot prove that a capped
+      // evaluation avoided Fast/priority processing.
+      providerData: Object.freeze({
+        service_tier: preferences.fastMode
+          ? ("fast" as const)
+          : ("default" as const),
+      }),
     }),
   });
 }

@@ -615,6 +615,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           SEMANTIC_QUERY_SERVICE_URL: ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+          ANTHROPIC_ANALYTICS_SERVICE_URL: ${{ vars.ANTHROPIC_ANALYTICS_SERVICE_URL }}
           OPERATOR_DIAGNOSTIC_SERVICE_URL: ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
           SYNC_WORKER_INTERNAL_URL: ${{ vars.SYNC_WORKER_INTERNAL_URL }}
           WEBHOOK_GATEWAY_PUBLIC_URL: ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
@@ -622,6 +623,7 @@ jobs:
           ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
           SUPABASE_MANAGEMENT_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_TOKEN }}
           FLY_SEMANTIC_APP: ${{ vars.FLY_SEMANTIC_APP }}
+          FLY_ANTHROPIC_APP: ${{ vars.FLY_ANTHROPIC_APP }}
           FLY_SYNC_APP: ${{ vars.FLY_SYNC_APP }}
           FLY_TRANSFORM_APP: ${{ vars.FLY_TRANSFORM_APP }}
           FLY_WEBHOOK_APP: ${{ vars.FLY_WEBHOOK_APP }}
@@ -955,6 +957,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { service: anthropic-analytics, config: deploy/fly/anthropic-analytics.toml, app_variable: FLY_ANTHROPIC_APP, token_secret: FLY_ANTHROPIC_API_TOKEN, exposure: public }
           - { service: semantic-query, config: deploy/fly/semantic-query.toml, app_variable: FLY_SEMANTIC_APP, token_secret: FLY_SEMANTIC_API_TOKEN, exposure: public }
           - { service: sync-worker, config: deploy/fly/sync-worker.toml, app_variable: FLY_SYNC_APP, token_secret: FLY_SYNC_API_TOKEN, exposure: public }
           - { service: transform-worker, config: deploy/fly/transform-worker.toml, app_variable: FLY_TRANSFORM_APP, token_secret: FLY_TRANSFORM_API_TOKEN, exposure: private }
@@ -1076,6 +1079,7 @@ jobs:
           ALBERT_RELEASE_READINESS_ATTEMPTS: "24"
           ALBERT_RELEASE_READINESS_DELAY_MS: "5000"
           SERVICE_URLS: >-
+            ${{ vars.ANTHROPIC_ANALYTICS_SERVICE_URL }}
             ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
             ${{ vars.SYNC_WORKER_INTERNAL_URL }}
             ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}

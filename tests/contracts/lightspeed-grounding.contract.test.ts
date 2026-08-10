@@ -9,9 +9,9 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
-
-const MIGRATIONS = new URL("../../infra/migrations/analytical/", import.meta.url);
+import { parseStagingContractsFromMigrations } from "../../scripts/lib/staging-schema-contract.js";
 
 const PLATFORM_COLUMNS = new Set([
   "tenant_id", "namespaced_source_key", "connection_id", "external_account_reference",
@@ -21,26 +21,13 @@ const PLATFORM_COLUMNS = new Set([
 ]);
 
 function parseDdl(): Map<string, Set<string>> {
-  const db = new Map<string, Set<string>>();
-  const createRe = /CREATE TABLE IF NOT EXISTS "?source_lightspeed"?\."?(\w+)"?\s*\(([\s\S]*?)\n\);/g;
-  const alterRe = /ALTER TABLE\s+"?source_lightspeed"?\."?(\w+)"?\s+((?:ADD COLUMN IF NOT EXISTS\s+"?\w+"?[^,;]*[,;]?\s*)+)/g;
-  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()) {
-    const sql = readFileSync(new URL(file, MIGRATIONS), "utf8");
-    let match: RegExpExecArray | null;
-    while ((match = createRe.exec(sql))) {
-      const cols = [...match[2]!.matchAll(/^\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s+/gm)].map((x) => x[1]!);
-      const existing = db.get(match[1]!) ?? new Set<string>();
-      for (const col of cols) existing.add(col);
-      db.set(match[1]!, existing);
-    }
-    while ((match = alterRe.exec(sql))) {
-      const cols = [...match[2]!.matchAll(/ADD COLUMN IF NOT EXISTS\s+"?(\w+)"?/g)].map((x) => x[1]!);
-      const existing = db.get(match[1]!) ?? new Set<string>();
-      for (const col of cols) existing.add(col);
-      db.set(match[1]!, existing);
-    }
-  }
-  return db;
+  return new Map(
+    [...parseStagingContractsFromMigrations(
+      resolve("infra/migrations/analytical"),
+    ).values()]
+      .filter(({ schema }) => schema === "source_lightspeed")
+      .map(({ table, columns }) => [table, new Set(columns.keys())]),
+  );
 }
 
 const ddl = parseDdl();
@@ -60,6 +47,20 @@ test("the generated table index covers every ls_ table", async () => {
   for (const table of lsTables) {
     assert.match(LIGHTSPEED_TABLE_INDEX, new RegExp(`^${table} `, "mu"), `table index is missing ${table}`);
   }
+  assert.match(LIGHTSPEED_TABLE_INDEX, /ls_item_shops[^\n]*shop_id = 0[^\n]*account-wide aggregate/u);
+});
+
+test("progressive discovery exposes exact documentation for every Lightspeed table", async () => {
+  const { LIGHTSPEED_TABLE_DICTIONARIES } = await import("../../packages/agent/src/generated-staging-schema.js");
+  const { describeLightspeedTables, searchLightspeedSchema } = await import("../../services/conversation/src/live.js");
+  assert.deepEqual(new Set(Object.keys(LIGHTSPEED_TABLE_DICTIONARIES)), lsTables);
+
+  const salesMatches = searchLightspeedSchema("sale payments tender", 5);
+  assert.ok(salesMatches.some(({ table }) => table === "ls_sale_payments"));
+  const described = describeLightspeedTables(["ls_sales", "ls_sale_lines", "ls_missing"]);
+  assert.match(described.tables.ls_sales ?? "", /one register ticket\/transaction/iu);
+  assert.match(described.tables.ls_sale_lines ?? "", /one charge on one sale/iu);
+  assert.deepEqual(described.unknown, ["ls_missing"]);
 });
 
 test("every generated dictionary column exists in the live DDL", async () => {

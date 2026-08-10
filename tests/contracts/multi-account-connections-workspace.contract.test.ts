@@ -97,9 +97,9 @@ test("the workspace preserves every current Xero organisation as a connection-bo
     xero.connections.map(({ auth }) => auth.accountName),
     ["Albert Retail Australia Pty Ltd", "Albert Retail New Zealand Limited"],
   );
-  assert.equal(xero.additionalConnectionLabel, undefined);
+  assert.equal("additionalConnectionLabel" in xero ? xero.additionalConnectionLabel : undefined, undefined);
   assert.equal(lightspeed?.connections.length, 1);
-  assert.equal(lightspeed?.additionalConnectionLabel, undefined);
+  assert.equal(lightspeed && "additionalConnectionLabel" in lightspeed ? lightspeed.additionalConnectionLabel : undefined, undefined);
   assert.equal(
     workspace.providers.flatMap(({ connections }) => connections)
       .some(({ connectionId }) => connectionId === connectionIds.disconnectedXero),

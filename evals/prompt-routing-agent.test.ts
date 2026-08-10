@@ -22,14 +22,16 @@ import {
   type PromptRouteContract,
 } from "../services/conversation/src/prompt-routing.js";
 import {
+  contextualTurnInterpretationSchema,
+  createContextualTurnInterpreterAgent,
+} from "../services/conversation/src/conversation-understanding.js";
+import {
   seedGoldenQuestions,
   type GoldenQuestion,
 } from "./golden/questions.js";
 
 const criticalCaseIds = [
-  "workforce-best",
   "workforce-overtime",
-  "finance-profit",
   "honesty-footfall",
 ] as const;
 
@@ -40,6 +42,29 @@ const criticalQuestions = new Map<CriticalCaseId, GoldenQuestion>(criticalCaseId
   if (!question) throw new Error(`Missing seed question ${caseId}.`);
   return [caseId, question];
 }));
+
+test("model-owned interpretation selects server-owned capability contracts", () => {
+  const interpretation = contextualTurnInterpretationSchema.parse({
+    continuity: "standalone",
+    resolvedQuestion: "How did observed visits change yesterday?",
+    resolvedSubject: null,
+    lane: "lookup",
+    domains: ["operations"],
+    requestedWorkstreams: ["Measure the change in observed store visits"],
+    policyRouteCaseId: "honesty-footfall",
+    reason: "The requested metric requires a visit observation that is not connected.",
+  });
+  assert.equal(promptRouteContractByCaseId(interpretation.policyRouteCaseId)?.caseId, "honesty-footfall");
+  assert.equal(promptRouteContractByCaseId(null), undefined);
+
+  const agent = createContextualTurnInterpreterAgent({
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    fastMode: true,
+  });
+  assert.match(String(agent.instructions), /only when it resolves the entire request/iu);
+  assert.match(String(agent.instructions), /supported findings and name the one unavailable part/iu);
+});
 
 type ScriptStep = Readonly<{
   responseId: string;
@@ -74,22 +99,8 @@ function finalStep(index: number, output: Readonly<Record<string, unknown>>): Sc
 function intentPlanForCase(caseId: CriticalCaseId): IntentPlan {
   const contract = promptRouteContractByCaseId(caseId);
   assert.ok(contract);
-  if (contract.route === "clarification") {
-    return intentPlanSchema.parse({
-      disposition: "clarification",
-      caseId,
-      domain: caseId === "finance-profit" ? "finance" : "employees",
-      grain: "unknown",
-      namedEntities: [],
-      tables: [],
-      planSteps: ["Ask which reading you want", "Answer after you choose"],
-      summary: "Checking which reading of this question you want",
-      clarification: {
-        question: contract.question,
-        optionIds: [...contract.optionIds],
-      },
-      unavailableReason: null,
-    });
+  if (contract.route !== "unavailable") {
+    throw new Error(`Critical eval case ${caseId} unexpectedly resolved to a ${contract.route} route.`);
   }
   return intentPlanSchema.parse({
     disposition: "unavailable",
@@ -146,9 +157,9 @@ class PromptSensitiveRouteModel implements Model {
 
   async *getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
     this.requests.push(request);
-    // Unavailable short-circuits before any SQL agent model call.
+    // Unavailable short-circuits before any primary analyst model call.
     if (this.contract.route === "unavailable") {
-      throw new Error("Unavailable route should not call the SQL evidence agent.");
+      throw new Error("Unavailable route should not call the primary analyst.");
     }
     assertRouteInstruction(request, this.contract);
 
@@ -174,9 +185,11 @@ class PromptSensitiveRouteModel implements Model {
     }
     if (index === 2) {
       return finalStep(index, {
-        status: "clarification",
-        notes: contract.question,
-        usedResultIds: [],
+        state: "Clarification",
+        text: contract.question,
+        claims: [],
+        followUps: [],
+        scope: null,
       });
     }
     throw new Error("Prompt-sensitive clarification model received an unexpected extra request.");
@@ -234,6 +247,7 @@ function turnOptions(
     semanticSigningSecret: "test-only-signing-secret-with-32-bytes",
     safetyIdentifier: `prompt_routing_${question.id}`,
     modelProvider: { getModel: () => model } satisfies ModelProvider,
+    reviewTerminalAnswer: async () => ({ verdict: "pass" as const, reason: "Route answer is relevant.", repairInstruction: null }),
     resolveIntentPlan: async () => intentPlanForCase(caseId),
     semanticClient: {
       async execute(): Promise<never> {
@@ -276,46 +290,6 @@ for (const caseId of criticalCaseIds) {
     }
   });
 }
-
-test("a model that ignores the actual profit prompt cannot substitute the workforce clarification", async () => {
-  const question = criticalQuestions.get("finance-profit");
-  assert.ok(question);
-  const workforce = promptRouteContractByCaseId("workforce-best");
-  assert.ok(workforce?.route === "clarification");
-  const model = new FixedStepModel([
-    toolStep(1, "ask_user", {
-      question: workforce.question,
-      options: workforce.optionIds.map((id: string) => ({ id })),
-    }),
-    finalStep(2, {
-      status: "clarification",
-      notes: workforce.question,
-      usedResultIds: [],
-    }),
-  ]);
-
-  await assert.rejects(
-    runLiveAlbertTurn(turnOptions(question, model, [], "finance-profit")),
-    /clarification (question|options) do not match|ignored the server-owned clarification route contract/u,
-  );
-});
-
-test("a model cannot claim Clarification while ignoring the required ask_user action", async () => {
-  const question = criticalQuestions.get("workforce-best");
-  assert.ok(question);
-  const model = new FixedStepModel([
-    finalStep(1, {
-      status: "clarification",
-      notes: "Choose a performance lens.",
-      usedResultIds: [],
-    }),
-  ]);
-
-  await assert.rejects(
-    runLiveAlbertTurn(turnOptions(question, model, [], "workforce-best")),
-    /ignored the server-owned clarification route contract/u,
-  );
-});
 
 test("Intent+Plan case catalogue covers every critical golden case id", () => {
   for (const caseId of criticalCaseIds) {

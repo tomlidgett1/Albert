@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+/.anthropic-runtime/
+/.xero-dlt-venv/
 /.pnp
 .pnp.*
 .yarn/*
@@ -32,6 +34,8 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+/.dlt/secrets.toml
+/.dlt/*.secrets.toml
 
 # vercel
 .vercel
@@ -44,5 +48,6 @@ next-env.d.ts
 /outputs/
 /work/
 /.albert-build/
+/.albert-agent-qa-out/
 /supabase/.temp/
 /supabase/.branches/

@@ -204,13 +204,24 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
+type ChatRuntime = "fixture" | "openai" | "anthropic";
+
+function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
+  const profile = value as Record<string, unknown>;
+  return profile.runtime === "anthropic-agent-sdk"
+    || (typeof profile.model === "string" && profile.model.startsWith("claude-"))
+    ? "anthropic"
+    : "openai";
+}
+
 type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   text: string;
   isStreaming?: boolean;
   events?: TraceEvent[];
-  runtime?: "fixture" | "openai";
+  runtime?: ChatRuntime;
   conversationId?: string;
   turnId?: string;
   suppressEnter?: boolean;
@@ -292,6 +303,7 @@ type ConversationSummary = Readonly<{
   updatedAt: string;
   lastMessage: string;
   lastTurnStatus?: string;
+  runtime: Exclude<ChatRuntime, "fixture">;
 }>;
 
 type OAuthNotice = Readonly<{
@@ -436,6 +448,7 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
     const lastTurnStatus = lastTurnRecord && typeof lastTurnRecord.status === "string"
       ? lastTurnRecord.status
       : undefined;
+    const runtime = chatRuntimeFromProfile(lastTurnRecord?.runtime_profile);
     const storedTitle = typeof candidate.title === "string" ? candidate.title.trim() : "";
     summaries.push({
       conversationId: candidate.conversation_id,
@@ -445,6 +458,7 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
       updatedAt: candidate.updated_at,
       lastMessage,
       lastTurnStatus,
+      runtime,
     });
   }
   return summaries;
@@ -583,6 +597,7 @@ export default function DashPage() {
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("openai");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
@@ -695,6 +710,7 @@ export default function DashPage() {
     preferences: AgentRunPreferences;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("openai");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
   agentPreferencesRef.current = agentPreferences;
@@ -704,12 +720,16 @@ export default function DashPage() {
     messages: ChatMessage[];
     preferences: AgentRunPreferences;
     messageSequence: number;
+    runtime: Exclude<ChatRuntime, "fixture">;
   }>());
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
     viewingKeyRef.current = activeConversationId ?? viewingKeyRef.current;
   }, [activeConversationId]);
+  useEffect(() => {
+    activeChatRuntimeRef.current = activeChatRuntime;
+  }, [activeChatRuntime]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
   const [conversationSkelPhase, setConversationSkelPhase] = useState<"idle" | "loading" | "revealing">("idle");
   const [conversationSkelRevealed, setConversationSkelRevealed] = useState(false);
@@ -1208,6 +1228,7 @@ export default function DashPage() {
     const restored: ChatMessage[] = [];
     let messageId = 0;
     let restoredPreferences = fallbackPreferences;
+    let restoredRuntime: Exclude<ChatRuntime, "fixture"> = "openai";
     if (!Array.isArray(history.turns)) {
       return null;
     }
@@ -1232,13 +1253,15 @@ export default function DashPage() {
       const restoredEvents = turn.status === "running"
         ? [...events, buildStoppedTraceEvent(messageId, "This analysis was interrupted.", events.length + 1)]
         : events;
+      const turnRuntime = chatRuntimeFromProfile(turn.runtime_profile);
+      restoredRuntime = turnRuntime;
       restored.push({
         id: messageId,
         role: "assistant",
         text: "",
         events: restoredEvents,
         isStreaming: false,
-        runtime: "openai",
+        runtime: turnRuntime,
         conversationId,
         turnId: turn.turn_id,
         suppressEnter: true,
@@ -1250,6 +1273,7 @@ export default function DashPage() {
       messages: restored,
       preferences: restoredPreferences,
       messageSequence: messageId,
+      runtime: restoredRuntime,
     };
   }, []);
 
@@ -1300,6 +1324,7 @@ export default function DashPage() {
       messages: ChatMessage[];
       preferences: AgentRunPreferences;
       messageSequence: number;
+      runtime: Exclude<ChatRuntime, "fixture">;
     },
   ) => {
     const live = liveTurnsRef.current.has(conversationId);
@@ -1318,6 +1343,8 @@ export default function DashPage() {
     viewingKeyRef.current = conversationId;
     clearConversationUnread(conversationId);
     setAgentPreferences(cached.preferences);
+    setActiveChatRuntime(cached.runtime);
+    activeChatRuntimeRef.current = cached.runtime;
     const baseMessages = (live ? cached.messages : finalizeStreamingMessages(cached.messages)).map((message) => ({
       ...message,
       suppressEnter: true,
@@ -1328,6 +1355,7 @@ export default function DashPage() {
       messages: baseMessages,
       preferences: cached.preferences,
       messageSequence: cached.messageSequence,
+      runtime: cached.runtime,
     });
     setChatMessages(baseMessages);
     setIsChatResponding(live);
@@ -1392,6 +1420,7 @@ export default function DashPage() {
       messages,
       preferences: agentPreferencesRef.current,
       messageSequence: chatMessageSequenceRef.current,
+      runtime: activeChatRuntimeRef.current,
     });
   };
 
@@ -1880,6 +1909,7 @@ export default function DashPage() {
       ? markConversationComputing(trackedConversationId)
       : null;
     const runPreferences = agentPreferencesRef.current;
+    const runRuntime = activeChatRuntimeRef.current;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -1902,6 +1932,7 @@ export default function DashPage() {
           text: "",
           isStreaming: true,
           events: [] as TraceEvent[],
+          runtime: runRuntime,
           suppressEnter: firstFlight,
           trailVisible: Boolean(reduceMotion) || !firstFlight,
         },
@@ -1913,6 +1944,7 @@ export default function DashPage() {
       messages: initialMessages,
       preferences: runPreferences,
       messageSequence: messageSequenceAtStart,
+      runtime: runRuntime,
     });
     if (trackedConversationId) {
       const now = new Date().toISOString();
@@ -1977,6 +2009,7 @@ export default function DashPage() {
       conversationCacheRef.current.set(cacheKey, {
         messages: next,
         preferences: runPreferences,
+        runtime: runRuntime,
         messageSequence: Math.max(
           messageSequenceAtStart,
           conversationCacheRef.current.get(cacheKey)?.messageSequence ?? 0,
@@ -2002,6 +2035,7 @@ export default function DashPage() {
             messages: next,
             preferences: runPreferences,
             messageSequence: chatMessageSequenceRef.current,
+            runtime: runRuntime,
           });
           return next;
         });
@@ -2014,12 +2048,15 @@ export default function DashPage() {
     try {
       const requestBody = {
         message: text,
-        preferences: runPreferences,
+        ...(runRuntime === "openai" ? { preferences: runPreferences } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         confirmedOption,
       };
-      debug.request("/api/conversation", requestBody);
-      const response = await fetch("/api/conversation", {
+      const endpoint = runRuntime === "anthropic"
+        ? "/api/anthropic-conversation"
+        : "/api/conversation";
+      debug.request(endpoint, requestBody);
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -2035,7 +2072,12 @@ export default function DashPage() {
         throw new Error(payload?.error || "Albert could not start this analysis.");
       }
 
-      const runtime = response.headers.get("X-Albert-Runtime") === "fixture" ? "fixture" : "openai";
+      const runtimeHeader = response.headers.get("X-Albert-Runtime");
+      const runtime: ChatRuntime = runtimeHeader === "fixture"
+        ? "fixture"
+        : runtimeHeader === "anthropic"
+          ? "anthropic"
+          : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
       debug.response(response, {
@@ -2043,7 +2085,11 @@ export default function DashPage() {
         conversationId: responseConversationId,
         turnId: responseTurnId,
       });
-      if (runtime === "openai" && (
+      if (runtime !== "fixture" && runtime !== runRuntime) {
+        await response.body?.cancel("runtime_lock_mismatch");
+        throw new Error("The conversation runtime did not match the selected method.");
+      }
+      if (runtime !== "fixture" && (
         !responseConversationId || !ulidPattern.test(responseConversationId)
         || !responseTurnId || !ulidPattern.test(responseTurnId)
       )) {
@@ -2091,6 +2137,7 @@ export default function DashPage() {
             updatedAt: now,
             lastMessage: text,
             lastTurnStatus: "running",
+            runtime: runRuntime,
           };
           return [nextItem, ...current.filter((item) => item.conversationId !== responseConversationId)];
         });
@@ -2102,6 +2149,10 @@ export default function DashPage() {
           turnId: responseTurnId,
         } : {}),
       });
+      if (runtime !== "fixture" && isViewingThisTurn()) {
+        setActiveChatRuntime(runtime);
+        activeChatRuntimeRef.current = runtime;
+      }
 
       if (!response.body) throw new Error("The conversation stream was unavailable.");
       const reader = response.body.getReader();
@@ -2316,6 +2367,7 @@ export default function DashPage() {
         messages: next,
         preferences: agentPreferencesRef.current,
         messageSequence: chatMessageSequenceRef.current,
+        runtime: activeChatRuntimeRef.current,
       });
       return next;
     });
@@ -2567,7 +2619,7 @@ export default function DashPage() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [editingMessageId, editPanelOpen, reduceMotion]);
 
-  const startNewChat = () => {
+  const resetChat = (runtime: Exclude<ChatRuntime, "fixture">) => {
     snapshotViewedConversation();
     chatPinAnimationsRef.current.forEach((animation) => animation.stop());
     chatPinAnimationsRef.current = [];
@@ -2590,6 +2642,8 @@ export default function DashPage() {
     setChatMessages([]);
     setActiveConversationId(undefined);
     activeConversationIdRef.current = undefined;
+    setActiveChatRuntime(runtime);
+    activeChatRuntimeRef.current = runtime;
     viewingKeyRef.current = null;
     chatMessageSequenceRef.current = 0;
     setChatDraft("");
@@ -2601,6 +2655,9 @@ export default function DashPage() {
     setEditingMessageId(null);
     setEditDraft("");
   };
+
+  const startNewChat = () => resetChat("openai");
+  const startNewMethod = () => resetChat("anthropic");
 
   const updateConversationSidebarPrefs = (
     updater: (current: ConversationSidebarPrefs) => ConversationSidebarPrefs,
@@ -2771,12 +2828,16 @@ export default function DashPage() {
                     <div className={traceStyles.expandInner}>
                       {showEditChrome ? (
                         <div className={styles.chatMessageEditTrailing}>
-                          <ModelRunControls
-                            value={agentPreferences}
-                            onChange={setAgentPreferences}
-                            popoverPlacement="below"
-                            popoverAlign="shell-start"
-                          />
+                          {activeChatRuntime === "anthropic" ? (
+                            <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                          ) : (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
+                          )}
                           <button
                             className={styles.chatMessageEditSend}
                             type="button"
@@ -2818,6 +2879,10 @@ export default function DashPage() {
                       streaming={message.isStreaming}
                       detailedMode={chatDetailedMode}
                       runtime={message.runtime}
+                      lineageReference={message.conversationId && message.turnId ? {
+                        conversationId: message.conversationId,
+                        turnId: message.turnId,
+                      } : undefined}
                       onFollowUp={(prompt) => void sendChatMessage(prompt)}
                       onAddToChat={(text) => {
                         setChatDraft((current) => {
@@ -3361,6 +3426,18 @@ export default function DashPage() {
                 </motion.h1>
               </AnimatePresence>
               <div className={styles.chatTopActions}>
+                {activeChatRuntime === "anthropic" ? (
+                  <span className={styles.chatRuntimeIndicator} aria-label="Anthropic runtime: Claude Opus 5">
+                    Claude Opus 5
+                  </span>
+                ) : null}
+                <button
+                  className={styles.chatNewMethod}
+                  type="button"
+                  onClick={startNewMethod}
+                >
+                  New Method
+                </button>
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatDetailedMode} ${chatDetailedMode ? styles.chatDetailedModeActive : ""}`}
@@ -3622,10 +3699,14 @@ export default function DashPage() {
                 />
               </div>
               <div className={styles.chatComposerTrailing}>
-                <ModelRunControls
-                  value={agentPreferences}
-                  onChange={setAgentPreferences}
-                />
+                {activeChatRuntime === "anthropic" ? (
+                  <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                ) : (
+                  <ModelRunControls
+                    value={agentPreferences}
+                    onChange={setAgentPreferences}
+                  />
+                )}
                 <button
                   className={styles.composerIconButton}
                   type="button"
@@ -3839,23 +3920,10 @@ export default function DashPage() {
             aria-labelledby="edit-resend-title"
             aria-describedby="edit-resend-copy"
           >
-            <button
-              className={styles.popupClose}
-              type="button"
-              aria-label="Close"
-              onClick={closeEditResendConfirm}
-              disabled={editResendBusy}
-            >
-              <Icon name="close" />
-            </button>
-            <p className={styles.popupEyebrow}>Rerun from here</p>
-            <h2 id="edit-resend-title">Replace later answers?</h2>
+            <h2 id="edit-resend-title">Rerun this question?</h2>
             <p id="edit-resend-copy">
-              Rerunning this question keeps the same chat, but every message after this point will be removed.
+              Later messages in this chat will be removed.
             </p>
-            <div className={styles.rewindConfirmNotice} role="note">
-              Earlier messages stay. Anything after this question is cleared before Albert answers again.
-            </div>
             <div className={styles.popupActions}>
               <button
                 className={styles.popupSecondaryAction}
@@ -3871,7 +3939,7 @@ export default function DashPage() {
                 onClick={() => void confirmEditedMessageResend()}
                 disabled={editResendBusy}
               >
-                {editResendBusy ? "Rerunning…" : "Rerun question"}
+                {editResendBusy ? "Rerunning…" : "Rerun"}
               </button>
             </div>
           </div>

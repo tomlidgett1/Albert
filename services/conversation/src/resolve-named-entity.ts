@@ -100,7 +100,7 @@ export function buildDescriptionMatchSql(
 
 /**
  * Rank Lightspeed catalogue items that match a fuzzy phrase by units sold this
- * calendar month (Sydney — the shop's timezone), then all-time completed sales.
+ * calendar month in each sale's shop timezone, then all-time completed sales.
  * Applies the three playbook gates: tombstone filter, pack pin by ingest
  * recency on every table, and completed AND NOT voided on the sale. `archived`
  * is deliberately NOT filtered — an archived completed sale was real revenue.
@@ -119,7 +119,8 @@ SELECT
   i.description AS item_name,
   COALESCE(SUM(CASE
     WHEN s.sale_id IS NOT NULL
-      AND s.complete_time >= (date_trunc('month', timezone('Australia/Sydney', now())) AT TIME ZONE 'Australia/Sydney')
+      AND sh.time_zone IS NOT NULL
+      AND s.complete_time >= (date_trunc('month', now() AT TIME ZONE sh.time_zone) AT TIME ZONE sh.time_zone)
     THEN sl.unit_quantity::numeric
     ELSE 0
   END), 0) AS units_this_month,
@@ -135,6 +136,10 @@ LEFT JOIN source_lightspeed.ls_sales AS s
  AND s.mapping_version = (SELECT mv FROM pack)
  AND s.completed = true
  AND s.voided = false
+LEFT JOIN source_lightspeed.ls_shops AS sh
+  ON sh.shop_id = s.shop_id
+ AND sh.tombstone = false
+ AND sh.mapping_version = (SELECT mv FROM pack)
 WHERE i.tombstone = false
   AND i.mapping_version = (SELECT mv FROM pack)
   AND (${match.sql})

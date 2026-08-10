@@ -141,6 +141,7 @@ test("operative defaults continue into the governed semantic context", () => {
   assert.doesNotMatch(liveAgent, /Checking your saved preferences/u);
   assert.match(liveAgent, /Do not look up saved preferences/u);
   assert.match(liveAgent, /Never preflight with SELECT 1/u);
-  assert.match(liveAgent, /const tools = \[resolveNamedEntity, runSql, askUser, remember, makeChart, openDimensionGuide\]/u);
+  assert.match(liveAgent, /updateAnalysisPlan,[\s\S]*searchSchema,[\s\S]*describeTables,[\s\S]*resolveNamedEntity,[\s\S]*runSql,[\s\S]*remember,[\s\S]*makeChart,[\s\S]*openDimensionGuide,/u);
+  assert.doesNotMatch(liveAgent, /const askUser = tool/u);
   assert.match(liveAgent, /window that honestly tells the story/u);
 });

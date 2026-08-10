@@ -14,6 +14,7 @@ if (process.env.GITHUB_ACTIONS === "true" && buildSha === "development") {
 await rm(outdir, { recursive: true, force: true });
 await build({
   entryPoints: {
+    "anthropic-analytics": "services/anthropic-analytics/src/main.ts",
     "semantic-query": "services/semantic-query/src/main.ts",
     "sync-worker": "services/sync-workers/src/main.ts",
     "transform-worker": "services/transform-worker/src/main.ts",

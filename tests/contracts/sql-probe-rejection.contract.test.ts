@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
-import { sqlProbeRejection } from "../../services/conversation/src/live.js";
+import {
+  primarySynthesisEvidenceInput,
+  recoverableSqlFailureGuidance,
+  sqlProbeRejection,
+} from "../../services/conversation/src/live.js";
+import { ANALYSIS_EXECUTION_PROFILES } from "../../services/conversation/src/analysis-orchestration.js";
 
 const liveAgent = readFileSync(new URL("../../services/conversation/src/live.ts", import.meta.url), "utf8");
 const playbooksDir = new URL("../../connectors/lightspeed-r/playbooks/", import.meta.url);
@@ -47,9 +52,11 @@ test("real monthly sales aggregates are allowed through", () => {
         SELECT mapping_version AS mv FROM source_lightspeed.ls_sales
         GROUP BY 1 ORDER BY max(ingested_at) DESC LIMIT 1
       )
-      SELECT date_trunc('month', s.complete_time AT TIME ZONE 'Australia/Sydney') AS month,
+      SELECT date_trunc('month', s.complete_time AT TIME ZONE sh.time_zone) AS month,
              SUM(s.calc_total) AS sales_inc_gst
       FROM source_lightspeed.ls_sales s
+      JOIN source_lightspeed.ls_shops sh ON sh.shop_id = s.shop_id
+        AND sh.mapping_version = (SELECT mv FROM pack) AND NOT sh.tombstone
       WHERE s.mapping_version = (SELECT mv FROM pack)
         AND NOT s.tombstone AND s.completed AND NOT s.voided
       GROUP BY 1 ORDER BY 1`,
@@ -58,15 +65,80 @@ test("real monthly sales aggregates are allowed through", () => {
   );
 });
 
-test("SQL evidence instructions ban diagnose spirals and cap turns", () => {
+test("SQL failures get cause-specific one-retry guidance", () => {
+  assert.match(
+    recoverableSqlFailureGuidance("canceling statement due to statement timeout"),
+    /filter the driving fact table[\s\S]*aggregate it before/iu,
+  );
+  assert.match(
+    recoverableSqlFailureGuidance('column "b.as_of_date" must appear in the GROUP BY clause'),
+    /GROUP BY|MIN\/MAX/u,
+  );
+  assert.match(
+    recoverableSqlFailureGuidance("data.resultWindow.orderBy: Too big: expected array to have <=5 items"),
+    /no more than three selected output aliases/u,
+  );
+});
+
+test("broad-review coverage is model-owned rather than inferred from prompt or SQL regex", () => {
+  assert.doesNotMatch(liveAgent, /requestedAnalysisSections|analysisSectionsForSql|BREADTH_FIRST_REQUIRED/u);
+  assert.match(liveAgent, /requestedWorkstreams/u);
+});
+
+test("interrupted synthesis fallback carries every result instead of the last table", () => {
+  const result = (resultId: string, value: number) => ({
+    resultId,
+    columns: [{ key: "value", label: "Value", type: "number" as const }],
+    rows: [{ value }],
+    provenance: {
+      sources: [],
+      timeRange: { label: "test", start: "2026-01-01", end: "2026-01-02", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  });
+  const results = new Map([
+    ["sql:sales", result("sql:sales", 12)],
+    ["sql:inventory", result("sql:inventory", 34)],
+  ]);
+  const packet = JSON.parse(primarySynthesisEvidenceInput(
+    "Review the business",
+    results,
+    new Map([["sql:sales", "Sales trend"], ["sql:inventory", "Stock risk"]]),
+    ["customer query did not complete"],
+    ["Cover sales", "Cover inventory", "Cover customers"],
+  ));
+  assert.deepEqual(packet.evidence.map((item: { resultId: string }) => item.resultId), ["sql:sales", "sql:inventory"]);
+  assert.equal(packet.evidence[0].rows[0].value, 12);
+  assert.equal(packet.evidence[1].rows[0].value, 34);
+  assert.match(packet.unresolvedFailures[0], /customer query/u);
+  assert.deepEqual(packet.requestedWorkstreams, ["Cover sales", "Cover inventory", "Cover customers"]);
+});
+
+test("primary analyst instructions ban diagnose spirals and keep a bounded revisable loop", () => {
   assert.match(liveAgent, /Never preflight with SELECT 1/u);
-  assert.match(liveAgent, /chart questions are one aggregate then the chart, never row samples first/u);
+  assert.match(liveAgent, /chart questions are one purposeful aggregate then the chart, never row samples first/iu);
   assert.match(liveAgent, /window that honestly tells the story/u);
   assert.match(liveAgent, /not an arbitrary handful of rows/u);
-  assert.match(liveAgent, /maxTurns: 20/u);
+  assert.match(liveAgent, /work breadth-first/u);
+  assert.equal(ANALYSIS_EXECUTION_PROFILES.lookup.maxResults, 2);
+  assert.equal(ANALYSIS_EXECUTION_PROFILES.standard.maxTurns, 32);
+  assert.equal(ANALYSIS_EXECUTION_PROFILES.deep.maxTurns, 48);
+  assert.equal(ANALYSIS_EXECUTION_PROFILES.deep.analyticalBudgetMs, 900_000);
+  assert.match(liveAgent, /PRIMARY_SYNTHESIS_MAX_TURNS = 3/u);
+  assert.match(liveAgent, /Call update_analysis_plan\(reason="initial"\) before any schema or data tool/u);
+  assert.match(liveAgent, /reason="evidence" or "recovery"/u);
+  assert.match(liveAgent, /Never ask a clarification question or return the Clarification state/u);
+  assert.doesNotMatch(liveAgent, /const askUser = tool/u);
   assert.match(liveAgent, /sqlProbeRejection/u);
   assert.match(liveAgent, /isOwnerTrailValidation/u);
-  assert.match(liveAgent, /const tools = \[resolveNamedEntity, runSql, askUser, remember, makeChart, openDimensionGuide\]/u);
+  assert.match(liveAgent, /updateAnalysisPlan,[\s\S]*searchSchema,[\s\S]*describeTables,[\s\S]*runSql,/u);
+  assert.doesNotMatch(liveAgent, /workflowName: "albert-answer"/u);
+  assert.doesNotMatch(liveAgent, /resolveIntentPlanWithAgent/u);
+  assert.doesNotMatch(liveAgent, /function createAnswerAgent/u);
+  assert.match(liveAgent, /createPrimaryAnalystAgent/u);
   assert.match(playbook, /Show a line graph of monthly sales/u);
   assert.match(playbook, /date_trunc\('month'/u);
 });
@@ -84,7 +156,7 @@ test("an uncontracted methodology clarification never blocks the turn", async ()
   const { applyIntentPlanDefaults } = await import("../../services/conversation/src/intent-plan.js");
   // "Aged inventory" is one example, not a special case — any methodology
   // question the server did not contract for flips to answer, and the analyst
-  // defaults + ask_user carry the rest.
+  // chooses and discloses the best-supported operational default.
   const forced = applyIntentPlanDefaults("give me an aged inventory report", {
     disposition: "clarification",
     caseId: null,
@@ -102,7 +174,7 @@ test("an uncontracted methodology clarification never blocks the turn", async ()
   assert.equal(forced.planSteps.length > 0, true);
 });
 
-test("a contracted clarification is preserved for the route", async () => {
+test("a legacy contracted clarification is converted to best-judgement analysis", async () => {
   const { applyIntentPlanDefaults } = await import("../../services/conversation/src/intent-plan.js");
   const kept = applyIntentPlanDefaults("who is my best employee", {
     disposition: "clarification",
@@ -116,8 +188,9 @@ test("a contracted clarification is preserved for the route", async () => {
     clarification: { question: "By net sales, gross margin, or gross profit per labour hour?" },
     unavailableReason: null,
   });
-  assert.equal(kept.disposition, "clarification");
-  assert.equal(kept.caseId, "workforce-best");
+  assert.equal(kept.disposition, "answer");
+  assert.equal(kept.caseId, null);
+  assert.equal(kept.clarification, null);
 });
 
 test("intent planning teaches layered reports, not per-question hardcodes", () => {

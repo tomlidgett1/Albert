@@ -78,11 +78,18 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
   ]);
   assert.deepEqual(shared.ANSWER_STATES, [
     "Verified",
+    "Derived",
     "Qualified",
     "Exploratory",
     "Clarification",
+    "No data",
     "Unavailable",
   ]);
+  assert.deepEqual(shared.DEFAULT_AGENT_PREFERENCES, {
+    model: "gpt-5.6-sol",
+    reasoningEffort: "max",
+    fastMode: true,
+  });
 
   const normalized = shared.normalizeAgentPreferences({
     model: "not-a-model",
@@ -110,7 +117,10 @@ test("Fast mode is independent from model and reasoning effort", () => {
   assert.equal(standard.model, fast.model);
   assert.deepEqual(standard.modelSettings.reasoning, fast.modelSettings.reasoning);
   assert.equal(fast.modelSettings.reasoning.context, "current_turn");
-  assert.deepEqual(standard.modelSettings.providerData, {});
+  assert.equal(fast.modelSettings.reasoning.mode, "standard");
+  assert.deepEqual(standard.modelSettings.providerData, {
+    service_tier: "default",
+  });
   assert.deepEqual(fast.modelSettings.providerData, { service_tier: "fast" });
 });
 

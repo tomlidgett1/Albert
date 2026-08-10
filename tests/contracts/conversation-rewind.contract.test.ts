@@ -27,7 +27,8 @@ test("rewind is exposed through a same-origin authenticated API", () => {
 
 test("edit-and-resend keeps the active conversation and confirms before discarding later messages", () => {
   assert.match(dashPage, /editResendConfirm/u);
-  assert.match(dashPage, /Rerun from here/u);
+  assert.match(dashPage, /Rerun this question\?/u);
+  assert.match(dashPage, /Later messages in this chat will be removed\./u);
   assert.match(dashPage, /\/api\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/rewind/u);
   assert.match(dashPage, /conversationId: conversationId \?\? null/u);
   assert.doesNotMatch(dashPage, /setActiveConversationId\(undefined\);\s*setTakeawaysOpen\(false\);\s*void sendChatMessage\(text, undefined, \{\s*conversationId: null/u);

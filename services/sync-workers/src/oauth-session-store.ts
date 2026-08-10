@@ -921,7 +921,7 @@ class SessionCredentialVault implements WorkerCredentialVault {
 }
 
 export function makeOAuthNonce(): string {
-  return randomBytes(32).toString("base64url");
+  return Buffer.from(randomBytes(32)).toString("base64url");
 }
 
 export function pkceChallenge(verifier: string): string {

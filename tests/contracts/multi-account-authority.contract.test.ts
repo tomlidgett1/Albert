@@ -131,6 +131,6 @@ function financeQuery(){
       range:{type:"absolute" as const,from:"2026-07-01T00:00:00.000Z",to:"2026-08-01T00:00:00.000Z"},
       compare:"none" as const,
     },
-    sort:[],limit:20,parameters:{},
+    sort:[],limit:20,
   };
 }

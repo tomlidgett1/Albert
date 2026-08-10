@@ -462,9 +462,10 @@ test("a confirmed year basis decides what year_to_date means", async () => {
   assert.equal(windowFor(1), "2026-01-01");
 });
 
-test("the agent is told to ask before answering a year-scoped question", async () => {
+test("the agent uses and discloses a defensible year basis instead of blocking", async () => {
   const source = await import("node:fs/promises")
     .then((fs) => fs.readFile("services/conversation/src/live.ts", "utf8"));
   assert.match(source, /calendar\.financial_year \/ calendar\.calendar_year/u);
-  assert.match(source, /no confirmed calendar\.year_basis/u);
+  assert.match(source, /For "this year" \/ YTD with no confirmed calendar basis, use best judgement/u);
+  assert.match(source, /State the basis used/u);
 });

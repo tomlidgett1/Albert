@@ -12,6 +12,7 @@ export const timeRangeSchema = z.union([
     type: z.enum([
       "today",
       "yesterday",
+      "week_to_date",
       "month_to_date",
       "quarter_to_date",
       "year_to_date",

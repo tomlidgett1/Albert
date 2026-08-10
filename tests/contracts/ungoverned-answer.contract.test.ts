@@ -23,6 +23,7 @@ import {
   governedQuerySignature,
   blockedQueryGuidance,
   BLOCKED_QUERY_BUDGET,
+  unresolvedScopeReason,
 } from "../../services/conversation/src/live.js";
 import { searchTokens } from "../../services/semantic-query/src/service.js";
 
@@ -46,7 +47,7 @@ test("claimless SQL answers may state dataThrough dates without being redacted",
     definitions: [],
     semanticBundleHash: "x",
     identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
-  };
+  } as const;
   const periodValues = periodGroundingValues([{ provenance }]);
   assert.ok(periodValues.includes(2026));
   assert.ok(periodValues.includes(8));
@@ -57,6 +58,58 @@ test("claimless SQL answers may state dataThrough dates without being redacted",
     periodDisclosure(provenance),
     "Figures from Lightspeed (updated through 7 August 2026).",
   );
+});
+
+test("percentage prose may faithfully render ratio or already-scaled cells", () => {
+  assert.deepEqual(findUngroundedNumbers("Refund rate was 2.66%.", [{ refund_rate: "0.0265652327" }]), []);
+  assert.deepEqual(findUngroundedNumbers("Old stock was 52.5% of value.", [{ share: "0.5249869148" }]), []);
+  assert.deepEqual(findUngroundedNumbers("Sales fell 48.18%.", [{ change_pct: "-48.1760028" }]), []);
+  assert.deepEqual(findUngroundedNumbers("Refund rate was 26.6%.", [{ refund_rate: "0.0265652327" }]), ["26.6%"]);
+});
+
+test("an ambiguity warning does not turn the determiner one into a fabricated row count", () => {
+  assert.deepEqual(
+    findUngroundedNumbers(
+      "I found two customer records, so I cannot identify one owner safely.",
+      [{ customer: "Jane" }, { customer: "John" }],
+    ),
+    [],
+  );
+  assert.deepEqual(
+    findUngroundedNumbers("I found one customer record.", [{ customer: "Jane" }, { customer: "John" }]),
+    ["one"],
+  );
+});
+
+test("scope guard ignores incomplete free text and verifies complete dimension/value scope", () => {
+  assert.equal(unresolvedScopeReason(
+    { segment: "rolling 30 calendar days", dimension: null, value: null } as never,
+    [],
+    [],
+  ), undefined);
+  assert.match(unresolvedScopeReason(
+    { segment: "the workshop", dimension: "product.category", value: "Workshop" },
+    [],
+    [],
+  ) ?? "", /not attested/iu);
+  assert.equal(unresolvedScopeReason(
+    { segment: "the workshop", dimension: "product.category", value: "Workshop" },
+    [],
+    ["category"],
+    [{
+      resultId: "sql:scope",
+      columns: [{ key: "category", label: "Category", type: "string" }],
+      rows: [{ category: "Workshop" }],
+      provenance: {
+        sources: [],
+        timeRange: { label: "test", start: "2026-01-01", end: "2026-02-01", timezone: "Australia/Melbourne" },
+        definitions: [],
+        semanticBundleHash: "x",
+        identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+      },
+      validations: [],
+    }],
+  ), undefined);
 });
 
 test("a min/max summary without a table gets the monthly rows appended", () => {
@@ -130,6 +183,30 @@ test("a min/max summary without a table gets the monthly rows appended", () => {
     ensureAnswerIncludesTable(`${summary}\n\n| Month | GP |\n| --- | --- |\n| September 2024 | $8,054.76 |`, [result]),
     `${summary}\n\n| Month | GP |\n| --- | --- |\n| September 2024 | $8,054.76 |`,
   );
+});
+
+test("a multi-section narrative does not get an arbitrary last-result table appended", () => {
+  const result = {
+    resultId: "sql:section",
+    columns: [
+      { key: "metric", label: "Metric", type: "string" as const },
+      { key: "value", label: "Value", type: "number" as const },
+    ],
+    rows: [
+      { metric: "Current", value: "12" },
+      { metric: "Prior", value: "10" },
+    ],
+    provenance: {
+      sources: [],
+      timeRange: { label: "test", start: "2026-01-01", end: "2026-02-01", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "x",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+    },
+    validations: [],
+  };
+  const narrative = "Sales improved, while inventory and customer evidence point to the next actions.";
+  assert.equal(ensureAnswerIncludesTable(narrative, [result, { ...result, resultId: "sql:other" }]), narrative);
 });
 
 test("a redacted draft that lost every result figure synthesises from the table", () => {
@@ -305,6 +382,17 @@ test("a recovered retry does not sink the turn that recovered", () => {
   assert.equal(
     enforceEvidenceBoundAnswerState("Qualified", [goodResult, blockedAttempt, goodResult], false, 3),
     "Qualified",
+  );
+});
+
+test("an unavailable cross-domain branch cannot erase surviving exploratory findings", () => {
+  const sourceResult = {
+    state: "exploratory",
+    validation: { status: "passed", warnings: [], checks: [] },
+  } as unknown as typeof blockedAttempt;
+  assert.equal(
+    enforceEvidenceBoundAnswerState("Unavailable", [sourceResult], false, 0),
+    "Exploratory",
   );
 });
 
@@ -514,6 +602,35 @@ test("answer synthesis prefers named product rows over a trailing bare row_count
   const explorationOnly = synthesizeAnswerFromResults([bareCount]);
   assert.ok(!/17138/u.test(explorationOnly));
   assert.match(explorationOnly, /couldn't turn the lookups/iu);
+});
+
+test("multi-result answers are never replaced with an arbitrary trailing labelled table", () => {
+  const provenance = {
+    sources: [],
+    timeRange: { label: "x", start: "2026-01-01T00:00:00.000Z", end: "2026-08-07T00:00:00.000Z", timezone: "Australia/Melbourne" },
+    definitions: [],
+    semanticBundleHash: "x",
+    identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+  };
+  const rosterCoverage = {
+    resultId: "sql:roster-coverage",
+    columns: [{ key: "roster_rows", label: "Roster Rows", type: "number" as const }],
+    rows: [{ roster_rows: "0" }],
+    provenance,
+    validations: [],
+  };
+  const internalWorkers = {
+    resultId: "sql:internal-workers",
+    columns: [
+      { key: "tenant_id", label: "Tenant Id", type: "string" as const },
+      { key: "display_name", label: "Display Name", type: "string" as const },
+    ],
+    rows: [{ tenant_id: "tenant-secret", display_name: "Jack Lidgett" }],
+    provenance,
+    validations: [],
+  };
+  const partial = "Deputy roster data is unavailable, so rostered hours cannot be compared; the supported Lightspeed findings remain usable.";
+  assert.equal(ensureAnswerCitesResults(partial, [rosterCoverage, internalWorkers]), partial);
 });
 
 test("no_fanout blocked guidance tells the model to pin mapping_version", () => {

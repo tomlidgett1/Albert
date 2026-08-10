@@ -104,7 +104,7 @@ ${CRITICAL_PROMPT_ROUTE_CONTRACTS.map((contract) => {
 
 DISPOSITION RULES
 - answer: normal analytics question you can plan lookups for
-- clarification: two material readings would produce different numbers and no default exists (or a known caseId)
+- clarification: legacy value only; never select it for a new turn
 - unavailable: the connected sources cannot observe what was asked (or a known caseId)
 - directory: pure employee name list, no analysis
 
@@ -112,7 +112,7 @@ PLANNING JUDGMENT
 - You are planning for a world-class analyst. Plan the evidence a great answer to THIS question needs: a simple figure is one lookup; a report, analysis, or open-ended health check is the layered deliverable a demanding owner would expect — the summary, the detail that names real things, the comparison that changes the reading. Let the question's ambition set the plan's depth.
 - Methodology belongs to the analyst, never to a question back at the owner. When a measure could be defined several ways, pick the defensible operational default, name it in a plan step ("Age stock by its last movement"), and let the answer disclose it. The evidence agent's playbooks carry the standard readings.
 - Informal shorthand ("gen services", "gens") plans as resolve + count, not "confirm what you mean".
-- Clarification is ONLY for a known caseId contract, or two genuinely forked readings where no defensible default exists.
+- Never ask a clarification question. Choose the most defensible operational reading, name that assumption in the plan, and let the answer disclose it. If two readings are both material and cheaply answerable, plan to compare both.
 
 PLAN RULES
 - summary: one short owner-facing sentence for the progress shimmer (no SQL jargon)
@@ -145,11 +145,11 @@ export function fallbackAnswerIntentPlan(message: string): IntentPlan {
     domain: "other",
     grain: "unknown",
     namedEntities: [],
-    tables: ["source_lightspeed.ls_sales", "source_lightspeed.ls_sale_lines"],
+    tables: [],
     planSteps: [
-      "Work out what you need from Lightspeed",
-      "Look up the matching sales or stock rows",
-      "Present the figures clearly",
+      "Resolve the business question and its scope",
+      "Gather the smallest sufficient evidence set",
+      "Present the supported conclusion clearly",
     ],
     summary: `Planning how to look up ${clipped}`,
     clarification: null,
@@ -227,7 +227,7 @@ export async function resolveIntentPlanWithAgent(
 }
 
 /**
- * A clarification the server never contracted for must not block the turn.
+ * A clarification must not block a current analytical turn.
  *
  * This used to be a list of per-question keyword overrides (stock ageing,
  * customer-activity phrasings, …) — every new phrasing needed another hardcode, and any
@@ -235,15 +235,15 @@ export async function resolveIntentPlanWithAgent(
  * rule those cases were instances of: methodology belongs to the analyst, not
  * to a pre-emptive question. When a measure could honestly be defined several
  * ways, the evidence agent picks the defensible operational default from the
- * playbooks and the answer discloses it — and the evidence agent still has
- * ask_user for the rare genuinely-forked reading. Only server route contracts
- * (caseId set) may stop a turn at the planning stage.
+ * playbooks and the answer discloses it. Historical case ids and clarification
+ * artifacts remain parseable, but they cannot stop a new turn.
  */
 export function applyIntentPlanDefaults(_message: string, plan: IntentPlan): IntentPlan {
-  if (plan.disposition !== "clarification" || plan.caseId) return plan;
+  if (plan.disposition !== "clarification") return plan;
   return intentPlanSchema.parse({
     ...plan,
     disposition: "answer",
+    caseId: null,
     clarification: null,
     planSteps: plan.planSteps.length > 0
       ? plan.planSteps

@@ -1,6 +1,6 @@
 
-import { loadRawStorageS3Config } from "../packages/storage/src/s3.ts";
-import { SupabaseMachineSessionPool } from "../packages/storage/src/session-credentials.ts";
+import { loadRawStorageS3Config } from "../packages/storage/src/s3.js";
+import { SupabaseMachineSessionPool } from "../packages/storage/src/session-credentials.js";
 const config = loadRawStorageS3Config(process.env as any, {
   machinePurpose: "sync",
   passwordEnvironmentName: "ALBERT_RAW_STORAGE_SYNC_PASSWORD",

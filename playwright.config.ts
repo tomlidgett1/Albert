@@ -9,14 +9,22 @@ const appEnvironment = {
   NEXT_PUBLIC_SUPABASE_URL: `https://${supabaseProjectRef}.supabase.co`,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "browser-acceptance-publishable-key",
   ALBERT_OAUTH_STATE_SECRET: "browser-acceptance-oauth-state-secret-00000001",
-  ALBERT_OAUTH_WORKER_SIGNING_SECRET: "browser-acceptance-worker-signing-secret-01",
+  ALBERT_OAUTH_WORKER_SIGNING_SECRET:
+    "browser-acceptance-worker-signing-secret-01",
   ALBERT_SEMANTIC_SIGNING_SECRET: "browser-acceptance-semantic-secret-000001",
-  ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET: "browser-acceptance-diagnostic-secret-001",
+  ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET:
+    "browser-acceptance-semantic-profile-secret-0001",
+  ALBERT_ANTHROPIC_SIGNING_SECRET: "browser-acceptance-anthropic-secret-0001",
+  ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET:
+    "browser-acceptance-diagnostic-secret-001",
   ALBERT_USER_HASH_SECRET: "browser-acceptance-user-hash-secret-00001",
   ALBERT_PUBLIC_ORIGIN: appOrigin,
   SYNC_WORKER_INTERNAL_URL: "https://sync.browser-acceptance.invalid",
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.browser-acceptance.invalid",
-  OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.browser-acceptance.invalid",
+  ANTHROPIC_ANALYTICS_SERVICE_URL:
+    "https://anthropic.browser-acceptance.invalid",
+  OPERATOR_DIAGNOSTIC_SERVICE_URL:
+    "https://diagnostic.browser-acceptance.invalid",
   OPENAI_API_KEY: "browser-acceptance-openai-key",
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   LIGHTSPEED_CLIENT_ID: "browser-acceptance-lightspeed-client",
@@ -41,7 +49,10 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI
-    ? [["line"], ["html", { outputFolder: ".playwright/report", open: "never" }]]
+    ? [
+        ["line"],
+        ["html", { outputFolder: ".playwright/report", open: "never" }],
+      ]
     : "list",
   timeout: 30_000,
   expect: { timeout: 8_000 },
@@ -75,7 +86,8 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "npm run build && NODE_OPTIONS=--import=./tests/browser/support/server-fetch-rewrite.mjs npm run start -- -p 3100 -H 127.0.0.1",
+      command:
+        "npm run build && NODE_OPTIONS=--import=./tests/browser/support/server-fetch-rewrite.mjs npm run start -- -p 3100 -H 127.0.0.1",
       env: appEnvironment,
       url: `${internalAppOrigin}/login`,
       reuseExistingServer: !process.env.CI,

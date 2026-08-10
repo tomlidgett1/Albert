@@ -1,28 +1,62 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import Image from "next/image";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type {
   AnswerState,
+  TraceChartEvent,
   TraceEvent,
   TraceProgressStage,
+  TraceProvenance,
   TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
 import { formatTraceCell } from "./analytical-values";
+import {
+  parseSafeAnswerLineage,
+  type SafeAnswerLineage,
+  type TurnLineageReference,
+} from "./answer-lineage";
+import { responseVisibleResultIds } from "../lib/answer-presentation";
 import { renderAssistantMarkdown } from "../lib/render-assistant-markdown";
 import styles from "./insights-trace.module.css";
+
+const ResultChart = lazy(() => import("./AnalyticalTrace").then((module) => ({
+  default: module.ResultChart,
+})));
+
+type TrailSource = TraceProvenance["sources"][number];
+
+const CONNECTOR_LOGOS: Record<TrailSource["connector"], string> = {
+  lightspeed: "/logos/lightspeed.png",
+  xero: "/logos/xero.svg",
+  deputy: "/logos/deputy.png",
+  square: "/logos/square.svg",
+  shopify: "/logos/shopify.svg",
+  stripe: "/logos/stripe.svg",
+  momence: "/logos/momence.svg",
+  "meta-ads": "/logos/meta.svg",
+  "google-ads": "/logos/google-ads.svg",
+};
 
 type InsightsStyleTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   detailedMode?: boolean;
-  runtime?: "fixture" | "openai";
+  runtime?: "fixture" | "openai" | "anthropic";
+  lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onAddToChat?: (text: string) => void;
   onClarification?: (label: string, optionId: string) => void;
 };
+
+type AuditReceiptState =
+  | Readonly<{ kind: "idle" }>
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "ready"; lineage: SafeAnswerLineage }>
+  | Readonly<{ kind: "error"; message: string }>;
 
 type TrailStepStatus = "running" | "done" | "error";
 
@@ -38,6 +72,10 @@ type TrailStep = Readonly<{
   warnings?: readonly string[];
   error?: string;
   table?: TraceTableEvent;
+  chart?: Readonly<{
+    event: TraceChartEvent;
+    table?: TraceTableEvent;
+  }>;
   governed?: Readonly<{
     topic: string;
     metrics: readonly string[];
@@ -57,11 +95,19 @@ type TrailModel = Readonly<{
   status: string;
   /** The substance behind `status` — what the current step is actually reading. */
   statusDetail: string;
+  /** Progress stage for the current work (steps); not used for generic header copy. */
+  statusStage?: TraceProgressStage;
+  /** Sticky question-contextual header theme from the analysis plan summary. */
+  statusTheme?: string;
   answer?: Readonly<{ state: AnswerState; text: string; followUps: readonly string[] }>;
   clarification?: Readonly<{ question: string; options: readonly Readonly<{ id: string; label: string }>[] }>;
   error?: Readonly<{ message: string; recoverable: boolean }>;
   /** User or navigation stop; shown discreetly, not as a retry error. */
   stopped?: boolean;
+  /** First event timestamp; used for a live Cursor-style elapsed clock while streaming. */
+  startedAtMs: number | null;
+  /** Unique connectors used in this turn (from table/answer provenance). */
+  sources: readonly TrailSource[];
   stats: Readonly<{
     stepCount: number;
     tableCount: number;
@@ -70,6 +116,10 @@ type TrailModel = Readonly<{
   }>;
   trace: readonly TraceEntry[];
   governedQueries: readonly NonNullable<TrailStep["governed"]>[];
+  charts: readonly Readonly<{
+    event: TraceChartEvent;
+    table?: TraceTableEvent;
+  }>[];
 }>;
 
 function isStopMessage(message: string): boolean {
@@ -80,17 +130,21 @@ function isStopMessage(message: string): boolean {
 
 const answerStateDescriptions = {
   Verified: "Checked against your connected data",
+  Derived: "Calculated deterministically from governed results",
   Qualified: "Useful answer, with a limitation noted below",
   Exploratory: "From your live Lightspeed or Xero data",
   Clarification: "Albert needs one quick choice before continuing",
+  "No data": "The valid question returned no matching records",
   Unavailable: "The required data is not available yet",
 } as const;
 
 const answerStateLabels = {
   Verified: "Checked",
+  Derived: "Calculated",
   Qualified: "With a note",
   Exploratory: "From your live data",
   Clarification: "Needs a choice",
+  "No data": "No matching data",
   Unavailable: "Can't answer yet",
 } as const;
 
@@ -118,7 +172,10 @@ function humanize(value: string): string {
   return value.replaceAll("_", " ");
 }
 
-/** One plain status line for the shimmer: what Albert is doing, in owner words. */
+/**
+ * Specific step-line copy for the expanded trail.
+ * Prefers concrete purpose detail over the generic stage label.
+ */
 export function laymanProgressStatus(label: string, detail = ""): string {
   const stage = label.trim();
   const purpose = detail.trim().replace(/\.+$/u, "");
@@ -138,12 +195,53 @@ export function laymanProgressStatus(label: string, detail = ""): string {
   return softStage || "Working on it";
 }
 
+const GENERIC_OWNER_THEMES = /^(Working out what you need|Working on it|Thinking|Planning your answer|Looking up your numbers|Looking up your people|Reading your setup|Checking your (?:catalogue|data)|Matching names|Understanding your question|Planning the governed analysis)$/iu;
+
+/** Owner-facing theme candidates from plan summaries / narrative. */
+function cleanOwnerTheme(value: string): string {
+  const trimmed = value.trim().replace(/\.+$/u, "");
+  if (!trimmed || trimmed.length > 72) return "";
+  if (GENERIC_OWNER_THEMES.test(trimmed)) return "";
+  if (/SQL|governed|allowlisted|tenant|staging|schema|CTE|GROUP BY/iu.test(trimmed)) return "";
+  if (/^Answer ready$|^Waiting for one detail$|^Stopped$|^Loaded \d+/iu.test(trimmed)) return "";
+  if (/^Running (?:SQL|an exploratory)/iu.test(trimmed)) return "";
+  if (/^Analysing\b|^Querying\b|^Exploring\b/iu.test(trimmed)) return "";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+/**
+ * Main header shimmer: question-contextual, not stage-generic.
+ * Prefers the sticky analysis-plan theme for the whole turn; step rows stay specific.
+ */
+export function highLevelProgressTheme(input: {
+  theme?: string;
+  stage?: TraceProgressStage;
+  label: string;
+  detail?: string;
+}): string {
+  const label = input.label.trim();
+  if (/Waiting for one detail/iu.test(label)) return "Needs one detail";
+  if (/Stopped|Albert can retry|Analysis stopped/iu.test(label)) return label;
+
+  if (input.theme) return input.theme;
+
+  // Before a plan summary lands, keep whatever clean contextual label we have.
+  const fromLabel = cleanOwnerTheme(label);
+  if (fromLabel) return fromLabel;
+
+  const fromDetail = cleanOwnerTheme(input.detail ?? "");
+  if (fromDetail) return fromDetail;
+
+  return "Working on it";
+}
+
 export function buildTrailModel(
   events: readonly TraceEvent[],
   streaming: boolean,
-  runtime: "fixture" | "openai",
+  runtime: "fixture" | "openai" | "anthropic",
 ): TrailModel {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
+  const visibleResultIds = responseVisibleResultIds(ordered);
   const steps: TrailStep[] = [];
   const commentary: string[] = [];
   const trace: TraceEntry[] = [];
@@ -154,8 +252,18 @@ export function buildTrailModel(
   let stopped = false;
   let status = streaming ? "Thinking" : "How this was worked out";
   let statusDetail = "";
+  let statusStage: TraceProgressStage | undefined;
+  /** Sticky question theme from update_analysis_plan / intent summary. */
+  let statusTheme = "";
   let startedAt: number | undefined;
   let endedAt: number | undefined;
+  const sourcesByConnector = new Map<TrailSource["connector"], TrailSource>();
+
+  const rememberSources = (provenance: TraceProvenance | undefined) => {
+    for (const source of provenance?.sources ?? []) {
+      sourcesByConnector.set(source.connector, source);
+    }
+  };
 
   const pushStep = (step: TrailStep) => {
     steps.push(step);
@@ -181,6 +289,14 @@ export function buildTrailModel(
     if (event.type === "progress") {
       status = event.label;
       statusDetail = event.detail ?? "";
+      statusStage = event.stage;
+      {
+        // Prefer plan summaries; otherwise first concrete purpose (never generics).
+        const theme = cleanOwnerTheme(event.label) || cleanOwnerTheme(event.detail ?? "");
+        if (theme && (event.stage === "planning" || !statusTheme)) {
+          statusTheme = theme;
+        }
+      }
       const running = streaming && event.status !== "complete";
       const nextStatus: TrailStepStatus = event.status === "error" ? "error" : running ? "running" : "done";
       // A settling step reports the outcome of work already on screen, so it
@@ -216,6 +332,10 @@ export function buildTrailModel(
       if (summary) {
         status = summary;
         statusDetail = "";
+        if (!statusTheme) {
+          const theme = cleanOwnerTheme(summary);
+          if (theme) statusTheme = theme;
+        }
       }
       trace.push({ id: `commentary_${event.id}`, type: "commentary", content: event.text });
       continue;
@@ -238,6 +358,7 @@ export function buildTrailModel(
       const open = openIndex >= 0 ? steps[openIndex] : undefined;
       status = `Analysing ${humanize(event.topic)}`;
       statusDetail = open?.detail ?? fallbackDetail;
+      statusStage = "query";
       if (open) {
         steps[openIndex] = {
           ...open,
@@ -263,14 +384,18 @@ export function buildTrailModel(
     if (event.type === "table") {
       status = event.caption;
       statusDetail = `${event.rows.length.toLocaleString()} governed row${event.rows.length === 1 ? "" : "s"} · ${event.columns.length} column${event.columns.length === 1 ? "" : "s"}`;
-      const previous = [...steps].reverse().find((step) => step.kind === "sql" && !step.table);
+      statusStage = statusStage ?? "query";
+      rememberSources(event.provenance);
+      const exposeTable = !visibleResultIds || visibleResultIds.has(event.resultId);
+      const previous = [...steps].reverse().find((step) =>
+        step.kind === "sql" && typeof step.rowCount !== "number");
       if (previous) {
         const index = steps.findIndex((step) => step.id === previous.id);
         steps[index] = {
           ...previous,
           status: "done",
           rowCount: event.rows.length,
-          table: event,
+          ...(exposeTable ? { table: event } : {}),
           title: previous.title || event.caption,
         };
       } else {
@@ -280,19 +405,27 @@ export function buildTrailModel(
           title: event.caption,
           status: "done",
           rowCount: event.rows.length,
-          table: event,
+          ...(exposeTable ? { table: event } : {}),
         });
       }
       continue;
     }
 
     if (event.type === "chart") {
+      const table = [...steps]
+        .reverse()
+        .find((step) => step.table?.resultId === event.dataRef)
+        ?.table;
+      status = event.caption;
+      statusDetail = `${event.chartType} chart`;
+      statusStage = undefined;
       pushStep({
         id: event.id,
         kind: "tool",
         title: event.caption,
         status: "done",
         detail: `${event.chartType} chart`,
+        chart: { event, ...(table ? { table } : {}) },
       });
       continue;
     }
@@ -320,8 +453,10 @@ export function buildTrailModel(
         text: event.text,
         followUps: event.followUps,
       };
+      rememberSources(event.provenance);
       status = "Answer ready";
       statusDetail = "";
+      statusStage = undefined;
       continue;
     }
 
@@ -329,6 +464,7 @@ export function buildTrailModel(
       clarification = { question: event.question, options: event.options };
       status = "Waiting for one detail";
       statusDetail = event.question;
+      statusStage = undefined;
       continue;
     }
 
@@ -380,21 +516,39 @@ export function buildTrailModel(
     reasoning: commentary.join("\n\n"),
     status,
     statusDetail,
+    statusStage,
+    statusTheme: statusTheme || undefined,
     answer,
     clarification,
     error,
     stopped,
+    startedAtMs: startedAt ?? null,
+    sources: [...sourcesByConnector.values()],
     stats: {
       stepCount: normalised.length,
       tableCount: normalised.filter((step) => step.table).length,
       durationMs,
-      runtimeLabel: runtime === "fixture" ? "Fixture" : "OpenAI",
+      runtimeLabel: runtime === "fixture"
+        ? "Fixture"
+        : runtime === "anthropic"
+          ? "Claude Opus 5"
+          : "OpenAI",
     },
     trace,
     governedQueries: normalised
       .map((step) => step.governed)
       .filter((query): query is NonNullable<TrailStep["governed"]> => Boolean(query)),
+    charts: normalised.flatMap((step) => step.chart ? [step.chart] : []),
   };
+}
+
+/** Cursor-style elapsed label: "for 12s" / "for 1m 24s". */
+function formatForDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  if (totalSec < 60) return `for ${totalSec}s`;
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return seconds > 0 ? `for ${minutes}m ${seconds}s` : `for ${minutes}m`;
 }
 
 function Chevron({ open }: { open: boolean }) {
@@ -576,110 +730,12 @@ function GovernedQuerySummary({
   );
 }
 
-function StreamingTrace({
-  steps,
-  headline,
-  detail,
-  reduceMotion = false,
-}: {
-  steps: readonly TrailStep[];
-  headline: string;
-  detail: string;
-  reduceMotion?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const lineTransition = reduceMotion
-    ? { duration: 0 }
-    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const };
-  const status = laymanProgressStatus(headline, detail);
-
-  return (
-    <motion.div
-      className={styles.streamingTrace}
-      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={
-        reduceMotion
-          ? { duration: 0 }
-          : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }
-      }
-    >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        aria-label={status}
-        onClick={() => setExpanded((current) => !current)}
-        className={styles.streamingToggle}
-      >
-        <span className={styles.streamingHeadlineGroup}>
-          <span className={styles.streamingHeadline}>
-            <span aria-hidden className={styles.streamingMeasure}>{status}</span>
-            <AnimatePresence>
-              <motion.span
-                key={status}
-                initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
-                animate={{ y: "0%", opacity: 1 }}
-                exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
-                transition={lineTransition}
-                className={styles.streamingLive}
-              >
-                {status}
-              </motion.span>
-            </AnimatePresence>
-          </span>
-        </span>
-        {steps.length > 0 ? (
-          <span className={styles.streamingChevron}>
-            <Chevron open={expanded} />
-          </span>
-        ) : null}
-      </button>
-
-      <div
-        className={styles.expandPanel}
-        style={{
-          gridTemplateRows: expanded ? "1fr" : "0fr",
-          opacity: expanded ? 1 : 0,
-        }}
-        data-duration="400"
-      >
-        <div className={styles.expandInner}>
-          <div className={styles.streamingSteps}>
-            {steps.map((step, index) => (
-              <div
-                key={step.id}
-                className={styles.streamingStep}
-                style={{ animationDelay: `${Math.min(index, 6) * 120}ms` }}
-              >
-                {step.status === "running" ? (
-                  <span className={styles.spinner} />
-                ) : step.status === "error" ? (
-                  <span className={styles.streamingStepIcon}><CrossIcon size={14} /></span>
-                ) : (
-                  <span className={styles.streamingStepIcon}><CheckIcon size={14} /></span>
-                )}
-                <span className={styles.streamingStepBody}>
-                  <span className={styles.streamingStepTitleLine}>
-                    <span className={styles.streamingStepTitle}>{step.title}</span>
-                    {typeof step.rowCount === "number" ? (
-                      <span className={styles.stepMeta}>
-                        {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
-                      </span>
-                    ) : null}
-                  </span>
-                  {step.detail ? (
-                    <span className={styles.streamingStepDetail}>{step.detail}</span>
-                  ) : null}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
+/**
+ * Cursor-style agent progress:
+ * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
+ * - Done: static "Worked" + "for Xs"
+ * - Task list always collapsed by default; expand to inspect steps
+ */
 function ThinkingTrail({
   model,
   streaming,
@@ -690,58 +746,117 @@ function ThinkingTrail({
   reduceMotion?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [mountedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const hasTrail = model.steps.length > 0 || model.reasoning.trim().length > 0 || streaming;
+  // Header stays question-contextual; expanded steps keep the specific work.
+  const status = highLevelProgressTheme({
+    theme: model.statusTheme,
+    stage: model.statusStage,
+    label: model.status || "Working",
+    detail: model.statusDetail,
+  });
+  const lineTransition = reduceMotion
+    ? { duration: 0 }
+    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const };
+
+  useEffect(() => {
+    if (!streaming) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [streaming]);
+
   if (!hasTrail) return null;
 
-  if (streaming) {
-    return (
-      <StreamingTrace
-        steps={model.steps}
-        headline={model.status || "Thinking"}
-        detail={model.statusDetail}
-        reduceMotion={reduceMotion}
-      />
-    );
-  }
-
-  const failed = Boolean(model.error);
-  const answerState = model.answer?.state;
-  const label = model.stats.stepCount > 0
-    ? `Worked through ${model.stats.stepCount} step${model.stats.stepCount === 1 ? "" : "s"}`
-    : "How this was worked out";
-  const meta = model.stats.durationMs > 0
-    ? `${(model.stats.durationMs / 1000).toFixed(0)}s · ${model.stats.tableCount} quer${model.stats.tableCount === 1 ? "y" : "ies"}`
-    : null;
+  const startedAt = model.startedAtMs ?? (streaming ? mountedAt : null);
+  const elapsedMs = streaming && startedAt != null
+    ? Math.max(0, now - startedAt)
+    : model.stats.durationMs;
+  const durationLabel = elapsedMs > 0 || streaming ? formatForDuration(elapsedMs) : null;
+  const verb = streaming
+    ? "Working"
+    : model.stopped
+      ? "Stopped"
+      : model.error
+        ? "Stopped"
+        : "Worked";
   const reasoning = cleanReasoningSummary(model.reasoning);
-  const stateClass = answerState === "Verified" ? styles.thinkingStateVerified
-    : answerState === "Qualified" ? styles.thinkingStateQualified
-      : answerState === "Exploratory" ? styles.thinkingStateExploratory
-        : answerState === "Clarification" ? styles.thinkingStateClarification
-          : answerState === "Unavailable" ? styles.thinkingStateUnavailable
-            : failed ? styles.thinkingStateUnavailable
-              : "";
+  const canExpand = model.steps.length > 0 || Boolean(reasoning) || model.governedQueries.length > 0;
+  const sourceLabel = model.sources.map((source) => source.label).join(", ");
+  const headerLabel = streaming
+    ? `${verb}. ${status}`
+    : `${verb}${durationLabel ? ` ${durationLabel}` : ""}${sourceLabel ? `. Sources: ${sourceLabel}` : ""}`;
 
   return (
-    <div
-      className={styles.thinkingCard}
-      style={{ borderRadius: open ? 12 : 14 }}
+    <motion.div
+      className={styles.agentTrail}
+      initial={reduceMotion || !streaming ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={
+        reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }
+      }
     >
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
-        className={`${styles.thinkingHeader} ${stateClass}`}
+        className={styles.agentTrailHeader}
         aria-expanded={open}
-        title={answerState ? answerStateDescriptions[answerState] : undefined}
+        aria-label={headerLabel}
+        onClick={() => {
+          if (!canExpand) return;
+          setOpen((current) => !current);
+        }}
       >
-        <span className={styles.thinkingTitle}>
-          <span className={styles.thinkingLabel}>{label}</span>
-          <span className={styles.thinkingChevron}><Chevron open={open} /></span>
+        <span className={styles.agentTrailVerbGroup}>
+          {streaming ? (
+            <span className={styles.agentTrailStatus}>
+              <span className={styles.agentTrailStatusMeasure} aria-hidden>{status || verb}</span>
+              <AnimatePresence>
+                <motion.span
+                  key={status || verb}
+                  initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
+                  animate={{ y: "0%", opacity: 1 }}
+                  exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
+                  transition={lineTransition}
+                  className={styles.agentTrailStatusLive}
+                >
+                  {status || verb}
+                </motion.span>
+              </AnimatePresence>
+            </span>
+          ) : (
+            <span className={styles.agentTrailVerb}>{verb}</span>
+          )}
+          {durationLabel ? (
+            <span className={styles.agentTrailDuration}>{durationLabel}</span>
+          ) : null}
         </span>
-        {answerState ? (
-          <span className={styles.thinkingStateBadge}>{answerStateLabels[answerState]}</span>
+        {model.sources.length > 0 ? (
+          <span className={styles.agentTrailSources} aria-hidden>
+            {model.sources.map((source) => (
+              <span
+                key={source.connector}
+                className={styles.agentTrailSource}
+                title={source.label}
+                data-connector={source.connector}
+              >
+                <Image
+                  src={CONNECTOR_LOGOS[source.connector]}
+                  alt=""
+                  width={12}
+                  height={12}
+                  unoptimized
+                />
+              </span>
+            ))}
+          </span>
         ) : null}
-        {model.stopped ? <span className={styles.thinkingStopped}>Stopped</span> : null}
-        {meta ? <span className={styles.thinkingMeta}>{meta}</span> : null}
+        {canExpand ? (
+          <span className={styles.agentTrailChevron}>
+            <Chevron open={open} />
+          </span>
+        ) : null}
       </button>
 
       <div
@@ -753,40 +868,51 @@ function ThinkingTrail({
         data-duration="300"
       >
         <div className={styles.expandInner}>
-          <div className={styles.thinkingBody}>
-            <div className={styles.thinkingBodyContent}>
-              {model.governedQueries.length > 0 ? (
-                <div className={styles.governedSection}>
-                  {model.governedQueries.map((query, index) => (
-                    <GovernedQuerySummary
-                      key={`${query.topic}_${query.lens}_${index}`}
-                      query={query}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {reasoning ? (
-                <p
-                  className={styles.thinkingReasoning}
-                  style={open ? { animationDelay: "120ms" } : undefined}
-                >
-                  {reasoning}
-                </p>
-              ) : null}
-              {model.steps.map((step, index) => (
-                <div
-                  key={step.id}
-                  style={open ? { animationDelay: `${120 + Math.min(index, 6) * 70}ms` } : undefined}
-                  className={styles.rowIn}
-                >
-                  <StepRow step={step} />
-                </div>
-              ))}
-            </div>
+          <div className={styles.agentTrailBody}>
+            {reasoning ? (
+              <p className={styles.thinkingReasoning}>{reasoning}</p>
+            ) : null}
+
+            {model.steps.length > 0 ? (
+              <div className={styles.agentTrailSteps}>
+                {model.steps.map((step) => (
+                  <div key={step.id} className={styles.agentTrailStep}>
+                    {step.status === "running" ? (
+                      <span className={styles.spinner} />
+                    ) : step.status === "error" ? (
+                      <span className={styles.agentTrailStepIcon}><CrossIcon size={14} /></span>
+                    ) : (
+                      <span className={styles.agentTrailStepIcon}><CheckIcon size={14} /></span>
+                    )}
+                    <span className={styles.agentTrailStepBody}>
+                      <span className={styles.agentTrailStepTitle}>
+                        {laymanProgressStatus(step.title, step.detail ?? "")}
+                      </span>
+                      {typeof step.rowCount === "number" ? (
+                        <span className={styles.stepMeta}>
+                          {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {model.governedQueries.length > 0 ? (
+              <div className={styles.governedSection}>
+                {model.governedQueries.map((query, index) => (
+                  <GovernedQuerySummary
+                    key={`${query.topic}_${query.lens}_${index}`}
+                    query={query}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -852,7 +978,13 @@ function DetailedQueryResult({
         </div>
       ) : step.status === "error" ? (
         <p className={styles.detailedQueryError}>{step.error || "This query could not be completed."}</p>
-      ) : !step.table || step.table.rows.length === 0 ? (
+      ) : !step.table ? (
+        <p className={styles.detailedQueryEmpty}>
+          {typeof step.rowCount === "number" && step.rowCount > 0
+            ? "Used to support the answer; detailed rows were not included in the response."
+            : "The query completed with no rows."}
+        </p>
+      ) : step.table.rows.length === 0 ? (
         <p className={styles.detailedQueryEmpty}>The query completed with no rows.</p>
       ) : (
         <ResultTable table={step.table} maxHeight={360} />
@@ -861,7 +993,25 @@ function DetailedQueryResult({
   );
 }
 
+function ChartLoadingState() {
+  return (
+    <div className={styles.chartLoadingState} role="status">
+      <span className={styles.spinner} aria-hidden="true" />
+      Preparing chart…
+    </div>
+  );
+}
+
 function DetailedSupportStep({ step }: { step: TrailStep }) {
+  if (step.chart) {
+    return (
+      <div className={styles.detailedChartArtifact}>
+        <Suspense fallback={<ChartLoadingState />}>
+          <ResultChart event={step.chart.event} table={step.chart.table} />
+        </Suspense>
+      </div>
+    );
+  }
   return (
     <div className={styles.detailedSupport}>
       {step.status === "running" ? <span className={styles.spinner} /> : <CheckIcon size={14} />}
@@ -1163,11 +1313,95 @@ function AssistantMarkdown({
   );
 }
 
+function AnswerAuditReceipt({ reference }: { reference: TurnLineageReference }) {
+  const [open, setOpen] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<AuditReceiptState>({ kind: "idle" });
+  const conversationId = reference.conversationId;
+  const turnId = reference.turnId;
+  const referenceKey = `${conversationId}:${turnId}`;
+
+  useEffect(() => {
+    setOpen(false);
+    setState({ kind: "idle" });
+  }, [referenceKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setState({ kind: "loading" });
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/lineage`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const payload = await response.json().catch(() => null) as {
+          lineage?: unknown;
+          error?: string;
+        } | null;
+        if (!response.ok) {
+          throw new Error(payload?.error || "The immutable answer record could not be loaded.");
+        }
+        const lineage = parseSafeAnswerLineage(payload?.lineage, { conversationId, turnId });
+        if (!lineage) throw new Error("The immutable answer record returned invalid metadata.");
+        if (!controller.signal.aborted) setState({ kind: "ready", lineage });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "The immutable answer record could not be loaded.",
+        });
+      }
+    })();
+    return () => controller.abort();
+  }, [attempt, conversationId, open, referenceKey, turnId]);
+
+  return (
+    <section className={styles.answerAudit} aria-label="Immutable answer record">
+      <button
+        type="button"
+        className={styles.answerAuditToggle}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>Immutable answer record</span>
+        <span aria-hidden="true">{open ? "−" : "+"}</span>
+      </button>
+      {open ? (
+        <div className={styles.answerAuditPanel}>
+          {state.kind === "loading" || state.kind === "idle" ? (
+            <p role="status">Loading the sealed receipt…</p>
+          ) : state.kind === "error" ? (
+            <div role="alert">
+              <p>{state.message}</p>
+              <button type="button" onClick={() => setAttempt((current) => current + 1)}>Retry</button>
+            </div>
+          ) : (
+            <>
+              <dl>
+                <div><dt>Answer</dt><dd>{state.lineage.answerState}</dd></div>
+                <div><dt>Artifact</dt><dd>{state.lineage.answerArtifactId}</dd></div>
+                <div><dt>Sealed</dt><dd>{new Date(state.lineage.finalizedAt).toLocaleString()}</dd></div>
+                <div><dt>Evidence queries</dt><dd>{state.lineage.queries.length}</dd></div>
+              </dl>
+              <p className={styles.answerAuditDigest}>
+                Receipt digest <code>{state.lineage.artifactDigest.slice(0, 16)}…</code>
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function InsightsStyleTrace({
   events,
   streaming = false,
   detailedMode = false,
   runtime = "openai",
+  lineageReference,
   onFollowUp,
   onAddToChat,
   onClarification,
@@ -1179,9 +1413,9 @@ export default function InsightsStyleTrace({
   );
   // Only animate the answer reveal for turns that streamed in this mount.
   // Restored / switched conversations must appear instantly.
-  const participatedInStreamRef = useRef(streaming);
-  if (streaming) participatedInStreamRef.current = true;
-  const animateAnswerReveal = participatedInStreamRef.current && !reduceMotion;
+  const [participatedInStream, setParticipatedInStream] = useState(streaming);
+  if (streaming && !participatedInStream) setParticipatedInStream(true);
+  const animateAnswerReveal = (participatedInStream || streaming) && !reduceMotion;
 
   return (
     <div className={styles.root}>
@@ -1190,6 +1424,19 @@ export default function InsightsStyleTrace({
       ) : (
         <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
       )}
+
+      {!detailedMode && model.charts.length > 0 ? (
+        <div className={styles.responseCharts} aria-label="Charts">
+          {model.charts.map((chart) => (
+            <Suspense key={chart.event.id} fallback={<ChartLoadingState />}>
+              <ResultChart
+                event={chart.event}
+                table={chart.table}
+              />
+            </Suspense>
+          ))}
+        </div>
+      ) : null}
 
       {!streaming && model.answer ? (
         <motion.div
@@ -1218,6 +1465,9 @@ export default function InsightsStyleTrace({
             onAddToChat={onAddToChat}
             reduceMotion={reduceMotion}
           />
+          {lineageReference && runtime !== "fixture" ? (
+            <AnswerAuditReceipt reference={lineageReference} />
+          ) : null}
           {model.answer.followUps.length ? (
             <div className={styles.followUps} aria-label="Suggested follow-up questions">
               {model.answer.followUps.map((followUp) => (

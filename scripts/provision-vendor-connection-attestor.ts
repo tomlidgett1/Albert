@@ -138,7 +138,7 @@ export async function provisionVendorConnectionAttestor(): Promise<void> {
     await client.query(`alter role ${identifier(LOGIN)} set search_path='pg_catalog'`);
     await client.query(
       "select extensions.albert_configure_vendor_attestor_verifier($1,$2,$3,$4,$5)",
-      [keyId, Buffer.from(publicKeyDer).toString("base64"), toolRef, buildDigest, admissionKey.toString("base64")],
+      [keyId, Buffer.from(publicKeyDer).toString("base64"), toolRef, buildDigest, Buffer.from(admissionKey).toString("base64")],
     );
     await client.query("commit");
   } catch (error) {

@@ -94,6 +94,16 @@ export interface SemanticReadDatabase {
     expectedIdentityGraph?: Readonly<{ version: number; hash: string }>;
     capabilityEvidence?: SemanticCapabilityEvidence;
   }>): Promise<DatabaseResult>;
+  /** Executes all statements inside one repeatable-read, read-only transaction.
+   * Required by V2 whenever a semantic workspace has more than one physical
+   * query, so comparisons and independently aggregated facts share a snapshot. */
+  queryBatchAsSemanticRole?(request: Readonly<{
+    tenantId: string;
+    statements: readonly Readonly<{ sql: string; parameters: readonly unknown[] }>[];
+    statementTimeoutMs: number;
+    expectedIdentityGraph?: Readonly<{ version: number; hash: string }>;
+    capabilityEvidence?: SemanticCapabilityEvidence;
+  }>): Promise<readonly DatabaseResult[]>;
 }
 
 export interface SemanticResultCache {

@@ -406,7 +406,13 @@ export function ensureAnswerIncludesTable(
   answerText: string,
   results: readonly GovernedResult[],
 ): string {
-  const focus = pickAnswerResult(results.filter((result) => result.rows.length > 0));
+  const usable = results.filter((result) => result.rows.length > 0);
+  // In a multi-section review there is no universally correct "last table".
+  // Appending one arbitrary section after a complete cross-result narrative
+  // misrepresents its importance. The model may still author a useful summary
+  // table; the server only forces tabular detail for a single-result answer.
+  if (usable.length > 1) return answerText;
+  const focus = pickAnswerResult(usable);
   if (!focus || !evidenceWantsMarkdownTable(focus)) return answerText;
   if (answerContainsMarkdownTable(answerText)) return answerText;
   const table = formatResultsAsMarkdownTable(focus, { includeIntro: false, maxRows: 36 });
@@ -557,7 +563,7 @@ export function unavailableEvidenceExplanation(
     capabilities?: { missing?: readonly string[] };
     validation: {
       warnings: readonly string[];
-      checks: readonly Readonly<{ status: string; checkId?: string }>[];
+      checks: readonly Readonly<Record<string, unknown>>[];
     };
   }>[],
   readableCheckName: (checkId: string) => string,
@@ -590,17 +596,17 @@ export function unavailableEvidenceExplanation(
  * States the part of the analysis that could not run, in owner English.
  * Omits the note entirely when we have nothing useful to say.
  */
-export function supersededBlockDisclosure(
-  evidence: readonly Readonly<{
+export function supersededBlockDisclosure<Evidence extends Readonly<{
     state?: string;
     capabilities?: { missing?: readonly string[] };
     validation: {
       status?: string;
       warnings: readonly string[];
-      checks: readonly Readonly<{ status: string }>[];
+      checks: readonly Readonly<Record<string, unknown>>[];
     };
-  }>[],
-  isBlocked: (item: (typeof evidence)[number]) => boolean,
+  }>>(
+  evidence: readonly Evidence[],
+  isBlocked: (item: Evidence) => boolean,
 ): string {
   const blocked = evidence.filter(isBlocked);
   if (blocked.length === 0) return "";

@@ -41,6 +41,7 @@ export function adaptGovernedResult(response: SemanticToolResponse): GovernedRes
     resultId: response.resultId,
     columns: response.data.columns.map((column) => columnMetadata(column, response, rows)),
     rows,
+    ...(response.scopeReceipt ? { scopeReceipt: response.scopeReceipt } : {}),
     ...(filterRefs ? { filterRefs: filterRefs.map((row) => ({ ...row })) } : {}),
     ...(safeResultWindow && safeResultWindow.orderBy.length > 0 ? {
       resultWindow: safeResultWindow,
@@ -167,7 +168,10 @@ function validatedCurrency(
 function inferColumnType(key: string, rows: readonly Readonly<Record<string, TraceCell>>[]): TraceTableColumn["type"] {
   const normalized = key.toLowerCase();
   if (normalized.endsWith("_at") || normalized.includes("timestamp")) return "datetime";
-  if (normalized.includes("date") || normalized === "calendar_week") return "date";
+  if (
+    normalized.includes("date")
+    || /(?:^|_)(?:day|week|month|quarter|year|period)(?:_|$)/u.test(normalized)
+  ) return "date";
   if (normalized.includes("pct") || normalized.includes("percent") || normalized.endsWith("_rate")) return "percent";
   if (/amount|sales|revenue|cost|profit|margin|value|receipt|receivable|payable|gst/.test(normalized)) return "currency";
   const values = rows.map((row) => row[key]).filter((value) => value !== null);

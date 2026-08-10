@@ -127,7 +127,7 @@ export class DeputyWebhookMaterialStore {
     const candidateMaterialId = ulid();
     const candidateMaterial: DeputyWebhookVerificationMaterial = Object.freeze({
       version: 1,
-      customHeaderSecret: randomBytes(32).toString("base64url"),
+      customHeaderSecret: Buffer.from(randomBytes(32)).toString("base64url"),
     });
     const candidateCallback = callbackUrl(this.gatewayOrigin, connectionId, candidateMaterialId);
     const candidateEnvelope = await sealSecret({

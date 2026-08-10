@@ -454,7 +454,7 @@ test("ruleset-only main protection fails closed when administrator bypass safety
 
 test("non-running Fly application metadata fails the production audit", async () => {
   const fixture = await validFixture();
-  fixture.apps[0].status = "suspended";
+  fixture.apps.find(({ name }) => name === fixture.source.FLY_SEMANTIC_APP).status = "suspended";
 
   const result = await auditProductionEnvironment({
     rootDirectory,

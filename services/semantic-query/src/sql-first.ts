@@ -236,7 +236,10 @@ export function sqlFirstResultWindow(
 } | undefined {
   if (ordering.orderBy.length === 0) return undefined;
   const orderBy = ordering.orderBy
-    .slice(0, 12)
+    // The governed wire contract accepts at most five ordering keys. Keep the
+    // proof within that boundary so a successful SQL result cannot be turned
+    // into a response-schema failure during service serialization.
+    .slice(0, 5)
     .map((item) => ({ columnKey: item.column, direction: item.direction }));
   if (ordering.limit !== undefined && ordering.limit <= serviceBound) {
     return { requestedLimit: ordering.limit, orderedBeforeLimit: true, orderBy };

@@ -210,6 +210,12 @@ function persistedAnswerState(value:string):"verified"|"qualified"|"exploratory"
   throw new Error("The completed answer state is invalid.");
 }
 
+function persistedSemanticV2AnswerState(value:string):"verified"|"derived"|"exploratory"|"clarification"|"no_data"|"unavailable"{
+  const normalized=value.toLowerCase().replaceAll(" ","_");
+  if(normalized==="verified"||normalized==="derived"||normalized==="exploratory"||normalized==="clarification"||normalized==="no_data"||normalized==="unavailable")return normalized;
+  throw new Error("The completed Semantic V2 answer state is invalid.");
+}
+
 async function safetyIdentifier(userId: string, secret: string): Promise<string> {
   const encoder=new TextEncoder();
   const key=await crypto.subtle.importKey(
@@ -305,6 +311,8 @@ export async function POST(request: Request) {
   }
 
   const turnId = ulid();
+  const analyticalRuntime =
+    process.env.ALBERT_ANALYTICAL_RUNTIME === "v2" ? "v2" : "v1";
   let begun;
   try {
     begun = await beginConversationTurn({
@@ -316,6 +324,7 @@ export async function POST(request: Request) {
         reasoningEffort: preferences.reasoningEffort,
         fastMode: preferences.fastMode,
         runtime: "openai-agents-sdk",
+        analyticalRuntime,
       },
       confirmedOption: parsed.data.confirmedOption,
       supabase,
@@ -421,6 +430,11 @@ export async function POST(request: Request) {
             return unavailableSemanticToolResponse(name, input);
           }
         },
+        executeV2: async (
+          name: Parameters<SemanticServiceClient["executeV2"]>[0],
+          input: unknown,
+          context: Parameters<SemanticServiceClient["executeV2"]>[2],
+        ) => semanticClient.executeV2(name, input, context),
       };
       const usageLifecycle = new DurableModelUsageLifecycle(async (usage, outcome) => {
         try {
@@ -490,6 +504,7 @@ export async function POST(request: Request) {
           semanticServiceUrl: configuration.semanticServiceUrl!,
           semanticSigningSecret: configuration.semanticSigningSecret!,
           semanticClient: resilientSemantic,
+          analyticalRuntime,
           safetyIdentifier: await safetyIdentifier(user.id, configuration.userHashSecret!),
           openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
           onProviderUsage: async (providerUsage, providerResponseId) => {
@@ -510,19 +525,31 @@ export async function POST(request: Request) {
         if (!usageCheckpoint) throw new Error("The completed provider run did not produce durable usage.");
         finalizationAttempted = true;
         try {
-          const finalization = await semanticClient.finalizeAnswerArtifact({
+          const commonFinalization = {
             tenantId:tenant.tenant_id,
             actorUserId:user.id,
             conversationId: begun.conversationId,
             turnId,
             providerResponseId: result.lastResponseId,
             providerUsage: result.usage,
-            answerState: persistedAnswerState(result.answerState),
             turnResultDigest: result.resultDigest,
             metering: toModelUsageRpcPayload(usageCheckpoint.metering),
-            queryAuditIds: [...result.queryAuditIds],
-            ...(result.directoryEvidence ? { directoryEvidence: result.directoryEvidence } : {}),
-          });
+          } as const;
+          const finalization = result.semanticV2
+            ? await semanticClient.finalizeSemanticV2AnswerArtifact({
+                ...commonFinalization,
+                answerState: persistedSemanticV2AnswerState(result.answerState),
+                executionIds: [...result.semanticV2.executionIds],
+                publicationHash: result.semanticV2.publicationHash,
+                investigationId: result.semanticV2.investigationId,
+                claims: [...result.semanticV2.claims],
+              })
+            : await semanticClient.finalizeAnswerArtifact({
+                ...commonFinalization,
+                answerState: persistedAnswerState(result.answerState),
+                queryAuditIds: [...result.queryAuditIds],
+                ...(result.directoryEvidence ? { directoryEvidence: result.directoryEvidence } : {}),
+              });
           try {
             await usageLifecycle.terminal("answer_finalized");
           } catch (usageOutcomeError) {

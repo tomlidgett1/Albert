@@ -112,7 +112,10 @@ test("source allowlist publication atomically retires removed and newly sensitiv
     },
   };
 
-  await publishSourceAllowlist(client,job,xeroManifest,accounts);
+  await publishSourceAllowlist(client,job,reclassifyXeroAccountClass({
+    disposition:"governed_extension",
+    pii:"none",
+  }),accounts);
   assert.ok(active.has("class"),"the reviewed non-PII extension should be active");
   assert.match(statements[0]??"",/set active=false/u);
 
@@ -140,7 +143,7 @@ function reclassifyXeroAccountClass(
     ...xeroManifest,
     packVersion:"1.0.1-test",
     fieldCoverage:xeroManifest.fieldCoverage.map((entry)=>
-      entry.stream==="accounts"&&entry.field==="Class"?{...entry,...patch}:entry,
+      entry.stream==="xero_accounts"&&entry.field==="Class"?{...entry,...patch}:entry,
     ),
   } as ConnectorManifest;
 }

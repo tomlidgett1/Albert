@@ -1794,7 +1794,7 @@ function categoryTreeDepth(item:Readonly<{command:CanonicalProjectionCommand;row
 function deterministicCanonicalId(parts:readonly string[]):string{
   const bytes=createHash("sha256").update(parts.join("\u001f")).digest().subarray(0,16);
   const alphabet="0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  let value=BigInt(`0x${bytes.toString("hex")}`);let output="";
+  let value=BigInt(`0x${Buffer.from(bytes).toString("hex")}`);let output="";
   for(let index=0;index<26;index+=1){output=alphabet[Number(value&31n)]+output;value>>=5n;}
   return output;
 }

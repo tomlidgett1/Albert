@@ -1,5 +1,8 @@
 "use client";
 
+import { ResponsiveBar, type BarDatum, type BarTooltipProps } from "@nivo/bar";
+import { ResponsiveLine, type LineSeries, type PointTooltipProps } from "@nivo/line";
+import { useReducedMotion } from "framer-motion";
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import type {
   TraceChartEvent,
@@ -7,6 +10,7 @@ import type {
   TraceProvenance,
   TraceTableEvent,
 } from "@/packages/shared/src";
+import { responseVisibleResultIds } from "../lib/answer-presentation";
 import styles from "../dash.module.css";
 import {
   parseSafeAnswerLineage,
@@ -23,7 +27,7 @@ import {
 type AnalyticalTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
-  runtime?: "fixture" | "openai";
+  runtime?: "fixture" | "openai" | "anthropic";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onClarification?: (label: string, optionId: string) => void;
@@ -43,9 +47,11 @@ type LineageState =
 
 const answerStateDescriptions = {
   Verified: "Checked against your connected data",
+  Derived: "Calculated deterministically from governed results",
   Qualified: "Useful answer, with a limitation noted below",
   Exploratory: "From your live Lightspeed or Xero data",
   Clarification: "Albert needs one quick choice before continuing",
+  "No data": "The valid question returned no matching records",
   Unavailable: "The required data is not available yet",
 } as const;
 
@@ -58,6 +64,29 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatChartDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.trim();
+  // Date-only ISO values (YYYY-MM-DD) stay calendar dates; datetimes keep a short time.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/u.test(value.trim());
+  return new Intl.DateTimeFormat("en-AU", dateOnly
+    ? { day: "numeric", month: "short", year: "numeric" }
+    : { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" },
+  ).format(date);
+}
+
+function formatChartDateRange(range: Readonly<{ start: string; end: string; label: string }> | undefined) {
+  if (!range) return "";
+  const start = range.start.trim();
+  const end = range.end.trim();
+  if (start && end) {
+    const startLabel = formatChartDate(start);
+    const endLabel = formatChartDate(end);
+    return startLabel === endLabel ? startLabel : `${startLabel} – ${endLabel}`;
+  }
+  return range.label.trim();
 }
 
 function formatFinalizedAt(value: string) {
@@ -391,94 +420,286 @@ function ResultTable({
   );
 }
 
-function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
-  const valueColumn = table?.columns.find((column) => column.key === event.yKey);
-  const points = useMemo(() => {
-    if (!table) return [];
-    return table.rows.flatMap((row) => {
-      const rawValue = row[event.yKey];
-      const value = traceCellNumber(rawValue);
-      const label = row[event.xKey];
-      return value !== null && label !== null
-        ? [{ label: String(label), rawValue, value }]
-        : [];
-    });
-  }, [event.xKey, event.yKey, table]);
+const NIVO_CHART_COLOURS: string[] = [
+  "var(--dash-chart-1)",
+  "var(--dash-chart-2)",
+  "var(--dash-chart-3)",
+  "var(--dash-chart-4)",
+];
 
-  const width = 620;
-  const height = 236;
-  const padding = { top: 18, right: 18, bottom: 42, left: 24 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  const maxValue = Math.max(0, ...points.map((point) => point.value));
-  const minValue = Math.min(0, ...points.map((point) => point.value));
-  const domainMax = maxValue === 0 && minValue === 0 ? 1 : maxValue;
-  const valueSpan = Math.max(domainMax - minValue, 1);
-  const yFor = (value: number) => padding.top + ((domainMax - value) / valueSpan) * chartHeight;
-  const zeroY = yFor(0);
-  const slotWidth = points.length ? chartWidth / points.length : chartWidth;
-  const linePoints = points.map((point, index) => ({
-    ...point,
-    x: padding.left + slotWidth * index + slotWidth / 2,
-    y: yFor(point.value),
-  }));
-  const linePath = linePoints.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
-  const chartMinimumWidth = Math.max(480, points.length * 68);
-  const shortLabel = (label: string) => label.length > 14 ? `${label.slice(0, 13)}…` : label;
+const nivoChartTheme = {
+  background: "transparent",
+  text: {
+    fill: "var(--dash-text-muted)",
+    fontFamily: "var(--font-geist-sans), sans-serif",
+    fontSize: 11,
+  },
+  axis: {
+    domain: { line: { stroke: "var(--dash-border-soft)", strokeWidth: 1 } },
+    ticks: {
+      line: { stroke: "var(--dash-border-soft)", strokeWidth: 1 },
+      text: { fill: "var(--dash-text-muted)", fontSize: 10 },
+    },
+    legend: { text: { fill: "var(--dash-text-body)", fontSize: 11 } },
+  },
+  grid: { line: { stroke: "var(--dash-chart-grid)", strokeWidth: 1 } },
+  legends: { text: { fill: "var(--dash-text-muted)", fontSize: 10 } },
+  crosshair: { line: { stroke: "var(--dash-text-faint)", strokeWidth: 1 } },
+  tooltip: {
+    container: {
+      background: "transparent",
+      boxShadow: "none",
+      padding: 0,
+    },
+  },
+} as const;
+
+type PreparedChartRow = Readonly<{
+  x: string;
+  source: TraceTableEvent["rows"][number];
+}>;
+
+export function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
+  const reducedMotion = useReducedMotion();
+  const descriptionId = useId().replaceAll(":", "");
+  const xColumn = table?.columns.find((column) => column.key === event.xKey);
+  const primaryColumn = table?.columns.find((column) => column.key === event.yKey);
+  const series = useMemo(() => {
+    if (!table) return [];
+    const requested = event.series?.length
+      ? event.series
+      : [{ key: event.yKey, label: primaryColumn?.label ?? event.yKey.replaceAll("_", " ") }];
+    return requested.flatMap((item) => {
+      const column = table.columns.find((candidate) => candidate.key === item.key);
+      return column ? [{ ...item, column }] : [];
+    });
+  }, [event.series, event.yKey, primaryColumn?.label, table]);
+  const rows = useMemo<PreparedChartRow[]>(() => {
+    if (!table || !series.length) return [];
+    return table.rows.flatMap((row) => {
+      const rawX = row[event.xKey];
+      if (rawX === null || rawX === undefined) return [];
+      const hasValue = series.some(({ key }) => traceCellNumber(row[key]) !== null);
+      return hasValue ? [{ x: String(rawX), source: row }] : [];
+    });
+  }, [event.xKey, series, table]);
+
+  const rawRows = useMemo(() => new Map(rows.map((row) => [row.x, row.source])), [rows]);
+  const seriesByKey = useMemo(() => new Map(series.map((item) => [item.key, item])), [series]);
+  const seriesKeyByLabel = useMemo(() => new Map(series.map((item) => [item.label, item.key])), [series]);
+  const formatX = (value: string | number) => {
+    const raw = rawRows.get(String(value))?.[event.xKey] ?? String(value);
+    return xColumn ? formatTraceCell(raw, xColumn) : String(raw);
+  };
+  const formatY = (value: number) => primaryColumn
+    ? formatCompactTraceCell(value, primaryColumn)
+    : new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  const longestXLabel = rows.reduce((longest, row) => Math.max(longest, formatX(row.x).length), 0);
+  const horizontalBars = event.chartType === "bar" && (rows.length >= 8 || longestXLabel > 14);
+  const hasLegend = series.length > 1;
+  const baseChartMinimumWidth = event.chartType === "line"
+    ? 620
+    : horizontalBars ? 520 : Math.max(520, rows.length * 72);
+  const chartMinimumWidth = hasLegend
+    ? Math.max(760, baseChartMinimumWidth)
+    : baseChartMinimumWidth;
+  const chartHeight = horizontalBars
+    ? Math.max(280, Math.min(620, rows.length * 34 + (hasLegend ? 108 : 72)))
+    : hasLegend ? 340 : 300;
+  const rawValue = (x: string | number, key: string) => rawRows.get(String(x))?.[key] ?? null;
+  const lineTickValues = useMemo(() => {
+    if (rows.length <= 12) return rows.map(({ x }) => x);
+    const interval = Math.ceil(rows.length / 12);
+    const sampled = rows.flatMap(({ x }, index) => index % interval === 0
+      ? [{ x, index }]
+      : []);
+    const lastIndex = rows.length - 1;
+    const last = rows[lastIndex]!;
+    const previous = sampled.at(-1);
+    if (!previous || previous.index !== lastIndex) {
+      if (previous && lastIndex - previous.index <= Math.ceil(interval / 2)) {
+        sampled[sampled.length - 1] = { x: last.x, index: lastIndex };
+      } else {
+        sampled.push({ x: last.x, index: lastIndex });
+      }
+    }
+    return sampled.map(({ x }) => x);
+  }, [rows]);
+
+  const BarTooltip = ({ id, indexValue, color }: BarTooltipProps<BarDatum>) => {
+    const key = String(id);
+    const item = seriesByKey.get(key);
+    const value = rawValue(indexValue, key);
+    return (
+      <div className={styles.traceChartTooltip}>
+        <span><i style={{ backgroundColor: color }} />{formatX(indexValue)}</span>
+        <strong>{item?.label ?? key}: {item ? formatTraceCell(value, item.column) : String(value ?? "—")}</strong>
+      </div>
+    );
+  };
+
+  const LineTooltip = ({ point }: PointTooltipProps<LineSeries>) => {
+    const label = String(point.seriesId);
+    const key = seriesKeyByLabel.get(label) ?? label;
+    const item = seriesByKey.get(key);
+    const value = rawValue(String(point.data.x), key);
+    return (
+      <div className={styles.traceChartTooltip}>
+        <span><i style={{ backgroundColor: point.seriesColor }} />{formatX(String(point.data.x))}</span>
+        <strong>{item?.label ?? label}: {item ? formatTraceCell(value, item.column) : String(value ?? "—")}</strong>
+      </div>
+    );
+  };
+
+  const barData = useMemo<BarDatum[]>(() => rows.map((row) => ({
+    __albert_x: row.x,
+    ...Object.fromEntries(series.flatMap(({ key }) => {
+      const value = traceCellNumber(row.source[key]);
+      return value === null ? [] : [[key, value]];
+    })),
+  })), [rows, series]);
+  const lineData = useMemo<LineSeries[]>(() => series.map((item) => ({
+    id: item.label,
+    data: rows.map((row) => ({
+      x: row.x,
+      y: traceCellNumber(row.source[item.key]),
+    })),
+  })), [rows, series]);
+
+  const legends = hasLegend ? [{
+    anchor: "bottom-left" as const,
+    direction: "row" as const,
+    translateY: 62,
+    itemWidth: 128,
+    itemHeight: 18,
+    itemsSpacing: 8,
+    symbolSize: 9,
+    symbolShape: "circle" as const,
+    itemTextColor: "var(--dash-text-muted)",
+  }] : [];
+  const minimumPoints = event.chartType === "line" ? 2 : 1;
+  const hasChart = Boolean(table && rows.length >= minimumPoints && series.length && primaryColumn);
+  const tableCaption = table?.caption?.trim() ?? "";
+  const exploratory = /^Exploratory(?:\s*·\s*|$)/iu.test(tableCaption);
+  const dateRangeLabel = formatChartDateRange(table?.provenance.timeRange);
 
   return (
     <figure className={styles.traceChartFigure}>
       <div className={styles.traceArtifactHeader}>
         <figcaption>
-          <span>{event.chartType.toUpperCase()} CHART</span>
           <strong>{event.caption}</strong>
         </figcaption>
-        <small>From {table?.caption ?? event.dataRef}</small>
+        {exploratory || dateRangeLabel ? (
+          <div className={styles.traceChartMeta}>
+            {exploratory ? (
+              <span className={styles.traceChartPill}>Exploratory</span>
+            ) : null}
+            {dateRangeLabel ? (
+              <span className={styles.traceChartPill} title={dateRangeLabel}>
+                {dateRangeLabel}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      {points.length ? (
+      {hasChart ? (
         <div className={styles.traceChartScroll} tabIndex={0} aria-label="Scrollable chart area">
-          <svg
-            viewBox={`0 0 ${width} ${height}`}
-            role="img"
-            aria-label={event.caption}
-            style={{ minWidth: chartMinimumWidth }}
+          <div
+            className={styles.traceChartCanvas}
+            style={{ height: chartHeight, minWidth: chartMinimumWidth }}
           >
-            <line className={styles.traceChartBaseline} x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} />
-            {event.chartType === "bar" ? points.map((point, index) => {
-              const barWidth = Math.min(58, slotWidth * 0.54);
-              const valueY = yFor(point.value);
-              const barHeight = Math.abs(valueY - zeroY);
-              const x = padding.left + slotWidth * index + (slotWidth - barWidth) / 2;
-              const y = Math.min(valueY, zeroY);
-              const valueLabelY = point.value >= 0
-                ? Math.max(12, y - 7)
-                : Math.min(height - 28, y + barHeight + 14);
-              return (
-                <g key={`${point.label}-${index}`}>
-                  <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
-                  <rect className={styles.traceChartBar} data-negative={point.value < 0 || undefined} x={x} y={y} width={barWidth} height={barHeight} rx="6" />
-                  <text className={styles.traceChartValue} x={x + barWidth / 2} y={valueLabelY} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                  <text className={styles.traceChartLabel} x={x + barWidth / 2} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
-                </g>
-              );
-            }) : (
-              <>
-                <path className={styles.traceChartLine} d={linePath} />
-                {linePoints.map((point, index) => (
-                  <g key={`${point.label}-${index}`}>
-                    <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
-                    <circle className={styles.traceChartDot} cx={point.x} cy={point.y} r="4" />
-                    <text className={styles.traceChartValue} x={point.x} y={Math.max(12, Math.min(height - 28, point.y - 9))} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                    <text className={styles.traceChartLabel} x={point.x} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
-                  </g>
-                ))}
-              </>
+            <p className="sr-only" id={descriptionId}>
+              {event.caption}. {rows.length} points across {series.length} {series.length === 1 ? "series" : "series"}. Exact values are available in the governed source table.
+            </p>
+            {event.chartType === "bar" ? (
+              <ResponsiveBar
+                data={barData}
+                keys={series.map(({ key }) => key)}
+                indexBy="__albert_x"
+                layout={horizontalBars ? "horizontal" : "vertical"}
+                groupMode="grouped"
+                margin={horizontalBars
+                  ? { top: 22, right: 24, bottom: hasLegend ? 88 : 58, left: Math.min(180, Math.max(92, longestXLabel * 7)) }
+                  : { top: 22, right: 20, bottom: hasLegend ? 102 : 70, left: 74 }}
+                padding={0.28}
+                innerPadding={3}
+                valueScale={{ type: "linear" }}
+                indexScale={{ type: "band", round: true }}
+                colors={NIVO_CHART_COLOURS}
+                colorBy="id"
+                borderRadius={5}
+                borderWidth={1}
+                borderColor={{ from: "color", modifiers: [["darker", 0.35]] }}
+                enableGridX={horizontalBars}
+                enableGridY={!horizontalBars}
+                enableLabel={!horizontalBars && !hasLegend && rows.length <= 8}
+                label={(datum) => formatY(datum.value ?? 0)}
+                labelSkipWidth={42}
+                labelSkipHeight={20}
+                labelTextColor="var(--dash-chart-label-on-fill)"
+                axisBottom={horizontalBars
+                  ? { tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }
+                  : { tickSize: 4, tickPadding: 8, tickRotation: longestXLabel > 9 ? -28 : 0, truncateTickAt: 18, format: formatX }}
+                axisLeft={horizontalBars
+                  ? { tickSize: 4, tickPadding: 7, truncateTickAt: 24, format: formatX }
+                  : { tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }}
+                legends={legends.map((legend) => ({ ...legend, dataFrom: "keys" as const }))}
+                legendLabel={(datum) => seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}
+                tooltip={BarTooltip}
+                theme={nivoChartTheme}
+                role="img"
+                ariaLabel={event.caption}
+                ariaDescribedBy={descriptionId}
+                isFocusable
+                barAriaLabel={(datum) => `${seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}, ${formatY(datum.value ?? 0)}, ${formatX(datum.indexValue)}`}
+                animate={!reducedMotion}
+                animateOnMount={!reducedMotion}
+                motionConfig={{ mass: 1, tension: 210, friction: 28, clamp: true }}
+              />
+            ) : (
+              <ResponsiveLine
+                data={lineData}
+                margin={{ top: 24, right: 24, bottom: hasLegend ? 102 : 70, left: 74 }}
+                xScale={{ type: "point" }}
+                yScale={{ type: "linear", min: "auto", max: "auto", stacked: false, reverse: false }}
+                curve="monotoneX"
+                colors={NIVO_CHART_COLOURS}
+                lineWidth={3}
+                enableArea={series.length === 1}
+                areaOpacity={0.07}
+                enableGridX={false}
+                enablePoints={rows.length <= 36}
+                pointSize={7}
+                pointColor="var(--dash-surface)"
+                pointBorderWidth={2}
+                pointBorderColor={{ from: "serieColor" }}
+                axisBottom={{
+                  tickSize: 4,
+                  tickPadding: 8,
+                  tickRotation: longestXLabel > 9 ? -28 : 0,
+                  tickValues: lineTickValues,
+                  truncateTickAt: 18,
+                  format: formatX,
+                }}
+                axisLeft={{ tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }}
+                legends={legends}
+                useMesh
+                tooltip={LineTooltip}
+                theme={nivoChartTheme}
+                role="img"
+                ariaLabel={event.caption}
+                ariaDescribedBy={descriptionId}
+                isFocusable
+                pointAriaLabel={(point) => `${String(point.seriesId)}, ${formatX(String(point.data.x))}, ${formatY(Number(point.data.y))}`}
+                animate={!reducedMotion}
+                motionConfig={{ mass: 1, tension: 210, friction: 28, clamp: true }}
+              />
             )}
-          </svg>
+          </div>
         </div>
       ) : (
         <p className={styles.traceChartUnavailable}>
-          {table ? "No chartable values were returned by the governed query." : "The governed source table is not available in this trace."}
+          {table ? `At least ${minimumPoints} chartable ${minimumPoints === 1 ? "value is" : "values are"} required; the exact result remains available in the governed source table.` : "The governed source table is not available in this trace."}
         </p>
       )}
     </figure>
@@ -504,6 +725,9 @@ export default function AnalyticalTrace({
     () => [...events].sort((first, second) => first.sequence - second.sequence),
     [events],
   );
+  const presentedResultIds = useMemo(() => {
+    return responseVisibleResultIds(orderedEvents);
+  }, [orderedEvents]);
   const tables = useMemo(
     () => new Map(
       orderedEvents.flatMap((event) => event.type === "table" ? [[event.resultId, event] as const] : []),
@@ -620,7 +844,11 @@ export default function AnalyticalTrace({
           </div>
         </div>
         <div className={styles.traceHeaderMeta}>
-          <span>{runtime === "fixture" ? "Demo dataset" : "OpenAI runtime"}</span>
+          <span>{runtime === "fixture"
+            ? "Demo dataset"
+            : runtime === "anthropic"
+              ? "Claude Opus 5 runtime"
+              : "OpenAI runtime"}</span>
           {auditProvenance ? (
             <button
               type="button"
@@ -682,7 +910,9 @@ export default function AnalyticalTrace({
                 </div>
               ) : null}
 
-              {event.type === "table" ? <ResultTable event={event} onExplain={openExplanation} /> : null}
+              {event.type === "table" && (!presentedResultIds || presentedResultIds.has(event.resultId))
+                ? <ResultTable event={event} onExplain={openExplanation} />
+                : null}
 
               {event.type === "chart" ? <ResultChart event={event} table={tables.get(event.dataRef)} /> : null}
 

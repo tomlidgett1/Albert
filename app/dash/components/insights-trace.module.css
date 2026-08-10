@@ -5,28 +5,29 @@
   flex-direction: column;
 }
 
-/* Shared shimmer (Insights New / Genie) */
+/* Cursor-style text shimmer: full base with a narrow highlight sweep */
 .runningShimmer,
-.streamingLive {
+.agentTrailVerbLive,
+.agentTrailStatusLive {
   background-image: linear-gradient(
     90deg,
-    light-dark(#a3a3a3, #8a8d96) 0%,
-    light-dark(#a3a3a3, #8a8d96) 38%,
-    light-dark(#525252, #f1f2f4) 50%,
-    light-dark(#a3a3a3, #8a8d96) 62%,
-    light-dark(#a3a3a3, #8a8d96) 100%
+    light-dark(#737373, #a8abb4) 0%,
+    light-dark(#737373, #a8abb4) 40%,
+    light-dark(#171717, #f5f6f8) 50%,
+    light-dark(#737373, #a8abb4) 60%,
+    light-dark(#737373, #a8abb4) 100%
   );
-  background-size: 220% 100%;
+  background-size: 200% 100%;
   color: transparent;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: insightsAgentShimmer 2.2s linear infinite;
+  animation: insightsAgentShimmer 2s linear infinite;
 }
 
 @keyframes insightsAgentShimmer {
-  0% { background-position: 200% center; }
-  100% { background-position: -200% center; }
+  0% { background-position: -100% center; }
+  100% { background-position: 200% center; }
 }
 
 @keyframes insightsRowIn {
@@ -104,312 +105,209 @@
   animation: insightsRowIn 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-/* Streaming status line */
-.streamingTrace {
+/* Cursor-style Working / Worked trail */
+.agentTrail {
   display: flex;
   width: 100%;
   flex-direction: column;
-  margin: 0 0 12px;
+  margin: 0 0 2px;
 }
 
-.streamingToggle {
+.agentTrailHeader {
   display: inline-flex;
   width: max-content;
   max-width: 100%;
+  min-height: 24px;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   margin: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
+  color: light-dark(#525252, #c4c7cf);
   cursor: pointer;
-  /* Match .chatMessage user bubble text inset (10px) */
-  padding: 4px 8px 4px 10px;
+  /* Match .answerBlock / response text inset */
+  padding: 2px 4px 2px 10px;
   text-align: left;
 }
 
-.streamingToggle:focus-visible {
+.agentTrailHeader:focus-visible {
   outline: 2px solid light-dark(#2c2d30, #e6e8ee);
   outline-offset: 2px;
 }
 
-.streamingHeadlineGroup {
-  display: flex;
+.agentTrailVerbGroup {
+  display: inline-flex;
   min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
-  flex-direction: row;
-  align-items: center;
+  align-items: baseline;
+  gap: 8px;
 }
 
-/* Single shimmer status line in plain language. */
-.streamingHeadline {
+.agentTrailVerb,
+.agentTrailVerbLive {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.agentTrailVerb {
+  color: light-dark(#525252, #c4c7cf);
+}
+
+.agentTrailDuration {
+  color: light-dark(#a3a3a3, #6f737c);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.agentTrailSources {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.agentTrailSource {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-left: -5px;
+  border: 1.5px solid light-dark(#f6f5f5, #24262a);
+  border-radius: 50%;
+  background: light-dark(#ffffff, #1b1d20);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.06));
+}
+
+.agentTrailSources .agentTrailSource:first-child {
+  margin-left: 0;
+}
+
+.agentTrailSource :global(img) {
+  width: 11px;
+  height: 11px;
+  object-fit: contain;
+}
+
+.agentTrailChevron {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: light-dark(#b0b0b0, #6f737c);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.agentTrailHeader:hover .agentTrailChevron,
+.agentTrailHeader[aria-expanded="true"] .agentTrailChevron,
+.agentTrailHeader:focus-visible .agentTrailChevron {
+  opacity: 1;
+}
+
+.agentTrailBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 0 0 2px 10px;
+}
+
+.agentTrailStatus {
   position: relative;
   display: block;
   min-width: 0;
-  flex: 0 1 auto;
-  max-width: 100%;
-  height: 20px;
+  max-width: min(520px, 70vw);
+  height: 18px;
   overflow: hidden;
-  text-align: left;
 }
 
-.streamingMeasure {
+.agentTrailStatusMeasure {
   display: block;
   overflow: hidden;
   visibility: hidden;
-  color: light-dark(#171717, #f5f6f8);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
-  line-height: 20px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.streamingLive {
+.agentTrailStatusLive {
   position: absolute;
   inset: 0;
   display: block;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
-  line-height: 20px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.streamingChevron {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  color: light-dark(#a3a3a3, #8a8d96);
-  transition: opacity 140ms ease;
-}
-
-.streamingToggle:hover .streamingChevron,
-.streamingToggle[aria-expanded="true"] .streamingChevron,
-.streamingToggle:focus-visible .streamingChevron {
-  opacity: 1;
-}
-
-.streamingSteps {
+.agentTrailSteps {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0;
-  padding: 4px 8px 4px 10px;
+  gap: 2px;
 }
 
-.streamingStep {
+.agentTrailStep {
   display: flex;
   width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   align-items: flex-start;
   gap: 8px;
-  border-radius: 6px;
-  padding: 4px 0;
-  animation: insightsRowIn 320ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  padding: 2px 0;
+  animation: insightsRowIn 280ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-.streamingStepIcon {
+.agentTrailStepIcon {
   display: grid;
+  width: 14px;
   height: 17px;
   flex: 0 0 auto;
   place-items: center;
   color: light-dark(#a3a3a3, #8a8d96);
 }
 
-/* Keep the 12px spinner optically centred on the 17px title line. */
-.streamingStep > .spinner {
-  margin-top: 3px;
+.agentTrailStep > .spinner {
+  margin-top: 2px;
 }
 
-.streamingStepBody {
+.agentTrailStepBody {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.streamingStepTitleLine {
-  display: flex;
-  min-width: 0;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
 
-.streamingStepTitle {
+.agentTrailStepTitle {
   min-width: 0;
-  flex: 0 1 auto;
   overflow: hidden;
-  color: light-dark(#171717, #f5f6f8);
+  color: light-dark(#404040, #d5d8df);
   font-size: 12.5px;
-  font-weight: 500;
+  font-weight: 450;
+  letter-spacing: -0.02em;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.streamingStepDetail {
-  min-width: 0;
-  overflow: hidden;
-  color: light-dark(#737373, #a8abb4);
-  font-size: 11.5px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Completed thinking card */
-.thinkingCard {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 0 12px;
-  overflow: hidden;
-  border: 1px solid light-dark(#e0e0e0, #3a3d44);
-  background: light-dark(#ededed, #292b30);
-  box-shadow: none;
-  outline: none;
-  transition: border-radius 300ms ease;
-}
-
-.thinkingHeader {
-  display: flex;
-  width: 100%;
-  min-height: 32px;
-  height: 32px;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  background: light-dark(#ededed, #292b30);
-  color: light-dark(#525252, #c4c7cf);
-  cursor: pointer;
-  /* Match .chatMessage user bubble text inset (10px) */
-  padding: 0 10px 0 10px;
-  text-align: left;
-}
-
-.thinkingTitle {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 2px;
-}
-
-.thinkingLabel {
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  color: inherit;
-  font-size: 12.5px;
-  font-weight: 520;
-  letter-spacing: -0.02em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thinkingMeta {
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: light-dark(#737373, #a8abb4);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.thinkingStopped {
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: light-dark(#8a8a8a, #8a8d96);
-  font-size: 11.5px;
-  font-weight: 450;
-  letter-spacing: -0.02em;
-}
-
-.thinkingStopped + .thinkingMeta {
-  margin-left: 0;
-}
-
 .stoppedNote {
   margin: 2px 0 0;
-  padding: 0 10px;
+  padding: 0;
   color: light-dark(#8a8a8a, #8a8d96);
   font-size: 12px;
   font-weight: 450;
   letter-spacing: -0.02em;
-}
-
-.thinkingStateBadge {
-  flex: 0 0 auto;
-  margin-left: auto;
-  border-radius: 6px;
-  background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
-  color: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1;
-  padding: 4px 7px;
-}
-
-.thinkingStateBadge + .thinkingMeta {
-  margin-left: 0;
-}
-
-.thinkingStateVerified {
-  color: light-dark(#246b3d, #9ce8b4);
-}
-
-.thinkingStateQualified {
-  color: light-dark(#2f7a4a, #7ddea0);
-}
-
-.thinkingStateExploratory {
-  color: light-dark(#8a6a1f, #edc879);
-}
-
-.thinkingStateClarification {
-  color: light-dark(#315f97, #8eb6e8);
-}
-
-.thinkingStateUnavailable {
-  color: light-dark(#9a403c, #f0aaa5);
-}
-
-.thinkingChevron {
-  display: flex;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: light-dark(#a3a3a3, #8a8d96);
-  opacity: 0;
-  transition: opacity 140ms ease;
-}
-
-.thinkingHeader:hover .thinkingChevron,
-.thinkingHeader[aria-expanded="true"] .thinkingChevron,
-.thinkingHeader:focus-visible .thinkingChevron {
-  opacity: 1;
-}
-
-.thinkingBody {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 8px;
-  padding: 0 10px 2px 10px;
-}
-
-.thinkingBodyContent {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .governedSection {
@@ -824,6 +722,30 @@
   line-height: 1.35;
 }
 
+.responseCharts {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 2px 10px 16px;
+}
+
+.detailedChartArtifact {
+  width: 100%;
+  min-width: 0;
+}
+
+.chartLoadingState {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 16px;
+  background: light-dark(#fafafa, #202226);
+  color: light-dark(#737373, #a8abb4);
+  font-size: 12px;
+}
+
 .detailedStreamingFooter {
   position: relative;
   z-index: 1;
@@ -856,6 +778,10 @@
   display: block;
   /* Match .chatMessage user bubble text inset (10px) */
   padding: 0 12px 0 10px;
+}
+
+.answerBlock .assistantProse > :first-child {
+  margin-top: 0;
 }
 
 .answerEyebrow {
@@ -982,6 +908,106 @@
   font-size: 0.85em;
   font-weight: 500;
   padding: 2px 4px;
+}
+
+.answerAudit {
+  margin-top: 14px;
+  border-top: 1px solid light-dark(#ededed, #2d3036);
+  padding-top: 10px;
+}
+
+.answerAuditToggle {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: light-dark(#646568, #a8abb4);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 0 9px;
+  text-align: left;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.answerAuditToggle:hover {
+  background: light-dark(#f5f5f5, #24262a);
+  color: light-dark(#202124, #f1f2f4);
+}
+
+.answerAuditToggle:focus-visible,
+.answerAuditPanel button:focus-visible {
+  outline: 2px solid light-dark(#2c2d30, #e6e8ee);
+  outline-offset: 2px;
+}
+
+.answerAuditPanel {
+  margin-top: 6px;
+  border: 1px solid light-dark(#e5e5e5, #34363c);
+  border-radius: 16px;
+  background: light-dark(#fafafa, #1b1d20);
+  color: light-dark(#404145, #d5d8df);
+  padding: 12px;
+}
+
+.answerAuditPanel p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.answerAuditPanel dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.answerAuditPanel dl > div {
+  min-width: 0;
+}
+
+.answerAuditPanel dt {
+  color: light-dark(#737478, #9296a0);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.answerAuditPanel dd {
+  overflow: hidden;
+  margin: 3px 0 0;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answerAuditPanel button {
+  min-height: 36px;
+  margin-top: 9px;
+  border: 1px solid light-dark(#dedede, #3a3d44);
+  border-radius: 8px;
+  background: light-dark(#ffffff, #24262a);
+  color: inherit;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.answerAuditDigest {
+  margin-top: 11px !important;
+  color: light-dark(#737478, #9296a0);
+}
+
+.answerAuditDigest code {
+  color: light-dark(#404145, #d5d8df);
 }
 
 .followUps {
@@ -1146,19 +1172,37 @@
 
 @media (prefers-reduced-motion: reduce) {
   .runningShimmer,
-  .streamingLive,
+  .agentTrailVerbLive,
+  .agentTrailStatusLive,
   .spinner,
   .spinnerSm,
   .spinnerLg,
   .rowIn,
   .thinkingReasoning,
-  .streamingStep,
+  .agentTrailStep,
   .thinkingMark,
   .selectionToolbar {
     animation: none !important;
   }
 
+  .agentTrailVerbLive,
+  .agentTrailStatusLive {
+    background: none;
+    color: light-dark(#737373, #a8abb4);
+    -webkit-text-fill-color: unset;
+  }
+
   .selectionToolbar {
     transition: none !important;
+  }
+
+  .answerAuditToggle {
+    transition: none !important;
+  }
+}
+
+@media (max-width: 700px) {
+  .answerAuditPanel dl {
+    grid-template-columns: 1fr;
   }
 }

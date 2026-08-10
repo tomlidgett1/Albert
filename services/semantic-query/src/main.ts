@@ -7,6 +7,7 @@ import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
 import { createPostgresSemanticComposition,type ClosablePgPool,type SemanticServiceComposition } from "./composition.js";
 import { OpenAIEmbeddingProvider } from "./embeddings.js";
 import { startSemanticNodeServer } from "./node-server.js";
+import { analyticalRuntimeRouteV2 } from "./v2-runtime.js";
 
 const logger=createServiceLogger("semantic-query");
 
@@ -61,6 +62,8 @@ async function createEnvironmentPostgresComposition(environment:NodeJS.ProcessEn
       promotionRelayTenantBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_TENANT_BATCH_SIZE,10),
       promotionRelayCandidateBatchSize:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_CANDIDATE_BATCH_SIZE,20),
       promotionRelayLeaseSeconds:integerEnvironment(environment.ALBERT_SEMANTIC_RELAY_LEASE_SECONDS,90),
+      analyticalRuntime:analyticalRuntimeRouteV2(environment),
+      ...(environment.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim()?{v2PublicationHash:environment.ALBERT_SEMANTIC_V2_PUBLICATION_HASH.trim()}:{}),
     });
   }catch(error){await Promise.all([controlPlanePool.end?.(),analyticalReadPool.end?.(),semanticMetadataPool.end?.()]);throw error;}
 }

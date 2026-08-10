@@ -36,6 +36,7 @@ import {
   type SqlFirstAttestationOutcome,
   type SqlFirstCanaryOutcome,
 } from "./sql-first.js";
+import { deriveSqlScopeReceipt } from "./scope-receipt.js";
 
 /** Exploratory SQL declares its own window, so provenance opens unbounded. */
 const OPEN_EXPLORATORY_START = "0001-01-01T00:00:00.000Z";
@@ -533,17 +534,20 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     if (cached) {
       const queryId = ulid();
       const cachedRows = cached.data?.rows ?? [];
+      const scopeReceipt = cached.scopeReceipt
+        ?? deriveSqlScopeReceipt(compiled.sql, cached.data?.columns ?? [], cachedRows);
       const resultDigest = contentDigest({ columns: cached.data?.columns ?? [], rows: cachedRows });
       await this.dependencies.audit.append({
         queryId, tenantId: context.tenantId, conversationId: context.conversationId,
         turnId: context.turnId, role: context.role, route: "sql_first",
         bundleHash, registryVersion: this.dependencies.registry.version,
-        input: claimEnvelope, compiledSql: compiled.sql, parameterCount: compiled.parameterCount,
+        input: { ...claimEnvelope, scopeReceipt }, compiledSql: compiled.sql, parameterCount: compiled.parameterCount,
         resultDigest, rowCount: cachedRows.length, durationMs: 0, cacheHit: true,
         state: cached.state, validation: cached.validation,
       });
       return {
         ...cached,
+        scopeReceipt,
         performance: { ...cached.performance, cacheHit: true },
         queryAudit: {
           queryAuditId: queryId, route: "sql_first", bundleHash,
@@ -583,6 +587,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     }
     const rows = result.rows.map(stripInternalColumns);
     const columns = rows.length > 0 ? Object.keys(rows[0] as Record<string, unknown>) : [];
+    const scopeReceipt = deriveSqlScopeReceipt(compiled.sql, columns, rows);
 
     // Runtime canary: prove the join tree preserved every touched fact's grain.
     const canaryOutcomes: SqlFirstCanaryOutcome[] = [];
@@ -709,6 +714,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const response: SemanticToolResponse = {
       state,
       resultId: `sql:${bundleHash}`,
+      scopeReceipt,
       ...(state !== "unavailable" ? {
         data: {
           columns,
@@ -752,7 +758,7 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
       route: "sql_first",
       bundleHash,
       registryVersion: this.dependencies.registry.version,
-      input: claimEnvelope,
+      input: { ...claimEnvelope, scopeReceipt },
       compiledSql: compiled.sql,
       parameterCount: compiled.parameterCount,
       resultDigest,
@@ -1108,12 +1114,13 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     const metric = resolveMetricDefinition(name, this.dependencies.registry.metrics);
     const topic = resolveTopicDefinition(name, this.dependencies.registry.topics);
     const dimension = resolveDimensionDefinition(name, this.dependencies.registry, context.role);
+    const fact = resolveFactDefinition(name, this.dependencies.registry, context.role);
     let sourceField: SourceField | undefined;
-    if (!metric && !topic && !dimension && this.dependencies.sourceCatalogue.searchFields) {
+    if (!metric && !topic && !dimension && !fact && this.dependencies.sourceCatalogue.searchFields) {
       const candidates = await this.dependencies.sourceCatalogue.searchFields(context, name, 10);
       sourceField = candidates.find((field) => sourceFieldId(field) === name || field.sourceField === name);
     }
-    if (!metric && !topic && !dimension && !sourceField) {
+    if (!metric && !topic && !dimension && !fact && !sourceField) {
       throw new SemanticCompilerError("UNKNOWN_METRIC", `No governed definition named ${name}.`);
     }
     if (topic && !topic.roles.includes(context.role)) {
@@ -1124,10 +1131,12 @@ export class DefaultSemanticToolExecutor implements SemanticToolExecutor {
     }
     const definition = metric
       ? publicMetricDefinition(metric)
-      : topic ?? dimension ?? publicSourceFieldDefinition(sourceField as SourceField);
+      : topic ?? dimension ?? fact ?? publicSourceFieldDefinition(sourceField as SourceField);
     const detail = metric
       ? metricDefinitionDetail(metric)
       : topic ? topicDefinitionDetail(topic)
+        : fact
+          ? { id: fact.id, label: humanize(fact.id), definition: `Governed SQL relation ${fact.table} at grain key ${fact.grainKey}.` }
         : sourceField
           ? { id: sourceFieldId(sourceField), label: humanize(sourceField.sourceField), definition: sourceField.definition }
           : { id: name, label: humanize(name), definition: `Governed dimension ${name}.` };
@@ -1903,6 +1912,42 @@ function resolveDimensionDefinition(name: string, registry: SemanticRegistry, ro
   const topics = [...registry.topics.values()].filter((topic) => topic.roles.includes(role) && topic.approvedDimensions.includes(name));
   if (!topics.length) return undefined;
   return { id: name, kind: "dimension", label: humanize(name), topics: topics.map((topic) => topic.id) };
+}
+
+/** Resolve canonical SQL shape only for facts reachable from a topic visible
+ * to the caller's role. This gives agents the relation and column contract
+ * they need without permitting information_schema discovery or exposing any
+ * row data. */
+function resolveFactDefinition(
+  name: string,
+  registry: SemanticRegistry,
+  role: TrustedToolContext["role"],
+): (Readonly<{ id: string; table: string; grainKey: string }> & Readonly<Record<string, unknown>>) | undefined {
+  const fact = registry.facts.get(name);
+  if (!fact) return undefined;
+  const visibleTopics = [...registry.topics.values()].filter((topic) =>
+    topic.roles.includes(role) && topic.baseFacts.includes(fact.id));
+  if (visibleTopics.length === 0) return undefined;
+  const allowedDimensions = new Set(visibleTopics.flatMap((topic) => topic.approvedDimensions));
+  return Object.freeze({
+    id: fact.id,
+    kind: "fact",
+    table: fact.table,
+    grainKey: fact.grainKey,
+    fields: fact.fields,
+    timeFields: fact.timeFields,
+    measures: fact.measures,
+    snapshotFields: fact.snapshotFields,
+    evidenceTier: fact.evidenceTier,
+    joins: fact.joins.map((join) => ({
+      dimension: join.dimension,
+      table: join.table,
+      factKey: join.factKey,
+      dimensionKey: join.dimensionKey,
+      cardinality: join.cardinality,
+      fields: Object.fromEntries(Object.entries(join.fields).filter(([dimension]) => allowedDimensions.has(dimension))),
+    })),
+  });
 }
 
 /**

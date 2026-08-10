@@ -41,8 +41,8 @@ const repository = "tomlidgett1/Albert";
 const workflowRef = "refs/tags/dogfood-attestor-v1";
 const toolingSha = "b".repeat(40);
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const privateKeyBase64Url = privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url");
-const publicKeyBase64Url = publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+const privateKeyBase64Url = Buffer.from(privateKey.export({ format: "der", type: "pkcs8" })).toString("base64url");
+const publicKeyBase64Url = Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString("base64url");
 const zeroResiduals = {
   rawObjects: 0, stagingRows: 0, canonicalRows: 0, bridgeRows: 0,
   linkRows: 0, embeddingRows: 0, cacheRows: 0, otherAnalyticalRows: 0,
@@ -287,6 +287,7 @@ function validRuntimeProvenance() {
     imageDigest: `sha256:${digest("e")}`,
     observedAt: "2026-08-03T00:25:00.000Z",
     apps: [
+      ["anthropic-analytics", "public"],
       ["deletion-worker", "private"],
       ["operator-diagnostic", "public"],
       ["semantic-query", "public"],
@@ -357,9 +358,9 @@ function validBody() {
       deletionTenantRef: digest("5"),
     },
     runtimes: {
-      checkedCount: 7,
+      checkedCount: 8,
       requiredServices: [
-        "deletion-worker", "operator-diagnostic", "semantic-query", "sync-worker",
+        "anthropic-analytics", "deletion-worker", "operator-diagnostic", "semantic-query", "sync-worker",
         "transform-worker", "web", "webhook-gateway",
       ] as const,
       deploymentId: "staging-20260803-001",
@@ -839,11 +840,11 @@ test("signed M5 evidence rejects a partial, reordered, or state-drifted suite", 
   const verifierForgery = structuredClone(signDogfoodAcceptance(validBody(), privateKeyBase64Url));
   verifierForgery.attestation.milestones.m5.cases[0].queries[0].rowCount += 1;
   verifierForgery.attestation.evidenceDigest = computeEvidenceDigest(verifierForgery.attestation);
-  verifierForgery.signature.value = signBytes(
+  verifierForgery.signature.value = Buffer.from(signBytes(
     null,
     Buffer.from(stableJson(verifierForgery.attestation)),
     privateKey,
-  ).toString("base64url");
+  )).toString("base64url");
   assert.throws(
     () => verifyDogfoodAcceptance(verifierForgery, expected),
     /M5 evidence digest is inconsistent/u,
@@ -864,7 +865,7 @@ test("tampering, wrong ref, expiry, and incomplete milestones fail closed", () =
   assert.throws(() => signDogfoodAcceptance(incomplete, privateKeyBase64Url), /Every planned stream/u);
 
   const partialFleet = validBody();
-  partialFleet.runtimes.checkedCount = 6 as 7;
+  partialFleet.runtimes.checkedCount = 7 as 8;
   assert.throws(() => signDogfoodAcceptance(partialFleet, privateKeyBase64Url));
 });
 
@@ -876,6 +877,7 @@ test("subject pseudonyms are keyed and domain separated", () => {
 
 test("private worker evidence uses Fly control-plane checks without public ingress", () => {
   const plan = validateRuntimePlan([
+    { name: "anthropic-analytics", url: "https://anthropic.example" },
     { name: "web", url: "https://web.example" },
     { name: "sync-worker", url: "https://sync.example" },
     { name: "transform-worker", flyApp: "albert-transform-staging" },
@@ -890,6 +892,7 @@ test("private worker evidence uses Fly control-plane checks without public ingre
       item.mode === "https" ? { name: item.name, url: item.url } : { name: item.name, flyApp: item.flyApp }
   ))));
   assert.throws(() => validateRuntimePlan([
+    { name: "anthropic-analytics", url: "https://anthropic.example" },
     { name: "web", url: "https://web.example" },
     { name: "sync-worker", url: "https://sync.example" },
     { name: "transform-worker", flyApp: "same-private-app" },

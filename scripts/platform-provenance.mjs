@@ -19,6 +19,7 @@ const MAX_SITES_ATTESTATION_MS = 2 * 60 * 60 * 1_000;
 const CLOCK_SKEW_MS = 5 * 60 * 1_000;
 
 export const FLY_RUNTIME_CONTRACTS = Object.freeze([
+  Object.freeze({ service: "anthropic-analytics", exposure: "public", readinessPath: "/readyz" }),
   Object.freeze({ service: "deletion-worker", exposure: "private", readinessPath: "/readyz" }),
   Object.freeze({ service: "operator-diagnostic", exposure: "public", readinessPath: "/readyz" }),
   Object.freeze({ service: "semantic-query", exposure: "public", readinessPath: "/readyz" }),
@@ -134,7 +135,7 @@ export function validateFlyPlatformProvenance(input, options) {
   assert.match(input.organization.slug, FLY_APP_NAME, "Fly organization slug is invalid.");
   nonEmptyString(input.organization.name, "Fly organization name", 200);
   assert.ok(Array.isArray(input.apps), "Fly app evidence must be an array.");
-  assert.equal(input.apps.length, FLY_RUNTIME_CONTRACTS.length, "Fly evidence must contain exactly six runtimes.");
+  assert.equal(input.apps.length, FLY_RUNTIME_CONTRACTS.length, `Fly evidence must contain exactly ${FLY_RUNTIME_CONTRACTS.length} runtimes.`);
 
   const observedDeploymentIds = input.apps.flatMap(({ machines }) => (
     Array.isArray(machines) ? machines.map(({ deploymentId }) => deploymentId) : []

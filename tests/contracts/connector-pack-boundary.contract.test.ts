@@ -129,7 +129,7 @@ test("connector manifests own authority, staging, budget and webhook policy", ()
   }]);
 
   assert.deepEqual(xeroManifest.sourceAuthority.defaults, [{
-    concepts: ["statutory_finance", "cash_settlement"],
+    concepts: ["statutory_finance", "cash_settlement", "worked_hours"],
     scope: { kind: "canonical_dimension", table: "legal_entity", scopeType: "legal_entity" },
   }]);
   const daily = xeroManifest.rateLimit.reservations.find((policy) =>

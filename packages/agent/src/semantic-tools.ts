@@ -36,6 +36,9 @@ export const LOCAL_SEMANTIC_AGENT_TOOL_NAMES = [
   "make_chart",
   "resolve_named_entity",
   "open_dimension_guide",
+  "update_analysis_plan",
+  "search_schema",
+  "describe_tables",
 ] as const;
 
 export const SEMANTIC_AGENT_TOOL_NAMES = [
@@ -149,6 +152,31 @@ const sourceFilterSchema = z.object({
   op: z.enum(["eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "is_null", "is_not_null"]),
   values: z.array(z.union([z.string(), z.number(), z.boolean()])).max(100).default([]),
 }).strict();
+
+/**
+ * Trusted evidence about the scope of the statement that actually executed.
+ * The model never supplies this object. SQL predicates are tokenised by the
+ * semantic service and result values are copied from the returned rows; the
+ * receipt therefore records scope evidence without pretending to certify a
+ * metric or infer a business fact.
+ */
+export const queryScopeReceiptSchema = z.object({
+  kind: z.literal("sql"),
+  relations: z.array(z.object({
+    schema: z.string().trim().min(1).max(80).optional(),
+    relation: z.string().trim().min(1).max(120),
+  }).strict()).max(32),
+  predicates: z.array(z.object({
+    expression: z.string().trim().min(1).max(240),
+    operator: z.enum(["eq", "neq", "gt", "gte", "lt", "lte", "like", "not_like", "ilike", "not_ilike", "in", "not_in", "is_null", "is_not_null"]),
+    values: z.array(z.string().max(240)).max(20),
+  }).strict()).max(40),
+  resultValues: z.array(z.object({
+    column: z.string().trim().min(1).max(120),
+    values: z.array(z.string().max(240)).min(1).max(20),
+  }).strict()).max(32),
+}).strict();
+export type QueryScopeReceipt = z.infer<typeof queryScopeReceiptSchema>;
 const sourceAggregateSchema = z.object({
   op: z.enum(["count", "count_distinct", "sum", "avg", "min", "max"]),
   field: z.string().min(1).optional(),
@@ -316,11 +344,18 @@ export const semanticToolInputSchemas = Object.freeze({
     nextStep: z.enum(OBSERVATION_NEXT_STEP_IDS).optional(),
   }).strict(),
   make_chart: z.object({
-    dataRef: z.string().min(1),
-    chartType: z.enum(["bar", "line"]),
-    xKey: z.string().min(1),
-    yKey: z.string().min(1),
-    series: z.array(z.object({ key: z.string().min(1), label: z.string().min(1) }).strict()).optional(),
+    dataRef: z.string().min(1).describe("Result id of a governed table returned in this turn."),
+    chartType: z.enum(["bar", "line"]).describe(
+      "Use line only for an ordered time/numeric sequence; use bar for categorical comparison or ranking.",
+    ),
+    xKey: z.string().min(1).describe("Dimension or ordered time column used on the x axis."),
+    yKey: z.string().min(1).describe("Primary numeric measure column."),
+    series: z.array(z.object({
+      key: z.string().min(1).max(120),
+      label: z.string().trim().min(1).max(120),
+    }).strict()).min(1).max(4).optional().describe(
+      "All plotted measures, with yKey first. Include only measures with the same unit and currency.",
+    ),
   }).strict(),
   /**
    * Resolve a dumbed-down product/service name against the store's Lightspeed
@@ -337,6 +372,25 @@ export const semanticToolInputSchemas = Object.freeze({
    */
   open_dimension_guide: z.object({
     dimension: z.string().trim().min(1).max(40),
+  }).strict(),
+  /**
+   * Audited working plan owned by the primary analyst. It is deliberately a
+   * local tool: the plan may change as evidence arrives and is never trusted as
+   * a query authorization or correctness proof.
+   */
+  update_analysis_plan: z.object({
+    summary: z.string().trim().min(1).max(180),
+    steps: z.array(z.string().trim().min(1).max(180)).min(1).max(8),
+    reason: z.enum(["initial", "evidence", "recovery"]),
+  }).strict(),
+  /** Keyword discovery over the complete generated Lightspeed SQL catalogue. */
+  search_schema: z.object({
+    query: z.string().trim().min(1).max(300),
+    limit: z.number().int().min(1).max(20).default(10),
+  }).strict(),
+  /** Retrieve the complete grounded dictionary for selected Lightspeed tables. */
+  describe_tables: z.object({
+    tables: z.array(z.string().trim().regex(/^ls_[a-z0-9_]+$/u)).min(1).max(8),
   }).strict(),
 } satisfies Record<SemanticAgentToolName, z.ZodType>);
 
@@ -433,6 +487,8 @@ export const semanticToolResponseSchema = z.object({
   }).strict().optional(),
   rememberedPreference: z.object({ preference: z.string(), overlayVersion: z.number().int().positive() }).strict().optional(),
   promotionCandidateId: z.string().min(1).optional(),
+  /** Server-derived scope evidence for the statement that actually ran. */
+  scopeReceipt: queryScopeReceiptSchema.optional(),
   /**
    * Server-side evidence receipt for an executed analytical query. The live
    * conversation runtime records this receipt in the immutable answer
@@ -475,6 +531,8 @@ export type GovernedResult = Readonly<{
   resultId: string;
   columns: readonly TraceTableColumn[];
   rows: readonly Readonly<Record<string, TraceCell>>[];
+  /** Server-derived query-scope evidence; never authored by the model. */
+  scopeReceipt?: QueryScopeReceipt;
   /** Exact canonical filter values, indexed in parallel with rows. */
   filterRefs?: readonly Readonly<Record<string, string>>[];
   /**
@@ -545,6 +603,7 @@ export type SemanticToolOutputMap = {
     chartType: "bar" | "line";
     xKey: string;
     yKey: string;
+    series?: readonly Readonly<{ key: string; label: string }>[];
   }>;
   resolve_named_entity: Readonly<{
     phrase: string;
@@ -568,6 +627,20 @@ export type SemanticToolOutputMap = {
     | { status: "ok"; dimension: string; guide: string }
     | { status: "unknown_dimension"; guidance: string }
   >;
+  update_analysis_plan: Readonly<{
+    status: "updated";
+    revision: number;
+    reason: "initial" | "evidence" | "recovery";
+  }>;
+  search_schema: Readonly<{
+    matches: readonly Readonly<{ table: string; score: number; summary: string }>[];
+    guidance: string;
+  }>;
+  describe_tables: Readonly<{
+    tables: Readonly<Record<string, string>>;
+    unknown: readonly string[];
+    guidance?: string;
+  }>;
 };
 
 export type SemanticAgentTool<Name extends SemanticAgentToolName = SemanticAgentToolName> =

@@ -72,6 +72,30 @@ import { XERO_STREAMS } from "../connectors/xero/streams.js";
 
 const OUT_DIR = resolve("/private/tmp/claude-502/-Users-user-Documents-Albert/1916f64e-61ca-47dd-849a-b19038f43140/scratchpad/xero/run");
 const STATE_FILE = resolve(OUT_DIR, "ingest-state.json");
+/**
+ * Parents already fetched, per fan-out family. Without this every window
+ * restarts each family from its first parent, so a family larger than one
+ * window's budget can never finish however many times it runs.
+ */
+const FANOUT_PROGRESS_FILE = resolve(OUT_DIR, "fanout-progress.json");
+
+function loadFanOutProgress(): Map<string, Set<string>> {
+  try {
+    const raw = JSON.parse(readFileSync(FANOUT_PROGRESS_FILE, "utf8")) as Record<string, string[]>;
+    return new Map(Object.entries(raw).map(([key, ids]) => [key, new Set(ids)]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveFanOutProgress(progressByFamily: ReadonlyMap<string, Set<string>>): void {
+  try {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(FANOUT_PROGRESS_FILE, JSON.stringify(
+      Object.fromEntries([...progressByFamily].map(([key, ids]) => [key, [...ids]])),
+    ));
+  } catch { /* best effort */ }
+}
 
 /* ------------------------------------------------------------------ */
 /* Environment                                                         */
@@ -174,6 +198,14 @@ const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 /* ------------------------------------------------------------------ */
 /* Staging                                                             */
 /* ------------------------------------------------------------------ */
+
+
+/** The `{Endpoint}` segment a templated fan-out path was issued against. */
+function parentEndpointOf(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  const index = segments.findIndex((segment) => /^[0-9a-f-]{8,}$/iu.test(segment));
+  return index > 0 ? segments[index - 1]! : segments[segments.length - 2] ?? "";
+}
 
 function hashPayload(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -299,7 +331,7 @@ async function main(): Promise<void> {
     return value;
   };
   const KNOWN = ["--ingest", "--report", "--skip-fanouts", "--include-history"];
-  const unknown = argv.filter((a) => !KNOWN.includes(a) && !/^--(only|reserve|max-per-fanout|min-budget)=/u.test(a));
+  const unknown = argv.filter((a) => !KNOWN.includes(a) && !/^--(only|reserve|max-per-fanout|min-budget|probe-parents)=/u.test(a));
   if (unknown.length > 0) {
     throw new Error(`Unknown option(s): ${unknown.join(", ")}. A typo must never be read as "ingest everything".`);
   }
@@ -325,6 +357,10 @@ async function main(): Promise<void> {
   // accounting substance, so it is opt-in rather than a default that quietly
   // consumes the budget forever.
   const includeHistory = argv.includes("--include-history");
+  // How many parents to spend before concluding a fan-out family returns
+  // nothing for this organisation. Cheap insurance: CIS settings are UK-only,
+  // and probing 400 AU contacts for them costs a third of the daily budget.
+  const PROBE_PARENTS = positive(flag("--probe-parents"), 20, "--probe-parents");
 
   if (reportOnly) {
     // Read-only by construction: no vendor call, no staging write. The previous
@@ -412,6 +448,12 @@ async function main(): Promise<void> {
     connectionString: analyticalUrl,
     max: 4,
     application_name: "albert-xero-full-ingest",
+    // The analytical database runs near its connection ceiling. Without these
+    // an exhausted pool blocks forever with no output — a hang that looks
+    // exactly like a slow endpoint.
+    connectionTimeoutMillis: 30_000,
+    idleTimeoutMillis: 10_000,
+    statement_timeout: 120_000,
   });
   pool.on("connect", (client) => {
     void client.query("set role albert_migration_owner");
@@ -442,12 +484,14 @@ async function main(): Promise<void> {
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     const token = await accessToken();
     await pacer.take();
+    // A hung TLS connection would otherwise stall the whole backfill silently.
     const response = await fetch(url, {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
         "xero-tenant-id": ids.accountId,
       },
+      signal: AbortSignal.timeout(60_000),
     });
     pacer.observe(response);
     if (response.status === 304) return {};
@@ -469,6 +513,11 @@ async function main(): Promise<void> {
     const list = (organisation as { Organisations?: readonly Record<string, unknown>[] }).Organisations;
     const value = list?.[0]?.CountryCode;
     return typeof value === "string" ? value.toUpperCase() : null;
+  })();
+  const organisationId = (() => {
+    const list = (organisation as { Organisations?: readonly Record<string, unknown>[] }).Organisations;
+    const value = list?.[0]?.OrganisationID;
+    return typeof value === "string" ? value : null;
   })();
   const payrollRegion = orgCountry === "AU" ? "payroll_au"
     : orgCountry === "NZ" ? "payroll_nz"
@@ -509,6 +558,9 @@ async function main(): Promise<void> {
     const profile = XERO_API_PROFILES[leader.source.api];
     const passes = extraParamPasses(leader, new Date().toISOString());
     const passList = passes.length > 0 ? passes : [{}];
+    // Parameters the scan chose are part of the row's identity (the 1099 year),
+    // but never appear in the body.
+    let walkSynthetics: Record<string, string> = {};
     const records: unknown[] = [];
     let pages = 0;
     let status: StreamOutcome["status"] = "complete";
@@ -520,6 +572,7 @@ async function main(): Promise<void> {
         let page = 1;
         for (;;) {
           const params: Record<string, string> = { ...baseParams(leader), ...pass };
+          walkSynthetics = { ...pass };
           if (group.pagination === "page" && profile.pageParam) {
             params[profile.pageParam] = String(page);
             if (profile.pageSizeParam) params[profile.pageSizeParam] = String(profile.pageSize);
@@ -576,6 +629,7 @@ async function main(): Promise<void> {
           resource: group.resource,
           records,
           recordIdField: stream?.recordIdField ?? table.recordIdField ?? "",
+          synthetics: { ...walkSynthetics, OrganisationID: organisationId },
         });
         projected = rows.length;
         const result = await stageRecords(pool, ids, table.id, rows);
@@ -601,6 +655,7 @@ async function main(): Promise<void> {
   }
 
   /* ---------- phase 2: fan-outs, parents served from the walk cache ---------- */
+  const fanOutProgress = loadFanOutProgress();
   if (!skipFanOuts) {
     for (const fanOut of XERO_SCAN_PLAN.fanOuts) {
       if (!inRegion(fanOut.table.source.api)) continue;
@@ -622,9 +677,75 @@ async function main(): Promise<void> {
       let skipped = 0;
       let status: StreamOutcome["status"] = "complete";
       let detail: string | undefined;
+      const familyKey = `${fanOut.table.source.api} ${fanOut.endpointOp}`;
+      const alreadyDone = fanOutProgress.get(familyKey) ?? new Set<string>();
+      const resumed = alreadyDone.size;
 
       try {
-        const allJobs = fanOutJobs(fanOut, parentCache);
+        let candidates: FanOutJob[] = [...fanOutJobs(fanOut, parentCache)];
+
+        // Some sub-resources are only addressable through ids the parent's LIST
+        // response omits: an AU pay run carries its Payslips only on its own
+        // detail response. Without this hop nine payroll tables can never be
+        // fetched at all. The harvested ids are cached, so the hop is paid for
+        // once rather than every window.
+        if (candidates.length === 0) {
+          const ancestry = fanOutAncestry(fanOut);
+          const rootTable = ancestry[0];
+          const rootStream = rootTable ? XERO_STREAMS.find((x) => x.id === rootTable.id) : undefined;
+          const parents = rootTable
+            ? parentCache.get(`${rootTable.source.api} ${rootTable.source.endpointOp}`) ?? []
+            : [];
+          const idField = rootTable?.recordIdField ?? rootStream?.recordIdField ?? "";
+          if (rootTable && parents.length > 0 && idField) {
+            const harvestKey = `${familyKey}::harvested`;
+            const harvested = fanOutProgress.get(harvestKey) ?? new Set<string>();
+            const detailBase = endpointPath(rootTable);
+            for (const parent of parents) {
+              if (budgetLeft() <= 0) break;
+              if (parent === null || typeof parent !== "object") continue;
+              const parentId = String((parent as Record<string, unknown>)[idField] ?? "").trim();
+              if (!parentId) continue;
+              const probeKey = `detail:${parentId}`;
+              if (harvested.has(probeKey)) continue;
+              let detail: unknown;
+              try {
+                detail = await getJson(`${detailBase}/${encodeURIComponent(parentId)}`, {});
+              } catch (error) {
+                const httpStatus = (error as { status?: number }).status;
+                if (httpStatus === 403 || httpStatus === 404) { harvested.add(probeKey); continue; }
+                throw error;
+              }
+              harvested.add(probeKey);
+              for (const record of unwrapEnvelope(detail, rootTable)) {
+                for (const id of resolveFanOutIds(fanOut.fanOutParam, record, rootTable)) {
+                  harvested.add(id);
+                }
+              }
+              fanOutProgress.set(harvestKey, harvested);
+            }
+            saveFanOutProgress(fanOutProgress);
+            const template = endpointPath(fanOut.table);
+            const usesPath = template.includes(`{${fanOut.fanOutParam}}`);
+            candidates = [...harvested]
+              .filter((id) => !id.startsWith("detail:"))
+              .map((id) => ({
+                path: usesPath ? template.replace(`{${fanOut.fanOutParam}}`, encodeURIComponent(id)) : template,
+                params: usesPath ? {} : { [fanOut.fanOutParam]: id },
+                parent: {},
+                parentTable: rootTable,
+                parentId: id,
+              }));
+            if (candidates.length > 0) {
+              progress({
+                event: "fanout-harvested", endpoint: fanOut.endpointOp,
+                ids: candidates.length, via: `${detailBase}/{${idField}}`,
+              });
+            }
+          }
+        }
+
+        const allJobs = candidates.filter((job) => !alreadyDone.has(job.parentId));
         // Cap PER FAMILY. Slicing the concatenated list means the first family
         // consumes the whole allowance and later families are never requested
         // at all, while the report still claims the fan-out was covered.
@@ -636,22 +757,56 @@ async function main(): Promise<void> {
           perFamily.set(key, bucket);
         }
         const jobs = [...perFamily.values()].flat();
-        if (allJobs.length === 0) { status = "unavailable"; detail = "no reachable parents"; }
+        if (allJobs.length === 0 && resumed === 0) {
+          status = "unavailable"; detail = "no reachable parents";
+        } else if (allJobs.length === 0) {
+          detail = `all ${resumed} parents already fetched in earlier runs`;
+        }
         if (jobs.length < allJobs.length) {
           status = "partial";
           detail = `capped at ${jobs.length} of ${allJobs.length} parents`;
         }
+        let issuedInFamily = 0;
         for (const job of jobs) {
           if (budgetLeft() <= 0) { status = "partial"; detail = "daily request budget reserved"; break; }
+          issuedInFamily += 1;
+          if (issuedInFamily > PROBE_PARENTS && resumed === 0) {
+            const found = [...rowsByTable.values()].reduce((total, list) => total + list.length, 0);
+            if (found === 0) {
+              status = "unavailable";
+              detail = `no rows from the first ${PROBE_PARENTS} parents — not applicable to this organisation`;
+              progress({ event: "fanout-abandoned", endpoint: fanOut.endpointOp, probed: PROBE_PARENTS });
+              break;
+            }
+          }
+          if (issuedInFamily % 25 === 0) {
+            progress({
+              event: "fanout-progress", endpoint: fanOut.endpointOp,
+              issued: issuedInFamily, of: jobs.length,
+              rows: [...rowsByTable.values()].reduce((total, list) => total + list.length, 0),
+              dayRemaining: pacer.dayRemaining,
+            });
+            writeState(outcomes, pacer, XERO_SPEC_TABLE_COUNT, started);
+            saveFanOutProgress(fanOutProgress);
+          }
           let body: unknown;
           try {
             body = await getJson(job.path, job.params);
             requests += 1;
           } catch (error) {
             const httpStatus = (error as { status?: number }).status;
-            if (httpStatus === 403 || httpStatus === 404) { skipped += 1; continue; }
+            if (httpStatus === 403 || httpStatus === 404) {
+              // A refusal is a settled answer for this parent: never pay for it
+              // again on a later window.
+              skipped += 1;
+              alreadyDone.add(job.parentId);
+              fanOutProgress.set(familyKey, alreadyDone);
+              continue;
+            }
             throw error;
           }
+          alreadyDone.add(job.parentId);
+          fanOutProgress.set(familyKey, alreadyDone);
           for (const table of targets) {
             const stream = streamById.get(table.id);
             const rows = projectStreamRows({
@@ -661,6 +816,15 @@ async function main(): Promise<void> {
               records: unwrapEnvelope(body, fanOut.table),
               recordIdField: stream?.recordIdField ?? table.recordIdField ?? "",
               fanOutParent: { record: job.parent, table: job.parentTable },
+              synthetics: {
+                ...job.params,
+                [fanOut.fanOutParam]: job.parentId,
+                parentId: job.parentId,
+                Guid: job.parentId,
+                parentEndpoint: parentEndpointOf(job.path),
+                Endpoint: parentEndpointOf(job.path),
+                OrganisationID: organisationId,
+              },
             });
             const bucket = rowsByTable.get(table.id) ?? [];
             bucket.push(...rows.map((record) => ({
@@ -697,8 +861,9 @@ async function main(): Promise<void> {
         }
         outcomes.push({ stream: table.id, pages: requests, records: rows.length, staged, quarantined, status, detail });
       }
+      saveFanOutProgress(fanOutProgress);
       progress({
-        event: "fanout", endpoint: fanOut.endpointOp, requests,
+        event: "fanout", endpoint: fanOut.endpointOp, requests, resumed,
         tables: targets.length, done: outcomes.length,
         totalRequests: pacer.requests, dayRemaining: pacer.dayRemaining,
         elapsedSec: Math.round((Date.now() - started) / 1000), status,

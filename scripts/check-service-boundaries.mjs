@@ -6,9 +6,36 @@ const transform=await readFile(".albert-build/services/transform-worker.js","utf
 const transformCapacity=await readFile(".albert-build/services/transform-capacity-harness.js","utf8");
 const webhook=await readFile(".albert-build/services/webhook-gateway.js","utf8");
 const semantic=await readFile(".albert-build/services/semantic-query.js","utf8");
+const anthropic=await readFile(".albert-build/services/anthropic-analytics.js","utf8");
 const deletion=await readFile(".albert-build/services/deletion-worker.js","utf8");
 const diagnostic=await readFile(".albert-build/services/operator-diagnostic.js","utf8");
 const buildIdentity=JSON.parse(await readFile(".albert-build/services/build-identity.json","utf8"));
+
+for(const required of [
+  "ANTHROPIC_CONTROL_PLANE_DATABASE_URL",
+  "albert_anthropic_control",
+  "ALBERT_ANTHROPIC_SIGNING_SECRET",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+  "anthropic-agent-sdk",
+  "/v1/turns",
+  "source_lightspeed",
+  "GetFoundationModelCommand",
+]){
+  assert.equal(anthropic.includes(required),true,`anthropic-analytics bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "ANALYTICAL_DATABASE_URL",
+  "OPENAI_API_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "XERO_CLIENT_SECRET",
+  "set local role semantic_ro",
+  "CredentialVault",
+  "ProductionConnectorFactory",
+]){
+  assert.equal(anthropic.includes(forbidden),false,`anthropic-analytics bundle crossed a forbidden boundary: ${forbidden}`);
+}
 
 for(const required of ["albert_sync_control","ingest_rw"]){
   assert.equal(sync.includes(required),true,`sync-worker bundle is missing its required database boundary: ${required}`);
@@ -227,7 +254,7 @@ for(const forbidden of [
   assert.equal(deletion.includes(forbidden),false,`deletion-worker bundle crossed a forbidden boundary: ${forbidden}`);
 }
 
-for(const [name,bundle] of Object.entries({sync,webhook,transform,transformCapacity,semantic,deletion,diagnostic})){
+for(const [name,bundle] of Object.entries({sync,webhook,transform,transformCapacity,semantic,anthropic,deletion,diagnostic})){
   assert.match(buildIdentity.buildSha,/^(?:development|[a-f0-9]{40})$/u,"service build identity is invalid");
   assert.equal(bundle.includes(buildIdentity.buildSha),true,`${name} does not contain the recorded compile-time build identity`);
   assert.equal(bundle.includes("__ALBERT_SERVICE_BUILD_SHA__"),false,`${name} retained an unresolved build-identity placeholder`);

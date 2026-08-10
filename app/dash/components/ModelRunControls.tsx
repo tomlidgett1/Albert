@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -91,14 +92,14 @@ export function ModelRunControls({
   const selectedEffortRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<number | null>(null);
 
-  const clearCloseTimer = () => {
+  const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-  };
+  }, []);
 
-  const closePopover = () => {
+  const closePopover = useCallback(() => {
     clearCloseTimer();
     setPopoverEntered(false);
     closeTimerRef.current = window.setTimeout(() => {
@@ -106,13 +107,13 @@ export function ModelRunControls({
       setPopoverCoords(null);
       closeTimerRef.current = null;
     }, reduceMotion ? 0 : 180);
-  };
+  }, [clearCloseTimer, reduceMotion]);
 
-  const openPopover = () => {
+  const openPopover = useCallback(() => {
     clearCloseTimer();
     setPopoverEntered(false);
     setOpen(true);
-  };
+  }, [clearCloseTimer]);
 
   const modelTabs = useMemo(
     () => MODEL_TAB_ORDER.map((id) => ALBERT_MODELS.find((model) => model.id === id)!),
@@ -198,13 +199,9 @@ export function ModelRunControls({
   ]);
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPopoverEntered(false);
-      return;
-    }
+    if (!open) return;
 
     // Paint the closed fixed position first, then enter so the slide transition runs.
-    setPopoverEntered(false);
     let enterFrame = 0;
     const prepFrame = window.requestAnimationFrame(() => {
       enterFrame = window.requestAnimationFrame(() => setPopoverEntered(true));
@@ -215,7 +212,13 @@ export function ModelRunControls({
     };
   }, [open]);
 
-  useEffect(() => () => clearCloseTimer(), []);
+  useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open || !popoverEntered) return;
+    const focusFrame = window.requestAnimationFrame(() => selectedEffortRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [open, popoverEntered]);
 
   useEffect(() => {
     if (!open) return;
@@ -235,14 +238,12 @@ export function ModelRunControls({
 
     document.addEventListener("pointerdown", closeOnOutsidePress);
     document.addEventListener("keydown", closeOnEscape);
-    const focusTimer = window.requestAnimationFrame(() => selectedEffortRef.current?.focus());
 
     return () => {
       document.removeEventListener("pointerdown", closeOnOutsidePress);
       document.removeEventListener("keydown", closeOnEscape);
-      window.cancelAnimationFrame(focusTimer);
     };
-  }, [open, reduceMotion]);
+  }, [closePopover, open]);
 
   const updateModel = (model: AlbertModelId) => {
     onChange({ ...value, model });
