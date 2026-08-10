@@ -135,6 +135,16 @@ controllability judgements.
 
 ## 5. Run deterministic qualification
 
+When an existing production analytical snapshot must move to the designated V2
+cell, use `npm run migrate:v2:snapshot` before qualification. The migration is
+explicitly execution-gated, accepts only the Lightspeed/Xero source, canonical,
+and mart schemas, requires an empty target, proves identical physical column
+contracts, streams directly between TLS PostgreSQL sessions, remaps only the
+declared tenant, and verifies exact row counts. It never writes customer rows
+to a local dump file. Preserve its content-addressed receipt with the release
+evidence. Ongoing ingestion still requires a fresh or safely migrated vendor
+connection; a snapshot receipt is not OAuth evidence.
+
 Point the release environment at the exact publication and migrated control
 plane. Set `ALBERT_ANALYTICAL_PROJECT_REF` to the exact production analytical
 Supabase project ref; the live audit rejects a direct endpoint or pooler login

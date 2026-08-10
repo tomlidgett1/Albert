@@ -54,6 +54,7 @@
     "registry:v2:generate": "npm run registry:v2:inventory && tsx scripts/generate-semantic-v2-registry.ts",
     "registry:v2:check": "tsx scripts/generate-semantic-v2-inventory.ts --check && tsx scripts/generate-semantic-v2-registry.ts --check && npm run registry:v2:audit",
     "registry:v2:audit": "node --import tsx scripts/audit-semantic-v2-schema.mts",
+    "migrate:v2:snapshot": "node --import tsx scripts/migrate-semantic-v2-analytical-snapshot.mts",
     "registry:v2:relationship-plan": "node --import tsx scripts/plan-semantic-v2-relationship-resolution.mts",
     "registry:v2:profile": "node --import tsx scripts/profile-semantic-v2-inventory.mts",
     "registry:v2:relationship-decisions": "node --import tsx scripts/create-semantic-v2-relationship-decisions.mts",
