@@ -194,6 +194,16 @@ const semanticAdminDraftRowSchema = z
     status: z.string().min(1),
   })
   .strict();
+const semanticAdminValidationResultSchema = z
+  .object({
+    validationId: z.string().min(1),
+    draftId: z.string().min(1),
+    revision: z.number().int().positive(),
+    manifestHash: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["passed", "failed"]),
+    idempotentReplay: z.boolean(),
+  })
+  .strict();
 const relationshipPromotionFields = {
   candidateId: z.string().min(1),
   targetViewId: z.string().min(1),
@@ -2213,7 +2223,7 @@ export async function POST(request: Request) {
     const publication =
       issues.length === 0 ? createSemanticPublicationV2(loaded.document) : null;
     const validationStatus = issues.length === 0 ? "passed" : "failed";
-    const { error } = await loaded.supabase.rpc(
+    const { data, error } = await loaded.supabase.rpc(
       "albert_semantic_v2_admin_record_validation",
       {
         p_validation_id: validationId,
@@ -2243,12 +2253,24 @@ export async function POST(request: Request) {
         "The validation report could not be persisted.",
         503,
       );
+    const persistedValidation = semanticAdminValidationResultSchema.parse(data);
+    if (
+      persistedValidation.draftId !== input.draftId ||
+      persistedValidation.revision !== input.expectedRevision ||
+      persistedValidation.manifestHash !== loaded.row.manifest_hash ||
+      persistedValidation.status !== validationStatus
+    )
+      throw new ControlPlaneError(
+        "The persisted validation report does not match the exact draft revision.",
+        409,
+      );
     return Response.json({
       validation: {
-        id: validationId,
+        id: persistedValidation.validationId,
         status: validationStatus,
         issues,
         publicationHash: publication?.publicationHash ?? null,
+        idempotentReplay: persistedValidation.idempotentReplay,
       },
     });
   } catch (error) {

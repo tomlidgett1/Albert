@@ -36,6 +36,10 @@ const adminPostgrestBoundary = readFileSync(
   "infra/migrations/control-plane/0106_m6_semantic_admin_postgrest_boundary.sql",
   "utf8",
 );
+const adminValidationReplay = readFileSync(
+  "infra/migrations/control-plane/0107_m6_semantic_admin_validation_replay.sql",
+  "utf8",
+);
 
 test("semantic administration is internal-only and uses immutable draft/publication workflows", () => {
   assert.match(route, /isInternalOperator/u);
@@ -104,6 +108,25 @@ test("semantic administration stays behind narrow public RPCs without exposing t
     /REVOKE ALL ON FUNCTION[\s\S]*FROM PUBLIC,anon,service_role/u,
   );
   assert.doesNotMatch(adminPostgrestBoundary, /GRANT[^;]+TO (?:anon|service_role)/iu);
+});
+
+test("semantic validation replay is immutable, exact, and idempotent", () => {
+  assert.match(
+    adminValidationReplay,
+    /FROM control_plane\.semantic_v2_drafts[\s\S]*FOR UPDATE/u,
+  );
+  assert.match(
+    adminValidationReplay,
+    /semantic_v2_validation_reports[\s\S]*draft_revision=p_expected_revision/u,
+  );
+  assert.match(adminValidationReplay, /idempotentReplay',true/u);
+  assert.match(adminValidationReplay, /idempotentReplay',false/u);
+  assert.match(
+    adminValidationReplay,
+    /immutable validation replay does not match the existing report/u,
+  );
+  assert.match(route, /semanticAdminValidationResultSchema\.parse\(data\)/u);
+  assert.match(route, /idempotentReplay: persistedValidation\.idempotentReplay/u);
 });
 
 test("the admin surface can edit every semantic object contract and version tenant context", () => {
