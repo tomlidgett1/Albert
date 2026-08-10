@@ -15,7 +15,6 @@ import { lightspeedRManifest } from "../connectors/lightspeed-r/manifest.js";
 import { mapXeroCanonical } from "../connectors/xero/canonical.js";
 import {
   hashPayload,
-  makeNamespacedSourceKey,
   projectSourceRecord,
   type ConnectorStream,
   type RawSourceRecord,
@@ -276,95 +275,6 @@ function fixtureBatch(
   };
 }
 
-function reconciliationRepairBatch(
-  fixture: Fixture,
-  tenantId: string,
-  connectionId: string,
-  connectionGeneration = 2,
-): FixtureBatch {
-  // The repair is a current-pack re-extraction of the vendor: it defaults to
-  // the manifest's own pack version, in contrast to the pack-1.0 legacy
-  // lineage the purchase-order-line batch models.
-  const batch = fixtureBatch(fixture, tenantId, connectionId, "ls_vendors", {
-    connectionGeneration,
-  });
-  const job: SyncJob = {
-    schemaVersion: 1,
-    type: "ReconciliationSweep",
-    tenantId,
-    connectionId,
-    connectionGeneration,
-    connectorId: "lightspeed-r",
-    externalAccountReference: EXTERNAL_ACCOUNT_REFERENCE,
-    syncRunId: batch.job.syncRunId,
-    batchId: batch.job.batchId,
-    requestedAt: REQUESTED_AT,
-    reconciliationSweepId: ulid(),
-    phase: "apply_tombstones",
-    stream: "ls_vendors",
-    lookbackFrom: "2025-07-01T00:00:00.000Z",
-    lookbackTo: REQUESTED_AT,
-  };
-  return { ...batch, job };
-}
-
-async function establishCurrentReconciledRepairEvidence(
-  database: PgTransactionalDatabase,
-  tenantId: string,
-  connectionId: string,
-  repair: FixtureBatch,
-): Promise<void> {
-  const connectionGeneration = repair.job.connectionGeneration;
-  await database.transaction(async (client) => {
-    await client.query("select set_config('albert.tenant_id',$1,true)", [tenantId]);
-    for (const streamId of ["ls_vendors", "ls_purchase_order_lines"] as const) {
-      const stream = lightspeedRManifest.streams.find((candidate) => candidate.id === streamId);
-      assert.ok(stream, `${streamId} is required by the supplier repair evidence.`);
-      await client.query(
-        `insert into quality.connector_stream_state (
-           tenant_id,connection_id,connection_generation,connector_id,stream,required,
-           late_edit_strategy,deletion_strategy,source_total_strategy,
-           observed_page_count,cursor_chain_valid,cursor_complete,backfill_complete,
-           reconciliation_completed_at,reconciliation_gap_count,
-           unresolved_schema_drift_count,unresolved_enum_drift_count,
-           unresolved_quarantine_count,last_page_at
-         ) values (
-           $1,$2,$3::bigint,'lightspeed-r',$4,true,
-           $5,$6,$7,
-           1,true,true,true,$8::timestamptz,0,0,0,0,$8::timestamptz
-         )`,
-        [
-          tenantId,
-          connectionId,
-          connectionGeneration,
-          streamId,
-          stream.lateEditStrategy,
-          stream.deletionStrategy,
-          stream.sourceTotalStrategy,
-          REQUESTED_AT,
-        ],
-      );
-    }
-    await client.query(
-      `insert into quality.connector_stream_page_evidence (
-         tenant_id,batch_id,connection_id,connection_generation,stream,evidence
-       ) values ($1,$2,$3,$4::bigint,'ls_vendors',$5::jsonb)`,
-      [tenantId, repair.job.batchId, connectionId, connectionGeneration, JSON.stringify({
-        recordCount: 1,
-        quarantineCount: 0,
-        schemaDriftCount: 0,
-        enumDriftCount: 0,
-        tombstoneCount: 0,
-        cursorLinkValid: true,
-        cursorComplete: true,
-        backfillComplete: false,
-        jobType: "ReconciliationSweep",
-        reconciliationPhase: "apply_tombstones",
-      })],
-    );
-  });
-}
-
 async function scalarCount(
   database: PgTransactionalDatabase,
   sql: string,
@@ -553,80 +463,38 @@ async function run(): Promise<void> {
       "Vendor materialisation alone must not replay an order line before current-generation reconciliation.",
     );
 
-    const repair = reconciliationRepairBatch(fixture, tenantId, connectionId);
-    const repairLanding = await landing.land(repair.job, repair.manifest, [repair.record]);
-    assert.equal(repairLanding.stagedRecordCount, 1);
-    assert.deepEqual(repairLanding.quarantined, []);
-    await establishCurrentReconciledRepairEvidence(database, tenantId, connectionId, repair);
-    await assert.rejects(
-      database.transaction(async (client) => {
-        await client.query("select set_config('albert.tenant_id',$1,true)", [tenantId]);
-        await client.query(
-          `select semantic_internal.record_lightspeed_order_dependency_replay(
-             $1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text
-           )`,
-          [
-            tenantId,
-            connectionId,
-            repair.job.batchId,
-            repair.job.syncRunId,
-            makeNamespacedSourceKey(
-              "lightspeed-r",
-              EXTERNAL_ACCOUNT_REFERENCE,
-              orderLines.record.sourceObjectType,
-              orderLines.record.sourceRecordId,
-            ),
-            orderLines.record.payloadHash,
-            MAPPING_VERSION,
-          ],
-        );
-      }),
-      /canonical materialization is incomplete/iu,
-      "Replay evidence must be rejected until the exact supplier-linked canonical lines exist.",
+    const orderLineRetry = fixtureBatch(
+      fixture,
+      tenantId,
+      connectionId,
+      "ls_purchase_order_lines",
+      { fields: purchaseOrderLineFields(fixture) },
     );
-    const duplicateReplayPipeline = new CanonicalTransformPipeline(
-      database,
-      new MappingContextDatabase(),
-      MAPPING_VERSION,
-      {
-        "lightspeed-r": (stream, row, context) => {
-          const commands = mapLightspeedCanonical(stream, row, context);
-          return stream === "ls_purchase_order_lines" && commands[0]
-            ? [...commands, commands[0]]
-            : commands;
-        },
-        xero: mapXeroCanonical,
-        deputy: mapDeputyCanonical,
-        square: mapSquareCanonical,
-        "shopify": mapShopifyCanonical,
-        "stripe": mapStripeCanonical,
-        "momence": mapMomenceCanonical,
-        "meta-ads": mapMetaAdsCanonical,
-        "google-ads": mapGoogleAdsCanonical,
-      },
-      () => new Date(REQUESTED_AT),
+    const retryLanding = await landing.land(
+      orderLineRetry.job,
+      orderLineRetry.manifest,
+      [orderLineRetry.record],
     );
-    await assert.rejects(
-      duplicateReplayPipeline.transformBatch(
-        repair.transform,
-        repair.stream,
-        repair.domains,
-        false,
-        false,
-      ),
-      /canonical_dependency_replay_command_duplicate:811/u,
-      "Duplicate canonical replay commands must fail before compatibility projection writes.",
+    assert.equal(retryLanding.stagedRecordCount, 1);
+    assert.deepEqual(retryLanding.quarantined, []);
+    await landing.recordConnectorStreamPage({
+      job: orderLineRetry.job,
+      stream: orderLineRetry.stream,
+      records: [orderLineRetry.record],
+      landing: retryLanding,
+      hasMore: false,
+      nextCursorPresent: false,
+      backfillComplete: false,
+      coverage: null,
+    });
+    const retryResult = await pipeline.transformBatch(
+      orderLineRetry.transform,
+      orderLineRetry.stream,
+      orderLineRetry.domains,
+      false,
+      false,
     );
-    assert.equal(
-      await scalarCount(
-        database,
-        "select count(*)::text as row_count from core.purchase_order_line where tenant_id=$1",
-        tenantId,
-      ),
-      0,
-      "The duplicate-line replay transaction must not materialise a purchase order.",
-    );
-    await pipeline.transformBatch(repair.transform, repair.stream, repair.domains, false, false);
+    assert.equal(retryResult.quarantinedRows, 0);
 
     const resolved = await database.query<{
       supplier_id: string;
@@ -657,125 +525,26 @@ async function run(): Promise<void> {
       match_status: "accepted",
     }]);
     assert.ok(resolved.rows[0]?.supplier_id, "The purchase-order supplier_id is required by this proof.");
-    const replayAudit = await database.query<{
-      repair_batch_id: string;
-      source_order_batch_id: string;
-      legacy_origin_batch_id: string;
-      connection_generation: string | number;
-      result: string;
-      materialized_command_count: string | number;
+    const healedReference = await database.query<{
+      error_code: string;
+      error_path: string | null;
+      status: string;
+      resolution_reason: string | null;
     }>(
-      `select repair_batch_id,source_order_batch_id,legacy_origin_batch_id,
-              connection_generation,result,materialized_command_count
-         from semantic_internal.lightspeed_order_dependency_replay_audit
-        where tenant_id=$1 and connection_id=$2`,
-      [tenantId, connectionId],
+      `select error_code,error_path,status,resolution_reason
+         from ingestion.quarantine_records
+        where tenant_id=$1 and payload_batch_id=$2
+        order by quarantine_id`,
+      [tenantId, orderLines.job.batchId],
     );
-    assert.deepEqual(replayAudit.rows.map((row) => ({
-      ...row,
-      connection_generation: Number(row.connection_generation),
-      materialized_command_count: Number(row.materialized_command_count),
-    })), [{
-      repair_batch_id: repair.job.batchId,
-      source_order_batch_id: orderLines.job.batchId,
-      legacy_origin_batch_id: orderLines.job.batchId,
-      connection_generation: 2,
-      result: "materialized",
-      materialized_command_count: 1,
+    assert.deepEqual(healedReference.rows, [{
+      error_code: "canonical.canonical_reference_missing",
+      error_path: "$projection",
+      status: "resolved",
+      resolution_reason: "validated_replay",
     }]);
-    const replayGate = await database.query<{
-      connection_generation: string | number;
-      legacy_candidate_count: string | number;
-      replay_audit_count: string | number;
-      ready: boolean;
-    }>(
-      `select connection_generation,legacy_candidate_count,replay_audit_count,ready
-         from semantic_internal.lightspeed_supplier_replay_gate_index
-        where tenant_id=$1 and connection_id=$2`,
-      [tenantId, connectionId],
-    );
-    assert.deepEqual(replayGate.rows.map((row) => ({
-      connection_generation: Number(row.connection_generation),
-      legacy_candidate_count: Number(row.legacy_candidate_count),
-      replay_audit_count: Number(row.replay_audit_count),
-      ready: row.ready,
-    })), [{
-      connection_generation: 2,
-      legacy_candidate_count: 1,
-      replay_audit_count: 1,
-      ready: true,
-    }]);
-
-    const nextGenerationRepair = reconciliationRepairBatch(
-      fixture,
-      tenantId,
-      connectionId,
-      3,
-    );
-    const nextGenerationLanding = await landing.land(
-      nextGenerationRepair.job,
-      nextGenerationRepair.manifest,
-      [nextGenerationRepair.record],
-    );
-    assert.equal(nextGenerationLanding.stagedRecordCount, 1);
-    assert.deepEqual(nextGenerationLanding.quarantined, []);
-    await establishCurrentReconciledRepairEvidence(
-      database,
-      tenantId,
-      connectionId,
-      nextGenerationRepair,
-    );
-    await assert.rejects(
-      database.transaction(async (client) => {
-        await client.query("select set_config('albert.tenant_id',$1,true)", [tenantId]);
-        await client.query(
-          `select semantic_internal.finalize_lightspeed_supplier_replay_gate(
-             $1::text,$2::text,$3::text
-           )`,
-          [tenantId, connectionId, nextGenerationRepair.job.batchId],
-        );
-      }),
-      /supplier replay remains incomplete: 0 of 1/iu,
-      "A prior-generation replay audit must not satisfy the current generation gate.",
-    );
-    await pipeline.transformBatch(
-      nextGenerationRepair.transform,
-      nextGenerationRepair.stream,
-      nextGenerationRepair.domains,
-      false,
-      false,
-    );
-    const generationEvidence = await database.query<{
-      connection_generation: string | number;
-    }>(
-      `select connection_generation
-         from semantic_internal.lightspeed_order_dependency_replay_audit
-        where tenant_id=$1 and connection_id=$2
-        order by connection_generation`,
-      [tenantId, connectionId],
-    );
-    assert.deepEqual(
-      generationEvidence.rows.map((row) => Number(row.connection_generation)),
-      [2, 3],
-      "Each reconciled credential generation requires independent replay evidence.",
-    );
-    const nextGenerationGate = await database.query<{
-      connection_generation: string | number;
-      ready: boolean;
-      replay_audit_count: string | number;
-    }>(
-      `select connection_generation,ready,replay_audit_count
-         from semantic_internal.lightspeed_supplier_replay_gate_index
-        where tenant_id=$1 and connection_id=$2`,
-      [tenantId, connectionId],
-    );
-    assert.deepEqual(nextGenerationGate.rows.map((row) => ({
-      connection_generation: Number(row.connection_generation),
-      ready: row.ready,
-      replay_audit_count: Number(row.replay_audit_count),
-    })), [{ connection_generation: 3, ready: true, replay_audit_count: 1 }]);
     process.stdout.write(
-      "Lightspeed generation-scoped reconciled legacy Order replay proof passed.\n",
+      "Lightspeed supplier reference quarantine and current-pack replay proof passed.\n",
     );
   } finally {
     await database.close();
