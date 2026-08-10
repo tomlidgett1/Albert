@@ -45,10 +45,14 @@ test("sync and webhook control identities are NOLOGIN and explicitly assumed", a
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role/i);
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM PUBLIC,\s*service_role/i);
   assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
-  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role/i);
-  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA control_plane FROM service_role/i);
-  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM service_role/i);
-  assert.match(finalServiceRoleDeny, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
+  assert.match(
+    finalServiceRoleDeny,
+    /REVOKE EXECUTE ON FUNCTION[\s\S]*enqueue_due_incremental_syncs\(timestamptz\)[\s\S]*is_known_connector\(text\)[\s\S]*FROM service_role/i,
+  );
+  assert.doesNotMatch(
+    finalServiceRoleDeny,
+    /ALL (?:TABLES|SEQUENCES|FUNCTIONS) IN SCHEMA control_plane/u,
+  );
 });
 
 test("public webhook identity cannot read encrypted credentials or user analytics", async () => {
