@@ -32,7 +32,9 @@ const env: Record<string, string> = Object.fromEntries(
   ),
 );
 
-const TENANT = "01KZ4ZMVF5QNQ4TX35VF3WDJBM";
+const TENANT =
+  process.env.ALBERT_V2_EVALUATION_TENANT_ID?.trim() ??
+  "01KZ4ZMVF5QNQ4TX35VF3WDJBM";
 const CASES_PATH = process.argv[2] ?? ".albert-agent-qa-cases.json";
 const ONLY =
   process.env.ALBERT_AGENT_QA_ONLY?.split(",")

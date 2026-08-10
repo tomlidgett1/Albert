@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
-import type { CompiledAggregateQueryV2, CompiledWorkspaceV2 } from "../../compiler/src/v2.js";
+import {
+  SOURCE_ROW_COUNT_COLUMN_V2,
+  type CompiledAggregateQueryV2,
+  type CompiledWorkspaceV2,
+} from "../../compiler/src/v2.js";
 import type { DatabaseResult, SemanticReadDatabase } from "../../../services/semantic-query/src/types.js";
 import type { GroundedClaimV2, ResultEvidenceV2 } from "./evidence.js";
 
@@ -133,7 +137,21 @@ function materializeOne(
   explainCost: number,
 ): ExecutedQueryV2 {
   if (query.parameters[0] !== context.tenantId) throw new Error(`Query ${query.queryId} does not bind the trusted tenant as parameter one.`);
-  const resultDigest = digest({ columns: query.resultColumns, rows: result.rows });
+  const sourceRows = result.rows[0]?.[SOURCE_ROW_COUNT_COLUMN_V2];
+  const sourceRowCount = typeof sourceRows === "number"
+    ? sourceRows
+    : typeof sourceRows === "string" && /^\d+$/u.test(sourceRows)
+      ? Number(sourceRows)
+      : undefined;
+  const noSourceRows = query.normalizedPlan.dimensionIds.length === 0
+    && result.rows.length === 1
+    && sourceRowCount === 0;
+  const rows = noSourceRows
+    ? []
+    : result.rows.map((row) => Object.fromEntries(
+        Object.entries(row).filter(([key]) => key !== SOURCE_ROW_COUNT_COLUMN_V2),
+      ));
+  const resultDigest = digest({ columns: query.resultColumns, rows });
   return Object.freeze({
     queryId: query.queryId,
     period: query.period,
@@ -147,15 +165,15 @@ function materializeOne(
       end: query.normalizedPlan.resolvedTime.to,
       timezone: context.timezone ?? "UTC",
     }),
-    rows: Object.freeze(result.rows.map((row) => Object.freeze({ ...row }))),
+    rows: Object.freeze(rows.map((row) => Object.freeze({ ...row }))),
     durationMs: result.durationMs,
     explainCost,
     resultDigest,
     evidence: Object.freeze({
       executionId,
       resultId: query.queryId,
-      state: result.rows.length === 0 ? "no_data" : query.semanticState,
-      rowCount: result.rows.length,
+      state: rows.length === 0 ? "no_data" : query.semanticState,
+      rowCount: rows.length,
       validationPassed: true,
       publicationHash,
       limitations: [],

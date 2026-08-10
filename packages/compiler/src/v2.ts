@@ -142,6 +142,10 @@ export type CompiledAggregateQueryV2 = Readonly<{
   }>;
 }>;
 
+/** Internal execution evidence; stripped before any governed result is exposed. */
+export const SOURCE_ROW_COUNT_COLUMN_V2 = "__albert_source_row_count";
+export const SEMANTIC_COMPILER_CONTRACT_VERSION_V2 = 2;
+
 export type CompiledWorkspaceV2 = Readonly<{
   publicationHash: string;
   overlayVersion: string;
@@ -1312,6 +1316,9 @@ function lower(
       ).as(measure.id),
     );
   }
+  selections.push(
+    sql<string>`count(*)::bigint`.as(SOURCE_ROW_COUNT_COLUMN_V2),
+  );
   query = query.select(selections);
   if (groupBy.length) query = query.groupBy(groupBy);
   for (const filter of plan.filters) {
@@ -1359,7 +1366,10 @@ function lower(
   query = query.limit(plan.limit);
   const compiled = query.compile();
   assertSafeCompilerOutput(compiled.sql, registry);
-  const normalizedPlanHash = digest(plan);
+  const normalizedPlanHash = digest({
+    compilerContractVersion: SEMANTIC_COMPILER_CONTRACT_VERSION_V2,
+    plan,
+  });
   return Object.freeze({
     queryId: plan.queryId,
     blockId: plan.blockId,
@@ -1483,6 +1493,7 @@ export function compileQueryWorkspaceV2(
     });
   });
   const reusablePlan = {
+    compilerContractVersion: SEMANTIC_COMPILER_CONTRACT_VERSION_V2,
     publicationHash: workspace.publicationHash,
     overlayVersion: workspace.overlayVersion,
     queries: queries.map(({ normalizedPlan }) => normalizedPlan),

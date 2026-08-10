@@ -26,7 +26,9 @@ import {
 } from "../../packages/analytics-v2/src/index.js";
 import {
   compileQueryWorkspaceV2,
+  SEMANTIC_COMPILER_CONTRACT_VERSION_V2,
   SemanticCompilerV2Error,
+  SOURCE_ROW_COUNT_COLUMN_V2,
 } from "../../packages/compiler/src/v2.js";
 import {
   semanticRegistryDocumentV2Schema,
@@ -100,6 +102,7 @@ function compile(
 }
 
 test("the generated business registry compiles deterministic tenant-bound SQL", () => {
+  assert.equal(SEMANTIC_COMPILER_CONTRACT_VERSION_V2, 2);
   const sourceById = new Map(
     registry.sourceObjects.map((source) => [source.id, source]),
   );
@@ -352,6 +355,63 @@ test("multi-query workspaces require one repeatable-read execution batch", async
         context,
       ),
     /shared repeatable-read snapshot/iu,
+  );
+});
+
+test("zero-row aggregate sentinels become No data and never enter governed results", async () => {
+  const workspace = salesWorkspace({
+    dimensionIds: [],
+    measureIds: ["commerce.transactions"],
+  });
+  const compiled = compile(workspace);
+  assert.match(
+    compiled.queries[0]?.sql ?? "",
+    /count\(\*\)::bigint as "__albert_source_row_count"/u,
+  );
+  const execute = async (sourceRowCount: string) =>
+    executeCompiledWorkspaceV2(
+      compiled,
+      {
+        async queryAsSemanticRole(request) {
+          if (request.sql.startsWith("EXPLAIN"))
+            return {
+              rows: [{ "QUERY PLAN": [{ Plan: { "Total Cost": 1 } }] }],
+              durationMs: 1,
+            };
+          return {
+            rows: [
+              {
+                "commerce.transactions": "0",
+                [SOURCE_ROW_COUNT_COLUMN_V2]: sourceRowCount,
+              },
+            ],
+            durationMs: 1,
+          };
+        },
+      },
+      {
+        tenantId,
+        workspaceId: workspace.id,
+        conversationId: "01K30000000000000000000005",
+        turnId: workspace.questionId,
+        statementTimeoutMs: 30_000,
+        maxPostgresCost: 50_000,
+        sourceWatermarks: {},
+        cacheKey: "c".repeat(64),
+      },
+    );
+  const empty = await execute("0");
+  assert.equal(empty.terminalState, "no_data");
+  assert.deepEqual(empty.queries[0]?.rows, []);
+  assert.equal(empty.queries[0]?.evidence.rowCount, 0);
+  const zeroValue = await execute("3");
+  assert.equal(zeroValue.terminalState, "verified");
+  assert.deepEqual(zeroValue.queries[0]?.rows, [
+    { "commerce.transactions": "0" },
+  ]);
+  assert.equal(
+    SOURCE_ROW_COUNT_COLUMN_V2 in (zeroValue.queries[0]?.rows[0] ?? {}),
+    false,
   );
 });
 

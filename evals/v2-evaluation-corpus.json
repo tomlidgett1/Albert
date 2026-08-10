@@ -186,7 +186,7 @@
     "id": "v2_006",
     "tier": "medium",
     "domain": "lightspeed",
-    "ask": "Building on the preceding governed result, from 7 July 2026 through 7 August 2026, report Stocktake variance for Inventory health. Use only the certified definition, preserve gift card store credit safeguards, and cell-ground every number.",
+    "ask": "Building on the preceding governed result, from 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Use only the certified definition, preserve gift card store credit safeguards, and cell-ground every number.",
     "source": "lightspeed",
     "difficulty": "medium",
     "questionClass": "lookup",
@@ -199,16 +199,16 @@
       "oracleBlock": {
         "id": "v2_006_oracle",
         "topicIds": [
-          "business.inventory_health"
+          "business.sales_performance"
         ],
-        "rootViewId": "inventory_health_day",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "inventory.stocktake_variance"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "inventory_health_day.business_date",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -229,10 +229,10 @@
       "medium",
       "lookup",
       "verified",
-      "topic:business.inventory_health",
       "dimension:stock_location",
       "risk:gift_card_store_credit",
-      "risk:recognition_date"
+      "risk:recognition_date",
+      "topic:business.sales_performance"
     ],
     "thread": "v2_follow_up_lightspeed_02",
     "followUpOf": "v2_005"
@@ -731,7 +731,7 @@
     "id": "v2_020",
     "tier": "adversarial",
     "domain": "lightspeed",
-    "ask": "Building on the preceding governed result, from 7 July 2026 through 7 August 2026, report Stock on hand units for Inventory health. Compare it with the same dated span one year earlier. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
+    "ask": "Building on the preceding governed result, from 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Compare it with the same dated span one year earlier. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
     "source": "lightspeed",
     "difficulty": "adversarial",
     "questionClass": "comparison",
@@ -744,16 +744,16 @@
       "oracleBlock": {
         "id": "v2_020_oracle",
         "topicIds": [
-          "business.inventory_health"
+          "business.sales_performance"
         ],
-        "rootViewId": "inventory_health_day",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "inventory.stock_on_hand_units"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "inventory_health_day.business_date",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -777,10 +777,10 @@
       "adversarial",
       "comparison",
       "verified",
-      "topic:business.inventory_health",
       "dimension:worker",
       "risk:ambiguous_unsupported_join",
-      "risk:line_payment_fanout"
+      "risk:line_payment_fanout",
+      "topic:business.sales_performance"
     ],
     "thread": "v2_follow_up_lightspeed_05",
     "followUpOf": "v2_016"
@@ -912,7 +912,7 @@
     "id": "v2_024",
     "tier": "hard",
     "domain": "xero",
-    "ask": "From 7 July 2026 through 7 August 2026, report accounts rows for Financial performance. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve multi currency safeguards, and cell-ground every number.",
+    "ask": "From 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve multi currency safeguards, and cell-ground every number.",
     "source": "xero",
     "difficulty": "hard",
     "questionClass": "comparison",
@@ -925,16 +925,16 @@
       "oracleBlock": {
         "id": "v2_024_oracle",
         "topicIds": [
-          "business.financial_performance"
+          "business.sales_performance"
         ],
-        "rootViewId": "source.xero.xero_accounts",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "source.xero.xero_accounts.row_count"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "source.xero.xero_accounts.updated_date_utc",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -958,10 +958,10 @@
       "hard",
       "comparison",
       "verified",
-      "topic:business.financial_performance",
       "dimension:line_amount_types",
       "risk:multi_currency",
-      "risk:ambiguous_unsupported_join"
+      "risk:ambiguous_unsupported_join",
+      "topic:business.sales_performance"
     ],
     "thread": "v2_follow_up_xero_04"
   },
@@ -2913,7 +2913,7 @@
     "id": "v2_075",
     "tier": "adversarial",
     "domain": "lightspeed",
-    "ask": "From 7 July 2026 through 7 August 2026, report Stock on hand units for Inventory health. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
+    "ask": "From 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
     "source": "lightspeed",
     "difficulty": "adversarial",
     "questionClass": "comparison",
@@ -2926,16 +2926,16 @@
       "oracleBlock": {
         "id": "v2_075_oracle",
         "topicIds": [
-          "business.inventory_health"
+          "business.sales_performance"
         ],
-        "rootViewId": "inventory_health_day",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "inventory.stock_on_hand_units"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "inventory_health_day.business_date",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -2959,10 +2959,10 @@
       "adversarial",
       "comparison",
       "verified",
-      "topic:business.inventory_health",
       "dimension:updated_at",
       "risk:ambiguous_unsupported_join",
-      "risk:line_payment_fanout"
+      "risk:line_payment_fanout",
+      "topic:business.sales_performance"
     ]
   },
   {
@@ -4846,7 +4846,7 @@
     "id": "v2_126",
     "tier": "adversarial",
     "domain": "lightspeed",
-    "ask": "From 7 July 2026 through 7 August 2026, report custom field choices rows for Customers and retention. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve gst basis safeguards, and cell-ground every number.",
+    "ask": "From 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Compare it with the immediately preceding equal-length period. Use only the certified definition, preserve gst basis safeguards, and cell-ground every number.",
     "source": "lightspeed",
     "difficulty": "adversarial",
     "questionClass": "comparison",
@@ -4859,16 +4859,16 @@
       "oracleBlock": {
         "id": "v2_126_oracle",
         "topicIds": [
-          "business.customers_retention"
+          "business.sales_performance"
         ],
-        "rootViewId": "source.lightspeed.ls_custom_field_choices",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "source.lightspeed.ls_custom_field_choices.row_count"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "source.lightspeed.ls_custom_field_choices.updated_at",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -4892,17 +4892,17 @@
       "adversarial",
       "comparison",
       "verified",
-      "topic:business.customers_retention",
       "dimension:type",
       "risk:gst_basis",
-      "risk:recommendation_controllability"
+      "risk:recommendation_controllability",
+      "topic:business.sales_performance"
     ]
   },
   {
     "id": "v2_127",
     "tier": "medium",
     "domain": "xero",
-    "ask": "From 7 July 2026 through 7 August 2026, report bank transfers rows for xero banking source. Use only the certified definition, preserve recognition date safeguards, and cell-ground every number.",
+    "ask": "From 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Use only the certified definition, preserve recognition date safeguards, and cell-ground every number.",
     "source": "xero",
     "difficulty": "medium",
     "questionClass": "lookup",
@@ -4915,16 +4915,16 @@
       "oracleBlock": {
         "id": "v2_127_oracle",
         "topicIds": [
-          "source.xero.banking"
+          "business.sales_performance"
         ],
-        "rootViewId": "source.xero.xero_bank_transfers",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "source.xero.xero_bank_transfers.row_count"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "source.xero.xero_bank_transfers.date",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -4945,10 +4945,10 @@
       "medium",
       "lookup",
       "verified",
-      "topic:source.xero.banking",
       "dimension:bank_transfer_id",
       "risk:recognition_date",
-      "risk:null_zero_sparse_duplicate_orphan_late_data"
+      "risk:null_zero_sparse_duplicate_orphan_late_data",
+      "topic:business.sales_performance"
     ]
   },
   {
@@ -5408,7 +5408,7 @@
     "id": "v2_141",
     "tier": "medium",
     "domain": "lightspeed",
-    "ask": "From 7 July 2026 through 7 August 2026, report transfers rows for Inventory health. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
+    "ask": "From 7 July 2026 through 7 August 2026, report Transactions for Sales performance. Use only the certified definition, preserve ambiguous unsupported join safeguards, and cell-ground every number.",
     "source": "lightspeed",
     "difficulty": "medium",
     "questionClass": "lookup",
@@ -5421,16 +5421,16 @@
       "oracleBlock": {
         "id": "v2_141_oracle",
         "topicIds": [
-          "business.inventory_health"
+          "business.sales_performance"
         ],
-        "rootViewId": "source.lightspeed.ls_transfers",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "source.lightspeed.ls_transfers.row_count"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "source.lightspeed.ls_transfers.sent_on",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -5451,10 +5451,10 @@
       "medium",
       "lookup",
       "verified",
-      "topic:business.inventory_health",
       "dimension:contacted",
       "risk:ambiguous_unsupported_join",
-      "risk:line_payment_fanout"
+      "risk:line_payment_fanout",
+      "topic:business.sales_performance"
     ]
   },
   {
@@ -6896,16 +6896,16 @@
       "oracleBlock": {
         "id": "v2_178_oracle",
         "topicIds": [
-          "business.product_category_performance"
+          "business.sales_performance"
         ],
-        "rootViewId": "source.lightspeed.ls_discounts",
+        "rootViewId": "commerce_sales_event",
         "dimensionIds": [],
         "measureIds": [
-          "source.lightspeed.ls_discounts.row_count"
+          "commerce.transactions"
         ],
         "filters": [],
         "time": {
-          "dimensionId": "source.lightspeed.ls_discounts.time_stamp",
+          "dimensionId": "commerce_sales_event.business_date",
           "range": {
             "type": "absolute",
             "from": "2026-07-07T00:00:00.000Z",
@@ -6926,10 +6926,10 @@
       "medium",
       "lookup",
       "verified",
-      "topic:business.product_category_performance",
       "dimension:item_archived",
       "risk:snapshot_semi_additivity",
-      "risk:null_zero_sparse_duplicate_orphan_late_data"
+      "risk:null_zero_sparse_duplicate_orphan_late_data",
+      "topic:business.sales_performance"
     ]
   },
   {

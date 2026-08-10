@@ -983,6 +983,72 @@ const unassignedDerived = () =>
       expectedTerminalState === "derived" && expectedOperator === null,
   );
 
+// Some generated Verified cases originally landed on certified facts that are
+// empty in the qualified Sydney snapshot. Keep numerical gold cases bound to a
+// populated certified fact; the empty domains remain covered by explicit No
+// data, Exploratory, and Unavailable cases.
+const numericOracleOverrides = new Map<
+  string,
+  Readonly<{ topicId: string; measureId: string }>
+>([
+  [
+    "v2_006",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_020",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_024",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_075",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_126",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_127",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_141",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+  [
+    "v2_178",
+    {
+      topicId: "business.sales_performance",
+      measureId: "commerce.transactions",
+    },
+  ],
+]);
+
 // Assign every operator to a visible compatible case first. The committed 160
 // regression cases therefore retain full operator coverage even when the 40
 // placeholder holdout cases are replaced by the sealed external holdout.
@@ -1024,19 +1090,31 @@ for (const evaluationCase of cases) {
       evaluationCase.questionClass === "comparison");
   const needsEmptyOracle = evaluationCase.expectedTerminalState === "no_data";
   if (!needsNumericOracle && !needsEmptyOracle) continue;
-  const topicId = evaluationCase.tags
+  const override = numericOracleOverrides.get(evaluationCase.id);
+  if (override)
+    evaluationCase.tags = [
+      ...evaluationCase.tags.filter((tag) => !tag.startsWith("topic:")),
+      `topic:${override.topicId}`,
+    ];
+  const topicId = override?.topicId ?? evaluationCase.tags
     .find((tag) => tag.startsWith("topic:"))
     ?.slice("topic:".length);
   const topic = topicId ? topicById.get(topicId) : undefined;
   if (!topic)
     throw new Error(`Evaluation case ${evaluationCase.id} has no Topic.`);
   const preferredMeasure = needsNumericOracle
-    ? certifiedMeasureFor(
-        topic,
-        evaluationCase.source,
-        Number(evaluationCase.id.slice(3)),
-      )
+    ? override
+      ? (measureById.get(override.measureId) ?? null)
+      : certifiedMeasureFor(
+          topic,
+          evaluationCase.source,
+          Number(evaluationCase.id.slice(3)),
+        )
     : null;
+  if (override && !preferredMeasure)
+    throw new Error(
+      `Evaluation case ${evaluationCase.id} references unknown measure ${override.measureId}.`,
+    );
   const oracleBlock = oracleBlockFor({
     caseId: evaluationCase.id,
     topic,

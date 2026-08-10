@@ -1275,29 +1275,14 @@ export class DefaultSemanticV2ToolExecutor implements SemanticV2ToolExecutor {
     try {
       await beginSemanticV2Tenant(client, context.tenantId, true);
       const result = await client.query(
-        `SELECT w.workspace_id,w.publication_hash,w.overlay_version,w.revision,w.blocks,t.turn_number
-           FROM control_plane.query_workspaces_v2 w
-           JOIN control_plane.conversation_turns t
-             ON t.tenant_id=w.tenant_id AND t.turn_id=w.question_id
-          WHERE w.tenant_id=$1 AND t.conversation_id=$2 AND w.status='executed'
-            AND w.question_id<>$3
-          ORDER BY t.turn_number DESC,w.updated_at DESC
-          LIMIT 1`,
+        `SELECT control_plane.load_previous_semantic_workspace_v2($1,$2,$3)
+                  AS workspace`,
         [context.tenantId, context.conversationId, context.turnId],
       );
       await client.query("COMMIT");
-      const row = result.rows[0];
-      return row
-        ? Object.freeze({
-            workspaceId: row.workspace_id,
-            publicationHash: row.publication_hash,
-            overlayVersion: row.overlay_version,
-            revision: Number(row.revision),
-            blocks: row.blocks,
-            turnNumber: Number(row.turn_number),
-            guidance:
-              "Continue this workspace only when the new question is a contextual follow-up; otherwise create a new workspace.",
-          })
+      const workspace = result.rows[0]?.workspace;
+      return workspace && typeof workspace === "object" && !Array.isArray(workspace)
+        ? Object.freeze(workspace as Record<string, unknown>)
         : null;
     } catch (error) {
       try {

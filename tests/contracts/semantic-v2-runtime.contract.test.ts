@@ -34,6 +34,10 @@ const nodeServer = readFileSync(
   "services/semantic-query/src/node-server.ts",
   "utf8",
 );
+const followUpWorkspaceBoundary = readFileSync(
+  "infra/migrations/control-plane/0113_semantic_v2_followup_workspace_boundary.sql",
+  "utf8",
+);
 
 test("V2 tools expose only semantic workspaces, investigations, results, and governed operator bindings", () => {
   assert.deepEqual(SEMANTIC_V2_TOOL_NAMES, [
@@ -143,6 +147,30 @@ test("workspace and investigation evidence mutations are scoped to the current t
   assert.match(v2Service, /OPERATOR_EVIDENCE_NOT_FOUND/u);
   assert.match(v2Service, /OPERATOR_EVIDENCE_MISMATCH/u);
   assert.match(v2Service, /artifact->>'operatorId' AS operator_id/u);
+});
+
+test("follow-up workspace discovery uses a lease-bound projection instead of conversation-ledger table access", () => {
+  assert.match(v2Service, /load_previous_semantic_workspace_v2/u);
+  assert.doesNotMatch(
+    v2Service,
+    /SELECT w\.workspace_id,w\.publication_hash,w\.overlay_version/u,
+  );
+  assert.match(
+    followUpWorkspaceBoundary,
+    /require_exact_runtime_login\([\s\S]*'albert_semantic_control_runtime'[\s\S]*'albert_semantic_control'/u,
+  );
+  assert.match(
+    followUpWorkspaceBoundary,
+    /current_turn\.status='running'[\s\S]*lease_expires_at>clock_timestamp\(\)/u,
+  );
+  assert.match(
+    followUpWorkspaceBoundary,
+    /GRANT EXECUTE ON FUNCTION control_plane\.load_previous_semantic_workspace_v2\(text,text,text\)[\s\S]*TO albert_semantic_control/u,
+  );
+  assert.doesNotMatch(
+    followUpWorkspaceBoundary,
+    /GRANT (?:SELECT|ALL)[^;]*conversation_turns/iu,
+  );
 });
 
 test("open-ended V2 answers suppress unchanged insight-ledger findings in trusted code", () => {
