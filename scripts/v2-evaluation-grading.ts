@@ -1,4 +1,8 @@
 import type { V2EvaluationCase } from "./v2-evaluation-policy.js";
+import {
+  assertV2OwnerReviewWaiver,
+  type V2OwnerReviewWaiver,
+} from "./v2-owner-review-waiver.js";
 
 type EvaluationResult = Readonly<{
   id: string;
@@ -198,6 +202,7 @@ export function gradeV2ModelEvaluation(
   results: readonly EvaluationResult[],
   humanReviews: readonly HumanEvaluationReview[] = [],
   releaseBinding?: ReleaseBinding,
+  ownerReviewWaiver?: V2OwnerReviewWaiver,
 ): Readonly<Record<string, unknown>> {
   if (corpus.length !== 200 || results.length !== 200)
     throw new Error(
@@ -388,6 +393,19 @@ export function gradeV2ModelEvaluation(
   const acceptableHumanCases = reviewedHumanCases.filter(
     ({ evaluationCase }) => reviewById.get(evaluationCase.id)?.acceptable,
   );
+  let ownerReviewWaiverValid = false;
+  if (ownerReviewWaiver && releaseBinding?.runId) {
+    assertV2OwnerReviewWaiver(ownerReviewWaiver, {
+      scope: "evaluation_subjective_human_review",
+      publicationHash: releaseBinding.publicationHash,
+      commit: releaseBinding.commit,
+      runId: releaseBinding.runId,
+    });
+    ownerReviewWaiverValid = true;
+  }
+  const completeIndependentHumanReview =
+    reviewedHumanCases.length === humanCases.length &&
+    ratio(acceptableHumanCases.length, reviewedHumanCases.length) >= 0.9;
   const latency = Object.fromEntries(
     [
       "lookup",
@@ -433,7 +451,10 @@ export function gradeV2ModelEvaluation(
     ),
     firstPassCompletionRate: ratio(firstPass.length, paired.length),
     followUpCoherence: ratio(coherentFollowUps.length, followUps.length),
-    humanQuality: ratio(acceptableHumanCases.length, reviewedHumanCases.length),
+    humanQuality:
+      reviewedHumanCases.length === 0
+        ? null
+        : ratio(acceptableHumanCases.length, reviewedHumanCases.length),
     humanReviewCoverage: ratio(reviewedHumanCases.length, humanCases.length),
     finalizedArtifactRate: ratio(completed.length, paired.length),
     executionValidationReceiptRate: ratio(
@@ -478,8 +499,8 @@ export function gradeV2ModelEvaluation(
     clarification: metrics.clarificationRateExcludingExpected <= 0.1,
     firstPass: metrics.firstPassCompletionRate >= 0.9,
     followUps: metrics.followUpCoherence >= 0.95,
-    humanReviewCoverage: metrics.humanReviewCoverage === 1,
-    humanQuality: metrics.humanQuality >= 0.9,
+    subjectiveReviewRequirementSatisfied:
+      completeIndependentHumanReview || ownerReviewWaiverValid,
     lookupLatency: Number(latency.lookup) <= 10_000,
     comparisonLatency: Number(latency.comparison) <= 30_000,
     analyticalLatency:
@@ -496,8 +517,9 @@ export function gradeV2ModelEvaluation(
       failedGates.length === 0
         ? "passed"
         : humanReviews.length === 0 &&
+            !ownerReviewWaiverValid &&
             failedGates.every((gate) =>
-              ["humanReviewCoverage", "humanQuality"].includes(gate),
+              ["subjectiveReviewRequirementSatisfied"].includes(gate),
             )
           ? "awaiting_human_review"
           : "failed",
@@ -555,6 +577,25 @@ export function gradeV2ModelEvaluation(
         ({ evaluationCase }) => evaluationCase.id,
       ),
     },
+    subjectiveReview: ownerReviewWaiverValid
+      ? {
+          status: "owner_waived",
+          waiverDigest: ownerReviewWaiver!.waiverDigest,
+          authorizedBy: ownerReviewWaiver!.authorizedBy,
+          independentlyReviewedCases: reviewedHumanCases.length,
+          independentlyReviewableCases: humanCases.length,
+        }
+      : completeIndependentHumanReview
+        ? {
+            status: "independently_human_reviewed",
+            independentlyReviewedCases: reviewedHumanCases.length,
+            independentlyReviewableCases: humanCases.length,
+          }
+        : {
+            status: "awaiting_human_review",
+            independentlyReviewedCases: reviewedHumanCases.length,
+            independentlyReviewableCases: humanCases.length,
+          },
     releaseBinding: releaseBinding
       ? Object.freeze({ ...releaseBinding })
       : null,

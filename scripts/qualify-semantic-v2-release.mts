@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 import { ulid } from "ulid";
+import {
+  assertV2OwnerReviewWaiver,
+  type V2OwnerReviewWaiver,
+} from "./v2-owner-review-waiver.js";
 
 if (!process.argv.includes("--execute"))
   throw new Error(
@@ -82,9 +86,10 @@ if (
   )
 )
   throw new Error(
-    "The model evaluation and independent human-review gates have not all passed.",
+    "The model evaluation release gates have not all passed.",
   );
 const gradeBinding = grade.releaseBinding as Record<string, unknown> | null;
+const subjectiveReview = grade.subjectiveReview as Record<string, unknown> | null;
 const receiptHashKeys = [
   "corpusHash",
   "visibleCorpusHash",
@@ -111,6 +116,16 @@ if (
     "The evaluation grade is not bound to the exact deterministic qualification, launch run, sealed corpus, holdout, deterministic gold, and dataset watermark.",
   );
 }
+if (
+  !subjectiveReview ||
+  !["independently_human_reviewed", "owner_waived"].includes(
+    String(subjectiveReview.status),
+  )
+) {
+  throw new Error(
+    "The evaluation grade has no authorized subjective-review disposition.",
+  );
+}
 const connectionString = process.env.CONTROL_PLANE_ADMIN_DATABASE_URL?.trim();
 if (!connectionString)
   throw new Error("CONTROL_PLANE_ADMIN_DATABASE_URL is required.");
@@ -135,6 +150,43 @@ try {
     throw new Error(
       "The qualification actor is not an enabled internal operator.",
     );
+  if (subjectiveReview.status === "owner_waived") {
+    const waiverDigest = String(subjectiveReview.waiverDigest ?? "");
+    if (!/^[a-f0-9]{64}$/u.test(waiverDigest)) {
+      throw new Error("The evaluation owner-review waiver digest is invalid.");
+    }
+    const persistedWaiver = await client.query(
+      `SELECT artifact
+         FROM control_plane.semantic_v2_owner_review_waivers
+        WHERE waiver_digest=$1
+          AND scope='evaluation_subjective_human_review'
+          AND publication_hash=$2
+          AND commit_sha=$3
+          AND run_id=$4`,
+      [waiverDigest, publicationHash, commit, launch.runId],
+    );
+    if (persistedWaiver.rows.length !== 1) {
+      throw new Error(
+        "The exact evaluation owner-review waiver is not registered in the control plane.",
+      );
+    }
+    const ownerReviewWaiver = persistedWaiver.rows[0]
+      ?.artifact as V2OwnerReviewWaiver;
+    assertV2OwnerReviewWaiver(ownerReviewWaiver, {
+      scope: "evaluation_subjective_human_review",
+      publicationHash,
+      commit,
+      runId: String(launch.runId),
+    });
+    if (
+      ownerReviewWaiver.waiverDigest !== waiverDigest ||
+      ownerReviewWaiver.authorizedBy !== subjectiveReview.authorizedBy
+    ) {
+      throw new Error(
+        "The evaluation grade does not match the registered owner-review waiver.",
+      );
+    }
+  }
   await client.query(
     `INSERT INTO control_plane.semantic_v2_activation_qualifications(
        qualification_id,publication_hash,commit_sha,status,deterministic_receipt,model_evaluation_receipt,created_by

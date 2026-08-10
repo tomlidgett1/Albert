@@ -13,6 +13,7 @@ import {
   v2EvaluationEnvironment,
 } from "../../scripts/v2-evaluation-policy.js";
 import { gradeV2ModelEvaluation } from "../../scripts/v2-evaluation-grading.js";
+import { v2OwnerReviewWaiverDigest } from "../../scripts/v2-owner-review-waiver.js";
 
 const corpus: unknown = JSON.parse(
   readFileSync("evals/v2-evaluation-corpus.json", "utf8"),
@@ -240,6 +241,63 @@ test("release grading enforces all machine gates and waits for independent human
   }));
   const awaiting = gradeV2ModelEvaluation(cases, results);
   assert.equal(awaiting.status, "awaiting_human_review");
+  const waiverBody = {
+    schemaVersion: 1 as const,
+    kind: "albert.semantic-v2-owner-review-waiver" as const,
+    status: "authorized" as const,
+    scope: "evaluation_subjective_human_review" as const,
+    publicationHash,
+    commit: "c".repeat(40),
+    runId: "evaluation-run",
+    reason:
+      "The product owner explicitly accepted the lack of independent subjective scoring for this exact run.",
+    authorizedBy: "93000000-0000-4000-8000-000000000009",
+    createdAt: "2026-08-10T00:00:00.000Z",
+  };
+  const ownerWaived = gradeV2ModelEvaluation(
+    cases,
+    results,
+    [],
+    {
+      publicationHash,
+      commit: "c".repeat(40),
+      runId: "evaluation-run",
+    },
+    {
+      ...waiverBody,
+      waiverDigest: v2OwnerReviewWaiverDigest(waiverBody),
+    },
+  );
+  assert.equal(ownerWaived.status, "passed");
+  assert.equal(
+    (ownerWaived.metrics as Record<string, unknown>).humanQuality,
+    null,
+  );
+  assert.deepEqual(ownerWaived.subjectiveReview, {
+    status: "owner_waived",
+    waiverDigest: v2OwnerReviewWaiverDigest(waiverBody),
+    authorizedBy: waiverBody.authorizedBy,
+    independentlyReviewedCases: 0,
+    independentlyReviewableCases: 95,
+  });
+  assert.throws(
+    () =>
+      gradeV2ModelEvaluation(
+        cases,
+        results,
+        [],
+        {
+          publicationHash,
+          commit: "c".repeat(40),
+          runId: "evaluation-run",
+        },
+        {
+          ...waiverBody,
+          waiverDigest: "f".repeat(64),
+        },
+      ),
+    /invalid or does not match/iu,
+  );
   const humanReviews = cases
     .filter(
       ({ questionClass }) =>

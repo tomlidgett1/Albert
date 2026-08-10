@@ -9,10 +9,12 @@ import {
   gradeV2ModelEvaluation,
   type HumanEvaluationReview,
 } from "./v2-evaluation-grading.js";
+import type { V2OwnerReviewWaiver } from "./v2-owner-review-waiver.js";
 
 const summaryPath = process.argv[2];
 const corpusPath = process.argv[3] ?? "evals/v2-evaluation-corpus.json";
 const humanReviewPath = process.argv[4];
+const ownerReviewWaiverPath = process.argv[5];
 if (!summaryPath)
   throw new Error(
     "Usage: grade-v2-model-evaluation <summary.json> [corpus.json] [human-review.json]",
@@ -27,6 +29,11 @@ const humanReviews = humanReviewPath
       readFileSync(humanReviewPath, "utf8"),
     ) as readonly HumanEvaluationReview[])
   : [];
+const ownerReviewWaiver = ownerReviewWaiverPath
+  ? (JSON.parse(
+      readFileSync(ownerReviewWaiverPath, "utf8"),
+    ) as V2OwnerReviewWaiver)
+  : undefined;
 const publicationHash = process.env.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim();
 const commit = process.env.ALBERT_AGENT_QA_COMMIT_SHA?.trim();
 const corpusHash = process.env.ALBERT_V2_EVALUATION_CORPUS_HASH?.trim();
@@ -92,6 +99,7 @@ const receipt = gradeV2ModelEvaluation(
     datasetWatermarkHash: datasetWatermarkHash!,
     deterministicReceiptHash: deterministicReceiptHash!,
   },
+  ownerReviewWaiver,
 );
 const outputPath = resolve(summaryPath, "..", "grade.json");
 writeFileSync(outputPath, `${JSON.stringify(receipt, null, 2)}\n`);

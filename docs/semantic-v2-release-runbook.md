@@ -114,6 +114,15 @@ candidate/target and mapping-version proof. Release qualification requires zero 
 relationship candidates and one valid `profile_receipt:` reference on every
 supported relationship.
 
+If the product owner explicitly accepts the missing second independent Tier 1
+review, register an exact-draft
+`semantic_publication_tier_1_second_review` waiver with
+`npm run register:v2:owner-review-waiver`. The waiver requires one real Tier 1
+approval per affected object and never replaces Tier 2 review, validation,
+relationship evidence or unresolved-change checks. Preserve its receipt with
+the release evidence; publication records `owner_waived_second_review` rather
+than pretending that two people reviewed it.
+
 ## 4. Prepare evaluation assets outside the repository
 
 Prepare two access-controlled files outside the repository:
@@ -131,7 +140,11 @@ terminal-state allocations.
 
 Have a reviewer who did not author the model answers own the human grading
 manifest for causal, diagnostic, recommendation, usefulness, and
-controllability judgements.
+controllability judgements. If the product owner explicitly waives that
+subjective review under ADR 0082, register an exact publication + commit + run
+`evaluation_subjective_human_review` waiver instead. Store its receipt outside
+the repository and set `ALBERT_V2_OWNER_REVIEW_WAIVER_PATH`; the grade must say
+`owner_waived`, not claim a human score.
 
 ## 5. Run deterministic qualification
 
@@ -218,8 +231,8 @@ before the first request. A failed or interrupted run consumes that reservation;
 automatic reruns are prohibited. Preserve the launch, result, usage, latency,
 cost, grade, corpus, holdout, gold, watermark, and deterministic-receipt hashes.
 
-Do not qualify a release unless independent review is complete and every gate
-in `grade.json` is `true`.
+Do not qualify a release unless independent review is complete or the exact
+owner waiver is registered and every machine gate in `grade.json` is `true`.
 
 ## 8. Record activation qualification
 

@@ -17,6 +17,10 @@ import {
   V2_EVALUATION_RUNTIME,
   v2EvaluationEnvironment,
 } from "./v2-evaluation-policy.js";
+import {
+  assertV2OwnerReviewWaiver,
+  type V2OwnerReviewWaiver,
+} from "./v2-owner-review-waiver.js";
 
 const corpusPath = "evals/v2-evaluation-corpus.json";
 const publicCorpus: unknown = JSON.parse(readFileSync(corpusPath, "utf8"));
@@ -195,6 +199,30 @@ const deterministicReceiptHash = createHash("sha256")
 const runId =
   effectiveEnvironment.ALBERT_AGENT_QA_RUN_ID?.trim() ||
   `v2-${commit.slice(0, 12)}-${publicationHash.slice(0, 12)}`;
+const ownerReviewWaiverPathValue =
+  effectiveEnvironment.ALBERT_V2_OWNER_REVIEW_WAIVER_PATH?.trim();
+let ownerReviewWaiverPath: string | undefined;
+if (ownerReviewWaiverPathValue) {
+  ownerReviewWaiverPath = resolve(ownerReviewWaiverPathValue);
+  const repositoryRelativeWaiver = relative(resolve("."), ownerReviewWaiverPath);
+  if (
+    !repositoryRelativeWaiver.startsWith("..") ||
+    repositoryRelativeWaiver === ""
+  ) {
+    throw new Error(
+      "The owner review waiver must be stored outside the repository.",
+    );
+  }
+  const ownerReviewWaiver = JSON.parse(
+    readFileSync(ownerReviewWaiverPath, "utf8"),
+  ) as V2OwnerReviewWaiver;
+  assertV2OwnerReviewWaiver(ownerReviewWaiver, {
+    scope: "evaluation_subjective_human_review",
+    publicationHash,
+    commit,
+    runId,
+  });
+}
 mkdirSync(resolve(".albert-agent-qa-out"), { recursive: true });
 const lockPath = resolve(
   ".albert-agent-qa-out",
@@ -280,6 +308,7 @@ if (exitCode === 0) {
       "scripts/grade-v2-model-evaluation.mts",
       summaryPath,
       combinedCorpusPath,
+      ...(ownerReviewWaiverPath ? ["", ownerReviewWaiverPath] : []),
     ],
     { stdio: "inherit", env: childEnvironment },
   );

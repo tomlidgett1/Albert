@@ -14,6 +14,12 @@ August 2026. This document is the complete context for building Albert v1. It is
 > deployment system identities bind the web bundle to a release; the earlier
 > ChatGPT Sites path is legacy V1 history. V2 release evidence covers only real
 > Lightspeed and Xero data and cannot require or claim Deputy qualification.
+>
+> **Owner review waiver.** ADR 0082 permits an explicit, immutable owner risk
+> acceptance to replace only the second Tier 1 semantic approval or subjective
+> human scoring for one exact V2 release. It never fabricates human ratings and
+> cannot bypass deterministic correctness, tenant isolation, fan-out,
+> grounding, evidence, runtime, latency or safety gates.
 
 **Initial build scope: three connectors (Lightspeed Retail R-Series, Xero, Deputy), the Supabase control plane, and the complete semantic operating system underneath them.** The architecture is designed for 150+ connectors and 20,000 tenants; the initial build implements the final boundaries with the simplest correct implementation behind each.
 
