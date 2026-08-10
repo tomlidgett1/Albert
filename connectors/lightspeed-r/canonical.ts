@@ -518,7 +518,7 @@ function mapPurchaseOrderLine(row: CanonicalStagingRow, context: CanonicalMappin
     purchase_order_ref: orderId,
     line_number: stablePositiveInteger(lineId),
     supplier_id: supplierId
-      ? sourceRef("supplier", "Vendor", supplierId, row, { entityType: "supplier", nullable: true })
+      ? sourceRef("supplier", "Vendor", supplierId, row, { entityType: "supplier" })
       : null,
     product_variant_id: itemId
       ? sourceRef("product_variant", "Item", itemId, row, { entityType: "product_variant", nullable: true })

@@ -662,7 +662,6 @@ test("Lightspeed purchase orders have one complete arrival-order-independent pro
     sourceRecordId:supplier.sourceRecordId,
     connectionId:"connection-lightspeed-r",
     entityType:"supplier",
-    nullable:true,
   });
   assert.notEqual(poLine.values.stock_location_id,null);
   assert.notEqual(poLine.values.ordered_at,null);
