@@ -55,4 +55,19 @@ test("a fresh analytical bootstrap skips only the reviewed predecessor-pack data
       ),
     /changed after its fresh-bootstrap data-migration review/u,
   );
+
+  const capabilityCleanup = {
+    id: "0131_m5_retire_capability_tombstones_after_activation.sql",
+    checksum:
+      "cf6a66b997095df92a0975fe94726106f269b84a733b2182ebe9e5cc33740fb7",
+    body: "DELETE FROM historical_capability_tombstones;",
+  };
+  assert.match(
+    analyticalMigrationBody(capabilityCleanup, true),
+    /no predecessor pack rows/u,
+  );
+  assert.equal(
+    analyticalMigrationBody(capabilityCleanup, false),
+    capabilityCleanup.body,
+  );
 });

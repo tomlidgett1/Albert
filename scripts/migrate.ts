@@ -28,6 +28,10 @@ const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
     "0129_m5_retire_renamed_predecessor_pack_surface.sql",
     "e7a2633e5e9df29982dd4ac2031a4f6774a60def7aad6a7a17ef21079723ae6c",
   ],
+  [
+    "0131_m5_retire_capability_tombstones_after_activation.sql",
+    "cf6a66b997095df92a0975fe94726106f269b84a733b2182ebe9e5cc33740fb7",
+  ],
 ]);
 
 export function analyticalMigrationBody(
