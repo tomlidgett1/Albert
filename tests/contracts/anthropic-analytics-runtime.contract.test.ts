@@ -324,6 +324,7 @@ test("the runtime is isolated from OpenAI and exposes only four in-process MCP t
 
 test("saved conversations and the chat surface remain method-locked", () => {
   const migration = readFileSync(resolve("infra/migrations/control-plane/0098_m6_anthropic_analytics_runtime.sql"), "utf8");
+  const triggerAcl = readFileSync(resolve("infra/migrations/control-plane/0104_m6_conversation_runtime_trigger_acl.sql"), "utf8");
   const route = readFileSync(resolve("app/api/anthropic-conversation/route.ts"), "utf8");
   const page = readFileSync(resolve("app/dash/page.tsx"), "utf8");
   const styles = readFileSync(resolve("app/dash/dash.module.css"), "utf8");
@@ -333,6 +334,11 @@ test("saved conversations and the chat surface remain method-locked", () => {
   assert.match(migration, /coalesce\(NULLIF\(turn\.runtime_profile->>''runtime'',''''\),''openai-agents-sdk''\)/u);
   assert.match(migration, /FORCE ROW LEVEL SECURITY/u);
   assert.match(migration, /tenant_id=current_setting\('albert\.tenant_id',true\)/u);
+  assert.match(
+    triggerAcl,
+    /REVOKE ALL ON FUNCTION control_plane\.enforce_conversation_runtime_lock\(\)[\s\S]*FROM PUBLIC,anon,authenticated,service_role/u,
+  );
+  assert.match(triggerAcl, /albert_anthropic_control/u);
   assert.match(route, /This conversation belongs to a different analytics method/u);
   assert.match(route, /"X-Albert-Runtime": "anthropic"/u);
   assert.match(route, /p_confirmation_turn_id: parsed\.confirmedOption\?\.offeredTurnId \?\? null/u);
