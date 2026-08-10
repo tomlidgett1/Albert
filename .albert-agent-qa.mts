@@ -87,7 +87,7 @@ const CASES = ONLY ? ALL_CASES.filter((c) => ONLY.includes(c.id)) : ALL_CASES;
 if (CASES.length === 0) throw new Error("No cases selected.");
 
 const { Client } = pg;
-const { runLiveAlbertTurn } =
+const { createTraceEmitter, runLiveAlbertTurn } =
   await import("./services/conversation/src/live.js");
 const { normalizeAgentPreferences } =
   await import("./packages/shared/src/index.js");
@@ -300,6 +300,42 @@ for (const c of CASES) {
     );
     await openTurn(conversation.conversationId, turnId, c.ask);
 
+    const traceEmitter = createTraceEmitter({
+      persist: async (event) => {
+        await adminQuery(
+          `insert into control_plane.conversation_turn_events(
+             tenant_id,turn_event_id,conversation_id,turn_id,sequence_number,event,occurred_at
+           ) values($1,$2,$3,$4,$5,$6::jsonb,$7::timestamptz)`,
+          [
+            TENANT,
+            event.id,
+            conversation.conversationId,
+            turnId,
+            event.sequence,
+            JSON.stringify(event),
+            event.occurredAt,
+          ],
+        );
+      },
+      deliver: (event) => {
+        events.push(event);
+        if (event.type === "query") toolish.push(`query:${event.topic ?? "?"}`);
+        if (event.type === "table")
+          toolish.push(`table:rows=${event.rows?.length ?? 0}`);
+        if (event.type === "clarification") {
+          clarification = event;
+          toolish.push("clarification");
+        }
+        if (event.type === "answer") answer = event;
+        if (event.type === "progress" && event.stage) {
+          toolish.push(`progress:${event.stage}:${event.detail ?? ""}`);
+        }
+        if (event.type === "validation") {
+          toolish.push(`validation:${event.name}:${event.outcome}`);
+        }
+      },
+    });
+
     try {
       const live = await runLiveAlbertTurn({
         message: c.ask,
@@ -316,25 +352,17 @@ for (const c of CASES) {
         safetyIdentifier: `albert-agent-qa-${c.id}`,
         openaiTracingEnabled: false,
         abortSignal: AbortSignal.timeout(turnTimeoutMs),
-        emit: async (event) => {
-          events.push(event);
-          if (event.type === "query")
-            toolish.push(`query:${event.topic ?? "?"}`);
-          if (event.type === "table")
-            toolish.push(`table:rows=${event.rows?.length ?? 0}`);
-          if (event.type === "clarification") {
-            clarification = event;
-            toolish.push("clarification");
-          }
-          if (event.type === "answer") answer = event;
-          if (event.type === "progress" && event.stage) {
-            toolish.push(`progress:${event.stage}:${event.detail ?? ""}`);
-          }
-          if (event.type === "validation") {
-            toolish.push(`validation:${event.name}:${event.outcome}`);
-          }
-        },
+        emit: traceEmitter,
       });
+      const tracePersistence = await traceEmitter.drain();
+      if (
+        tracePersistence.failed !== 0 ||
+        tracePersistence.persisted !== events.length
+      ) {
+        throw new Error(
+          `Evaluation trace persistence failed closed (${tracePersistence.persisted}/${events.length} persisted, ${tracePersistence.failed} failed).`,
+        );
+      }
       if (
         !live.providerRuntime?.verified ||
         live.providerRuntime.model !== "gpt-5.6-luna" ||

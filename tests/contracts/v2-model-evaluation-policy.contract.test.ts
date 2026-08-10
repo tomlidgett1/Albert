@@ -21,12 +21,14 @@ const corpus: unknown = JSON.parse(
 
 test("release blueprint locks all 200 allocations without committing holdout prompts", () => {
   assert.doesNotThrow(() => assertV2PublicEvaluationBlueprint(corpus));
-  const cases = corpus as Array<{ id: string; ask: string; visibility: string }>;
+  const cases = corpus as Array<{
+    id: string;
+    ask: string;
+    visibility: string;
+  }>;
   const hidden = cases.filter(({ visibility }) => visibility === "hidden");
   assert.equal(hidden.length, 40);
-  assert.ok(
-    hidden.every(({ id, ask }) => ask === sealedV2HoldoutPrompt(id)),
-  );
+  assert.ok(hidden.every(({ id, ask }) => ask === sealedV2HoldoutPrompt(id)));
   const allocated = corpus as Array<{
     source: string;
     expectedTerminalState: string;
@@ -148,6 +150,14 @@ test("model-backed runner requires an explicit 200-case budget confirmation", ()
   assert.match(harness, /providerRuntime\.reasoningEffort !== "max"/u);
   assert.match(harness, /providerRuntime\.reasoningMode !== "standard"/u);
   assert.match(harness, /providerRuntime\.serviceTier !== "default"/u);
+  assert.match(harness, /createTraceEmitter/u);
+  assert.match(harness, /insert into control_plane\.conversation_turn_events/u);
+  assert.ok(
+    harness.indexOf("await traceEmitter.drain()") <
+      harness.indexOf("finalizeSemanticV2AnswerArtifact"),
+    "the complete ordered trace must be durable before immutable answer finalization",
+  );
+  assert.match(harness, /tracePersistence\.failed !== 0/u);
 });
 
 test("release grading enforces all machine gates and waits for independent human review", () => {
