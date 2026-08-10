@@ -190,6 +190,14 @@ test("semantic review batches are explicit, bounded, atomic, and preserve indepe
   );
   assert.match(
     atomicReviewBatches,
+    /FOR UPDATE TO authenticated[\s\S]*reviewer_id=extensions\.albert_auth_uid\(\)/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /GRANT UPDATE \(risk_tier,disposition,notes,created_at\)/u,
+  );
+  assert.match(
+    atomicReviewBatches,
     /public\.albert_semantic_v2_record_review\([\s\S]*v_review->>'objectId'/u,
   );
   assert.match(

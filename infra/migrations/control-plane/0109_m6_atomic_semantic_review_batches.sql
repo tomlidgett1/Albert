@@ -102,6 +102,45 @@ BEGIN
 END;
 $$;
 
+-- The review writer is intentionally SECURITY INVOKER. Its conflict repair
+-- therefore needs narrow UPDATE authority, while RLS must prevent one operator
+-- from rewriting another operator's independent decision. Replace the original
+-- all-operations policy with operation-specific policies and grant only the
+-- four columns the upsert is allowed to revise.
+DROP POLICY IF EXISTS semantic_v2_reviews_internal_operator
+  ON control_plane.semantic_v2_object_reviews;
+DROP POLICY IF EXISTS semantic_v2_reviews_internal_operator_select
+  ON control_plane.semantic_v2_object_reviews;
+DROP POLICY IF EXISTS semantic_v2_reviews_internal_operator_insert
+  ON control_plane.semantic_v2_object_reviews;
+DROP POLICY IF EXISTS semantic_v2_reviews_internal_operator_update
+  ON control_plane.semantic_v2_object_reviews;
+CREATE POLICY semantic_v2_reviews_internal_operator_select
+  ON control_plane.semantic_v2_object_reviews
+  FOR SELECT TO authenticated
+  USING (control_plane.is_internal_operator());
+CREATE POLICY semantic_v2_reviews_internal_operator_insert
+  ON control_plane.semantic_v2_object_reviews
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    control_plane.is_internal_operator()
+    AND reviewer_id=extensions.albert_auth_uid()
+  );
+CREATE POLICY semantic_v2_reviews_internal_operator_update
+  ON control_plane.semantic_v2_object_reviews
+  FOR UPDATE TO authenticated
+  USING (
+    control_plane.is_internal_operator()
+    AND reviewer_id=extensions.albert_auth_uid()
+  )
+  WITH CHECK (
+    control_plane.is_internal_operator()
+    AND reviewer_id=extensions.albert_auth_uid()
+  );
+REVOKE UPDATE ON control_plane.semantic_v2_object_reviews FROM authenticated;
+GRANT UPDATE (risk_tier,disposition,notes,created_at)
+  ON control_plane.semantic_v2_object_reviews TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.albert_semantic_v2_record_review_batch(
   p_draft_id text,
   p_expected_revision integer,

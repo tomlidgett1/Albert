@@ -26,6 +26,19 @@ INSERT INTO control_plane.internal_operators(
   '93000000-0000-4000-8000-000000000009',
   'semantic-reviewer@albert.invalid',true,'Semantic review batch integration fixture.'
 );
+INSERT INTO auth.users(
+  id,aud,role,email,encrypted_password,email_confirmed_at,
+  raw_app_meta_data,raw_user_meta_data,created_at,updated_at
+) VALUES (
+  '93000000-0000-4000-8000-000000000010','authenticated','authenticated',
+  'semantic-reviewer-two@albert.invalid','',now(),'{}','{}',now(),now()
+);
+INSERT INTO control_plane.internal_operators(
+  user_id,email,enabled,reason
+) VALUES (
+  '93000000-0000-4000-8000-000000000010',
+  'semantic-reviewer-two@albert.invalid',true,'Independent semantic reviewer integration fixture.'
+);
 
 INSERT INTO control_plane.semantic_v2_drafts(
   draft_id,name,revision,status,manifest,manifest_hash,created_by
@@ -93,6 +106,35 @@ SELECT pg_temp.assert_true(
       AND reviewer_id='93000000-0000-4000-8000-000000000009'
       AND notes='Reviewed against the governed fixture.'),
   'the review writer must persist the submitted evidence notes'
+);
+
+SELECT set_config(
+  'request.jwt.claim.sub','93000000-0000-4000-8000-000000000010',true
+);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"93000000-0000-4000-8000-000000000010","role":"authenticated","app_metadata":{}}',
+  true
+);
+UPDATE control_plane.semantic_v2_object_reviews
+SET notes='A different reviewer tried to replace this evidence.'
+WHERE draft_id='01K1ZZZZZZ0000000000000210'
+  AND reviewer_id='93000000-0000-4000-8000-000000000009';
+SELECT pg_temp.assert_true(
+  (SELECT count(*)=2
+     FROM control_plane.semantic_v2_object_reviews
+    WHERE draft_id='01K1ZZZZZZ0000000000000210'
+      AND reviewer_id='93000000-0000-4000-8000-000000000009'
+      AND notes='Reviewed against the governed fixture.'),
+  'one reviewer must not be able to rewrite another reviewer''s decision'
+);
+SELECT set_config(
+  'request.jwt.claim.sub','93000000-0000-4000-8000-000000000009',true
+);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"93000000-0000-4000-8000-000000000009","role":"authenticated","app_metadata":{}}',
+  true
 );
 SELECT pg_temp.assert_true(
   (public.albert_semantic_v2_admin_draft_reviews(
@@ -172,5 +214,34 @@ BEGIN
   END;
 END;
 $$;
+
+SELECT set_config(
+  'request.jwt.claim.sub','93000000-0000-4000-8000-000000000010',true
+);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"93000000-0000-4000-8000-000000000010","role":"authenticated","app_metadata":{}}',
+  true
+);
+SELECT public.albert_semantic_v2_record_review_batch(
+  '01K1ZZZZZZ0000000000000210',1,
+  '[
+    {
+      "reviewId":"01K1ZZZZZZ0000000000000217",
+      "objectId":"measure.fixture.tier1",
+      "riskTier":"tier_1",
+      "disposition":"approved",
+      "notes":"Independently reviewed against the governed fixture."
+    }
+  ]'::jsonb
+);
+SELECT pg_temp.assert_true(
+  (SELECT count(DISTINCT reviewer_id)=2
+     FROM control_plane.semantic_v2_object_reviews
+    WHERE draft_id='01K1ZZZZZZ0000000000000210'
+      AND object_id='measure.fixture.tier1'
+      AND disposition='approved'),
+  'Tier 1 approval counting must preserve two independent reviewers'
+);
 
 ROLLBACK;
