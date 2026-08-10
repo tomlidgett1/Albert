@@ -9,9 +9,10 @@ async function source(path: string): Promise<string> {
 }
 
 test("sync and webhook control identities are NOLOGIN and explicitly assumed", async () => {
-  const [bootstrap, migration, deputy, xero, attestation, postgres, sync, webhook] = await Promise.all([
+  const [bootstrap, migration, finalServiceRoleDeny, deputy, xero, attestation, postgres, sync, webhook] = await Promise.all([
     source("infra/bootstrap/control_plane_role.sql"),
     source("infra/migrations/control-plane/0007_runtime_service_isolation.sql"),
+    source("infra/migrations/control-plane/0105_m0_service_role_final_deny.sql"),
     source("infra/migrations/control-plane/0009_deputy_webhook_security.sql"),
     source("infra/migrations/control-plane/0010_xero_webhook_inbox.sql"),
     source("infra/migrations/control-plane/0037_m7_verified_webhook_attestation_boundary.sql"),
@@ -44,6 +45,10 @@ test("sync and webhook control identities are NOLOGIN and explicitly assumed", a
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role/i);
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM PUBLIC,\s*service_role/i);
   assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
+  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role/i);
+  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA control_plane FROM service_role/i);
+  assert.match(finalServiceRoleDeny, /REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM service_role/i);
+  assert.match(finalServiceRoleDeny, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
 });
 
 test("public webhook identity cannot read encrypted credentials or user analytics", async () => {
