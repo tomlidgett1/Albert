@@ -43,6 +43,7 @@ export function buildSnapshotDumpArguments(
     "--no-owner",
     "--no-privileges",
     "--format=plain",
+    "--enable-row-security",
     "--dbname=postgres",
     `--snapshot=${snapshotId}`,
     ...tables.map((table) => `--table=${qualifiedSnapshotTable(table)}`),
@@ -87,7 +88,11 @@ export function buildTenantRemapSql(
 export function postgresProcessEnvironment(
   connectionString: string,
   applicationName: string,
+  tenantId: string,
 ): NodeJS.ProcessEnv {
+  if (!ULID.test(tenantId)) {
+    throw new Error("Snapshot tenant identifier is invalid.");
+  }
   let connection: URL;
   try {
     connection = new URL(connectionString);
@@ -115,6 +120,7 @@ export function postgresProcessEnvironment(
     PGPASSWORD: decodeURIComponent(connection.password),
     PGSSLMODE: sslMode,
     PGAPPNAME: applicationName,
+    PGOPTIONS: `-c albert.tenant_id=${tenantId}`,
   });
 }
 

@@ -123,7 +123,11 @@ async function streamSnapshot(input: Readonly<{
   const dump = spawn("pg_dump", [
     ...buildSnapshotDumpArguments(input.tables, input.sourceSnapshotId),
   ], {
-    env: postgresProcessEnvironment(input.sourceUrl, "albert-v2-snapshot-source"),
+    env: postgresProcessEnvironment(
+      input.sourceUrl,
+      "albert-v2-snapshot-source",
+      input.sourceTenantId,
+    ),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const restore = spawn("psql", [
@@ -132,7 +136,11 @@ async function streamSnapshot(input: Readonly<{
     "--set=ON_ERROR_STOP=1",
     "--quiet",
   ], {
-    env: postgresProcessEnvironment(input.targetUrl, "albert-v2-snapshot-target"),
+    env: postgresProcessEnvironment(
+      input.targetUrl,
+      "albert-v2-snapshot-target",
+      input.targetTenantId,
+    ),
     stdio: ["pipe", "ignore", "pipe"],
   });
   const dumpError = collectSafeError(dump.stderr);
@@ -204,6 +212,10 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       source.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
       target.query("BEGIN TRANSACTION READ ONLY"),
     ]);
+    await Promise.all([
+      source.query("SELECT set_config('albert.tenant_id',$1,true)", [sourceTenantId]),
+      target.query("SELECT set_config('albert.tenant_id',$1,true)", [targetTenantId]),
+    ]);
     const exportedSnapshot = await source.query<{ snapshot_id: string }>(
       "SELECT pg_export_snapshot() AS snapshot_id",
     );
@@ -219,11 +231,9 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       columnContract(target, tables),
     ]);
     assert.deepEqual(targetColumns, sourceColumns, "Source and target snapshot schemas differ.");
-    const [sourceAll, sourceTenant, targetAll] = await Promise.all([
-      counts(source, tables),
-      counts(source, tables, sourceTenantId),
-      counts(target, tables),
-    ]);
+    const sourceAll = await counts(source, tables);
+    const sourceTenant = await counts(source, tables, sourceTenantId);
+    const targetAll = await counts(target, tables);
     assert.deepEqual(
       sourceTenant,
       sourceAll,

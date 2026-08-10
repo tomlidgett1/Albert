@@ -29,8 +29,10 @@ it proves:
 
 The source preflight exports a repeatable-read PostgreSQL snapshot, and
 `pg_dump` is required to consume that exact snapshot while the exporting
-read-only transaction remains open. `pg_dump` streams directly into `psql` over
-required TLS. The target restore transaction locks every selected table,
+read-only transaction remains open. Both source sessions bind the declared
+`albert.tenant_id`, and `pg_dump` explicitly enables row security so the
+least-privilege deployer cannot export a different tenant. `pg_dump` streams
+directly into `psql` over required TLS. The target restore transaction locks every selected table,
 rechecks that the target is empty, restores the rows, and remaps the tenant with
 `ON_ERROR_STOP`. A failed or interrupted dump injects a deliberately invalid
 statement so even a syntactically valid partial stream must roll back. No

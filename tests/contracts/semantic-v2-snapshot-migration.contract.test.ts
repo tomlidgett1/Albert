@@ -21,6 +21,7 @@ test("snapshot transfer allowlists exact tenant tables and never puts credential
   assert.ok(args.includes('--table="source_lightspeed"."ls_sales"'));
   assert.ok(args.includes('--table="source_xero"."xero_invoices"'));
   assert.ok(args.includes("--snapshot=00000003-0000001B-1"));
+  assert.ok(args.includes("--enable-row-security"));
   assert.ok(args.every((value) => !value.includes("secret")));
   assert.throws(
     () => buildSnapshotDumpArguments(
@@ -32,9 +33,11 @@ test("snapshot transfer allowlists exact tenant tables and never puts credential
   const environment = postgresProcessEnvironment(
     "postgresql://operator:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
     "snapshot-test",
+    "01KZ4ZMVF5QNQ4TX35VF3WDJBM",
   );
   assert.equal(environment.PGPASSWORD, "secret");
   assert.equal(environment.PGSSLMODE, "require");
+  assert.equal(environment.PGOPTIONS, "-c albert.tenant_id=01KZ4ZMVF5QNQ4TX35VF3WDJBM");
   assert.ok(args.every((value) => !value.includes(String(environment.PGPASSWORD))));
 });
 
