@@ -145,7 +145,7 @@ const modelResponse = await fetch(
   `${openaiBaseUrl.replace(/\/+$/u, "")}/models/${V2_EVALUATION_RUNTIME.model}`,
   {
     headers: { Authorization: `Bearer ${openaiApiKey}` },
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(60_000),
   },
 );
 const modelIdentity = (await modelResponse.json()) as Record<string, unknown>;

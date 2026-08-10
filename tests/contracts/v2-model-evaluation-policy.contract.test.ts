@@ -143,6 +143,7 @@ test("model-backed runner requires an explicit 200-case budget confirmation", ()
     /deterministicReceipt\.analyticalProjectRef !== analyticalProjectRef/u,
   );
   assert.match(runner, /\/models\/\$\{V2_EVALUATION_RUNTIME\.model\}/u);
+  assert.match(runner, /signal: AbortSignal\.timeout\(60_000\)/u);
   assert.match(runner, /modelIdentity\.id !== V2_EVALUATION_RUNTIME\.model/u);
   assert.match(runner, /ALBERT_V2_DETERMINISTIC_RECEIPT_HASH/u);
   assert.match(runner, /combinedCorpusPath/u);
