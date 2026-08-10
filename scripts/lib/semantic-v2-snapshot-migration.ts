@@ -12,6 +12,13 @@ export type SnapshotTable = Readonly<{
   table: string;
 }>;
 
+export type SnapshotForeignKey = Readonly<{
+  schema: SnapshotTable["schema"];
+  table: string;
+  constraint: string;
+  definition: string;
+}>;
+
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/u;
 const POSTGRES_SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/iu;
@@ -21,6 +28,20 @@ export const SNAPSHOT_ABORT_SQL = "SELECT albert_snapshot_dump_failed();\n";
 function quoteIdentifier(value: string): string {
   if (!IDENTIFIER.test(value)) throw new Error("Snapshot table identifier is invalid.");
   return `"${value}"`;
+}
+
+function validatedForeignKey(foreignKey: SnapshotForeignKey): SnapshotForeignKey {
+  qualifiedSnapshotTable(foreignKey);
+  quoteIdentifier(foreignKey.constraint);
+  if (
+    foreignKey.definition.length > 4_096
+    || !foreignKey.definition.startsWith("FOREIGN KEY (")
+    || !foreignKey.definition.includes(" REFERENCES ")
+    || /[;\r\n]|--|\/\*|\*\//u.test(foreignKey.definition)
+  ) {
+    throw new Error("Snapshot foreign-key definition is invalid.");
+  }
+  return foreignKey;
 }
 
 export function qualifiedSnapshotTable(table: SnapshotTable): string {
@@ -44,11 +65,28 @@ export function buildSnapshotDumpArguments(
     "--no-privileges",
     "--format=plain",
     "--enable-row-security",
-    "--disable-triggers",
     "--dbname=postgres",
     `--snapshot=${snapshotId}`,
     ...tables.map((table) => `--table=${qualifiedSnapshotTable(table)}`),
   ]);
+}
+
+export function buildDropSnapshotForeignKeysSql(
+  foreignKeys: readonly SnapshotForeignKey[],
+): string {
+  return `${foreignKeys.map((entry) => {
+    const foreignKey = validatedForeignKey(entry);
+    return `ALTER TABLE ${qualifiedSnapshotTable(foreignKey)} DROP CONSTRAINT ${quoteIdentifier(foreignKey.constraint)};`;
+  }).join("\n")}\n`;
+}
+
+export function buildAddSnapshotForeignKeysSql(
+  foreignKeys: readonly SnapshotForeignKey[],
+): string {
+  return `${foreignKeys.map((entry) => {
+    const foreignKey = validatedForeignKey(entry);
+    return `ALTER TABLE ${qualifiedSnapshotTable(foreignKey)} ADD CONSTRAINT ${quoteIdentifier(foreignKey.constraint)} ${foreignKey.definition};`;
+  }).join("\n")}\n`;
 }
 
 export function buildTargetSnapshotGuardSql(

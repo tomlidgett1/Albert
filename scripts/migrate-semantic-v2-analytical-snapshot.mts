@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { bindSemanticV2LiveProject } from "./lib/semantic-v2-schema-audit.js";
 import {
+  buildAddSnapshotForeignKeysSql,
+  buildDropSnapshotForeignKeysSql,
   buildSnapshotDumpArguments,
   buildTargetSnapshotGuardSql,
   buildTenantRemapSql,
@@ -13,6 +15,7 @@ import {
   SNAPSHOT_ABORT_SQL,
   V2_SNAPSHOT_SCHEMAS,
   type SnapshotTable,
+  type SnapshotForeignKey,
 } from "./lib/semantic-v2-snapshot-migration.js";
 
 const { Client } = pg;
@@ -73,6 +76,43 @@ async function columnContract(client: pg.Client, tables: readonly SnapshotTable[
   return result.rows.filter((row) => allowed.has(`${row.schema_name}.${row.table_name}`));
 }
 
+async function foreignKeyContract(
+  client: pg.Client,
+  tables: readonly SnapshotTable[],
+): Promise<SnapshotForeignKey[]> {
+  const allowed = new Set(tables.map((table) => `${table.schema}.${table.table}`));
+  const result = await client.query<{
+    schema_name: SnapshotForeignKey["schema"];
+    table_name: string;
+    constraint_name: string;
+    definition: string;
+    validated: boolean;
+  }>(
+    `SELECT namespace.nspname AS schema_name,class.relname AS table_name,
+            constraint_record.conname AS constraint_name,
+            pg_catalog.pg_get_constraintdef(constraint_record.oid,false) AS definition,
+            constraint_record.convalidated AS validated
+       FROM pg_catalog.pg_constraint AS constraint_record
+       JOIN pg_catalog.pg_class AS class ON class.oid=constraint_record.conrelid
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=class.relnamespace
+      WHERE constraint_record.contype='f'
+        AND namespace.nspname=ANY($1::text[])
+      ORDER BY namespace.nspname,class.relname,constraint_record.conname`,
+    [[...V2_SNAPSHOT_SCHEMAS]],
+  );
+  return result.rows
+    .filter((row) => allowed.has(`${row.schema_name}.${row.table_name}`))
+    .map((row) => {
+      assert.equal(row.validated, true, "Snapshot foreign keys must already be validated.");
+      return {
+        schema: row.schema_name,
+        table: row.table_name,
+        constraint: row.constraint_name,
+        definition: row.definition,
+      };
+    });
+}
+
 async function counts(
   client: pg.Client,
   tables: readonly SnapshotTable[],
@@ -119,6 +159,7 @@ async function streamSnapshot(input: Readonly<{
   sourceTenantId: string;
   targetTenantId: string;
   sourceSnapshotId: string;
+  foreignKeys: readonly SnapshotForeignKey[];
 }>): Promise<void> {
   const dump = spawn("pg_dump", [
     ...buildSnapshotDumpArguments(input.tables, input.sourceSnapshotId),
@@ -145,7 +186,10 @@ async function streamSnapshot(input: Readonly<{
   });
   const dumpError = collectSafeError(dump.stderr);
   const restoreError = collectSafeError(restore.stderr);
-  restore.stdin.write(buildTargetSnapshotGuardSql(input.tables));
+  restore.stdin.write(
+    buildTargetSnapshotGuardSql(input.tables)
+    + buildDropSnapshotForeignKeysSql(input.foreignKeys),
+  );
   dump.stdout.pipe(restore.stdin, { end: false });
   restore.stdin.on("error", () => {
     if (dump.exitCode === null) dump.kill("SIGTERM");
@@ -188,7 +232,7 @@ async function streamSnapshot(input: Readonly<{
         input.tables,
         input.sourceTenantId,
         input.targetTenantId,
-      ));
+      ) + buildAddSnapshotForeignKeysSql(input.foreignKeys));
     }
     restoreResult = await restoreCompletion;
   }
@@ -224,6 +268,7 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
   let tables: SnapshotTable[];
   let before: Record<string, number>;
   let sourceSnapshotId: string;
+  let foreignKeys: SnapshotForeignKey[];
   try {
     await Promise.all([
       source.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
@@ -248,6 +293,16 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       columnContract(target, tables),
     ]);
     assert.deepEqual(targetColumns, sourceColumns, "Source and target snapshot schemas differ.");
+    const [sourceForeignKeys, targetForeignKeys] = await Promise.all([
+      foreignKeyContract(source, tables),
+      foreignKeyContract(target, tables),
+    ]);
+    assert.deepEqual(
+      targetForeignKeys,
+      sourceForeignKeys,
+      "Source and target snapshot foreign-key contracts differ.",
+    );
+    foreignKeys = sourceForeignKeys;
     const sourceAll = await counts(source, tables);
     const sourceTenant = await counts(source, tables, sourceTenantId);
     const targetAll = await counts(target, tables);
@@ -280,6 +335,7 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       sourceTenantId,
       targetTenantId,
       sourceSnapshotId,
+      foreignKeys,
     });
   } finally {
     await source.query("ROLLBACK").catch(() => undefined);
