@@ -19,6 +19,14 @@ export type SnapshotForeignKey = Readonly<{
   definition: string;
 }>;
 
+export type SnapshotTrigger = Readonly<{
+  schema: SnapshotTable["schema"];
+  table: string;
+  trigger: string;
+  definition: string;
+  status: "origin" | "disabled" | "replica" | "always";
+}>;
+
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/u;
 const POSTGRES_SNAPSHOT_ID = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/iu;
@@ -42,6 +50,20 @@ function validatedForeignKey(foreignKey: SnapshotForeignKey): SnapshotForeignKey
     throw new Error("Snapshot foreign-key definition is invalid.");
   }
   return foreignKey;
+}
+
+function validatedTrigger(trigger: SnapshotTrigger): SnapshotTrigger {
+  qualifiedSnapshotTable(trigger);
+  quoteIdentifier(trigger.trigger);
+  if (
+    trigger.definition.length > 8_192
+    || !trigger.definition.startsWith("CREATE TRIGGER ")
+    || !trigger.definition.includes(" EXECUTE FUNCTION ")
+    || /[;\r\n]|--|\/\*|\*\//u.test(trigger.definition)
+  ) {
+    throw new Error("Snapshot trigger definition is invalid.");
+  }
+  return trigger;
 }
 
 export function qualifiedSnapshotTable(table: SnapshotTable): string {
@@ -86,6 +108,36 @@ export function buildAddSnapshotForeignKeysSql(
   return `${foreignKeys.map((entry) => {
     const foreignKey = validatedForeignKey(entry);
     return `ALTER TABLE ${qualifiedSnapshotTable(foreignKey)} ADD CONSTRAINT ${quoteIdentifier(foreignKey.constraint)} ${foreignKey.definition};`;
+  }).join("\n")}\n`;
+}
+
+export function buildDisableSnapshotTriggersSql(
+  triggers: readonly SnapshotTrigger[],
+): string {
+  return `${triggers.flatMap((entry) => {
+    const trigger = validatedTrigger(entry);
+    if (trigger.status === "disabled") return [];
+    return [
+      `ALTER TABLE ${qualifiedSnapshotTable(trigger)} DISABLE TRIGGER ${quoteIdentifier(trigger.trigger)};`,
+    ];
+  }).join("\n")}\n`;
+}
+
+export function buildRestoreSnapshotTriggersSql(
+  triggers: readonly SnapshotTrigger[],
+): string {
+  return `${triggers.flatMap((entry) => {
+    const trigger = validatedTrigger(entry);
+    const mode = {
+      origin: "ENABLE TRIGGER",
+      replica: "ENABLE REPLICA TRIGGER",
+      always: "ENABLE ALWAYS TRIGGER",
+      disabled: null,
+    }[trigger.status];
+    if (!mode) return [];
+    return [
+      `ALTER TABLE ${qualifiedSnapshotTable(trigger)} ${mode} ${quoteIdentifier(trigger.trigger)};`,
+    ];
   }).join("\n")}\n`;
 }
 

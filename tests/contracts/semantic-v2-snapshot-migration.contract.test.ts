@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   buildAddSnapshotForeignKeysSql,
+  buildDisableSnapshotTriggersSql,
   buildDropSnapshotForeignKeysSql,
+  buildRestoreSnapshotTriggersSql,
   buildSnapshotDumpArguments,
   buildTargetSnapshotGuardSql,
   buildTenantRemapSql,
@@ -12,6 +14,7 @@ import {
   SNAPSHOT_ABORT_SQL,
   type SnapshotTable,
   type SnapshotForeignKey,
+  type SnapshotTrigger,
 } from "../../scripts/lib/semantic-v2-snapshot-migration.js";
 
 const tables: SnapshotTable[] = [
@@ -23,6 +26,13 @@ const foreignKeys: SnapshotForeignKey[] = [{
   table: "ls_sales",
   constraint: "ls_sales_shop_fk",
   definition: "FOREIGN KEY (tenant_id, shop_id) REFERENCES source_lightspeed.ls_shops(tenant_id, shop_id)",
+}];
+const triggers: SnapshotTrigger[] = [{
+  schema: "source_lightspeed",
+  table: "ls_sales",
+  trigger: "protect_sync_run",
+  definition: "CREATE TRIGGER protect_sync_run BEFORE UPDATE ON source_lightspeed.ls_sales FOR EACH ROW EXECUTE FUNCTION core.protect_canonical_sync_run()",
+  status: "origin",
 }];
 
 test("snapshot transfer allowlists exact tenant tables and never puts credentials in process arguments", () => {
@@ -65,6 +75,25 @@ test("foreign keys are removed and exactly recreated inside the restore transact
   );
 });
 
+test("named user triggers are disabled and restored to their exact modes", () => {
+  assert.equal(
+    buildDisableSnapshotTriggersSql(triggers),
+    'ALTER TABLE "source_lightspeed"."ls_sales" DISABLE TRIGGER "protect_sync_run";\n',
+  );
+  assert.equal(
+    buildRestoreSnapshotTriggersSql(triggers),
+    'ALTER TABLE "source_lightspeed"."ls_sales" ENABLE TRIGGER "protect_sync_run";\n',
+  );
+  assert.equal(
+    buildRestoreSnapshotTriggersSql([{ ...triggers[0]!, status: "replica" }]),
+    'ALTER TABLE "source_lightspeed"."ls_sales" ENABLE REPLICA TRIGGER "protect_sync_run";\n',
+  );
+  assert.equal(
+    buildDisableSnapshotTriggersSql([{ ...triggers[0]!, status: "disabled" }]),
+    "\n",
+  );
+});
+
 test("target guard locks every table and aborts if any target row exists", () => {
   const sql = buildTargetSnapshotGuardSql(tables);
   assert.match(sql, /^LOCK TABLE /u);
@@ -103,6 +132,8 @@ test("migration entry point is explicit, atomic, receipt-bound, and never stages
   assert.match(source, /dump\.kill\("SIGTERM"\)/u);
   assert.match(source, /buildDropSnapshotForeignKeysSql/u);
   assert.match(source, /buildAddSnapshotForeignKeysSql/u);
+  assert.match(source, /buildDisableSnapshotTriggersSql/u);
+  assert.match(source, /buildRestoreSnapshotTriggersSql/u);
   assert.match(source, /dump\.stdout\.pipe\(restore\.stdin/u);
   assert.doesNotMatch(source, /writeFile|mkdtemp|tmpdir/u);
   assert.match(snapshotReceiptDigest({ b: 2, a: 1 }), /^[a-f0-9]{64}$/u);

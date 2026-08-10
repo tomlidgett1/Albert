@@ -5,7 +5,9 @@ import pg from "pg";
 import { bindSemanticV2LiveProject } from "./lib/semantic-v2-schema-audit.js";
 import {
   buildAddSnapshotForeignKeysSql,
+  buildDisableSnapshotTriggersSql,
   buildDropSnapshotForeignKeysSql,
+  buildRestoreSnapshotTriggersSql,
   buildSnapshotDumpArguments,
   buildTargetSnapshotGuardSql,
   buildTenantRemapSql,
@@ -16,6 +18,7 @@ import {
   V2_SNAPSHOT_SCHEMAS,
   type SnapshotTable,
   type SnapshotForeignKey,
+  type SnapshotTrigger,
 } from "./lib/semantic-v2-snapshot-migration.js";
 
 const { Client } = pg;
@@ -113,6 +116,47 @@ async function foreignKeyContract(
     });
 }
 
+async function triggerContract(
+  client: pg.Client,
+  tables: readonly SnapshotTable[],
+): Promise<SnapshotTrigger[]> {
+  const allowed = new Set(tables.map((table) => `${table.schema}.${table.table}`));
+  const result = await client.query<{
+    schema_name: SnapshotTrigger["schema"];
+    table_name: string;
+    trigger_name: string;
+    definition: string;
+    status: "O" | "D" | "R" | "A";
+  }>(
+    `SELECT namespace.nspname AS schema_name,class.relname AS table_name,
+            trigger_record.tgname AS trigger_name,
+            pg_catalog.pg_get_triggerdef(trigger_record.oid,false) AS definition,
+            trigger_record.tgenabled AS status
+       FROM pg_catalog.pg_trigger AS trigger_record
+       JOIN pg_catalog.pg_class AS class ON class.oid=trigger_record.tgrelid
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=class.relnamespace
+      WHERE NOT trigger_record.tgisinternal
+        AND namespace.nspname=ANY($1::text[])
+      ORDER BY namespace.nspname,class.relname,trigger_record.tgname`,
+    [[...V2_SNAPSHOT_SCHEMAS]],
+  );
+  const statuses = {
+    O: "origin",
+    D: "disabled",
+    R: "replica",
+    A: "always",
+  } as const;
+  return result.rows
+    .filter((row) => allowed.has(`${row.schema_name}.${row.table_name}`))
+    .map((row) => ({
+      schema: row.schema_name,
+      table: row.table_name,
+      trigger: row.trigger_name,
+      definition: row.definition,
+      status: statuses[row.status],
+    }));
+}
+
 async function counts(
   client: pg.Client,
   tables: readonly SnapshotTable[],
@@ -160,6 +204,7 @@ async function streamSnapshot(input: Readonly<{
   targetTenantId: string;
   sourceSnapshotId: string;
   foreignKeys: readonly SnapshotForeignKey[];
+  triggers: readonly SnapshotTrigger[];
 }>): Promise<void> {
   const dump = spawn("pg_dump", [
     ...buildSnapshotDumpArguments(input.tables, input.sourceSnapshotId),
@@ -188,6 +233,7 @@ async function streamSnapshot(input: Readonly<{
   const restoreError = collectSafeError(restore.stderr);
   restore.stdin.write(
     buildTargetSnapshotGuardSql(input.tables)
+    + buildDisableSnapshotTriggersSql(input.triggers)
     + buildDropSnapshotForeignKeysSql(input.foreignKeys),
   );
   dump.stdout.pipe(restore.stdin, { end: false });
@@ -232,7 +278,9 @@ async function streamSnapshot(input: Readonly<{
         input.tables,
         input.sourceTenantId,
         input.targetTenantId,
-      ) + buildAddSnapshotForeignKeysSql(input.foreignKeys));
+      )
+        + buildAddSnapshotForeignKeysSql(input.foreignKeys)
+        + buildRestoreSnapshotTriggersSql(input.triggers));
     }
     restoreResult = await restoreCompletion;
   }
@@ -269,6 +317,7 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
   let before: Record<string, number>;
   let sourceSnapshotId: string;
   let foreignKeys: SnapshotForeignKey[];
+  let triggers: SnapshotTrigger[];
   try {
     await Promise.all([
       source.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
@@ -303,6 +352,16 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       "Source and target snapshot foreign-key contracts differ.",
     );
     foreignKeys = sourceForeignKeys;
+    const [sourceTriggers, targetTriggers] = await Promise.all([
+      triggerContract(source, tables),
+      triggerContract(target, tables),
+    ]);
+    assert.deepEqual(
+      targetTriggers,
+      sourceTriggers,
+      "Source and target snapshot trigger contracts differ.",
+    );
+    triggers = sourceTriggers;
     const sourceAll = await counts(source, tables);
     const sourceTenant = await counts(source, tables, sourceTenantId);
     const targetAll = await counts(target, tables);
@@ -336,6 +395,7 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       targetTenantId,
       sourceSnapshotId,
       foreignKeys,
+      triggers,
     });
   } finally {
     await source.query("ROLLBACK").catch(() => undefined);

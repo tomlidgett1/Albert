@@ -38,7 +38,10 @@ are identical and validated, temporarily removes those exact constraints,
 loads the circular data graph, then recreates and validates each exact
 constraint before commit. This is compatible with Supabase's managed
 `postgres` role and does not require superuser-only trigger suppression. It also
-rechecks that the target is empty, restores the rows, and remaps the tenant with
+proves the exact non-internal trigger contract, transactionally disables only
+those named user triggers during load and tenant remapping, and restores every
+original trigger mode before commit. System triggers are never disabled. It
+also rechecks that the target is empty, restores the rows, and remaps the tenant with
 `ON_ERROR_STOP`. A failed or interrupted dump injects a deliberately invalid
 statement so even a syntactically valid partial stream must roll back. An early
 restore exit immediately terminates the source dump rather than leaving an
