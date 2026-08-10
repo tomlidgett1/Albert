@@ -501,11 +501,34 @@ async function run(): Promise<void> {
 
     const orderLines = batches.get("ls_purchase_order_lines");
     assert.ok(orderLines);
-    await assert.rejects(
-      pipeline.transformBatch(orderLines.transform, orderLines.stream, orderLines.domains, false, false),
-      /canonical_reference_missing:supplier:Vendor:802/u,
-      "A present projected vendor_id must never degrade to a null supplier foreign key.",
+    const unresolvedOrderLine = await pipeline.transformBatch(
+      orderLines.transform,
+      orderLines.stream,
+      orderLines.domains,
+      false,
+      false,
     );
+    assert.equal(
+      unresolvedOrderLine.quarantinedRows,
+      1,
+      "A present projected vendor_id must be quarantined instead of degrading to a null supplier foreign key.",
+    );
+    const unresolvedReference = await database.query<{
+      error_code: string;
+      error_path: string | null;
+      status: string;
+    }>(
+      `select error_code,error_path,status
+         from ingestion.quarantine_records
+        where tenant_id=$1 and payload_batch_id=$2
+        order by quarantine_id`,
+      [tenantId, orderLines.job.batchId],
+    );
+    assert.deepEqual(unresolvedReference.rows, [{
+      error_code: "canonical.canonical_reference_missing",
+      error_path: "$projection",
+      status: "open",
+    }]);
     assert.equal(
       await scalarCount(
         database,
