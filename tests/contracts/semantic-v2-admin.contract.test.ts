@@ -32,6 +32,10 @@ const receiptAttestation = readFileSync(
   "packages/semantic-registry/src/profile-receipt-attestation.ts",
   "utf8",
 );
+const adminPostgrestBoundary = readFileSync(
+  "infra/migrations/control-plane/0106_m6_semantic_admin_postgrest_boundary.sql",
+  "utf8",
+);
 
 test("semantic administration is internal-only and uses immutable draft/publication workflows", () => {
   assert.match(route, /isInternalOperator/u);
@@ -64,7 +68,8 @@ test("semantic administration is internal-only and uses immutable draft/publicat
   assert.match(route, /diffDraftFromBase/u);
   assert.match(route, /diffSemanticRegistryV2/u);
   assert.match(route, /content-addressed integrity check/u);
-  assert.match(route, /semantic_v2_profile_receipts/u);
+  assert.match(route, /albert_semantic_v2_admin_profile_receipt/u);
+  assert.doesNotMatch(route, /\.schema\("control_plane"\)/u);
   assert.match(
     route,
     /registered profile does not prove a safe many-to-one target/iu,
@@ -76,8 +81,29 @@ test("semantic administration is internal-only and uses immutable draft/publicat
   assert.match(route, /executableSqlDisclosed: false/u);
   assert.match(route, /evaluationCorpusSummary/u);
   assert.match(route, /\.length\(200\)/u);
-  assert.match(route, /semantic_runtime_events_v2/u);
+  assert.match(route, /albert_semantic_v2_admin_state/u);
   assert.match(route, /privacy-preserving V2 runtime event/u);
+});
+
+test("semantic administration stays behind narrow public RPCs without exposing the control schema", () => {
+  for (const routine of [
+    "albert_semantic_v2_admin_state",
+    "albert_semantic_v2_admin_profile_receipt",
+    "albert_semantic_v2_admin_load_draft",
+    "albert_semantic_v2_admin_load_publication",
+    "albert_semantic_v2_admin_load_initial_revision",
+    "albert_semantic_v2_create_draft_from_current",
+    "albert_semantic_v2_admin_register_profile_receipt",
+    "albert_semantic_v2_admin_record_validation",
+  ]) {
+    assert.match(adminPostgrestBoundary, new RegExp(routine, "u"));
+  }
+  assert.match(adminPostgrestBoundary, /control_plane\.is_internal_operator\(\)/u);
+  assert.match(
+    adminPostgrestBoundary,
+    /REVOKE ALL ON FUNCTION[\s\S]*FROM PUBLIC,anon,service_role/u,
+  );
+  assert.doesNotMatch(adminPostgrestBoundary, /GRANT[^;]+TO (?:anon|service_role)/iu);
 });
 
 test("the admin surface can edit every semantic object contract and version tenant context", () => {

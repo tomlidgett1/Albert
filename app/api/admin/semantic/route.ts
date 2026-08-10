@@ -160,6 +160,40 @@ const profileReceiptSchema = z
       .strict(),
   })
   .passthrough();
+const semanticAdminPersistenceSchema = z
+  .object({
+    drafts: z.array(z.record(z.string(), z.unknown())),
+    draftCount: z.number().int().nonnegative(),
+    active: z.record(z.string(), z.unknown()).nullable(),
+    publications: z.array(z.record(z.string(), z.unknown())),
+    qualifications: z.array(z.record(z.string(), z.unknown())),
+    validations: z.array(z.record(z.string(), z.unknown())),
+    reviews: z.array(z.record(z.string(), z.unknown())),
+    profileReceipts: z.array(z.record(z.string(), z.unknown())),
+    contextValues: z.array(z.record(z.string(), z.unknown())),
+    runtimeEvents: z.array(z.record(z.string(), z.unknown())),
+  })
+  .strict();
+const semanticAdminProfileRowSchema = z
+  .object({
+    profile_receipt_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    publication_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    tenant_digest: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["complete", "incomplete"]),
+    artifact: profileReceiptSchema,
+    created_at: z.string(),
+  })
+  .strict();
+const semanticAdminDraftRowSchema = z
+  .object({
+    draft_id: z.string().min(1),
+    base_publication_hash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+    revision: z.number().int().positive(),
+    manifest: semanticRegistryDocumentV2Schema,
+    manifest_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.string().min(1),
+  })
+  .strict();
 const relationshipPromotionFields = {
   candidateId: z.string().min(1),
   targetViewId: z.string().min(1),
@@ -487,92 +521,10 @@ async function loadSemanticHealth() {
 
 async function persistenceSummary() {
   const { supabase } = await requireUser();
-  const control = supabase.schema("control_plane");
-  const [
-    drafts,
-    active,
-    publications,
-    qualifications,
-    validations,
-    reviews,
-    profileReceipts,
-    contextValues,
-    runtimeEvents,
-  ] = await Promise.all([
-    control
-      .from("semantic_v2_drafts")
-      .select("draft_id,name,revision,status,manifest_hash,updated_at", {
-        count: "exact",
-      })
-      .order("updated_at", { ascending: false })
-      .limit(30),
-    control
-      .from("semantic_v2_active_publication")
-      .select("publication_hash,previous_publication_hash,activated_at")
-      .eq("singleton", true)
-      .maybeSingle(),
-    control
-      .from("semantic_v2_publications")
-      .select(
-        "publication_hash,registry_version,object_counts,source_draft_id,source_draft_revision,created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(30),
-    control
-      .from("semantic_v2_activation_qualifications")
-      .select("publication_hash,commit_sha,status,created_at")
-      .order("created_at", { ascending: false })
-      .limit(30),
-    control
-      .from("semantic_v2_validation_reports")
-      .select(
-        "validation_id,draft_id,draft_revision,manifest_hash,status,issues,deterministic_test_receipt,created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(60),
-    control
-      .from("semantic_v2_object_reviews")
-      .select(
-        "draft_id,draft_revision,object_id,risk_tier,disposition,reviewer_id,created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(500),
-    control
-      .from("semantic_v2_profile_receipts")
-      .select(
-        "profile_receipt_hash,publication_hash,tenant_digest,status,created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(100),
-    control
-      .from("business_context_v2")
-      .select("context_id,context_key,version,value,source,evidence,valid_from")
-      .is("valid_to", null)
-      .order("context_key")
-      .limit(500),
-    control
-      .from("semantic_runtime_events_v2")
-      .select(
-        "event_id,turn_id,publication_hash,event_kind,reason_code,question_digest,topic_ids,object_ids,detail,created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(500),
-  ]);
-  const responses = [
-    drafts,
-    active,
-    publications,
-    qualifications,
-    validations,
-    reviews,
-    profileReceipts,
-    contextValues,
-    runtimeEvents,
-  ];
-  const unavailable = responses.some(
-    ({ error }) => error?.code === "42P01" || error?.code === "PGRST205",
+  const { data, error } = await supabase.rpc(
+    "albert_semantic_v2_admin_state",
   );
-  if (unavailable)
+  if (error?.code === "42883" || error?.code === "PGRST202")
     return {
       available: false,
       drafts: [],
@@ -585,23 +537,15 @@ async function persistenceSummary() {
       runtimeEvents: [],
       active: null,
     };
-  if (responses.some(({ error }) => error))
+  if (error)
     throw new ControlPlaneError(
       "Semantic authoring state could not be loaded.",
       503,
     );
+  const state = semanticAdminPersistenceSchema.parse(data);
   return {
     available: true,
-    drafts: drafts.data ?? [],
-    draftCount: drafts.count ?? 0,
-    publications: publications.data ?? [],
-    qualifications: qualifications.data ?? [],
-    validations: validations.data ?? [],
-    reviews: reviews.data ?? [],
-    profileReceipts: profileReceipts.data ?? [],
-    contextValues: contextValues.data ?? [],
-    runtimeEvents: runtimeEvents.data ?? [],
-    active: active.data ?? null,
+    ...state,
   };
 }
 
@@ -611,22 +555,19 @@ async function relationshipResolutionEvidence(
 ): Promise<ReadonlyMap<string, Record<string, unknown>>> {
   const { supabase } = await requireUser();
   const { data, error } = await supabase
-    .schema("control_plane")
-    .from("semantic_v2_profile_receipts")
-    .select("profile_receipt_hash,publication_hash,status,artifact,created_at")
-    .eq("publication_hash", publicationHash)
-    .eq("status", "complete")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error?.code === "42P01" || error?.code === "PGRST205") return new Map();
+    .rpc("albert_semantic_v2_admin_profile_receipt", {
+      p_profile_receipt_hash: null,
+      p_publication_hash: publicationHash,
+    });
+  if (error?.code === "42883" || error?.code === "PGRST202") return new Map();
   if (error)
     throw new ControlPlaneError(
       "Relationship profiling evidence could not be loaded.",
       503,
     );
   if (!data) return new Map();
-  const receipt = profileReceiptSchema.parse(data.artifact);
+  const profileRow = semanticAdminProfileRowSchema.parse(data);
+  const receipt = profileRow.artifact;
   const resolutions = planSemanticRelationshipResolutionsV2(
     document,
     receipt as unknown as RelationshipProfileReceiptV2,
@@ -636,9 +577,9 @@ async function relationshipResolutionEvidence(
       resolution.candidateId,
       {
         ...resolution,
-        profileReceiptHash: data.profile_receipt_hash,
-        profilePublicationHash: data.publication_hash,
-        profiledAt: data.created_at,
+        profileReceiptHash: profileRow.profile_receipt_hash,
+        profilePublicationHash: profileRow.publication_hash,
+        profiledAt: profileRow.created_at,
       },
     ]),
   );
@@ -1441,28 +1382,25 @@ function promoteRelationshipCandidate(
 
 async function loadDraft(draftId: string, expectedRevision: number) {
   const { supabase, user } = await requireUser();
-  const { data, error } = await supabase
-    .schema("control_plane")
-    .from("semantic_v2_drafts")
-    .select(
-      "draft_id,base_publication_hash,revision,manifest,manifest_hash,status",
-    )
-    .eq("draft_id", draftId)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc(
+    "albert_semantic_v2_admin_load_draft",
+    { p_draft_id: draftId },
+  );
   if (error)
     throw new ControlPlaneError("The semantic draft could not be loaded.", 503);
   if (!data)
     throw new ControlPlaneError("The semantic draft was not found.", 404);
-  if (data.revision !== expectedRevision)
+  const row = semanticAdminDraftRowSchema.parse(data);
+  if (row.revision !== expectedRevision)
     throw new ControlPlaneError(
-      `Draft revision conflict. Current revision is ${data.revision}.`,
+      `Draft revision conflict. Current revision is ${row.revision}.`,
       409,
     );
   return {
     supabase,
     user,
-    row: data,
-    document: semanticRegistryDocumentV2Schema.parse(data.manifest),
+    row,
+    document: row.manifest,
   };
 }
 
@@ -1475,12 +1413,13 @@ async function requirePromotionProfile(
 ): Promise<void> {
   let receipt = cache.get(input.profileReceiptHash);
   if (!receipt) {
-    const profileRow = await loaded.supabase
-      .schema("control_plane")
-      .from("semantic_v2_profile_receipts")
-      .select("publication_hash,status,artifact")
-      .eq("profile_receipt_hash", input.profileReceiptHash)
-      .maybeSingle();
+    const profileRow = await loaded.supabase.rpc(
+      "albert_semantic_v2_admin_profile_receipt",
+      {
+        p_profile_receipt_hash: input.profileReceiptHash,
+        p_publication_hash: null,
+      },
+    );
     if (profileRow.error)
       throw new ControlPlaneError(
         "The profiling receipt could not be verified.",
@@ -1491,12 +1430,13 @@ async function requirePromotionProfile(
         "Register the immutable profiling receipt before promoting this relationship.",
         422,
       );
-    receipt = profileReceiptSchema.parse(profileRow.data.artifact);
+    const storedProfile = semanticAdminProfileRowSchema.parse(profileRow.data);
+    receipt = storedProfile.artifact;
     const expectedProfilePublication =
       loaded.row.base_publication_hash ??
       SEMANTIC_V2_ADMIN_FALLBACK.publicationHash;
     if (
-      profileRow.data.status !== "complete" ||
+      storedProfile.status !== "complete" ||
       receipt.status !== "complete" ||
       receipt.errors.length > 0
     )
@@ -1505,7 +1445,7 @@ async function requirePromotionProfile(
         422,
       );
     if (
-      profileRow.data.publication_hash !== expectedProfilePublication ||
+      storedProfile.publication_hash !== expectedProfilePublication ||
       receipt.publicationHash !== expectedProfilePublication
     )
       throw new ControlPlaneError(
@@ -1553,12 +1493,10 @@ async function diffDraftFromBase(
 ) {
   let baseDocument: SemanticRegistryDocumentV2;
   if (loaded.row.base_publication_hash) {
-    const { data, error } = await loaded.supabase
-      .schema("control_plane")
-      .from("semantic_v2_publications")
-      .select("artifact")
-      .eq("publication_hash", loaded.row.base_publication_hash)
-      .maybeSingle();
+    const { data, error } = await loaded.supabase.rpc(
+      "albert_semantic_v2_admin_load_publication",
+      { p_publication_hash: loaded.row.base_publication_hash },
+    );
     if (error)
       throw new ControlPlaneError(
         "The draft base publication could not be loaded for review.",
@@ -1572,7 +1510,12 @@ async function diffDraftFromBase(
     const artifact = z
       .object({ manifest: semanticRegistryDocumentV2Schema })
       .passthrough()
-      .parse(data.artifact);
+      .parse(
+        z
+          .object({ artifact: z.unknown() })
+          .passthrough()
+          .parse(data).artifact,
+      );
     baseDocument = artifact.manifest;
     if (
       createSemanticPublicationV2(baseDocument).publicationHash !==
@@ -1583,14 +1526,10 @@ async function diffDraftFromBase(
         409,
       );
   } else {
-    const { data, error } = await loaded.supabase
-      .schema("control_plane")
-      .from("semantic_v2_draft_revisions")
-      .select("manifest,manifest_hash,revision")
-      .eq("draft_id", loaded.row.draft_id)
-      .order("revision", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+    const { data, error } = await loaded.supabase.rpc(
+      "albert_semantic_v2_admin_load_initial_revision",
+      { p_draft_id: loaded.row.draft_id },
+    );
     if (error)
       throw new ControlPlaneError(
         "The initial draft revision could not be loaded for review.",
@@ -1601,8 +1540,16 @@ async function diffDraftFromBase(
         "The initial draft revision is missing; publication review cannot continue.",
         409,
       );
-    baseDocument = semanticRegistryDocumentV2Schema.parse(data.manifest);
-    if (semanticRegistryV2Digest(baseDocument) !== data.manifest_hash)
+    const initialRevision = z
+      .object({
+        manifest: semanticRegistryDocumentV2Schema,
+        manifest_hash: z.string().regex(/^[a-f0-9]{64}$/),
+        revision: z.number().int().positive(),
+      })
+      .strict()
+      .parse(data);
+    baseDocument = initialRevision.manifest;
+    if (semanticRegistryV2Digest(baseDocument) !== initialRevision.manifest_hash)
       throw new ControlPlaneError(
         "The initial draft revision failed its manifest integrity check.",
         409,
@@ -1767,30 +1714,17 @@ export async function POST(request: Request) {
     if (input.action === "create_draft") {
       const { supabase } = await requireUser();
       const draftId = ulid();
-      const active = await supabase
-        .schema("control_plane")
-        .from("semantic_v2_active_publication")
-        .select("publication_hash")
-        .eq("singleton", true)
-        .maybeSingle();
-      if (active.error && active.error.code !== "PGRST116")
-        throw new ControlPlaneError(
-          "The active publication could not be checked.",
-          503,
-        );
       const document =
         semanticRegistryDocumentV2Schema.parse(generatedRegistry);
-      const { data, error } = active.data
-        ? await supabase.rpc("albert_semantic_v2_create_draft_from_active", {
-            p_draft_id: draftId,
-            p_name: input.name,
-          })
-        : await supabase.rpc("albert_semantic_v2_create_draft", {
-            p_draft_id: draftId,
-            p_name: input.name,
-            p_manifest: document,
-            p_manifest_hash: semanticRegistryV2Digest(document),
-          });
+      const { data, error } = await supabase.rpc(
+        "albert_semantic_v2_create_draft_from_current",
+        {
+          p_draft_id: draftId,
+          p_name: input.name,
+          p_manifest: document,
+          p_manifest_hash: semanticRegistryV2Digest(document),
+        },
+      );
       if (error)
         throw new ControlPlaneError(
           "The semantic draft could not be created.",
@@ -1802,32 +1736,36 @@ export async function POST(request: Request) {
       const receipt = profileReceiptSchema.parse(input.receipt);
       verifyProfileReceiptAttestation(receipt);
       const profileReceiptHash = semanticProfileReceiptDigestV2(receipt);
-      const { supabase, user } = await requireUser();
-      const { error } = await supabase
-        .schema("control_plane")
-        .from("semantic_v2_profile_receipts")
-        .insert({
-          profile_receipt_hash: profileReceiptHash,
-          publication_hash: receipt.publicationHash,
-          tenant_digest: receipt.tenantDigest,
-          status: receipt.status,
-          artifact: receipt,
-          created_by: user.id,
-        });
-      if (error && error.code !== "23505")
+      const { supabase } = await requireUser();
+      const { data, error } = await supabase.rpc(
+        "albert_semantic_v2_admin_register_profile_receipt",
+        {
+          p_profile_receipt_hash: profileReceiptHash,
+          p_publication_hash: receipt.publicationHash,
+          p_tenant_digest: receipt.tenantDigest,
+          p_status: receipt.status,
+          p_artifact: receipt,
+        },
+      );
+      if (error)
         throw new ControlPlaneError(
           "The immutable profiling receipt could not be registered.",
           503,
         );
+      const registration = z
+        .object({
+          profileReceiptHash: z.string().regex(/^[a-f0-9]{64}$/),
+          publicationHash: z.string().regex(/^[a-f0-9]{64}$/),
+          status: z.enum(["complete", "incomplete"]),
+          inserted: z.boolean(),
+        })
+        .strict()
+        .parse(data);
       return Response.json(
         {
-          profileReceipt: {
-            profileReceiptHash,
-            publicationHash: receipt.publicationHash,
-            status: receipt.status,
-          },
+          profileReceipt: registration,
         },
-        { status: error?.code === "23505" ? 200 : 201 },
+        { status: registration.inserted ? 201 : 200 },
       );
     }
     if (input.action === "activate_publication") {
@@ -2274,17 +2212,17 @@ export async function POST(request: Request) {
     const validationId = ulid();
     const publication =
       issues.length === 0 ? createSemanticPublicationV2(loaded.document) : null;
-    const { error } = await loaded.supabase
-      .schema("control_plane")
-      .from("semantic_v2_validation_reports")
-      .insert({
-        validation_id: validationId,
-        draft_id: input.draftId,
-        draft_revision: input.expectedRevision,
-        manifest_hash: loaded.row.manifest_hash,
-        status: issues.length === 0 ? "passed" : "failed",
-        issues,
-        deterministic_test_receipt: {
+    const validationStatus = issues.length === 0 ? "passed" : "failed";
+    const { error } = await loaded.supabase.rpc(
+      "albert_semantic_v2_admin_record_validation",
+      {
+        p_validation_id: validationId,
+        p_draft_id: input.draftId,
+        p_expected_revision: input.expectedRevision,
+        p_manifest_hash: loaded.row.manifest_hash,
+        p_status: validationStatus,
+        p_issues: issues,
+        p_deterministic_test_receipt: {
           status: issues.length === 0 ? "passed" : "failed",
           suite: "semantic_authoring_contracts_v2",
           checks: [
@@ -2298,8 +2236,8 @@ export async function POST(request: Request) {
           ],
           modelEvaluationTriggered: false,
         },
-        created_by: loaded.user.id,
-      });
+      },
+    );
     if (error)
       throw new ControlPlaneError(
         "The validation report could not be persisted.",
@@ -2308,7 +2246,7 @@ export async function POST(request: Request) {
     return Response.json({
       validation: {
         id: validationId,
-        status: issues.length === 0 ? "passed" : "failed",
+        status: validationStatus,
         issues,
         publicationHash: publication?.publicationHash ?? null,
       },
