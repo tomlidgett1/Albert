@@ -221,7 +221,7 @@ test("semantic publication review presents an object-aware risk-tiered draft dif
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
-  await installAppApiRoutes(page, {
+  const capture = await installAppApiRoutes(page, {
     internalOperator: true,
     semanticDraft: true,
   });
@@ -267,6 +267,60 @@ test("semantic publication review presents an object-aware risk-tiered draft dif
   ).toBeVisible();
   await expect(diff.getByText(/expression, authority/u)).toBeVisible();
   await expect(diff.getByText("Tier 1", { exact: true })).toBeVisible();
+
+  const reviewGate = semanticAdmin.getByRole("region", {
+    name: "Semantic publication review gate",
+  });
+  await expect(reviewGate).toBeVisible();
+  await expect(
+    reviewGate.getByText("Required objects", { exact: true }).locator("..").locator("dd"),
+  ).toHaveText("2");
+  await reviewGate
+    .getByRole("button", { name: "Open review queue" })
+    .click();
+  const reviewDialog = page.getByRole("dialog", {
+    name: "Review required semantic objects",
+  });
+  await expect(reviewDialog).toBeVisible();
+  await expect(
+    reviewDialog.getByText(/Tier 1 still requires a second independent reviewer/iu),
+  ).toBeVisible();
+  await reviewDialog
+    .getByRole("button", { name: "Select up to 100 visible" })
+    .click();
+  await reviewDialog
+    .getByRole("textbox", { name: "Review evidence and notes" })
+    .fill("Checked formulas, source authority, grain, and evidence fixtures.");
+  await reviewDialog
+    .getByRole("checkbox", {
+      name: /I confirm I personally reviewed every selected object/iu,
+    })
+    .check();
+  await reviewDialog
+    .getByRole("button", { name: "Record 2 decisions" })
+    .click();
+  await expect
+    .poll(
+      () =>
+        capture.semanticPayloads.filter(
+          (payload) =>
+            (payload as { action?: string }).action === "batch_review_objects",
+        ).length,
+    )
+    .toBe(1);
+  const reviewPayload = capture.semanticPayloads.find(
+    (payload) =>
+      (payload as { action?: string }).action === "batch_review_objects",
+  ) as { reviews: Array<{ disposition: string; notes: string }> };
+  expect(reviewPayload.reviews).toHaveLength(2);
+  expect(
+    reviewPayload.reviews.every(
+      ({ disposition, notes }) =>
+        disposition === "approved" && notes.includes("source authority"),
+    ),
+  ).toBe(true);
+  await reviewDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(reviewDialog).toBeHidden();
 
   await semanticAdmin
     .getByRole("button", { name: "Relationships", exact: true })

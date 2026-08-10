@@ -204,6 +204,21 @@ const semanticAdminValidationResultSchema = z
     idempotentReplay: z.boolean(),
   })
   .strict();
+const semanticAdminReviewBatchResultSchema = z
+  .object({
+    draftId: z.string().min(1),
+    revision: z.number().int().positive(),
+    recorded: z.number().int().min(1).max(100),
+    reviews: z.array(z.record(z.string(), z.unknown())).min(1).max(100),
+  })
+  .strict();
+const semanticAdminDraftReviewsSchema = z
+  .object({
+    reviews: z.array(z.record(z.string(), z.unknown())).max(5000),
+    count: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+  })
+  .strict();
 const relationshipPromotionFields = {
   candidateId: z.string().min(1),
   targetViewId: z.string().min(1),
@@ -249,6 +264,17 @@ type RelationshipRejectionInput = Readonly<{
   reason: string;
   evidence: readonly string[];
 }>;
+const semanticReviewDecisionSchema = z
+  .object({
+    objectId: z.string().min(1).max(240),
+    riskTier: z.enum(["tier_1", "tier_2", "tier_3"]),
+    disposition: z.enum(["approved", "changes_requested", "sampled"]),
+    notes: z.string().max(2000).nullable().default(null),
+  })
+  .strict();
+const semanticBatchReviewDecisionSchema = semanticReviewDecisionSchema
+  .extend({ notes: z.string().trim().min(10).max(2000) })
+  .strict();
 const mutationSchema = z.discriminatedUnion("action", [
   z
     .object({
@@ -329,10 +355,24 @@ const mutationSchema = z.discriminatedUnion("action", [
       action: z.literal("review_object"),
       draftId: z.string().min(1),
       expectedRevision: z.number().int().positive(),
-      objectId: z.string().min(1),
-      riskTier: z.enum(["tier_1", "tier_2", "tier_3"]),
-      disposition: z.enum(["approved", "changes_requested", "sampled"]),
-      notes: z.string().max(2000).nullable().default(null),
+      ...semanticReviewDecisionSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("batch_review_objects"),
+      draftId: z.string().min(1),
+      expectedRevision: z.number().int().positive(),
+      reviews: z
+        .array(semanticBatchReviewDecisionSchema)
+        .min(1)
+        .max(100)
+        .refine(
+          (reviews) =>
+            new Set(reviews.map(({ objectId }) => objectId)).size ===
+            reviews.length,
+          "A semantic object may appear only once in a review batch.",
+        ),
     })
     .strict(),
   z
@@ -557,6 +597,144 @@ async function persistenceSummary() {
     available: true,
     ...state,
   };
+}
+
+async function loadDraftReviews(loaded: LoadedSemanticDraft) {
+  const { data, error } = await loaded.supabase.rpc(
+    "albert_semantic_v2_admin_draft_reviews",
+    {
+      p_draft_id: loaded.row.draft_id,
+      p_draft_revision: loaded.row.revision,
+    },
+  );
+  if (error)
+    throw new ControlPlaneError(
+      "The exact semantic draft reviews could not be loaded.",
+      503,
+    );
+  const result = semanticAdminDraftReviewsSchema.parse(data);
+  if (result.truncated || result.count !== result.reviews.length)
+    throw new ControlPlaneError(
+      "The exact semantic draft has more review evidence than the bounded admin projection can safely represent.",
+      409,
+    );
+  return result.reviews;
+}
+
+type SemanticReviewTier = "tier_1" | "tier_2";
+type SemanticReviewObjectType = "measure" | "relationship" | "topic" | "field";
+
+function semanticReviewQueue(
+  document: SemanticRegistryDocumentV2,
+  reviews: readonly Record<string, unknown>[],
+  draftId: string,
+  draftRevision: number,
+  currentReviewerId: string,
+) {
+  const requirements = new Map<
+    string,
+    {
+      objectId: string;
+      objectType: SemanticReviewObjectType;
+      label: string;
+      riskTier: SemanticReviewTier;
+    }
+  >();
+  const add = (
+    objectId: string,
+    objectType: SemanticReviewObjectType,
+    label: string,
+    riskTier: SemanticReviewTier,
+  ) => {
+    const existing = requirements.get(objectId);
+    if (existing && existing.objectType !== objectType)
+      throw new ControlPlaneError(
+        `Semantic review identity ${objectId} is not globally unique.`,
+        409,
+      );
+    requirements.set(objectId, { objectId, objectType, label, riskTier });
+  };
+
+  for (const measure of document.measures) {
+    if (
+      ["verified", "derived"].includes(measure.semanticState) &&
+      (measure.riskTier === "tier_1" || measure.riskTier === "tier_2")
+    )
+      add(measure.id, "measure", measure.label, measure.riskTier);
+  }
+  for (const relationship of document.relationships) {
+    if (["verified", "derived"].includes(relationship.semanticState))
+      add(
+        relationship.id,
+        "relationship",
+        relationship.id,
+        "tier_1",
+      );
+  }
+  for (const topic of document.topics) {
+    if (
+      topic.layer === "composite" &&
+      ["verified", "derived"].includes(topic.semanticState)
+    )
+      add(topic.id, "topic", topic.label, "tier_1");
+  }
+  for (const source of document.sourceObjects) {
+    for (const field of source.fields) {
+      if (field.pii || field.disposition === "sensitive_metadata")
+        add(field.id, "field", `${source.label} · ${field.name}`, "tier_1");
+    }
+  }
+
+  const relevantReviews = reviews.filter(
+    (review) =>
+      review.draft_id === draftId &&
+      review.draft_revision === draftRevision &&
+      typeof review.object_id === "string" &&
+      requirements.has(review.object_id),
+  );
+  return [...requirements.values()]
+    .map((requirement) => {
+      const objectReviews = relevantReviews.filter(
+        (review) => review.object_id === requirement.objectId,
+      );
+      const approvedReviewers = new Set(
+        objectReviews
+          .filter(
+            (review) =>
+              review.disposition === "approved" &&
+              typeof review.reviewer_id === "string",
+          )
+          .map((review) => String(review.reviewer_id)),
+      );
+      const requiredApprovals = requirement.riskTier === "tier_1" ? 2 : 1;
+      const currentReview = objectReviews.find(
+        (review) => review.reviewer_id === currentReviewerId,
+      );
+      const changesRequested = objectReviews.some(
+        (review) => review.disposition === "changes_requested",
+      );
+      return Object.freeze({
+        ...requirement,
+        requiredApprovals,
+        approvalCount: approvedReviewers.size,
+        remainingApprovals: Math.max(
+          0,
+          requiredApprovals - approvedReviewers.size,
+        ),
+        changesRequested,
+        complete: !changesRequested && approvedReviewers.size >= requiredApprovals,
+        currentReviewerDisposition:
+          typeof currentReview?.disposition === "string"
+            ? currentReview.disposition
+            : null,
+      });
+    })
+    .sort(
+      (left, right) =>
+        left.riskTier.localeCompare(right.riskTier) ||
+        left.objectType.localeCompare(right.objectType) ||
+        left.objectId.localeCompare(right.objectId),
+    );
 }
 
 async function relationshipResolutionEvidence(
@@ -1636,6 +1814,20 @@ export async function GET(request: Request) {
       section === "publications" && loadedDraft
         ? await diffDraftFromBase(loadedDraft)
         : null;
+    const draftReviews =
+      section === "publications" && loadedDraft
+        ? await loadDraftReviews(loadedDraft)
+        : [];
+    const reviewQueue =
+      section === "publications" && loadedDraft
+        ? semanticReviewQueue(
+            document,
+            draftReviews,
+            loadedDraft.row.draft_id,
+            loadedDraft.row.revision,
+            loadedDraft.user.id,
+          )
+        : null;
     const authoringContext =
       section === "measures" && objectId
         ? measureAuthoringContext(document, objectId)
@@ -1691,6 +1883,7 @@ export async function GET(request: Request) {
         semanticHealth,
         evaluationCorpus: evaluationCorpusPayload,
         draftDiff,
+        reviewQueue,
         ...(section === "overview" ||
         section === "health" ||
         section === "publications"
@@ -2174,6 +2367,43 @@ export async function POST(request: Request) {
           error.code === "40001" ? 409 : 503,
         );
       return Response.json({ draft: data, object: input.objectId });
+    }
+    if (input.action === "batch_review_objects") {
+      const { data, error } = await loaded.supabase.rpc(
+        "albert_semantic_v2_record_review_batch",
+        {
+          p_draft_id: input.draftId,
+          p_expected_revision: input.expectedRevision,
+          p_reviews: input.reviews.map((review) => ({
+            reviewId: ulid(),
+            objectId: review.objectId,
+            riskTier: review.riskTier,
+            disposition: review.disposition,
+            notes: review.notes,
+          })),
+        },
+      );
+      if (error)
+        throw new ControlPlaneError(
+          error.code === "40001"
+            ? "The draft changed before the review batch was recorded."
+            : error.code === "22023"
+              ? "The review batch contains an object, tier, or disposition that does not match the pinned semantic contract."
+              : "The semantic review batch could not be recorded.",
+          error.code === "40001" ? 409 : error.code === "22023" ? 422 : 503,
+        );
+      const reviewBatch = semanticAdminReviewBatchResultSchema.parse(data);
+      if (
+        reviewBatch.draftId !== input.draftId ||
+        reviewBatch.revision !== input.expectedRevision ||
+        reviewBatch.recorded !== input.reviews.length ||
+        reviewBatch.reviews.length !== input.reviews.length
+      )
+        throw new ControlPlaneError(
+          "The semantic review batch receipt did not match the submitted decisions.",
+          503,
+        );
+      return Response.json({ reviewBatch });
     }
     if (input.action === "review_object") {
       const { data, error } = await loaded.supabase.rpc(

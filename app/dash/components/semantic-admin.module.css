@@ -603,6 +603,76 @@
   align-self: flex-start;
   color: var(--dash-danger-text);
 }
+.reviewGate {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 16px;
+  background: var(--dash-surface);
+}
+.reviewGate > header {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--dash-border-soft);
+  background: var(--dash-surface-inset);
+  padding: 9px 12px 9px 14px;
+}
+.reviewGate > header > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.reviewGate b {
+  color: var(--dash-text-strong);
+  font-size: calc(11px * var(--text-scale));
+}
+.reviewGate small {
+  color: var(--dash-text-faint);
+  font-size: calc(8px * var(--text-scale));
+}
+.reviewGate button {
+  height: var(--dash-control-height);
+  border: 1px solid var(--dash-border-input);
+  border-radius: 8px;
+  background: var(--dash-surface);
+  color: var(--dash-text-body);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(9px * var(--text-scale));
+  font-weight: 650;
+  padding: 0 12px;
+}
+.reviewGate button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.reviewGate dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--dash-border-soft);
+  border-radius: 0;
+}
+.reviewGate dl > div {
+  min-height: 58px;
+  border-right: 1px solid var(--dash-border-soft);
+  padding: 10px 12px;
+}
+.reviewGate dl > div:last-child {
+  border-right: 0;
+}
+.reviewGate > p {
+  margin: 0;
+  padding: 11px 14px;
+  color: var(--dash-text-muted);
+  font-size: calc(8px * var(--text-scale));
+  line-height: 1.5;
+}
 .diffPanel {
   margin-top: 18px;
   overflow: hidden;
@@ -1015,6 +1085,98 @@
 .modal select {
   height: var(--dash-control-height);
   padding-block: 0;
+}
+.reviewQueueModal {
+  display: flex;
+  width: min(1040px, 100%);
+  max-height: calc(100vh - 36px);
+  flex-direction: column;
+  overflow: hidden;
+}
+.reviewQueueToolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 190px minmax(220px, auto);
+  align-items: end;
+  gap: 10px;
+}
+.reviewSelectionActions {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+}
+.reviewSelectionActions > span {
+  margin-right: auto;
+  color: var(--dash-text-muted);
+  font-size: calc(9px * var(--text-scale));
+  font-variant-numeric: tabular-nums;
+}
+.reviewQueueRows {
+  min-height: 180px;
+  max-height: 360px;
+  margin-top: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 10px;
+  background: var(--dash-surface-page);
+}
+.reviewQueueRows > p {
+  padding: 14px;
+}
+.modal .reviewQueueRows > label {
+  display: grid;
+  min-height: 52px;
+  grid-template-columns: 18px minmax(260px, 1fr) auto minmax(130px, auto);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  border-bottom: 1px solid var(--dash-border-soft);
+  padding: 7px 11px;
+  cursor: pointer;
+}
+.modal .reviewQueueRows > label:last-child {
+  border-bottom: 0;
+}
+.modal .reviewQueueRows > label > input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+.reviewQueueRows label > span:nth-of-type(1) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.reviewQueueRows b {
+  overflow: hidden;
+  color: var(--dash-text-strong);
+  font-size: calc(9px * var(--text-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reviewQueueRows small,
+.reviewQueueRows label > span:last-child {
+  color: var(--dash-text-faint);
+  font-size: calc(8px * var(--text-scale));
+}
+.reviewQueueRows em {
+  border-radius: 999px;
+  background: var(--dash-surface-control);
+  color: var(--dash-text-muted);
+  font-size: calc(8px * var(--text-scale));
+  font-style: normal;
+  padding: 4px 7px;
+}
+.reviewDecisionFields {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 0 10px;
+}
+.reviewDecisionFields .inlineToggle {
+  grid-column: 1 / -1;
 }
 .contractModal {
   width: min(760px, 100%);
@@ -1728,6 +1890,12 @@
   .healthPanel .diffSummary {
     grid-template-columns: repeat(3, 1fr);
   }
+  .reviewQueueToolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+  .reviewQueueToolbar .inlineToggle {
+    grid-column: 1 / -1;
+  }
   .healthDetails {
     grid-template-columns: 1fr;
   }
@@ -1823,6 +1991,25 @@
   .publicationRows > div {
     grid-template-columns: 1fr;
     align-items: flex-start;
+  }
+  .reviewGate > header,
+  .reviewSelectionActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .reviewGate dl,
+  .reviewQueueToolbar,
+  .reviewDecisionFields {
+    grid-template-columns: 1fr;
+  }
+  .reviewDecisionFields .inlineToggle {
+    grid-column: auto;
+  }
+  .modal .reviewQueueRows > label {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+  .reviewQueueRows label > span:last-child {
+    grid-column: 2 / -1;
   }
   .modal {
     border-radius: 24px;

@@ -694,6 +694,34 @@ function semanticAdminFixture(
           ],
         }
       : null,
+    reviewQueue: semanticDraft
+      ? [
+          {
+            objectId: "commerce.gross_margin",
+            objectType: "measure",
+            label: "Gross margin",
+            riskTier: "tier_1",
+            requiredApprovals: 2,
+            approvalCount: 0,
+            remainingApprovals: 2,
+            changesRequested: false,
+            complete: false,
+            currentReviewerDisposition: null,
+          },
+          {
+            objectId: "commerce.net_sales",
+            objectType: "measure",
+            label: "Net sales",
+            riskTier: "tier_2",
+            requiredApprovals: 1,
+            approvalCount: 0,
+            remainingApprovals: 1,
+            changesRequested: false,
+            complete: false,
+            currentReviewerDisposition: null,
+          },
+        ]
+      : null,
   };
 }
 
@@ -854,6 +882,19 @@ export async function installAppApiRoutes(
               },
               compilerFailure: null,
               modelEvaluationTriggered: false,
+            },
+          },
+        });
+        return;
+      }
+      if (payload.action === "batch_review_objects") {
+        await route.fulfill({
+          json: {
+            reviewBatch: {
+              draftId: payload.draftId,
+              revision: payload.expectedRevision,
+              recorded: payload.reviews.length,
+              reviews: payload.reviews,
             },
           },
         });

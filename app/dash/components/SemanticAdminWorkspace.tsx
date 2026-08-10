@@ -229,6 +229,22 @@ type SemanticAdminPayload = Readonly<{
       reason: string;
     }>;
   } | null;
+  reviewQueue?: Array<{
+    objectId: string;
+    objectType: "measure" | "relationship" | "topic" | "field";
+    label: string;
+    riskTier: "tier_1" | "tier_2";
+    requiredApprovals: number;
+    approvalCount: number;
+    remainingApprovals: number;
+    changesRequested: boolean;
+    complete: boolean;
+    currentReviewerDisposition:
+      | "approved"
+      | "changes_requested"
+      | "sampled"
+      | null;
+  }> | null;
   error?: string;
 }>;
 
@@ -1051,6 +1067,18 @@ export default function SemanticAdminWorkspace({
     string,
     unknown
   > | null>(null);
+  const [showReviewQueue, setShowReviewQueue] = useState(false);
+  const [reviewQuery, setReviewQuery] = useState("");
+  const [reviewTier, setReviewTier] = useState<"all" | "tier_1" | "tier_2">(
+    "all",
+  );
+  const [showMyReviewedObjects, setShowMyReviewedObjects] = useState(false);
+  const [reviewDisposition, setReviewDisposition] = useState<
+    "approved" | "changes_requested"
+  >("approved");
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const tabRow = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<Partial<Record<Section, HTMLButtonElement | null>>>(
@@ -1137,6 +1165,40 @@ export default function SemanticAdminWorkspace({
   }, [section, payload]);
 
   const items = useMemo(() => payload?.items ?? [], [payload]);
+  const reviewQueue = useMemo(
+    () => payload?.reviewQueue ?? [],
+    [payload?.reviewQueue],
+  );
+  const filteredReviewQueue = useMemo(() => {
+    const normalizedQuery = reviewQuery.trim().toLowerCase();
+    return reviewQueue.filter((item) => {
+      if (reviewTier !== "all" && item.riskTier !== reviewTier) return false;
+      if (
+        !showMyReviewedObjects &&
+        item.currentReviewerDisposition === "approved"
+      )
+        return false;
+      if (!normalizedQuery) return true;
+      return `${item.objectId} ${item.label} ${item.objectType}`
+        .toLowerCase()
+        .includes(normalizedQuery);
+    });
+  }, [reviewQueue, reviewQuery, reviewTier, showMyReviewedObjects]);
+  const visibleReviewQueue = filteredReviewQueue.slice(0, 100);
+  const reviewQueueSummary = useMemo(
+    () => ({
+      total: reviewQueue.length,
+      complete: reviewQueue.filter(({ complete }) => complete).length,
+      changesRequested: reviewQueue.filter(({ changesRequested }) =>
+        Boolean(changesRequested),
+      ).length,
+      awaitingCurrentReviewer: reviewQueue.filter(
+        ({ currentReviewerDisposition }) =>
+          currentReviewerDisposition !== "approved",
+      ).length,
+    }),
+    [reviewQueue],
+  );
   const createDraft = async () => {
     setSaving(true);
     setError("");
@@ -1656,6 +1718,81 @@ export default function SemanticAdminWorkspace({
       setSaving(false);
     }
   };
+  const toggleReviewSelection = (objectId: string) => {
+    setReviewConfirmed(false);
+    setSelectedReviewIds((current) =>
+      current.includes(objectId)
+        ? current.filter((item) => item !== objectId)
+        : current.length >= 100
+          ? current
+          : [...current, objectId],
+    );
+  };
+  const selectVisibleReviews = () => {
+    setReviewConfirmed(false);
+    setSelectedReviewIds(
+      visibleReviewQueue.slice(0, 100).map(({ objectId }) => objectId),
+    );
+  };
+  const submitReviewBatch = async () => {
+    if (!draft || selectedReviewIds.length === 0 || !reviewConfirmed) return;
+    const notes = reviewNotes.trim();
+    if (notes.length < 10) {
+      setError(
+        "Batch review notes must describe the evidence or checks performed in at least 10 characters.",
+      );
+      return;
+    }
+    const selectedItems = reviewQueue.filter(({ objectId }) =>
+      selectedReviewIds.includes(objectId),
+    );
+    if (selectedItems.length !== selectedReviewIds.length) {
+      setError("Refresh the review queue before recording these decisions.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/semantic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "batch_review_objects",
+          draftId: draft.id,
+          expectedRevision: draft.revision,
+          reviews: selectedItems.map((item) => ({
+            objectId: item.objectId,
+            riskTier: item.riskTier,
+            disposition: reviewDisposition,
+            notes,
+          })),
+        }),
+      });
+      const result = (await response.json()) as {
+        reviewBatch?: { recorded: number };
+        error?: string;
+      };
+      if (!response.ok || !result.reviewBatch)
+        throw new Error(
+          result.error || "The semantic review batch could not be recorded.",
+        );
+      setError(
+        `${result.reviewBatch.recorded} explicit ${humanize(reviewDisposition)} review decisions recorded atomically. Tier 1 objects still require two independent reviewers.`,
+      );
+      setSelectedReviewIds([]);
+      setReviewConfirmed(false);
+      setReviewNotes("");
+      await load();
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "The semantic review batch could not be recorded.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
   const publishDraft = async () => {
     if (!draft || !payload) return;
     const validation = payload.persistence.validations.find(
@@ -2078,6 +2215,56 @@ export default function SemanticAdminWorkspace({
               <dd>{payload.persistence.publications.length}</dd>
             </div>
           </dl>
+          {draft && payload.reviewQueue ? (
+            <section
+              className={styles.reviewGate}
+              aria-label="Semantic publication review gate"
+            >
+              <header>
+                <span>
+                  <b>Risk-tier publication review</b>
+                  <small>
+                    Exact draft r{draft.revision} · no inferred approvals
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedReviewIds([]);
+                    setReviewConfirmed(false);
+                    setShowReviewQueue(true);
+                  }}
+                  disabled={saving || reviewQueue.length === 0}
+                >
+                  Open review queue
+                </button>
+              </header>
+              <dl>
+                <div>
+                  <dt>Required objects</dt>
+                  <dd>{reviewQueueSummary.total}</dd>
+                </div>
+                <div>
+                  <dt>Governance complete</dt>
+                  <dd>{reviewQueueSummary.complete}</dd>
+                </div>
+                <div>
+                  <dt>Awaiting my review</dt>
+                  <dd>{reviewQueueSummary.awaitingCurrentReviewer}</dd>
+                </div>
+                <div>
+                  <dt>Changes requested</dt>
+                  <dd>{reviewQueueSummary.changesRequested}</dd>
+                </div>
+              </dl>
+              <p>
+                Tier 1 objects need approvals from two distinct internal
+                reviewers. A batch records only the signed-in reviewer’s
+                explicit decisions and never satisfies the second-reviewer gate
+                by itself.
+              </p>
+            </section>
+          ) : null}
           {draft && payload.draftDiff ? (
             <section
               className={styles.diffPanel}
@@ -2300,6 +2487,195 @@ export default function SemanticAdminWorkspace({
             </nav>
           ) : null}
         </>
+      ) : null}
+      {showReviewQueue && draft ? (
+        <div
+          className={styles.modalBackdrop}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowReviewQueue(false);
+              setSelectedReviewIds([]);
+              setReviewConfirmed(false);
+            }
+          }}
+        >
+          <section
+            className={`${styles.modal} ${styles.reviewQueueModal}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="semantic-review-queue"
+          >
+            <span>RISK-TIER REVIEW · DRAFT R{draft.revision}</span>
+            <h3 id="semantic-review-queue">Review required semantic objects</h3>
+            <p>
+              Select only objects you have actually reviewed. Each submission
+              is atomic and bounded to 100 decisions. Tier 1 still requires a
+              second independent reviewer.
+            </p>
+            <div className={styles.reviewQueueToolbar}>
+              <label>
+                Search review objects
+                <input
+                  type="search"
+                  value={reviewQuery}
+                  onChange={(event) => {
+                    setReviewQuery(event.target.value);
+                    setSelectedReviewIds([]);
+                    setReviewConfirmed(false);
+                  }}
+                />
+              </label>
+              <label>
+                Risk tier
+                <select
+                  value={reviewTier}
+                  onChange={(event) => {
+                    setReviewTier(
+                      event.target.value as "all" | "tier_1" | "tier_2",
+                    );
+                    setSelectedReviewIds([]);
+                    setReviewConfirmed(false);
+                  }}
+                >
+                  <option value="all">All required tiers</option>
+                  <option value="tier_1">Tier 1</option>
+                  <option value="tier_2">Tier 2</option>
+                </select>
+              </label>
+              <label className={styles.inlineToggle}>
+                <input
+                  type="checkbox"
+                  checked={showMyReviewedObjects}
+                  onChange={(event) => {
+                    setShowMyReviewedObjects(event.target.checked);
+                    setSelectedReviewIds([]);
+                    setReviewConfirmed(false);
+                  }}
+                />
+                Include objects I already reviewed
+              </label>
+            </div>
+            <div className={styles.reviewSelectionActions}>
+              <span>
+                {selectedReviewIds.length} selected · {filteredReviewQueue.length} matching
+                {filteredReviewQueue.length > 100 ? " · first 100 shown" : ""}
+              </span>
+              <button
+                type="button"
+                onClick={selectVisibleReviews}
+                disabled={visibleReviewQueue.length === 0}
+              >
+                Select up to 100 visible
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedReviewIds([]);
+                  setReviewConfirmed(false);
+                }}
+                disabled={selectedReviewIds.length === 0}
+              >
+                Clear
+              </button>
+            </div>
+            <div className={styles.reviewQueueRows} role="list">
+              {visibleReviewQueue.length === 0 ? (
+                <p>No review objects match these filters.</p>
+              ) : (
+                visibleReviewQueue.map((item) => (
+                  <label key={item.objectId} role="listitem">
+                    <input
+                      type="checkbox"
+                      checked={selectedReviewIds.includes(item.objectId)}
+                      onChange={() => toggleReviewSelection(item.objectId)}
+                      aria-label={`Select ${item.objectId}`}
+                    />
+                    <span>
+                      <b>{item.label}</b>
+                      <small>
+                        {item.objectId} · {humanize(item.objectType)}
+                      </small>
+                    </span>
+                    <em>{humanize(item.riskTier)}</em>
+                    <span>
+                      {item.approvalCount}/{item.requiredApprovals} approvals
+                      {item.changesRequested ? " · changes requested" : ""}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className={styles.reviewDecisionFields}>
+              <label>
+                Decision for selected objects
+                <select
+                  value={reviewDisposition}
+                  onChange={(event) => {
+                    setReviewDisposition(
+                      event.target.value as
+                        | "approved"
+                        | "changes_requested",
+                    );
+                    setReviewConfirmed(false);
+                  }}
+                >
+                  <option value="approved">Approve</option>
+                  <option value="changes_requested">Request changes</option>
+                </select>
+              </label>
+              <label>
+                Review evidence and notes
+                <textarea
+                  rows={3}
+                  value={reviewNotes}
+                  onChange={(event) => {
+                    setReviewNotes(event.target.value);
+                    setReviewConfirmed(false);
+                  }}
+                  placeholder="Describe the evidence and checks you performed."
+                />
+              </label>
+              <label className={styles.inlineToggle}>
+                <input
+                  type="checkbox"
+                  checked={reviewConfirmed}
+                  onChange={(event) =>
+                    setReviewConfirmed(event.target.checked)
+                  }
+                />
+                I confirm I personally reviewed every selected object and the
+                decision above is accurate.
+              </label>
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReviewQueue(false);
+                  setSelectedReviewIds([]);
+                  setReviewConfirmed(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitReviewBatch()}
+                disabled={
+                  saving ||
+                  selectedReviewIds.length === 0 ||
+                  reviewNotes.trim().length < 10 ||
+                  !reviewConfirmed
+                }
+              >
+                {saving
+                  ? "Recording…"
+                  : `Record ${selectedReviewIds.length} decisions`}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
       {showCreate ? (
         <div

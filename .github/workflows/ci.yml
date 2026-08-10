@@ -266,6 +266,7 @@ jobs:
           PGPASSWORD: ci-control-semantic-password-00000001
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-verify.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-release-qualification.sql
+      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-review-batch.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-rls.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-runtime-isolation.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-connection-mutation-boundary.sql

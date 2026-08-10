@@ -44,6 +44,10 @@ const releaseQualificationRls = readFileSync(
   "infra/migrations/control-plane/0108_m6_semantic_release_qualification_rls.sql",
   "utf8",
 );
+const atomicReviewBatches = readFileSync(
+  "infra/migrations/control-plane/0109_m6_atomic_semantic_review_batches.sql",
+  "utf8",
+);
 
 test("semantic administration is internal-only and uses immutable draft/publication workflows", () => {
   assert.match(route, /isInternalOperator/u);
@@ -56,6 +60,7 @@ test("semantic administration is internal-only and uses immutable draft/publicat
     "batch_relationship_decisions",
     "validate_draft",
     "review_object",
+    "batch_review_objects",
     "publish_draft",
     "activate_publication",
     "rollback_publication",
@@ -157,6 +162,39 @@ test("release qualification can read only immutable semantic evidence and append
     /(?:anon|authenticated|service_role|albert_semantic_control)/u,
   );
   assert.doesNotMatch(releaseQualificationRls, /FOR (?:ALL|UPDATE|DELETE)/u);
+});
+
+test("semantic review batches are explicit, bounded, atomic, and preserve independent reviewers", () => {
+  assert.match(route, /action: z\.literal\("batch_review_objects"\)/u);
+  assert.match(route, /\.max\(100\)/u);
+  assert.match(route, /A semantic object may appear only once in a review batch/u);
+  assert.match(route, /notes: z\.string\(\)\.trim\(\)\.min\(10\)/u);
+  assert.match(route, /albert_semantic_v2_record_review_batch/u);
+  assert.match(route, /albert_semantic_v2_admin_draft_reviews/u);
+  assert.match(route, /result\.truncated \|\| result\.count !== result\.reviews\.length/u);
+  assert.match(
+    atomicReviewBatches,
+    /jsonb_array_length\(p_reviews\) NOT BETWEEN 1 AND 100/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /count\(\*\)<>count\(DISTINCT item->>'objectId'\)/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /public\.albert_semantic_v2_record_review\([\s\S]*v_review->>'objectId'/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /albert_semantic_v2_admin_draft_reviews[\s\S]*LIMIT 5000[\s\S]*'truncated',v_count>5000/u,
+  );
+  assert.match(
+    atomicReviewBatches,
+    /REVOKE ALL ON FUNCTION[\s\S]*FROM PUBLIC,anon,service_role/u,
+  );
+  assert.match(workspace, /Select only objects you have actually reviewed/u);
+  assert.match(workspace, /I confirm I personally reviewed every selected object/u);
+  assert.match(workspace, /second independent reviewer/u);
 });
 
 test("the admin surface can edit every semantic object contract and version tenant context", () => {
