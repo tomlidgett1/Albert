@@ -49,6 +49,16 @@ test("snapshot transfer allowlists exact tenant tables and never puts credential
     ),
     /outside the migration allowlist/u,
   );
+  assert.ok(buildSnapshotDumpArguments([
+    ...tables,
+    { schema: "ingestion", table: "batch_manifests" },
+  ], "00000003-0000001B-1").includes('--table="ingestion"."batch_manifests"'));
+  assert.throws(
+    () => buildSnapshotDumpArguments([
+      { schema: "ingestion", table: "source_records" },
+    ], "00000003-0000001B-1"),
+    /table is outside the migration allowlist/u,
+  );
   const environment = postgresProcessEnvironment(
     "postgresql://operator:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
     "snapshot-test",
@@ -134,6 +144,7 @@ test("migration entry point is explicit, atomic, receipt-bound, and never stages
   assert.match(source, /buildAddSnapshotForeignKeysSql/u);
   assert.match(source, /buildDisableSnapshotTriggersSql/u);
   assert.match(source, /buildRestoreSnapshotTriggersSql/u);
+  assert.match(source, /foreignKeyReferenceDataContract/u);
   assert.match(source, /dump\.stdout\.pipe\(restore\.stdin/u);
   assert.doesNotMatch(source, /writeFile|mkdtemp|tmpdir/u);
   assert.match(snapshotReceiptDigest({ b: 2, a: 1 }), /^[a-f0-9]{64}$/u);

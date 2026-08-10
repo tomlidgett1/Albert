@@ -13,6 +13,7 @@ import {
   buildTenantRemapSql,
   postgresProcessEnvironment,
   qualifiedSnapshotTable,
+  isAllowedSnapshotTable,
   snapshotReceiptDigest,
   SNAPSHOT_ABORT_SQL,
   V2_SNAPSHOT_SCHEMAS,
@@ -50,7 +51,9 @@ async function tenantTables(client: pg.Client): Promise<SnapshotTable[]> {
       ORDER BY namespace.nspname,class.relname`,
     [[...V2_SNAPSHOT_SCHEMAS]],
   );
-  return result.rows.map(({ schema_name: schema, table_name: table }) => ({ schema, table }));
+  return result.rows
+    .map(({ schema_name: schema, table_name: table }) => ({ schema, table }))
+    .filter(isAllowedSnapshotTable);
 }
 
 async function columnContract(client: pg.Client, tables: readonly SnapshotTable[]) {
@@ -155,6 +158,71 @@ async function triggerContract(
       definition: row.definition,
       status: statuses[row.status],
     }));
+}
+
+async function foreignKeyReferenceDataContract(
+  client: pg.Client,
+  tables: readonly SnapshotTable[],
+) {
+  const selected = new Set(tables.map((table) => `${table.schema}.${table.table}`));
+  const result = await client.query<{
+    source_schema: SnapshotTable["schema"];
+    source_table: string;
+    target_schema: SnapshotTable["schema"];
+    target_table: string;
+    target_tenant_scoped: boolean;
+  }>(
+    `SELECT DISTINCT source_namespace.nspname AS source_schema,
+            source_class.relname AS source_table,
+            target_namespace.nspname AS target_schema,
+            target_class.relname AS target_table,
+            EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute AS target_attribute
+               WHERE target_attribute.attrelid=target_class.oid
+                 AND target_attribute.attname='tenant_id'
+                 AND target_attribute.attnum>0
+                 AND NOT target_attribute.attisdropped
+            ) AS target_tenant_scoped
+       FROM pg_catalog.pg_constraint AS constraint_record
+       JOIN pg_catalog.pg_class AS source_class ON source_class.oid=constraint_record.conrelid
+       JOIN pg_catalog.pg_namespace AS source_namespace ON source_namespace.oid=source_class.relnamespace
+       JOIN pg_catalog.pg_class AS target_class ON target_class.oid=constraint_record.confrelid
+       JOIN pg_catalog.pg_namespace AS target_namespace ON target_namespace.oid=target_class.relnamespace
+      WHERE constraint_record.contype='f'
+        AND source_namespace.nspname=ANY($1::text[])
+      ORDER BY source_namespace.nspname,source_class.relname,
+               target_namespace.nspname,target_class.relname`,
+    [[...V2_SNAPSHOT_SCHEMAS]],
+  );
+  const references = new Map<string, SnapshotTable>();
+  for (const row of result.rows) {
+    if (!selected.has(`${row.source_schema}.${row.source_table}`)) continue;
+    if (selected.has(`${row.target_schema}.${row.target_table}`)) continue;
+    assert.equal(
+      row.target_tenant_scoped,
+      false,
+      "A tenant-scoped foreign-key dependency is missing from the snapshot allowlist.",
+    );
+    const table = { schema: row.target_schema, table: row.target_table };
+    assert.equal(
+      isAllowedSnapshotTable(table),
+      true,
+      "A foreign-key reference table is outside the snapshot schema allowlist.",
+    );
+    references.set(`${table.schema}.${table.table}`, table);
+  }
+  const contract: Array<Readonly<SnapshotTable & { rows: readonly string[] }>> = [];
+  for (const table of [...references.values()].sort((left, right) => (
+    `${left.schema}.${left.table}`.localeCompare(`${right.schema}.${right.table}`)
+  ))) {
+    const rows = await client.query<{ payload: string }>(
+      `SELECT pg_catalog.to_jsonb(reference_row)::text AS payload
+         FROM ${qualifiedSnapshotTable(table)} AS reference_row
+        ORDER BY 1`,
+    );
+    contract.push({ ...table, rows: rows.rows.map((row) => row.payload) });
+  }
+  return contract;
 }
 
 async function counts(
@@ -362,6 +430,15 @@ export async function migrateSemanticV2AnalyticalSnapshot(): Promise<void> {
       "Source and target snapshot trigger contracts differ.",
     );
     triggers = sourceTriggers;
+    const [sourceReferenceData, targetReferenceData] = await Promise.all([
+      foreignKeyReferenceDataContract(source, tables),
+      foreignKeyReferenceDataContract(target, tables),
+    ]);
+    assert.deepEqual(
+      targetReferenceData,
+      sourceReferenceData,
+      "Source and target snapshot reference data differ.",
+    );
     const sourceAll = await counts(source, tables);
     const sourceTenant = await counts(source, tables, sourceTenantId);
     const targetAll = await counts(target, tables);

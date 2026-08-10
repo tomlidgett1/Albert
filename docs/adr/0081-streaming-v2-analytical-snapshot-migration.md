@@ -18,14 +18,17 @@ them risks invalid credentials.
 
 Albert provides an explicit, one-time streaming analytical snapshot migration.
 It copies only tenant-scoped tables in `source_lightspeed`, `source_xero`,
-`core`, and `mart` from one exact Supabase project to another. Before transfer
-it proves:
+`core`, and `mart`, plus the exact lineage dependency
+`ingestion.batch_manifests`, from one exact Supabase project to another. The
+other ingestion tables remain outside the allowlist. Before transfer it proves:
 
 - source and target project identities;
 - an exact allowlisted tenant-table set and physical column contract;
 - one declared source tenant;
 - non-empty Lightspeed and Xero source data;
 - a completely empty target table set.
+- complete tenant-scoped foreign-key closure and exact equality of any
+  referenced non-tenant lookup rows.
 
 The source preflight exports a repeatable-read PostgreSQL snapshot, and
 `pg_dump` is required to consume that exact snapshot while the exporting

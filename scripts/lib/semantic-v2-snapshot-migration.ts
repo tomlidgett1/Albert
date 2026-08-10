@@ -5,6 +5,7 @@ export const V2_SNAPSHOT_SCHEMAS = Object.freeze([
   "source_xero",
   "core",
   "mart",
+  "ingestion",
 ] as const);
 
 export type SnapshotTable = Readonly<{
@@ -26,6 +27,8 @@ export type SnapshotTrigger = Readonly<{
   definition: string;
   status: "origin" | "disabled" | "replica" | "always";
 }>;
+
+const EXACT_TABLE_ALLOWLIST = new Set(["ingestion.batch_manifests"]);
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/u;
@@ -70,7 +73,19 @@ export function qualifiedSnapshotTable(table: SnapshotTable): string {
   if (!V2_SNAPSHOT_SCHEMAS.includes(table.schema)) {
     throw new Error("Snapshot schema is outside the migration allowlist.");
   }
+  if (table.schema === "ingestion" && !EXACT_TABLE_ALLOWLIST.has(`${table.schema}.${table.table}`)) {
+    throw new Error("Snapshot table is outside the migration allowlist.");
+  }
   return `${quoteIdentifier(table.schema)}.${quoteIdentifier(table.table)}`;
+}
+
+export function isAllowedSnapshotTable(table: SnapshotTable): boolean {
+  try {
+    qualifiedSnapshotTable(table);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function buildSnapshotDumpArguments(
