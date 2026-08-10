@@ -22,6 +22,7 @@ test("snapshot transfer allowlists exact tenant tables and never puts credential
   assert.ok(args.includes('--table="source_xero"."xero_invoices"'));
   assert.ok(args.includes("--snapshot=00000003-0000001B-1"));
   assert.ok(args.includes("--enable-row-security"));
+  assert.ok(args.includes("--disable-triggers"));
   assert.ok(args.every((value) => !value.includes("secret")));
   assert.throws(
     () => buildSnapshotDumpArguments(
@@ -75,6 +76,8 @@ test("migration entry point is explicit, atomic, receipt-bound, and never stages
   assert.match(source, /ON_ERROR_STOP=1/u);
   assert.match(source, /pg_export_snapshot/u);
   assert.match(source, /SNAPSHOT_ABORT_SQL/u);
+  assert.match(source, /Promise\.race/u);
+  assert.match(source, /dump\.kill\("SIGTERM"\)/u);
   assert.match(source, /dump\.stdout\.pipe\(restore\.stdin/u);
   assert.doesNotMatch(source, /writeFile|mkdtemp|tmpdir/u);
   assert.match(snapshotReceiptDigest({ b: 2, a: 1 }), /^[a-f0-9]{64}$/u);

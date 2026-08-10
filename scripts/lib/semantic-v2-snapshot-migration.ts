@@ -44,6 +44,7 @@ export function buildSnapshotDumpArguments(
     "--no-privileges",
     "--format=plain",
     "--enable-row-security",
+    "--disable-triggers",
     "--dbname=postgres",
     `--snapshot=${snapshotId}`,
     ...tables.map((table) => `--table=${qualifiedSnapshotTable(table)}`),

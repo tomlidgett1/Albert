@@ -32,10 +32,14 @@ The source preflight exports a repeatable-read PostgreSQL snapshot, and
 read-only transaction remains open. Both source sessions bind the declared
 `albert.tenant_id`, and `pg_dump` explicitly enables row security so the
 least-privilege deployer cannot export a different tenant. `pg_dump` streams
-directly into `psql` over required TLS. The target restore transaction locks every selected table,
+directly into `psql` over required TLS and emits bounded trigger suppression so
+the reviewed data-only snapshot can restore circular foreign-key graphs. The
+target restore transaction locks every selected table,
 rechecks that the target is empty, restores the rows, and remaps the tenant with
 `ON_ERROR_STOP`. A failed or interrupted dump injects a deliberately invalid
-statement so even a syntactically valid partial stream must roll back. No
+statement so even a syntactically valid partial stream must roll back. An early
+restore exit immediately terminates the source dump rather than leaving an
+orphaned reader. No
 customer data is written to disk. Post-transfer verification requires exact
 per-schema counts, no residual source tenant identifiers, and emits a
 content-addressed receipt. The source is read-only throughout.

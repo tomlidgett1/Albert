@@ -169,20 +169,37 @@ async function streamSnapshot(input: Readonly<{
   );
   const dumpCompletion = completion(dump);
   const restoreCompletion = completion(restore);
-  const dumpResult = await dumpCompletion;
-  if (dumpResult.error || dumpResult.code !== 0) {
-    restore.stdin.end(SNAPSHOT_ABORT_SQL);
+  const first = await Promise.race([
+    dumpCompletion.then((result) => ({ process: "dump" as const, result })),
+    restoreCompletion.then((result) => ({ process: "restore" as const, result })),
+  ]);
+  let dumpResult: Awaited<typeof dumpCompletion>;
+  let restoreResult: Awaited<typeof restoreCompletion>;
+  if (first.process === "restore") {
+    restoreResult = first.result;
+    if (dump.exitCode === null) dump.kill("SIGTERM");
+    dumpResult = await dumpCompletion;
   } else {
-    restore.stdin.end(buildTenantRemapSql(
-      input.tables,
-      input.sourceTenantId,
-      input.targetTenantId,
-    ));
+    dumpResult = first.result;
+    if (dumpResult.error || dumpResult.code !== 0) {
+      restore.stdin.end(SNAPSHOT_ABORT_SQL);
+    } else {
+      restore.stdin.end(buildTenantRemapSql(
+        input.tables,
+        input.sourceTenantId,
+        input.targetTenantId,
+      ));
+    }
+    restoreResult = await restoreCompletion;
   }
-  const restoreResult = await restoreCompletion;
   if (dumpResult.error || restoreResult.error || dumpResult.code !== 0 || restoreResult.code !== 0) {
+    const diagnostic = restoreError()
+      || dumpError()
+      || restoreResult.error?.message
+      || dumpResult.error?.message
+      || "no safe diagnostic";
     throw new Error(
-      `Snapshot stream failed (dump=${String(dumpResult.code)}, restore=${String(restoreResult.code)}): ${dumpError() || restoreError() || dumpResult.error?.message || restoreResult.error?.message || "no safe diagnostic"}`,
+      `Snapshot stream failed (dump=${String(dumpResult.code)}, restore=${String(restoreResult.code)}): ${diagnostic}`,
     );
   }
 }
