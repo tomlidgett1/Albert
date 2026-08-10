@@ -33,6 +33,8 @@ type AnthropicSqlToolInput = Readonly<{
  * metadata can never leak into the governed SQL request. */
 export function toGovernedSqlRequest(input: AnthropicSqlToolInput) {
   const { objectiveId: _objectiveId, decompositionOf: _decompositionOf, ...request } = input;
+  void _objectiveId;
+  void _decompositionOf;
   return request;
 }
 

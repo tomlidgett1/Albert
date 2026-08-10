@@ -469,28 +469,6 @@ type ScriptStep = Readonly<{
 }>;
 
 
-/**
- * The model calls tools with the flattened tool-facing shape; the compiler IR
- * (which defaults `parameters`) is what the service derives from it. These
- * constants stay IR-parsed for response fixtures, so the scripted tool
- * arguments strip the IR-only keys back off.
- */
-function toolShapedQuery(query: SemanticQueryIr): Readonly<Record<string, unknown>> {
-  const { parameters: _parameters, ...rest } = query as Record<string, unknown> & { parameters?: unknown };
-  void _parameters;
-  if ((query as { kind?: string }).kind === "composite") {
-    const composite = rest as { queries?: readonly (Record<string, unknown> & { parameters?: unknown })[] };
-    return {
-      ...rest,
-      queries: (composite.queries ?? []).map(({ parameters: _sub, ...subRest }) => {
-        void _sub;
-        return subRest;
-      }),
-    };
-  }
-  return rest;
-}
-
 function toolStep(prefix: string, index: number, name: string, argumentsValue: Readonly<Record<string, unknown>>): ScriptStep {
   return Object.freeze({
     responseId: `${prefix}_response_${index}`,

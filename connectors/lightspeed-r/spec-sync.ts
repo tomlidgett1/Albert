@@ -27,7 +27,6 @@ import type {
 import { decodeCursor, encodeCursor } from "../../packages/connector-sdk/src/cursor.js";
 import {
   MAX_PAGE_SIZE,
-  afterTokenFrom,
   assertRelationsPresent,
   evaluatePagination,
   parseEnvelope,

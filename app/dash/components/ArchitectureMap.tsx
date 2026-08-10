@@ -566,11 +566,10 @@ function DictionaryBrowser({
       </div>
 
       <div className={styles.archDictLayout}>
-        <div className={styles.archDictList} role="list" aria-label={`${view} catalogue`}>
+        <div className={styles.archDictList} role="group" aria-label={`${view} catalogue`}>
           {view === "topics" ? filteredTopics.map((topic) => (
             <button
               type="button"
-              role="listitem"
               key={topic.id}
               aria-pressed={selectedTopic?.id === topic.id}
               onClick={() => setSelectedTopicId(topic.id)}
@@ -583,7 +582,6 @@ function DictionaryBrowser({
           {view === "metrics" ? filteredMetrics.map((metric) => (
             <button
               type="button"
-              role="listitem"
               key={metric.id}
               aria-pressed={selectedMetric?.id === metric.id}
               onClick={() => setSelectedMetricId(metric.id)}
@@ -596,7 +594,6 @@ function DictionaryBrowser({
           {view === "facts" ? filteredFacts.map((fact) => (
             <button
               type="button"
-              role="listitem"
               key={fact.id}
               aria-pressed={selectedFact?.id === fact.id}
               onClick={() => setSelectedFactId(fact.id)}
@@ -609,7 +606,6 @@ function DictionaryBrowser({
           {view === "dimensions" ? filteredDimensions.map((dimension) => (
             <button
               type="button"
-              role="listitem"
               key={dimension.id}
               aria-pressed={selectedDimension?.id === dimension.id}
               onClick={() => setSelectedDimensionId(dimension.id)}
@@ -1083,11 +1079,10 @@ export default function ArchitectureMap({
         </header>
 
         <div className={styles.archTopicLayout}>
-          <div className={styles.archTopicList} role="list" aria-label="Governed Topics">
+          <div className={styles.archTopicList} role="group" aria-label="Governed Topics">
             {overview.semantic.topics.map((topic) => (
               <button
                 type="button"
-                role="listitem"
                 key={topic.id}
                 aria-pressed={selectedTopic?.id === topic.id}
                 onClick={() => setActiveTopic(topic.id)}

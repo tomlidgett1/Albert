@@ -125,12 +125,6 @@ export function tokenizeSql(sql: string): SqlToken[] {
   return tokens;
 }
 
-type TokenCursor = { tokens: readonly SqlToken[]; at: number };
-
-function peek(cursor: TokenCursor, offset = 0): SqlToken | undefined {
-  return cursor.tokens[cursor.at + offset];
-}
-
 function matchingParen(tokens: readonly SqlToken[], openIndex: number): number {
   let depth = 0;
   for (let index = openIndex; index < tokens.length; index += 1) {

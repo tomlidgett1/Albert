@@ -35,7 +35,6 @@ import {
   makeNamespacedSourceKey,
   type ConnectorContext,
   type RawSourceRecord,
-  type SyncCursor,
 } from "../packages/connector-sdk/src/index.js";
 import {
   AesKeyringWrapper,
@@ -58,13 +57,10 @@ import {
   endpointPath,
   extraParamPasses,
   fanOutAncestry,
-  fillFanOutPath,
   projectStreamRows,
   resolveFanOutIds,
   templatedParents,
   unwrapEnvelope,
-  XERO_ATTACHMENT_PARENTS,
-  XERO_HISTORY_PARENTS,
 } from "../connectors/xero/spec-sync.js";
 import { XeroConnector } from "../connectors/xero/index.js";
 import { xeroManifest } from "../connectors/xero/manifest.js";
@@ -592,8 +588,9 @@ async function main(): Promise<void> {
             // so drop it and take the page rather than lose the whole table.
             const status = (error as { status?: number }).status;
             if (status === 400 && "order" in params) {
-              const { order: _dropped, ...rest } = params;
-              body = await getJson(endpointPath(leader), rest);
+              const retryParams = { ...params };
+              delete retryParams.order;
+              body = await getJson(endpointPath(leader), retryParams);
             } else {
               throw error;
             }

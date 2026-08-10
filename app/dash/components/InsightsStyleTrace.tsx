@@ -587,15 +587,6 @@ function CrossIcon({ size = 12 }: { size?: number }) {
   );
 }
 
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={styles.stepGlyph} aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
 function SparklesIcon({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={styles.stepGlyph} aria-hidden>
@@ -641,49 +632,6 @@ function ResultTable({
           {table.rows.length.toLocaleString()} row{table.rows.length === 1 ? "" : "s"} · scroll for all
         </p>
       ) : null}
-    </div>
-  );
-}
-
-function StepRow({ step }: { step: TrailStep }) {
-  const [showPreview, setShowPreview] = useState(false);
-  return (
-    <div className={styles.stepRow}>
-      <span className={styles.stepRowIcon}>
-        {step.kind === "sql" ? <SearchIcon /> : <SparklesIcon size={14} />}
-      </span>
-      <div className={styles.stepRowBody}>
-        <div className={styles.stepRowTitleLine}>
-          <span className={step.status === "error" ? styles.stepTitleError : styles.stepTitle}>
-            {step.title}
-          </span>
-          {typeof step.rowCount === "number" ? (
-            <span className={styles.stepMeta}>
-              {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
-            </span>
-          ) : null}
-          {step.status === "running" ? (
-            <span className={styles.runningShimmer}>running</span>
-          ) : null}
-        </div>
-        {step.detail ? <div className={styles.stepDetail}>{step.detail}</div> : null}
-        {step.error ? <div className={styles.stepError}>{step.error}</div> : null}
-        {step.warnings?.map((warning) => (
-          <div key={warning} className={styles.stepWarning}>{warning}</div>
-        ))}
-        {step.table && step.table.rows.length > 0 ? (
-          <>
-            <button
-              type="button"
-              className={styles.sqlToggle}
-              onClick={() => setShowPreview((current) => !current)}
-            >
-              {showPreview ? "Hide preview" : "Show preview"}
-            </button>
-            {showPreview ? <ResultTable table={step.table} /> : null}
-          </>
-        ) : null}
-      </div>
     </div>
   );
 }

@@ -1783,6 +1783,5 @@ function derivedDateExpression(dimension: string, alias: string): string {
   return derived.expression(alias);
 }
 
-function calendarWeekExpression(alias: string): string { return derivedDateExpression("calendar_week", alias); }
 function indent(value: string): string { return value.split("\n").map((line) => `  ${line}`).join("\n"); }
 function sameSet(left: readonly string[], right: readonly string[]): boolean { return left.length === right.length && left.every((item) => right.includes(item)); }

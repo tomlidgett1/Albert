@@ -64,7 +64,6 @@ const TOKEN_ENDPOINT = "https://identity.xero.com/connect/token";
 const REVOCATION_ENDPOINT = "https://identity.xero.com/connect/revocation";
 const CONNECTIONS_ENDPOINT = "https://api.xero.com/connections";
 const ACCOUNTING_ORIGIN = "https://api.xero.com";
-const PAGE_SIZE = 1_000;
 
 const tokenSchema = z.object({
   access_token: z.string().min(1),

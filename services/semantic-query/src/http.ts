@@ -74,6 +74,7 @@ export function createSemanticHttpHandler(executor:SemanticToolExecutor,options:
       if(finalizationV2Request){
         if(!options.answerArtifactFinalizer)return json({error:{code:"FINALIZER_UNAVAILABLE",message:"Answer artefact finalization is unavailable."}},503,correlationId);
         const {provider:_provider,...input}=answerArtifactFinalizationV2InputSchema.parse(JSON.parse(rawBody));
+        void _provider;
         const result=await options.answerArtifactFinalizer.finalize(input);
         return json({result:answerArtifactFinalizationResultSchema.parse(result)},200,correlationId);
       }

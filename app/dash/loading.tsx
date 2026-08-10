@@ -1,3 +1,4 @@
+import Image from "next/image";
 import styles from "./dash.module.css";
 
 export default function DashLoading() {
@@ -6,13 +7,12 @@ export default function DashLoading() {
       <aside className={styles.sidebar} aria-hidden="true">
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
-            <img
+            <Image
               className={styles.projectLogo}
               src="/logos/albert.png"
               alt=""
               width={20}
               height={20}
-              decoding="async"
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>

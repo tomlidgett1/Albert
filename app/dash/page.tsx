@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
 import {
@@ -492,7 +493,7 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
 }
 
 /** Local calendar day key for sorting sections (newest first). */
-function conversationDayKey(updatedAt: string, now = new Date()): string {
+function conversationDayKey(updatedAt: string): string {
   const date = new Date(updatedAt);
   if (Number.isNaN(date.valueOf())) return "0000-00-00";
   const year = date.getFullYear();
@@ -2352,7 +2353,7 @@ export default function DashPage() {
     }
   };
 
-  const stopChatResponse = () => {
+  const stopChatResponse = useCallback(() => {
     const key = viewingKeyRef.current
       ?? (activeConversationId && ulidPattern.test(activeConversationId) ? activeConversationId : null);
     if (!key) return;
@@ -2382,7 +2383,7 @@ export default function DashPage() {
           : item
       )));
     }
-  };
+  }, [activeConversationId]);
 
   useEffect(() => {
     if (!isChatResponding) return;
@@ -2394,7 +2395,7 @@ export default function DashPage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isChatResponding]);
+  }, [isChatResponding, stopChatResponse]);
 
   const answerClarification = (answer: string, offeredTurnId?: string, optionId?: string) => {
     const text = answer.trim();
@@ -2412,7 +2413,7 @@ export default function DashPage() {
     setEditDraft(text);
   };
 
-  const cancelEditUserMessage = () => {
+  const cancelEditUserMessage = useCallback(() => {
     window.clearTimeout(editCloseTimerRef.current);
     const closingId = editingMessageId;
     // Restore the idle face immediately so collapse does not end with a
@@ -2428,7 +2429,7 @@ export default function DashPage() {
     editCloseTimerRef.current = window.setTimeout(() => {
       setEditClosingId(null);
     }, 300);
-  };
+  }, [editingMessageId, reduceMotion]);
 
   const resolveTurnIdForUserMessage = (messageIndex: number): string | undefined => {
     const following = chatMessages[messageIndex + 1];
@@ -2617,7 +2618,7 @@ export default function DashPage() {
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [editingMessageId, editPanelOpen, reduceMotion]);
+  }, [cancelEditUserMessage, editingMessageId]);
 
   const resetChat = (runtime: Exclude<ChatRuntime, "fixture">) => {
     snapshotViewedConversation();
@@ -2920,13 +2921,12 @@ export default function DashPage() {
       <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
-            <img
+            <Image
               className={styles.projectLogo}
               src="/logos/albert.png"
               alt=""
               width={20}
               height={20}
-              decoding="async"
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>
@@ -2985,13 +2985,12 @@ export default function DashPage() {
                 aria-hidden="true"
               >
                 <span className={styles.collapseIconSwapFace} data-icon="a">
-                  <img
+                  <Image
                     className={styles.collapseButtonLogo}
                     src="/logos/albert.png"
                     alt=""
                     width={20}
                     height={20}
-                    decoding="async"
                   />
                 </span>
                 <span className={styles.collapseIconSwapFace} data-icon="b">

@@ -2,10 +2,7 @@ import { readFileSync } from "node:fs";
 import type { RegistryDocument, SemanticRegistry } from "./schema.js";
 import {
   buildRegistry,
-  generateRegistryDocumentation,
   parseRegistryDocument,
-  registryDigest,
-  validateRegistry,
 } from "./registry-build.js";
 
 export {

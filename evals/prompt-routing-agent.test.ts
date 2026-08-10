@@ -196,30 +196,6 @@ class PromptSensitiveRouteModel implements Model {
   }
 }
 
-class FixedStepModel implements Model {
-  private cursor = 0;
-
-  constructor(private readonly steps: readonly ScriptStep[]) {}
-
-  async getResponse(): Promise<ModelResponse> {
-    throw new Error("Albert's production loop must use the streaming Responses path.");
-  }
-
-  async *getStreamedResponse(): AsyncIterable<StreamEvent> {
-    const step = this.steps[this.cursor++];
-    if (!step) throw new Error("Fixed-step model received an unexpected extra request.");
-    yield { type: "response_started" };
-    yield {
-      type: "response_done",
-      response: {
-        id: step.responseId,
-        usage: { requests: 1, inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-        output: [step.output],
-      },
-    } as StreamEvent;
-  }
-}
-
 function traceEmitter(events: TraceEvent[]) {
   return createTraceEmitter({
     persist: async (event) => { events.push(event); },

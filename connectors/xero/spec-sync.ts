@@ -453,7 +453,6 @@ export function projectStreamRows(input: {
         fanOutParent ? { record: fanOutParent.record, table: fanOutParent.table } : null,
         synthetics,
       );
-      const ordinal = row.ordinal;
       // Identity follows the declared grain. A composite primary key means the
       // row is only unique across all of its parts — a contact address is keyed
       // by contact AND address type, and keying it on the type alone would make
@@ -567,12 +566,6 @@ function partialKey(
 
 function leaderIdField(leader: XeroSpecTable): string {
   return leader.recordIdField ?? leader.primaryKey[0] ?? "";
-}
-
-function toArray(value: unknown): readonly unknown[] {
-  if (Array.isArray(value)) return value;
-  if (value === null || value === undefined) return [];
-  return [value];
 }
 
 function readIdentifier(record: JsonRecord | Record<string, unknown>, field: string): string | null {
