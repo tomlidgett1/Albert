@@ -541,7 +541,7 @@ async function run(): Promise<void> {
       error_code: "canonical.canonical_reference_missing",
       error_path: "$projection",
       status: "resolved",
-      resolution_reason: "validated_replay",
+      resolution_reason: "canonical_projection_recovered",
     }]);
     process.stdout.write(
       "Lightspeed supplier reference quarantine and current-pack replay proof passed.\n",
