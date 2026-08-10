@@ -17,6 +17,7 @@ import {
   hashPayload,
   makeNamespacedSourceKey,
   projectSourceRecord,
+  type ConnectorStream,
   type RawSourceRecord,
 } from "../packages/connector-sdk/src/index.js";
 import type { PostgresQueryClient, SyncJob } from "../packages/queue/src/index.js";
@@ -428,10 +429,46 @@ async function run(): Promise<void> {
       }),
     );
 
+    const registrationJob = batches.get("ls_shops")?.job;
+    assert.ok(registrationJob);
+    const registrationStreams: readonly ConnectorStream[] = lightspeedRManifest.streams.map(
+      (stream) => ({
+        id: stream.id,
+        label: stream.resource,
+        domains: stream.productDomains,
+        cursorKind: stream.modifiedField ? "high_water_mark" : "none",
+        backfillStrategy: stream.backfillStrategy,
+        lateEditStrategy: stream.lateEditStrategy,
+        deletionStrategy: stream.deletionStrategy,
+        sourceTotalStrategy: stream.sourceTotalStrategy,
+        availability: stream.availability ?? "required",
+        dependencies: stream.dependencies,
+        productDomains: stream.productDomains,
+      }),
+    );
+    assert.equal(
+      await landing.registerConnectorStreams({
+        job: registrationJob,
+        streams: registrationStreams,
+      }),
+      registrationStreams.length,
+      "The disposable proof must register the same stream policy as the real worker before publishing page evidence.",
+    );
+
     for (const batch of batches.values()) {
       const result = await landing.land(batch.job, batch.manifest, [batch.record]);
       assert.equal(result.stagedRecordCount, 1, `${batch.stream} did not reach typed staging.`);
       assert.deepEqual(result.quarantined, [], `${batch.stream} fixture was quarantined.`);
+      await landing.recordConnectorStreamPage({
+        job: batch.job,
+        stream: batch.stream,
+        records: [batch.record],
+        landing: result,
+        hasMore: false,
+        nextCursorPresent: false,
+        backfillComplete: false,
+        coverage: null,
+      });
     }
 
     for (const stream of ["ls_shops", "ls_categories", "ls_items"] as const) {
