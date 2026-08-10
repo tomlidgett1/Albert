@@ -143,7 +143,10 @@ proves identical physical column, foreign-key, trigger, and referenced lookup
 contracts, streams directly between TLS PostgreSQL sessions, remaps only the
 declared tenant, and verifies exact row counts. It never writes customer rows
 to a local dump file. Preserve its content-addressed receipt with the release
-evidence. Ongoing ingestion still requires a fresh or safely migrated vendor
+evidence, then register that exact artifact with
+`npm run register:v2:snapshot-receipt` so the control plane binds it to the
+semantic manifest, implementation commit, Sydney analytical project and
+enabled internal operator. Ongoing ingestion still requires a fresh or safely migrated vendor
 connection; a snapshot receipt is not OAuth evidence.
 
 Point the release environment at the exact publication and migrated control
