@@ -220,4 +220,8 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.equal((roleDelegation.match(/'albert_(?:deletion|sync|webhook|transform|semantic)_control'/gu) ?? []).length, 5);
   assert.doesNotMatch(roleDelegation, /EXECUTE\s+FORMAT|\bformat\s*\(/iu);
   assert.match(ci, /control-plane-test-role-delegation\.sql[\s\S]*PGOPTIONS: -c albert\.test_role_delegation=on/u);
+  assert.match(
+    ci,
+    /ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD:[^\n]+[\s\S]*provision:runtime-logins -- --target=control-plane/u,
+  );
 });
