@@ -3,7 +3,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile.services"
+  dockerfile = "../../Dockerfile.services"
 
 [env]
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"

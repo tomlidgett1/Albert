@@ -183,7 +183,7 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.match(
     body,
-    /^\s*dockerfile\s*=\s*"Dockerfile\.services"$/mu,
+    /^\s*dockerfile\s*=\s*"\.\.\/\.\.\/Dockerfile\.services"$/mu,
     `${file} must use the hardened service image.`,
   );
   assert.match(

@@ -3,7 +3,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile.services"
+  dockerfile = "../../Dockerfile.services"
 
 [env]
   ALBERT_ANTHROPIC_HOST = "0.0.0.0"
