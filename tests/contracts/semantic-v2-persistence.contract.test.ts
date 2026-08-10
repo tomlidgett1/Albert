@@ -141,7 +141,12 @@ test("activation is bound to the exact publication and full release commit after
     /SELECT publication_hash,manifest\s+FROM control_plane\.semantic_v2_publications/u,
   );
   assert.match(deterministicQualifier, /expectedProfilePublication/u);
-  assert.match(deterministicQualifier, /initial_manifest_hash/u);
+  assert.match(
+    deterministicQualifier,
+    /relationship-decisions\.v2\.json/u,
+  );
+  assert.match(deterministicQualifier, /expectedProfileReceiptHash/u);
+  assert.doesNotMatch(deterministicQualifier, /initial_manifest_hash/u);
   assert.match(
     deterministicQualifier,
     /verifySemanticProfileReceiptAttestationV2/u,

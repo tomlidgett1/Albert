@@ -66,6 +66,30 @@ if (
   );
 }
 const manifest = generatedPublication.manifest;
+const relationshipDecisionArtifact = record(
+  JSON.parse(
+    readFileSync(
+      "packages/semantic-registry/registry/relationship-decisions.v2.json",
+      "utf8",
+    ),
+  ),
+  "relationship decision artifact",
+);
+const expectedProfilePublication = String(
+  relationshipDecisionArtifact.basePublicationHash ?? "",
+);
+const expectedProfileReceiptHash = String(
+  relationshipDecisionArtifact.profileReceiptHash ?? "",
+);
+if (
+  relationshipDecisionArtifact.schemaVersion !== 1 ||
+  !/^[a-f0-9]{64}$/u.test(expectedProfilePublication) ||
+  !/^[a-f0-9]{64}$/u.test(expectedProfileReceiptHash)
+) {
+  throw new Error(
+    "The canonical relationship decision artifact has invalid immutable profile lineage.",
+  );
+}
 const lightspeedObjects = manifest.sourceObjects.filter(
   ({ connector }) => connector === "lightspeed",
 );
@@ -160,31 +184,6 @@ try {
       "The control plane has not applied every required Semantic V2 migration.",
     );
   }
-  const profileBasis = await client.query(
-    `SELECT d.base_publication_hash,
-            (SELECT r.manifest_hash
-               FROM control_plane.semantic_v2_draft_revisions r
-              WHERE r.draft_id=d.draft_id
-              ORDER BY r.revision ASC
-              LIMIT 1) AS initial_manifest_hash
-       FROM control_plane.semantic_v2_drafts d
-      WHERE d.draft_id=$1`,
-    [persistedRow.source_draft_id],
-  );
-  if (profileBasis.rows.length !== 1)
-    throw new Error(
-      "The publication source draft is missing; relationship-profile lineage cannot be verified.",
-    );
-  const expectedProfilePublication =
-    profileBasis.rows[0].base_publication_hash ??
-    profileBasis.rows[0].initial_manifest_hash;
-  if (
-    typeof expectedProfilePublication !== "string" ||
-    !/^[a-f0-9]{64}$/u.test(expectedProfilePublication)
-  )
-    throw new Error(
-      "The publication source draft has no valid immutable profile basis.",
-    );
   const relationshipReceiptHashes = manifest.relationships.map(
     (relationship) => {
       const references = relationship.evidence
@@ -201,6 +200,14 @@ try {
     },
   );
   const uniqueReceiptHashes = [...new Set(relationshipReceiptHashes)];
+  if (
+    uniqueReceiptHashes.length !== 1 ||
+    uniqueReceiptHashes[0] !== expectedProfileReceiptHash
+  ) {
+    throw new Error(
+      "Published relationships do not cite the canonical relationship decision receipt.",
+    );
+  }
   const registeredReceipts = uniqueReceiptHashes.length
     ? await client.query(
         `SELECT profile_receipt_hash,publication_hash,status,artifact
