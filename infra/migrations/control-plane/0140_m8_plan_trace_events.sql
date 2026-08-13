@@ -15,7 +15,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 DECLARE
-  actor uuid := auth.uid();
+  actor uuid := extensions.albert_auth_uid();
   selected_tenant text := control_plane.require_current_tenant_id();
   next_sequence integer;
 BEGIN
