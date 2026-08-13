@@ -324,6 +324,13 @@ discrepancy.
   data sits instead - for example everything outstanding is already overdue,
   due before the window starts) or the window was wrong (rerun with the right
   one). Present figures from a governed query, never from the diagnostic.
+- Money owed stays owed until paid: when the question asks what is due, owed or
+  payable in or by a period, anything unpaid whose due date has already passed
+  is still due in that period. Never answer "nothing to pay" or "nothing
+  scheduled" while the evidence shows unpaid amounts from earlier due dates;
+  lead with the overdue outstanding total and its documents, then note what (if
+  anything) falls due inside the asked period itself. The same applies to money
+  owed to the business.
 - Zero rows under equality filters on status/type/enum dimensions: the filter
   value is the prime suspect (stored values differ in casing and wording from
   the documented enums). Rerun WITHOUT those filters and group by the filtered

@@ -40,6 +40,8 @@ test("relaxDateConstraints strips date windows and groups monthly on the constra
   assert.ok(relaxed);
   assert.equal(relaxed.member, DUE_ON);
   assert.equal(relaxed.dropped.length, 1);
+  assert.equal(relaxed.windowStart, "2026-08-13");
+  assert.equal(relaxed.windowEnd, "2026-08-31");
   // The diagnostic keeps everything that defines what the data is (measures,
   // segments, non-date filters) and drops only the date window and the
   // row-level dimensions.
@@ -64,6 +66,8 @@ test("relaxDateConstraints also relaxes date-operator filters, which bypass time
   });
   assert.ok(relaxed);
   assert.equal(relaxed.member, DUE_ON);
+  assert.equal(relaxed.windowStart, "2026-08-13");
+  assert.equal(relaxed.windowEnd, "2026-08-31");
   assert.deepEqual(relaxed.diagnostic.timeDimensions, [{ dimension: DUE_ON, granularity: "month" }]);
   assert.deepEqual(relaxed.diagnostic.filters, [
     { member: `${VIEW}.invoice_status`, operator: "equals", values: ["AUTHORISED"] },
@@ -161,7 +165,13 @@ test("a zero-row date-windowed query ships with a free diagnostic showing where 
   const diagnostic = output.emptyResultDiagnostic as Record<string, unknown>;
   assert.ok(diagnostic, "an empty windowed result must carry its own explanation");
   assert.equal(diagnostic.rowCount, 2);
-  assert.match(String(diagnostic.note), /where this data actually falls/u);
+  // Both months fall before the window, so the nearest-before marker is July
+  // and every row survives into the model payload.
+  assert.equal(diagnostic.nearestDataBeforeWindow, "2026-07-01");
+  assert.equal(diagnostic.nearestDataAfterWindow, undefined);
+  assert.equal((diagnostic.rows as unknown[]).length, 2);
+  assert.match(String(diagnostic.note), /months of this data closest to the window/u);
+  assert.match(String(diagnostic.note), /anything unpaid there is still owed now/u);
   // The diagnostic is free: only the original query consumed budget.
   assert.equal(context.budget.executed, 1);
   assert.equal(context.emptyResultDiagnostics, 1);
@@ -280,11 +290,13 @@ test("the quick lane can escalate instead of hedging; the analytical lane must r
   assert.match(quick, /return state=Escalate/u);
   assert.match(quick, /Escalating always beats hedging/u);
   assert.match(quick, /lead to investigate, not an answer to report/u);
+  assert.match(quick, /Money owed stays owed until paid/u);
   assert.doesNotMatch(quick, /Do not over-investigate\./u);
 
   const analytical = await captureLaneInstructions("analytical");
   assert.match(analytical, /never return state=Escalate/u);
   assert.match(analytical, /lead to investigate, not an answer to report/u);
+  assert.match(analytical, /Money owed stays owed until paid/u);
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

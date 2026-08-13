@@ -611,8 +611,14 @@ type RelaxedDateConstraints = Readonly<{
   member: string;
   /** Human-readable descriptions of every dropped date constraint. */
   dropped: readonly string[];
+  /** Best-effort bounds of the dropped window, for nearest-data reporting. */
+  windowStart?: string;
+  windowEnd?: string;
   diagnostic: CubeQuery;
 }>;
+
+const ISO_DATE_PAIR = /^(\d{4}-\d{2}-\d{2})\s*,\s*(\d{4}-\d{2}-\d{2})$/u;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}/u;
 
 /**
  * Rebuilds a query with its date constraints removed, grouped monthly on the
@@ -624,10 +630,22 @@ type RelaxedDateConstraints = Readonly<{
 export function relaxDateConstraints(query: CubeQuery): RelaxedDateConstraints | null {
   const dropped: string[] = [];
   let member: string | undefined;
+  let windowStart: string | undefined;
+  let windowEnd: string | undefined;
+  const rememberWindow = (start?: string, end?: string) => {
+    if (start && ISO_DATE.test(start)) windowStart ??= start.slice(0, 10);
+    if (end && ISO_DATE.test(end)) windowEnd ??= end.slice(0, 10);
+  };
   for (const td of query.timeDimensions ?? []) {
     if (!td.dateRange && !td.compareDateRange) continue;
     member ??= td.dimension;
     const range = td.dateRange ?? td.compareDateRange;
+    if (Array.isArray(td.dateRange) && td.dateRange.length === 2) {
+      rememberWindow(String(td.dateRange[0]), String(td.dateRange[1]));
+    } else if (typeof td.dateRange === "string") {
+      const pair = td.dateRange.match(ISO_DATE_PAIR);
+      if (pair) rememberWindow(pair[1], pair[2]);
+    }
     dropped.push(`${td.dimension} in ${JSON.stringify(range)}`);
   }
   const keptFilters: CubeFilter[] = [];
@@ -643,7 +661,19 @@ export function relaxDateConstraints(query: CubeQuery): RelaxedDateConstraints |
     }
     if (DATE_RELAXABLE_OPERATORS.has(filter.operator)) {
       member ??= filter.member;
-      dropped.push(`${filter.member} ${filter.operator} ${(filter.values ?? []).join("..")}`);
+      const values = filter.values ?? [];
+      if (filter.operator === "inDateRange") {
+        if (values.length === 2) rememberWindow(values[0], values[1]);
+        else if (values.length === 1) {
+          const pair = values[0]!.match(ISO_DATE_PAIR);
+          if (pair) rememberWindow(pair[1], pair[2]);
+        }
+      } else if (filter.operator === "beforeDate") {
+        rememberWindow(undefined, values[0]);
+      } else if (filter.operator === "afterDate") {
+        rememberWindow(values[0], undefined);
+      }
+      dropped.push(`${filter.member} ${filter.operator} ${values.join("..")}`);
       continue;
     }
     keptFilters.push(filter);
@@ -652,6 +682,8 @@ export function relaxDateConstraints(query: CubeQuery): RelaxedDateConstraints |
   return {
     member,
     dropped,
+    ...(windowStart ? { windowStart } : {}),
+    ...(windowEnd ? { windowEnd } : {}),
     diagnostic: {
       ...(query.measures?.length ? { measures: query.measures } : {}),
       ...(query.segments?.length ? { segments: query.segments } : {}),
@@ -692,8 +724,22 @@ async function explainEmptyDateWindow(
   const spanKey = result.rows.length > 0
     ? Object.keys(result.rows[0]!).find((key) => key === relaxed.member || key.startsWith(`${relaxed.member}.`))
     : undefined;
-  const spanOf = (row: Record<string, unknown> | undefined): string =>
+  const spanOf = (row: Readonly<Record<string, unknown>> | undefined): string =>
     spanKey && row ? String(row[spanKey]).slice(0, 10) : "unknown";
+  // Rows arrive ascending. The months adjacent to the requested window matter
+  // far more than a decades-old outlier, so both the model payload and the
+  // trace summary centre on the window when its bounds are known.
+  const before = relaxed.windowStart
+    ? result.rows.filter((row) => spanOf(row) < relaxed.windowStart!)
+    : result.rows;
+  const after = relaxed.windowEnd
+    ? result.rows.filter((row) => spanOf(row) > relaxed.windowEnd!)
+    : [];
+  const nearestBefore = before.at(-1);
+  const nearestAfter = after[0];
+  const modelRows = relaxed.windowStart || relaxed.windowEnd
+    ? [...before.slice(-24), ...after.slice(0, 12)]
+    : result.rows.slice(-EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS);
   await context.emit({
     type: "progress",
     status: "complete",
@@ -705,18 +751,29 @@ async function explainEmptyDateWindow(
       160,
     ),
     ...(result.rows.length > 0
-      ? { detail: sanitizeTraceText(`Without the date constraints: data spans ${spanOf(result.rows[0])} to ${spanOf(result.rows.at(-1))}`, 300) }
+      ? {
+          detail: sanitizeTraceText(
+            relaxed.windowStart || relaxed.windowEnd
+              ? `Nearest data before the window: ${nearestBefore ? spanOf(nearestBefore) : "none"} · after: ${nearestAfter ? spanOf(nearestAfter) : "none"} · full span ${spanOf(result.rows[0])} to ${spanOf(result.rows.at(-1))}`
+              : `Without the date constraints: data spans ${spanOf(result.rows[0])} to ${spanOf(result.rows.at(-1))}`,
+            300,
+          ),
+        }
       : {}),
   });
   return {
     relaxedDateConstraints: relaxed.dropped,
+    ...(relaxed.windowStart ? { windowStart: relaxed.windowStart } : {}),
+    ...(relaxed.windowEnd ? { windowEnd: relaxed.windowEnd } : {}),
     groupedBy: `${relaxed.member} by month`,
     rowCount: result.rows.length,
-    truncated: result.rows.length > EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS,
-    rows: result.rows.slice(0, EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS),
+    ...(nearestBefore ? { nearestDataBeforeWindow: spanOf(nearestBefore) } : {}),
+    ...(nearestAfter ? { nearestDataAfterWindow: spanOf(nearestAfter) } : {}),
+    truncated: result.rows.length > modelRows.length,
+    rows: modelRows,
     note: result.rows.length === 0
       ? "Even without the date constraints this query returns nothing, so the window is not the cause. Suspect the segments or remaining filters: rerun without them and group by the filtered dimensions before concluding anything."
-      : "The requested window is genuinely empty; the rows above show where this data actually falls without the date constraints. Answer with where the data sits (for example everything falls earlier or later than the window) instead of calling the data incomplete. To present these figures, run a governed query; this diagnostic is context only and did not consume the query budget.",
+      : "The requested window is genuinely empty; the rows above are the months of this data closest to the window (not the full history). Answer with where the data sits instead of calling the data incomplete, and watch outstanding-style measures in months before the window: anything unpaid there is still owed now. To present these figures, run a governed query; this diagnostic is context only and did not consume the query budget.",
   };
 }
 
