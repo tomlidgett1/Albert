@@ -300,13 +300,66 @@ export async function loadConnectorRouting(
       }
     }
   }
+  let freshness = [...byConnectorDomain.values()]
+    .sort((a, b) => a.connector.localeCompare(b.connector) || a.domain.localeCompare(b.domain));
+  if (!freshness.some((entry) => entry.dataThrough !== null)) {
+    // readiness is unpopulated for some tenants; fall back to the ingestion
+    // stream cursors so the agent still knows how fresh each source is.
+    const { data: fallback } = await supabase.rpc("albert_connector_freshness");
+    const parsed = connectorFreshnessSchema.safeParse(singleton(fallback));
+    if (parsed.success) {
+      freshness = parsed.data.map((entry) => ({
+        connector: entry.connector,
+        domain: entry.domain,
+        dataThrough: entry.dataThrough,
+      }));
+    }
+  }
   return Object.freeze({
     activeConnectors: Object.freeze([...new Set(
       active.map(({ connector_key: connectorKey }) => connectorKey),
     )].sort()),
-    freshness: Object.freeze([...byConnectorDomain.values()]
-      .sort((a, b) => a.connector.localeCompare(b.connector) || a.domain.localeCompare(b.domain))),
+    freshness: Object.freeze(freshness),
   });
+}
+
+const connectorFreshnessSchema = z.array(z.object({
+  connector: z.string().trim().min(1).max(80),
+  domain: z.string().trim().min(1).max(120),
+  dataThrough: z.string().nullable(),
+}).strict());
+
+const sourceFindingsSchema = z.array(z.object({
+  concept: z.string().trim().min(1).max(60),
+  finding: z.string().trim().min(1).max(500),
+  recordedAt: z.string(),
+}).strict());
+
+export type TenantSourceFindings = z.infer<typeof sourceFindingsSchema>;
+
+/** Durable source-topology facts recorded by earlier agent investigations. */
+export async function loadSourceFindings(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<TenantSourceFindings> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_list_source_findings");
+  if (error) throw new ControlPlaneError("Source findings could not be loaded.", 503);
+  const parsed = sourceFindingsSchema.safeParse(singleton(data));
+  if (!parsed.success) throw new ControlPlaneError("Source findings returned invalid data.", 503);
+  return parsed.data;
+}
+
+export async function recordSourceFinding(
+  concept: string,
+  finding: string,
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<void> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { error } = await supabase.rpc("albert_record_source_finding", {
+    p_concept: concept,
+    p_finding: finding,
+  });
+  if (error) throw new ControlPlaneError("The source finding could not be recorded.", 503);
 }
 
 export async function loadActiveConnectorKeys(

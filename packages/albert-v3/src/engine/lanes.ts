@@ -11,7 +11,7 @@ import {
   renderSkillsCatalogue,
   type AlbertV3AgentConfig,
 } from "../agent-config/loader.js";
-import type { ConnectorDomainFreshness, V3TurnContext } from "./context.js";
+import type { ConnectorDomainFreshness, TenantSourceFinding, V3TurnContext } from "./context.js";
 import {
   MISSING_QUERY_RETRY_MESSAGE,
   ungroundedFinalAnswer,
@@ -94,6 +94,13 @@ export function laneModelSettings(
   options?: Readonly<{
     toolChoice?: "auto" | "required" | "none";
     promptCacheKey?: string;
+    /**
+     * Ceiling for support roles (intent, composer, repair, reviewer). The
+     * user's effort preference is a floor for investigation only; elevating a
+     * formatting or routing pass to xhigh multiplies latency without adding
+     * evidence — the 75-question Luna Max battery measured a 232s median.
+     */
+    maxEffort?: LaneEffort;
   }>,
 ) {
   const toolChoice = options?.toolChoice;
@@ -112,8 +119,13 @@ export function laneModelSettings(
       ...(toolChoice ? { toolChoice } : {}),
     };
   }
+  const elevated = elevatedLaneEffort(effort, preferences.reasoningEffort);
+  const capped = options?.maxEffort
+    && LANE_EFFORT_ORDER.indexOf(elevated) > LANE_EFFORT_ORDER.indexOf(options.maxEffort)
+    ? options.maxEffort
+    : elevated;
   return {
-    reasoning: { effort: elevatedLaneEffort(effort, preferences.reasoningEffort) },
+    reasoning: { effort: capped },
     ...(options?.promptCacheKey
       ? { promptCacheOptions: { mode: "explicit" as const, ttl: "30m" as const } }
       : {}),
@@ -301,6 +313,21 @@ watermark; say the data runs to the watermark instead.
 ${lines}`;
 }
 
+/** Durable source-topology facts recorded by earlier investigations; empty string when none. */
+export function renderSourceFindings(
+  findings: readonly TenantSourceFinding[],
+): string {
+  if (findings.length === 0) return "";
+  const lines = findings
+    .map((entry) => `- [${entry.concept}] ${entry.finding}`)
+    .join("\n");
+  return `# Established source facts for this business (verified by earlier investigations)
+These override generic assumptions about which source answers which concept.
+When evidence this turn contradicts one, investigate and record the correction
+with record_source_finding.
+${lines}`;
+}
+
 /** Request-specific trusted material deliberately lives after the cache boundary. */
 export function renderRequestContext(input: Readonly<{
   config: AlbertV3AgentConfig;
@@ -309,6 +336,7 @@ export function renderRequestContext(input: Readonly<{
   ownerGoal?: string | null;
   answerMustCover?: readonly string[];
   connectorFreshness?: readonly ConnectorDomainFreshness[];
+  sourceFindings?: readonly TenantSourceFinding[];
 }>): string {
   const matchedRules = matchAgentRequestedRules(input.question, input.config);
   const certified = matchCertifiedQueries(input.question, input.config);
@@ -327,6 +355,8 @@ export function renderRequestContext(input: Readonly<{
       ).join("\n\n"),
     );
   }
+  const findingsBlock = renderSourceFindings(input.sourceFindings ?? []);
+  if (findingsBlock) sections.push(findingsBlock);
   const freshnessBlock = renderConnectorFreshness(input.connectorFreshness ?? []);
   if (freshnessBlock) sections.push(freshnessBlock);
   sections.push(
@@ -359,6 +389,7 @@ export function laneConversationInput(input: LaneRunInput): AgentInputItem[] {
       ownerGoal: input.intent.ownerGoal,
       answerMustCover: input.intent.answerMustCover,
       connectorFreshness: input.context.connectorFreshness,
+      sourceFindings: input.context.sourceFindings,
     })),
     ...input.conversation,
   ]);
@@ -508,6 +539,8 @@ ${ANSWER_CONTRACT}
 # Route-relevant business rules
 ${renderAlwaysRulesForRoute(input.config, input.context.toolRoute)}
 
+${renderSourceFindings(input.context.sourceFindings)}
+
 ${renderConnectorFreshness(input.context.connectorFreshness)}
 
 # Request and retrieved evidence
@@ -522,7 +555,7 @@ ${evidenceSummary}
 # Governed result cells available to compose_table
 ${JSON.stringify(sources)}`,
     model: input.preferences.model,
-    modelSettings: laneModelSettings(input.preferences, "medium"),
+    modelSettings: laneModelSettings(input.preferences, "medium", { maxEffort: "medium" }),
     tools: [createComposeTableTool()],
     outputType: finalAnswerSchema,
   });
@@ -571,12 +604,27 @@ async function runStructuredLane(
     })],
     outputType: finalAnswerSchema,
   });
-  const run = await input.runner.run(agent, laneConversationInput(input), {
-    context: input.context,
-    maxTurns: spec.maxTurns,
-    signal: input.context.signal,
-  });
-  return run.finalOutput;
+  try {
+    const run = await input.runner.run(agent, laneConversationInput(input), {
+      context: input.context,
+      maxTurns: spec.maxTurns,
+      signal: input.context.signal,
+    });
+    return run.finalOutput;
+  } catch (error) {
+    // Turn exhaustion is an escalation signal, not a fatal fault: the caller
+    // falls through to the analytical lane or composes from the evidence
+    // already gathered. Anything else (provider/network) stays fatal.
+    if (error instanceof Error && /max turns/iu.test(error.message)) return undefined;
+    throw error;
+  }
+}
+
+/** Composes an answer from evidence already gathered, without new queries. */
+export async function composeFromGatheredEvidence(
+  input: LaneRunInput,
+): Promise<FinalAnswer | undefined> {
+  return composeGroundedAnswer(input);
 }
 
 export async function runQuickLane(input: LaneRunInput): Promise<FinalAnswer | undefined> {

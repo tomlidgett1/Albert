@@ -121,6 +121,7 @@ function stubContext(input: Readonly<{
     } as never),
     budget: { maxQueries: 3, executed: 0 },
     connectorFreshness: [],
+    sourceFindings: [],
     commentary: createV3CommentaryState(false),
     executedQueries: [],
     tableResults: new Map(),
@@ -264,6 +265,7 @@ async function captureLaneInstructions(
     } as never),
     budget: { maxQueries: 8, executed: 0 },
     connectorFreshness: [],
+    sourceFindings: [],
     commentary: createV3CommentaryState(lane === "analytical"),
     executedQueries: [],
     tableResults: new Map(),
@@ -385,8 +387,37 @@ test("an evidence reviewer gates the answer and can re-enter the analytical lane
   assert.match(engine, /verdict === "investigate"/u);
   // The review runs between lane execution and answer finalisation, refills
   // the budget, and never loops (the revised answer is not re-reviewed).
-  assert.match(engine, /An internal reviewer judged the evidence gathered so far insufficient/u);
+  assert.match(engine, /An internal reviewer judged the draft below insufficient/u);
   assert.match(engine, /An unexplained zero is not an answer/u);
+});
+
+test("the source-finding ledger reaches prompts, the tool ships, and support roles cap effort", async () => {
+  const { renderSourceFindings } = await import("../../packages/albert-v3/src/engine/lanes.ts");
+  const block = renderSourceFindings([
+    { concept: "worked hours", finding: "Deputy timesheets are authoritative; Square timecards run high.", recordedAt: "2026-08-13T00:00:00Z" },
+  ]);
+  assert.match(block, /\[worked hours\] Deputy timesheets are authoritative/u);
+  assert.match(block, /record_source_finding/u);
+  assert.equal(renderSourceFindings([]), "");
+
+  const names = createV3Tools({ route: route(), lane: "quick", purpose: "answer" }).map((tool) => tool.name);
+  assert.ok(names.includes("record_source_finding"));
+  const investigation = createV3Tools({ route: route(), lane: "quick", purpose: "investigation" }).map((tool) => tool.name);
+  assert.equal(investigation.includes("record_source_finding"), false);
+
+  // The user's effort floor applies to investigation; support roles stay capped.
+  const capped = laneModelSettings(
+    { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+    "medium",
+    { maxEffort: "medium" },
+  );
+  assert.equal(capped.reasoning?.effort, "medium");
+
+  // Turn exhaustion escalates or composes from evidence instead of failing.
+  const lanes = read("packages/albert-v3/src/engine/lanes.ts");
+  assert.match(lanes, /max turns/iu);
+  const engine = read("packages/albert-v3/src/engine/engine.ts");
+  assert.match(engine, /composeFromGatheredEvidence\(laneInput\)/u);
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

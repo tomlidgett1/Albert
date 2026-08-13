@@ -32,6 +32,18 @@ export type ConnectorDomainFreshness = Readonly<{
   dataThrough: string | null;
 }>;
 
+/**
+ * A durable, tenant-scoped fact about how this business's data sources fit
+ * together, recorded by an earlier investigation: source elections, verified
+ * reconciliations, data-quality traits. Injected into every turn so the
+ * agent stops re-deriving (and sometimes fumbling) the same topology.
+ */
+export type TenantSourceFinding = Readonly<{
+  concept: string;
+  finding: string;
+  recordedAt: string;
+}>;
+
 /** A governed query executed this turn, recorded for provenance and the UI. */
 export type ExecutedCubeQuery = Readonly<{
   topic: string;
@@ -82,6 +94,12 @@ export type V3TurnContext = {
   readonly budget: { maxQueries: number; executed: number };
   /** Per-connector-domain sync watermarks resolved at turn start; empty when unavailable. */
   readonly connectorFreshness: readonly ConnectorDomainFreshness[];
+  /** Durable source-topology facts for this tenant; empty when none recorded. */
+  readonly sourceFindings: readonly TenantSourceFinding[];
+  /** Persists a new source finding; absent when the runtime has no store. */
+  readonly recordSourceFinding?: (concept: string, finding: string) => Promise<void>;
+  /** record_source_finding calls this turn; capped so a turn cannot flood the ledger. */
+  sourceFindingsRecorded?: number;
   /**
    * Set when a query window reached past a connector's sync watermark, so a
    * "Verified" claim about that window would overstate certainty.

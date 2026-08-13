@@ -281,6 +281,7 @@ export async function classifyIntent(input: Readonly<{
       // Goal inference needs real thought; routing alone was fine at low.
       "medium",
       {
+        maxEffort: "medium",
         promptCacheKey: v3PromptCacheKey({
           partition: input.cachePartition,
           profile: "intent-orchestrator",

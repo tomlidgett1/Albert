@@ -97,6 +97,7 @@ function context(toolRoute: V3ToolRoute): V3TurnContext {
     }),
     budget: { maxQueries: 30, executed: 0 },
     connectorFreshness: [],
+    sourceFindings: [],
     commentary: createV3CommentaryState(true),
     executedQueries: [],
     tableResults: new Map(),

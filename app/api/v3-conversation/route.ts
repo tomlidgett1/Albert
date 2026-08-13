@@ -32,7 +32,10 @@ import {
   consumeAlbertRateLimit,
   currentTenantContext,
   loadConnectorRouting,
+  loadSourceFindings,
+  recordSourceFinding,
   type ConnectorRouting,
+  type TenantSourceFindings,
   requireUser,
 } from "@/services/control-plane/src/web-repository";
 import {
@@ -171,8 +174,9 @@ export async function POST(request: Request): Promise<Response> {
   let conversation: readonly ConversationMessage[];
   let activeConnectors: readonly string[] | undefined;
   let connectorFreshness: ConnectorRouting["freshness"] | undefined;
+  let sourceFindings: TenantSourceFindings | undefined;
   try {
-    const [priorMessages, routing] = await Promise.all([
+    const [priorMessages, routing, findings] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch((error) => {
         // Routing metadata is a cost optimisation, not an authorisation
@@ -185,9 +189,20 @@ export async function POST(request: Request): Promise<Response> {
         }, correlationId);
         return undefined;
       }),
+      loadSourceFindings(auth.supabase).catch((error) => {
+        // Same fail-open stance as routing: findings improve answers but a
+        // transient read failure must never block a turn.
+        logger.warn("v3.source_findings_unavailable", {
+          conversationId,
+          turnId,
+          ...safeErrorEvidence(error),
+        }, correlationId);
+        return undefined;
+      }),
     ]);
     activeConnectors = routing?.activeConnectors;
     connectorFreshness = routing?.freshness;
+    sourceFindings = findings;
     conversation = [
       ...priorMessages.map(({ role, text, governedQueries, resolvedSubject }) => ({
         role,
@@ -279,6 +294,10 @@ export async function POST(request: Request): Promise<Response> {
           role: tenant.role,
           activeConnectors,
           connectorFreshness,
+          sourceFindings,
+          recordSourceFinding: async (concept, finding) => {
+            await recordSourceFinding(concept, finding, auth.supabase);
+          },
           conversationId,
           turnId,
           cubeApiUrl: configuration.cubeApiUrl!,

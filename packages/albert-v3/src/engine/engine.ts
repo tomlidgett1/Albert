@@ -15,13 +15,14 @@ import { CubeClient } from "../cube/client.js";
 import { ShopifyQLClient } from "../shopifyql/client.js";
 import { ShopifyAdminClient } from "../shopify-admin/client.js";
 import { loadAgentConfig } from "../agent-config/loader.js";
-import type { ConnectorDomainFreshness, EmitV3Trace, V3TurnContext } from "./context.js";
+import type { ConnectorDomainFreshness, EmitV3Trace, TenantSourceFinding, V3TurnContext } from "./context.js";
 import {
   buildConversationInput,
   classifyIntent,
   type ConversationMessage,
 } from "./orchestrator.js";
 import {
+  composeFromGatheredEvidence,
   normalizeOwnerFollowUps,
   finalAnswerSchema,
   laneModelSettings,
@@ -63,6 +64,10 @@ export type AlbertV3TurnOptions = Readonly<{
   activeConnectors?: readonly string[];
   /** Per connector+domain sync watermarks from control-plane readiness. */
   connectorFreshness?: readonly ConnectorDomainFreshness[];
+  /** Durable source-topology facts for this tenant. */
+  sourceFindings?: readonly TenantSourceFinding[];
+  /** Persists a source finding the agent verified this turn. */
+  recordSourceFinding?: (concept: string, finding: string) => Promise<void>;
   conversationId: string;
   turnId: string;
   cubeApiUrl: string;
@@ -157,6 +162,7 @@ short paragraphs, bullets and numbered-list hierarchy, as well as its state, fol
 and disclosed assumptions. Do not run new queries.`,
     model: input.preferences.model,
     modelSettings: laneModelSettings(input.preferences, "medium", {
+      maxEffort: "medium",
       promptCacheKey: v3PromptCacheKey({
         partition: input.context.promptCachePartition,
         profile: "structured-table-repair",
@@ -244,6 +250,7 @@ missing checks phrased as plain data questions (no tool or schema jargon).
 Never fail a review for style, formatting or depth beyond the question.`,
     model: input.preferences.model,
     modelSettings: laneModelSettings(input.preferences, "medium", {
+      maxEffort: "medium",
       promptCacheKey: v3PromptCacheKey({
         partition: input.context.promptCachePartition,
         profile: "evidence-reviewer",
@@ -474,6 +481,8 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     signal: options.signal,
     budget: { maxQueries: budget.maxQueries, executed: 0 },
     connectorFreshness: options.connectorFreshness ?? [],
+    sourceFindings: options.sourceFindings ?? [],
+    ...(options.recordSourceFinding ? { recordSourceFinding: options.recordSourceFinding } : {}),
     commentary: createV3CommentaryState(lane === "analytical" || lane === "deep"),
     executedQueries: [],
     tableResults: new Map(),
@@ -546,6 +555,11 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     finalAnswer = await runAnalyticalLane(laneInput);
   }
 
+  if (!finalAnswer && context.executedQueries.length > 0) {
+    // Every lane pass ran out of turns or budget with evidence in hand:
+    // compose from what was gathered rather than failing the turn.
+    finalAnswer = await composeFromGatheredEvidence(laneInput);
+  }
   if (!finalAnswer) {
     throw new Error("The Albert v3 engine did not produce a terminal answer.");
   }
@@ -571,9 +585,13 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       draft: finalAnswer,
     });
     if (review?.verdict === "investigate" && review.missing.length > 0) {
+      // Targeted top-up, not a fresh investigation: the reviewer named the
+      // gaps, so the revision runs only those checks and updates the draft.
+      // The 75-question battery showed full re-investigation here doubled
+      // latency and caused timeouts.
       context.budget.maxQueries = Math.max(
         context.budget.maxQueries,
-        context.budget.executed + config.lanes.analytical.maxQueries,
+        context.budget.executed + Math.min(4, config.lanes.analytical.maxQueries),
       );
       await emit({
         type: "progress",
@@ -588,9 +606,9 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
         conversation: [
           ...laneInput.conversation,
           user(
-            "An internal reviewer judged the evidence gathered so far insufficient to answer usefully. "
-            + `Address these gaps with further governed queries, reusing the evidence already gathered: ${review.missing.join("; ")}. `
-            + "Then compose the full answer.",
+            "An internal reviewer judged the draft below insufficient on specific points. "
+            + `Run ONLY the queries needed to close these gaps (do not repeat work already done): ${review.missing.join("; ")}. `
+            + `Then return the corrected full answer, keeping everything from the draft that remains true.\n\nDraft:\n${finalAnswer.answer}`,
           ),
         ],
       });

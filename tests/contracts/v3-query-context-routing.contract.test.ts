@@ -84,7 +84,8 @@ test("active connector routing is authenticated, bounded, stable, and deduplicat
     "shopify",
     "xero",
   ]);
-  assert.deepEqual(calls, ["albert_connections_workspace"]);
+  // The workspace read plus the stream-cursor freshness fallback (readiness empty).
+  assert.deepEqual(calls, ["albert_connections_workspace", "albert_connector_freshness"]);
 });
 
 test("active connector routing rejects malformed or failed control-plane state", async () => {

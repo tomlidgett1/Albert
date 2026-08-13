@@ -1682,6 +1682,47 @@ export function createV3Tools(
     },
   });
 
+  const recordSourceFindingTool = tool({
+    name: "record_source_finding",
+    description:
+      "Durably record a stable fact about how THIS business's data sources fit together, for every future question: which source is authoritative for a concept, a verified cross-source reconciliation (for example one feed double-counts or subsets another), or a persistent data-quality trait. Record only conclusions verified by evidence this turn that will remain true. Never record one-off figures, period totals, or anything already listed in the established source facts unless correcting it.",
+    parameters: z.object({
+      concept: z.string().trim().min(2).max(60)
+        .regex(/^[a-z0-9][a-z0-9 _-]*$/u)
+        .describe("Short lowercase concept key, e.g. 'worked hours', 'gst collected', 'total income'."),
+      finding: z.string().trim().min(10).max(400)
+        .describe("The durable fact, one to three plain sentences with the evidence basis."),
+    }).strict(),
+    strict: true,
+    execute: async (input, runContext) => {
+      const context = contextOf(runContext);
+      if (!context.recordSourceFinding) {
+        return { ok: false, error: "This runtime has no finding store; continue without recording." };
+      }
+      const used = context.sourceFindingsRecorded ?? 0;
+      if (used >= 2) {
+        return { ok: false, error: "The finding allowance for this turn is spent. Continue without recording." };
+      }
+      context.sourceFindingsRecorded = used + 1;
+      try {
+        await context.recordSourceFinding(
+          input.concept,
+          sanitizeTraceText(input.finding, 400),
+        );
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "The finding could not be recorded." };
+      }
+      await context.emit({
+        type: "progress",
+        status: "complete",
+        stage: "planning",
+        label: sanitizeTraceText(`Remembered how "${input.concept}" works for this business`, 160),
+        detail: sanitizeTraceText(input.finding, 300),
+      });
+      return { ok: true, guidance: "Recorded. It will be shown to every future turn as an established source fact." };
+    },
+  });
+
   const updatePlan = tool({
     name: "update_plan",
     description:
@@ -1793,6 +1834,7 @@ export function createV3Tools(
   if (purpose === "answer" && (options.lane === undefined || options.lane === "analytical")) {
     selected.push(updatePlan);
   }
+  if (purpose === "answer") selected.push(recordSourceFindingTool);
   if (purpose === "answer") selected.push(loadSkill, createComposeTableTool());
   return Object.freeze(selected);
 }

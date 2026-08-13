@@ -64,6 +64,7 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
     "top_n_breakdown",
     "explore_entities",
     "make_chart",
+    "record_source_finding",
     "load_skill",
     "compose_table",
   ]);
@@ -103,6 +104,7 @@ test("Shopify-native reporting exposes ShopifyQL without unrelated Cube tools", 
     "search_shopifyql_catalogue",
     "run_shopifyql_query",
     "make_chart",
+    "record_source_finding",
     "load_skill",
     "compose_table",
   ]);
@@ -120,6 +122,7 @@ test("Shopify long-tail object metadata exposes the Admin read plane only", () =
     "search_shopify_admin_catalogue",
     "run_shopify_admin_query",
     "make_chart",
+    "record_source_finding",
     "load_skill",
     "compose_table",
   ]);
