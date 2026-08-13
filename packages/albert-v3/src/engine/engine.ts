@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Agent, Runner, user } from "@openai/agents";
+import { z } from "zod";
 import {
   resolveAlbertModelTransport,
   describeChatFailure,
@@ -14,7 +15,7 @@ import { CubeClient } from "../cube/client.js";
 import { ShopifyQLClient } from "../shopifyql/client.js";
 import { ShopifyAdminClient } from "../shopify-admin/client.js";
 import { loadAgentConfig } from "../agent-config/loader.js";
-import type { EmitV3Trace, V3TurnContext } from "./context.js";
+import type { ConnectorDomainFreshness, EmitV3Trace, V3TurnContext } from "./context.js";
 import {
   buildConversationInput,
   classifyIntent,
@@ -60,6 +61,8 @@ export type AlbertV3TurnOptions = Readonly<{
   role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
   /** Authenticated control-plane connector keys; never accepted from a client request. */
   activeConnectors?: readonly string[];
+  /** Per connector+domain sync watermarks from control-plane readiness. */
+  connectorFreshness?: readonly ConnectorDomainFreshness[];
   conversationId: string;
   turnId: string;
   cubeApiUrl: string;
@@ -187,6 +190,88 @@ and disclosed assumptions. Do not run new queries.`,
     // governed source results remain visible and pinnable if repair fails.
   }
   return { ...input.draft, answer: stripMarkdownTables(input.draft.answer) || "The governed results are shown above." };
+}
+
+const evidenceReviewSchema = z.object({
+  verdict: z.enum(["ship", "investigate"]),
+  /** Concrete missing checks phrased as data questions; empty when shipping. */
+  missing: z.array(z.string().min(8).max(200)).max(3),
+});
+
+/**
+ * The generate→review gate: before an answer ships, a cheap reviewer asks
+ * whether the gathered evidence would genuinely satisfy the owner's goal. A
+ * literally-true but unexplanatory answer (an unexplained zero, an uncovered
+ * facet, a claim reaching past a sync watermark) fails review and re-enters
+ * the analytical lane once with a refilled budget. Best effort: any reviewer
+ * failure ships the original answer.
+ */
+async function reviewEvidenceSufficiency(input: Readonly<{
+  runner: Runner;
+  preferences: AgentRunPreferences;
+  context: V3TurnContext;
+  intent: Readonly<{
+    resolvedQuestion: string;
+    ownerGoal: string | null;
+    answerMustCover: readonly string[];
+  }>;
+  draft: FinalAnswer;
+}>): Promise<z.infer<typeof evidenceReviewSchema> | undefined> {
+  const evidence = input.context.executedQueries.map((query) => ({
+    topic: query.topic,
+    view: query.view,
+    rowCount: query.rowCount,
+    timeRange: query.timeRangeLabel,
+  }));
+  const critic = new Agent<unknown, typeof evidenceReviewSchema>({
+    name: "Albert v3 evidence reviewer",
+    instructions: `You review whether the evidence gathered this turn genuinely answers the
+owner's question before the answer ships. You never write the answer; you only
+judge sufficiency.
+
+Fail the review (verdict=investigate) when:
+- A zero, empty or missing figure is reported without evidence explaining it
+  (where the data actually falls, what the planned/counterpart figures show, or
+  a data-freshness limit). An unexplained zero is not an answer.
+- The question or the useful-answer points have a facet no query addressed. A
+  question about actuals usually needs the matching plan or schedule for the
+  same period when actuals come back empty; a question about a period needs
+  anything already outstanding from earlier periods when money is involved.
+- A claim depends on a window that reaches past the connector's synced-through
+  watermark without saying so.
+Otherwise return verdict=ship. When investigating, name at most 3 concrete
+missing checks phrased as plain data questions (no tool or schema jargon).
+Never fail a review for style, formatting or depth beyond the question.`,
+    model: input.preferences.model,
+    modelSettings: laneModelSettings(input.preferences, "medium", {
+      promptCacheKey: v3PromptCacheKey({
+        partition: input.context.promptCachePartition,
+        profile: "evidence-reviewer",
+        route: input.context.toolRoute,
+      }),
+    }),
+    outputType: evidenceReviewSchema,
+  });
+  try {
+    const run = await input.runner.run(critic, withV3PromptCacheBoundary(
+      input.preferences.model,
+      [user(JSON.stringify({
+        resolvedQuestion: input.intent.resolvedQuestion,
+        ownerGoal: input.intent.ownerGoal,
+        answerMustCover: input.intent.answerMustCover,
+        evidence,
+        connectorFreshness: input.context.connectorFreshness,
+        draftAnswer: input.draft.answer,
+        draftState: input.draft.state,
+      }))],
+    ), {
+      maxTurns: 2,
+      signal: input.context.signal,
+    });
+    return run.finalOutput;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -388,6 +473,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     emit,
     signal: options.signal,
     budget: { maxQueries: budget.maxQueries, executed: 0 },
+    connectorFreshness: options.connectorFreshness ?? [],
     commentary: createV3CommentaryState(lane === "analytical" || lane === "deep"),
     executedQueries: [],
     tableResults: new Map(),
@@ -464,6 +550,54 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     throw new Error("The Albert v3 engine did not produce a terminal answer.");
   }
 
+  // Generate → review → revise: a cheap sufficiency review gates the answer.
+  // One revision pass at most; explain rests on prior turns and deep already
+  // synthesises across branches, so only the data lanes are gated.
+  if (
+    (lane === "quick" || lane === "analytical")
+    && finalAnswer.state !== "Escalate"
+    && finalAnswer.state !== "Unavailable"
+    && context.executedQueries.length > 0
+  ) {
+    const review = await reviewEvidenceSufficiency({
+      runner,
+      preferences: options.preferences,
+      context,
+      intent: {
+        resolvedQuestion: intent.resolvedQuestion,
+        ownerGoal: intent.ownerGoal,
+        answerMustCover: intent.answerMustCover,
+      },
+      draft: finalAnswer,
+    });
+    if (review?.verdict === "investigate" && review.missing.length > 0) {
+      context.budget.maxQueries = Math.max(
+        context.budget.maxQueries,
+        context.budget.executed + config.lanes.analytical.maxQueries,
+      );
+      await emit({
+        type: "progress",
+        status: "running",
+        stage: "query",
+        label: "Reviewed the evidence — digging further",
+        detail: sanitizeTraceText(review.missing.join(" · "), 300),
+        progress: 0.7,
+      });
+      const revised = await runAnalyticalLane({
+        ...laneInput,
+        conversation: [
+          ...laneInput.conversation,
+          user(
+            "An internal reviewer judged the evidence gathered so far insufficient to answer usefully. "
+            + `Address these gaps with further governed queries, reusing the evidence already gathered: ${review.missing.join("; ")}. `
+            + "Then compose the full answer.",
+          ),
+        ],
+      });
+      if (revised && revised.state !== "Escalate") finalAnswer = revised;
+    }
+  }
+
   if (hasMarkdownTable(finalAnswer.answer)) {
     finalAnswer = await repairMarkdownAnswerTable({
       runner,
@@ -482,6 +616,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     requested: finalAnswer.state === "Escalate" ? "Exploratory" : finalAnswer.state,
     queriesExecuted: context.executedQueries.length,
     rowsSeen,
+    freshnessQualified: context.freshnessQualified,
   });
   const text = sanitizeAnswerText(ownerFacingAnswerText({
     lane,

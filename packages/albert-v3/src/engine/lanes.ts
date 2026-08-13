@@ -11,7 +11,7 @@ import {
   renderSkillsCatalogue,
   type AlbertV3AgentConfig,
 } from "../agent-config/loader.js";
-import type { V3TurnContext } from "./context.js";
+import type { ConnectorDomainFreshness, V3TurnContext } from "./context.js";
 import {
   MISSING_QUERY_RETRY_MESSAGE,
   ungroundedFinalAnswer,
@@ -286,6 +286,21 @@ may be reused without another schema call. Never invent a view or member.`,
   return sections.join("\n\n");
 }
 
+/** Compact per-connector sync watermark block; empty string when unknown. */
+export function renderConnectorFreshness(
+  freshness: readonly ConnectorDomainFreshness[],
+): string {
+  if (freshness.length === 0) return "";
+  const lines = freshness
+    .map((entry) => `- ${entry.connector} ${entry.domain}: ${entry.dataThrough ? `synced through ${entry.dataThrough.slice(0, 16)}` : "sync watermark unknown"}`)
+    .join("\n");
+  return `# Data freshness (synced-through watermarks)
+Data past a watermark has not been ingested yet: its absence means "not synced",
+never zero. Never assert a period is empty when the period reaches past the
+watermark; say the data runs to the watermark instead.
+${lines}`;
+}
+
 /** Request-specific trusted material deliberately lives after the cache boundary. */
 export function renderRequestContext(input: Readonly<{
   config: AlbertV3AgentConfig;
@@ -293,6 +308,7 @@ export function renderRequestContext(input: Readonly<{
   assumptions?: readonly string[];
   ownerGoal?: string | null;
   answerMustCover?: readonly string[];
+  connectorFreshness?: readonly ConnectorDomainFreshness[];
 }>): string {
   const matchedRules = matchAgentRequestedRules(input.question, input.config);
   const certified = matchCertifiedQueries(input.question, input.config);
@@ -311,6 +327,8 @@ export function renderRequestContext(input: Readonly<{
       ).join("\n\n"),
     );
   }
+  const freshnessBlock = renderConnectorFreshness(input.connectorFreshness ?? []);
+  if (freshnessBlock) sections.push(freshnessBlock);
   sections.push(
     "# Current request",
     `Resolved question: ${input.question}`,
@@ -340,6 +358,7 @@ export function laneConversationInput(input: LaneRunInput): AgentInputItem[] {
       assumptions: input.intent.assumptions,
       ownerGoal: input.intent.ownerGoal,
       answerMustCover: input.intent.answerMustCover,
+      connectorFreshness: input.context.connectorFreshness,
     })),
     ...input.conversation,
   ]);
@@ -488,6 +507,8 @@ ${ANSWER_CONTRACT}
 
 # Route-relevant business rules
 ${renderAlwaysRulesForRoute(input.config, input.context.toolRoute)}
+
+${renderConnectorFreshness(input.context.connectorFreshness)}
 
 # Request and retrieved evidence
 Resolved question: ${input.intent.resolvedQuestion}

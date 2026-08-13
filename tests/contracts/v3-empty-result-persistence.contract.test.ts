@@ -120,6 +120,7 @@ function stubContext(input: Readonly<{
       occurredAt: "2026-08-13T00:00:00.000Z",
     } as never),
     budget: { maxQueries: 3, executed: 0 },
+    connectorFreshness: [],
     commentary: createV3CommentaryState(false),
     executedQueries: [],
     tableResults: new Map(),
@@ -262,6 +263,7 @@ async function captureLaneInstructions(
       occurredAt: "2026-08-13T00:00:00.000Z",
     } as never),
     budget: { maxQueries: 8, executed: 0 },
+    connectorFreshness: [],
     commentary: createV3CommentaryState(lane === "analytical"),
     executedQueries: [],
     tableResults: new Map(),
@@ -348,6 +350,43 @@ test("the visible plan tool ships on the analytical lane and its events pass the
   assert.match(lanes, /call update_plan with 2-5 short owner-readable steps/u);
   const migration = read("infra/migrations/control-plane/0140_m8_plan_trace_events.sql");
   assert.match(migration, /'progress', 'narrative', 'plan', 'query', 'table', 'chart',/u);
+});
+
+test("connector sync watermarks reach the model, the tool results, and the answer state", async () => {
+  const { groundedAnswerState } = await import("../../packages/albert-v3/src/engine/grounding.ts");
+  // A confident emptiness reaching past the watermark downgrades to Qualified.
+  assert.equal(groundedAnswerState({
+    lane: "quick", requested: "Verified", queriesExecuted: 2, rowsSeen: 0, freshnessQualified: true,
+  }), "Qualified");
+  assert.equal(groundedAnswerState({
+    lane: "quick", requested: "Verified", queriesExecuted: 2, rowsSeen: 5,
+  }), "Verified");
+
+  const { renderConnectorFreshness } = await import("../../packages/albert-v3/src/engine/lanes.ts");
+  const block = renderConnectorFreshness([
+    { connector: "deputy", domain: "timesheets", dataThrough: "2026-08-01T14:00:00Z" },
+    { connector: "deputy", domain: "rosters", dataThrough: "2026-08-13T09:00:00Z" },
+  ]);
+  assert.match(block, /deputy timesheets: synced through 2026-08-01/u);
+  assert.match(block, /never zero/u);
+  assert.equal(renderConnectorFreshness([]), "");
+
+  // The routing read now carries freshness instead of discarding it.
+  const webRepository = read("services/control-plane/src/web-repository.ts");
+  assert.match(webRepository, /data_ready_through/u);
+  assert.match(webRepository, /loadConnectorRouting/u);
+  const route = read("app/api/v3-conversation/route.ts");
+  assert.match(route, /connectorFreshness/u);
+});
+
+test("an evidence reviewer gates the answer and can re-enter the analytical lane once", () => {
+  const engine = read("packages/albert-v3/src/engine/engine.ts");
+  assert.match(engine, /reviewEvidenceSufficiency/u);
+  assert.match(engine, /verdict === "investigate"/u);
+  // The review runs between lane execution and answer finalisation, refills
+  // the budget, and never loops (the revised answer is not re-reviewed).
+  assert.match(engine, /An internal reviewer judged the evidence gathered so far insufficient/u);
+  assert.match(engine, /An unexplained zero is not an answer/u);
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

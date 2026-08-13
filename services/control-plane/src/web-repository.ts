@@ -94,8 +94,22 @@ const connectorRoutingWorkspaceSchema = z.object({
   connections: z.array(z.object({
     connector_key: z.string().trim().min(1).max(80),
     status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
+    readiness: z.array(z.object({
+      domain: z.string().trim().min(1).max(80),
+      data_ready_through: z.string().nullable().optional(),
+    }).passthrough()).default([]),
   }).passthrough()).default([]),
 }).passthrough();
+
+export type ConnectorRouting = Readonly<{
+  activeConnectors: readonly string[];
+  /** Per connector+domain sync watermarks; data past a watermark is unsynced, not zero. */
+  freshness: readonly Readonly<{
+    connector: string;
+    domain: string;
+    dataThrough: string | null;
+  }>[];
+}>;
 
 const tenantDeletionReceiptSchema = z.object({
   deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
@@ -257,9 +271,9 @@ export async function loadConnectionsWorkspace(): Promise<unknown> {
  * blocked connections remain visible because governed historical data can
  * still be queryable with an explicit freshness qualification.
  */
-export async function loadActiveConnectorKeys(
+export async function loadConnectorRouting(
   supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
-): Promise<readonly string[]> {
+): Promise<ConnectorRouting> {
   const supabase = supabaseClient ?? (await requireUser()).supabase;
   const { data, error } = await supabase.rpc("albert_connections_workspace");
   if (error) throw new ControlPlaneError("Connection routing state could not be loaded.", 503);
@@ -267,11 +281,38 @@ export async function loadActiveConnectorKeys(
   if (!parsed.success) {
     throw new ControlPlaneError("Connection routing state returned invalid data.", 503);
   }
-  return Object.freeze([...new Set(
-    parsed.data.connections
-      .filter(({ status }) => status !== "pending" && status !== "disconnected")
-      .map(({ connector_key: connectorKey }) => connectorKey),
-  )].sort());
+  const active = parsed.data.connections
+    .filter(({ status }) => status !== "pending" && status !== "disconnected");
+  // Several connections of one connector: the freshest watermark per domain
+  // reflects what is actually queryable.
+  const byConnectorDomain = new Map<string, { connector: string; domain: string; dataThrough: string | null }>();
+  for (const connection of active) {
+    for (const readiness of connection.readiness) {
+      const key = `${connection.connector_key} ${readiness.domain}`;
+      const existing = byConnectorDomain.get(key);
+      const candidate = readiness.data_ready_through ?? null;
+      if (!existing || (candidate !== null && (existing.dataThrough === null || candidate > existing.dataThrough))) {
+        byConnectorDomain.set(key, {
+          connector: connection.connector_key,
+          domain: readiness.domain,
+          dataThrough: candidate,
+        });
+      }
+    }
+  }
+  return Object.freeze({
+    activeConnectors: Object.freeze([...new Set(
+      active.map(({ connector_key: connectorKey }) => connectorKey),
+    )].sort()),
+    freshness: Object.freeze([...byConnectorDomain.values()]
+      .sort((a, b) => a.connector.localeCompare(b.connector) || a.domain.localeCompare(b.domain))),
+  });
+}
+
+export async function loadActiveConnectorKeys(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<readonly string[]> {
+  return (await loadConnectorRouting(supabaseClient)).activeConnectors;
 }
 
 export async function disconnectConnection(

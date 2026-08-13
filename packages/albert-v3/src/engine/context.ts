@@ -21,6 +21,17 @@ type TraceEventInput = TraceEvent extends infer Event
 
 export type EmitV3Trace = (event: TraceEventInput) => Promise<TraceEvent>;
 
+/**
+ * One connector domain's ingestion watermark from control-plane readiness.
+ * Absence of data beyond `dataThrough` means "not synced yet", never zero.
+ */
+export type ConnectorDomainFreshness = Readonly<{
+  connector: string;
+  domain: string;
+  /** ISO timestamp the domain's data is ready through; null when unknown. */
+  dataThrough: string | null;
+}>;
+
 /** A governed query executed this turn, recorded for provenance and the UI. */
 export type ExecutedCubeQuery = Readonly<{
   topic: string;
@@ -69,6 +80,13 @@ export type V3TurnContext = {
   readonly emit: EmitV3Trace;
   readonly signal?: AbortSignal;
   readonly budget: { maxQueries: number; executed: number };
+  /** Per-connector-domain sync watermarks resolved at turn start; empty when unavailable. */
+  readonly connectorFreshness: readonly ConnectorDomainFreshness[];
+  /**
+   * Set when a query window reached past a connector's sync watermark, so a
+   * "Verified" claim about that window would overstate certainty.
+   */
+  freshnessQualified?: boolean;
   /** Bounded owner-facing commentary for analytical and deep turns. */
   readonly commentary: V3CommentaryState;
   /**

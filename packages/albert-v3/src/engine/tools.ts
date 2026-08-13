@@ -841,6 +841,11 @@ export async function executeGovernedCubeQuery(
   const catalogue = await context.cube.fetchCatalogue(context.signal);
   const queryYaml = cubeQueryToYaml(validated.query);
   const connector = connectorForView(context, validated.view);
+  const connectorWatermarks = context.connectorFreshness
+    .filter((entry) => entry.connector === connector && entry.dataThrough !== null);
+  const sortedWatermarks = connectorWatermarks.map((entry) => entry.dataThrough!).sort();
+  const oldestWatermark = sortedWatermarks[0];
+  const newestWatermark = sortedWatermarks.at(-1);
   const queryEvent = await context.emit({
     type: "query",
     status: "complete",
@@ -876,9 +881,9 @@ export async function executeGovernedCubeQuery(
     sources: [{
       connector,
       label: `Cube · ${validated.view}`,
-      // Cube query completion is not a source watermark. The dashboard
-      // resolves current readiness watermarks from the control plane.
-      dataThrough: "unknown",
+      // The control-plane readiness watermark, resolved at turn start; Cube
+      // query completion itself is never a source watermark.
+      dataThrough: newestWatermark ?? "unknown",
     }],
     timeRange,
     definitions: validated.members.slice(0, 12).map((member) => ({
@@ -943,6 +948,17 @@ export async function executeGovernedCubeQuery(
     ? await explainEmptyDateWindow(context, validated.query)
     : undefined;
 
+  // Deterministic freshness guard: a window reaching past the connector's
+  // synced-through watermark cannot support a confident emptiness claim.
+  const windowReachesPastWatermark = Boolean(
+    oldestWatermark
+    && timeRange.end !== "unknown"
+    && timeRange.end > oldestWatermark.slice(0, 10),
+  );
+  if (windowReachesPastWatermark && result.rows.length === 0) {
+    context.freshnessQualified = true;
+  }
+
   return {
     ok: true,
     resultId,
@@ -952,6 +968,16 @@ export async function executeGovernedCubeQuery(
     rows: result.rows.slice(0, MAX_MODEL_ROWS),
     executionMs: result.executionMs,
     ...(emptyResultDiagnostic ? { emptyResultDiagnostic } : {}),
+    ...(windowReachesPastWatermark
+      ? {
+          freshnessWarning: {
+            syncedThrough: Object.fromEntries(
+              connectorWatermarks.map((entry) => [entry.domain, entry.dataThrough]),
+            ),
+            note: "The requested window reaches past this connector's synced-through watermark. Absence of rows beyond the watermark means the data has not been ingested yet, never that nothing happened. Say the data runs to the watermark rather than asserting the period is empty.",
+          },
+        }
+      : {}),
   };
 }
 

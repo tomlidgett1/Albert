@@ -114,12 +114,19 @@ export function groundedAnswerState(input: Readonly<{
   requested: AnswerState;
   queriesExecuted: number;
   rowsSeen: number;
+  /** An empty result window reached past a connector's sync watermark. */
+  freshnessQualified?: boolean;
 }>): AnswerState {
   let state = input.requested;
   if (input.queriesExecuted === 0 && (state === "Verified" || state === "Exploratory")) {
     state = input.lane === "explain" ? "Exploratory" : "Unavailable";
   }
   if (state === "Verified" && input.rowsSeen === 0) state = "No data";
+  // A "verified" emptiness reaching past the sync watermark overstates
+  // certainty: the data may simply not have arrived yet.
+  if (input.freshnessQualified && (state === "Verified" || state === "No data")) {
+    state = "Qualified";
+  }
   if (laneRequiresQueryEvidence(input.lane) && input.queriesExecuted === 0) {
     return "Unavailable";
   }

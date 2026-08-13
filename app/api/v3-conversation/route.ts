@@ -31,7 +31,8 @@ import {
   ControlPlaneError,
   consumeAlbertRateLimit,
   currentTenantContext,
-  loadActiveConnectorKeys,
+  loadConnectorRouting,
+  type ConnectorRouting,
   requireUser,
 } from "@/services/control-plane/src/web-repository";
 import {
@@ -169,10 +170,11 @@ export async function POST(request: Request): Promise<Response> {
 
   let conversation: readonly ConversationMessage[];
   let activeConnectors: readonly string[] | undefined;
+  let connectorFreshness: ConnectorRouting["freshness"] | undefined;
   try {
-    const [priorMessages, routedConnectors] = await Promise.all([
+    const [priorMessages, routing] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
-      loadActiveConnectorKeys(auth.supabase).catch((error) => {
+      loadConnectorRouting(auth.supabase).catch((error) => {
         // Routing metadata is a cost optimisation, not an authorisation
         // boundary. Fail open so a transient control-plane read cannot hide a
         // valid query tool or degrade answer quality.
@@ -184,7 +186,8 @@ export async function POST(request: Request): Promise<Response> {
         return undefined;
       }),
     ]);
-    activeConnectors = routedConnectors;
+    activeConnectors = routing?.activeConnectors;
+    connectorFreshness = routing?.freshness;
     conversation = [
       ...priorMessages.map(({ role, text, governedQueries, resolvedSubject }) => ({
         role,
@@ -275,6 +278,7 @@ export async function POST(request: Request): Promise<Response> {
           actorId: auth.user.id,
           role: tenant.role,
           activeConnectors,
+          connectorFreshness,
           conversationId,
           turnId,
           cubeApiUrl: configuration.cubeApiUrl!,
