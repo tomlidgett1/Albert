@@ -408,8 +408,14 @@ do not call report_progress, search_semantic_catalogue or get_view_schema as a s
 type GroundedLaneSpec = Readonly<{
   name: string;
   instructions: string;
-  effort: "low" | "medium" | "high" | "xhigh";
+  effort: LaneEffort;
   maxTurns: number;
+  /**
+   * The lane actually executing, which decides tool exposure. An escalated
+   * quick turn runs the analytical lane and must get its tools (update_plan,
+   * report_progress), whatever the original intent lane was.
+   */
+  toolLane: NonNullable<Parameters<typeof createV3Tools>[0]>["lane"];
 }>;
 
 function exposedToolLane(lane: IntentDecision["lane"]): NonNullable<Parameters<typeof createV3Tools>[0]>["lane"] {
@@ -432,7 +438,7 @@ async function runGrokInvestigation(
     modelSettings: laneModelSettings(input.preferences, spec.effort, { toolChoice: "required" }),
     tools: [...createV3Tools({
       route: input.context.toolRoute,
-      lane: exposedToolLane(input.intent.lane),
+      lane: spec.toolLane,
       purpose: "investigation",
     })],
   });
@@ -539,7 +545,7 @@ async function runStructuredLane(
     }),
     tools: [...createV3Tools({
       route: input.context.toolRoute,
-      lane: exposedToolLane(input.intent.lane),
+      lane: spec.toolLane,
       purpose: "answer",
     })],
     outputType: finalAnswerSchema,
@@ -558,6 +564,7 @@ export async function runQuickLane(input: LaneRunInput): Promise<FinalAnswer | u
     name: "Albert v3 quick lane",
     effort: budget.reasoningEffort,
     maxTurns: 8,
+    toolLane: exposedToolLane(input.intent.lane),
     instructions: `You are Albert, answering a simple analytical question about a small business
 using its connected tools (POS, accounting, payroll, workforce and live Shopify reports).
 Answer it with the smallest number of governed typed queries, ideally one. Do not
@@ -621,16 +628,22 @@ export async function runAnalyticalLane(input: LaneRunInput): Promise<FinalAnswe
     name: "Albert v3 analytical lane",
     effort: budget.reasoningEffort,
     maxTurns: 30,
+    toolLane: "analytical",
     instructions: `You are Albert, a senior analyst answering a question about a small business
 using its connected tools (POS, accounting, payroll, workforce and live Shopify reports),
 using only governed typed query tools.
 
 Method:
-1. Before the first query, call report_progress once with kind=plan. Plan against
-   the owner's practical goal and the useful-answer points in the request context,
-   not just the literal wording. Write one or two natural sentences explaining the
-   checks you will make and why; do not use a numbered list or mention queries,
-   tools, Cube, schemas, or internal reasoning.
+1. Before the first query, call update_plan with 2-5 short owner-readable steps
+   (exactly one active) so the owner can watch the plan tick off; then call
+   report_progress once with kind=plan. Plan against the owner's practical goal
+   and the useful-answer points in the request context, not just the literal
+   wording. Write one or two natural sentences explaining the checks you will
+   make and why; do not use a numbered list or mention queries, tools, Cube,
+   schemas, or internal reasoning. As each plan step completes, call update_plan
+   again with the full list (completed steps done, next step active); mark every
+   step done before composing the answer. update_plan is free and never uses the
+   query budget.
 2. Execute the plan: trends, breakdowns and comparisons each get their own query.
    Use compare_periods for period-over-period questions and top_n_breakdown for
    rankings. Stay within ${budget.maxQueries} queries.

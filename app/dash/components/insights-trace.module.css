@@ -1857,3 +1857,71 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Visible working plan (Codex-style tick-off checklist) */
+.planCard {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  background: light-dark(rgba(0, 0, 0, 0.015), rgba(255, 255, 255, 0.02));
+}
+
+.planHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: light-dark(#737373, #9ca3af);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.planCount {
+  font-weight: 450;
+  text-transform: none;
+}
+
+.planStep {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+}
+
+.planStepIcon {
+  display: inline-flex;
+  width: 14px;
+  justify-content: center;
+  align-items: center;
+  color: light-dark(#16a34a, #4ade80);
+  flex: none;
+}
+
+.planStepDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid light-dark(#a3a3a3, #6b7280);
+}
+
+.planStepLabel {
+  color: light-dark(#404040, #d5d8df);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: -0.02em;
+}
+
+.planStep[data-status="done"] .planStepLabel {
+  color: light-dark(#8a8a8a, #8b90a0);
+  text-decoration: line-through;
+  text-decoration-color: light-dark(rgba(0, 0, 0, 0.25), rgba(255, 255, 255, 0.3));
+}
+
+.planStep[data-status="active"] .planStepLabel {
+  font-weight: 550;
+}

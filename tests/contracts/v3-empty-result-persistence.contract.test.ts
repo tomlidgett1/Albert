@@ -22,6 +22,7 @@ import {
 } from "../../packages/albert-v3/src/engine/lanes.ts";
 import { intentSchema } from "../../packages/albert-v3/src/engine/orchestrator.ts";
 import {
+  createV3Tools,
   executeGovernedCubeQuery,
   relaxDateConstraints,
 } from "../../packages/albert-v3/src/engine/tools.ts";
@@ -333,6 +334,20 @@ test("the user's reasoning effort is a floor for lane effort, never silently dow
     "low",
   );
   assert.equal(settings.reasoning?.effort, "xhigh");
+});
+
+test("the visible plan tool ships on the analytical lane and its events pass the persistence gate", () => {
+  const names = (lane: "quick" | "analytical") =>
+    createV3Tools({ route: route(), lane, purpose: "answer" }).map((tool) => tool.name);
+  assert.ok(names("analytical").includes("update_plan"));
+  assert.equal(names("quick").includes("update_plan"), false);
+
+  // The analytical prompt instructs the model to maintain the plan, and the
+  // control-plane append gate accepts 'plan' events (migration 0140).
+  const lanes = read("packages/albert-v3/src/engine/lanes.ts");
+  assert.match(lanes, /call update_plan with 2-5 short owner-readable steps/u);
+  const migration = read("infra/migrations/control-plane/0140_m8_plan_trace_events.sql");
+  assert.match(migration, /'progress', 'narrative', 'plan', 'query', 'table', 'chart',/u);
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

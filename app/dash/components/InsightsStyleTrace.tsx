@@ -8,6 +8,7 @@ import type {
   AnswerState,
   TraceChartEvent,
   TraceEvent,
+  TracePlanEvent,
   TraceProgressStage,
   TraceProvenance,
   TraceTableColumn,
@@ -143,6 +144,8 @@ type TrailModel = Readonly<{
   }>;
   /** Sparse, owner-facing plan and finding updates shown only while work runs. */
   commentaryUpdates: readonly TrailCommentaryUpdate[];
+  /** Latest visible working plan; steps tick off as the agent progresses. */
+  plan?: TracePlanEvent;
   trace: readonly TraceEntry[];
   governedQueries: readonly NonNullable<TrailStep["governed"]>[];
   charts: readonly Readonly<{
@@ -283,6 +286,7 @@ export function buildTrailModel(
   let clarification: TrailModel["clarification"];
   let error: TrailModel["error"];
   let cubecoreMeta: TrailModel["cubecoreMeta"];
+  let plan: TracePlanEvent | undefined;
   let stopped = false;
   let status = streaming ? "Thinking" : "How this was worked out";
   let statusDetail = "";
@@ -357,6 +361,12 @@ export function buildTrailModel(
         ...(event.detail ? { detail: event.detail } : {}),
         status: nextStatus,
       });
+      continue;
+    }
+
+    if (event.type === "plan") {
+      // Each plan event carries the full current list; the latest wins.
+      plan = event;
       continue;
     }
 
@@ -624,6 +634,7 @@ export function buildTrailModel(
               : "OpenAI",
     },
     commentaryUpdates,
+    plan,
     trace,
     governedQueries: normalised
       .map((step) => step.governed)
@@ -631,6 +642,31 @@ export function buildTrailModel(
     charts: normalised.flatMap((step) => step.chart ? [step.chart] : []),
     answerTables,
   };
+}
+
+/** Codex-style visible plan: short steps that tick off as work completes. */
+function PlanChecklist({ plan }: { plan: TracePlanEvent }) {
+  const done = plan.steps.filter((step) => step.status === "done").length;
+  return (
+    <div className={styles.planCard} aria-label="Plan">
+      <div className={styles.planHeader}>
+        Plan
+        <span className={styles.planCount}>{done}/{plan.steps.length}</span>
+      </div>
+      {plan.steps.map((step, index) => (
+        <div key={index} className={styles.planStep} data-status={step.status}>
+          <span className={styles.planStepIcon}>
+            {step.status === "done"
+              ? <CheckIcon size={12} />
+              : step.status === "active"
+                ? <span className={styles.spinner} />
+                : <span className={styles.planStepDot} />}
+          </span>
+          <span className={styles.planStepLabel}>{step.label}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Compact elapsed label used by the Codex-style working trail. */
@@ -1864,6 +1900,7 @@ export default function InsightsStyleTrace({
       ) : (
         <>
           <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
+          {model.plan ? <PlanChecklist plan={model.plan} /> : null}
           <AnimatePresence initial={false}>
             {streaming && runtime === "v3" && model.commentaryUpdates.length > 0 ? (
               <LiveCommentary
@@ -1875,6 +1912,7 @@ export default function InsightsStyleTrace({
           </AnimatePresence>
         </>
       )}
+      {detailedMode && model.plan ? <PlanChecklist plan={model.plan} /> : null}
 
       {!detailedMode ? (
         <CompactQueries

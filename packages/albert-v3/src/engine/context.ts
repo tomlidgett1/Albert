@@ -81,6 +81,8 @@ export type V3TurnContext = {
    * actually falls) run outside the query budget; capped per turn.
    */
   emptyResultDiagnostics?: number;
+  /** update_plan calls (visible tick-off plan) run outside the query budget; capped per turn. */
+  planUpdates?: number;
   catalogueSearches?: number;
   catalogueSchemaLoads?: number;
   shopifyQLCatalogueSearches?: number;

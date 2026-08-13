@@ -79,6 +79,8 @@ function summarizeEvent(event: TraceEvent): string {
         return [event.stage, event.label].filter(Boolean).join(" · ");
       case "narrative":
         return event.text;
+      case "plan":
+        return event.steps.map((step) => `${step.status === "done" ? "✓" : step.status === "active" ? "▸" : "○"} ${step.label}`).join(" · ");
       case "query":
         return `${event.topic} · ${event.metrics.length} metric(s) · ${event.dimensions.length} dimension(s)`;
       case "table":

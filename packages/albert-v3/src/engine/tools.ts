@@ -1656,6 +1656,37 @@ export function createV3Tools(
     },
   });
 
+  const updatePlan = tool({
+    name: "update_plan",
+    description:
+      "Maintain the short visible plan the owner watches while you work. Call it before the first query with 2-6 short owner-readable steps (exactly one active), then call it again with the full updated list each time a step completes so steps tick off live. Free: it never consumes the query budget.",
+    parameters: z.object({
+      steps: z.array(z.object({
+        label: z.string().trim().min(3).max(60)
+          .describe("Short owner-readable step, e.g. 'Check overdue bills'. No tool or query jargon."),
+        status: z.enum(["pending", "active", "done"]),
+      }).strict()).min(2).max(6),
+    }).strict(),
+    strict: true,
+    execute: async (input, runContext) => {
+      const context = contextOf(runContext);
+      const used = context.planUpdates ?? 0;
+      if (used >= 12) {
+        return { ok: false, error: "The plan-update allowance for this turn is spent. Continue the work without further plan updates." };
+      }
+      context.planUpdates = used + 1;
+      await context.emit({
+        type: "plan",
+        status: "complete",
+        steps: input.steps.map((step) => ({
+          label: sanitizeTraceText(step.label, 60),
+          status: step.status,
+        })),
+      });
+      return { ok: true };
+    },
+  });
+
   const reportProgress = tool({
     name: "report_progress",
     description:
@@ -1732,6 +1763,9 @@ export function createV3Tools(
   if (route.cube || route.shopifyQL || route.shopifyAdmin) selected.push(makeChart);
   if (purpose === "answer" && (options.lane === undefined || options.lane === "analytical" || options.lane === "deep")) {
     selected.push(reportProgress);
+  }
+  if (purpose === "answer" && (options.lane === undefined || options.lane === "analytical")) {
+    selected.push(updatePlan);
   }
   if (purpose === "answer") selected.push(loadSkill, createComposeTableTool());
   return Object.freeze(selected);

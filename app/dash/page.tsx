@@ -424,6 +424,7 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
 const traceEventTypes = new Set([
   "progress",
   "narrative",
+  "plan",
   "query",
   "table",
   "chart",

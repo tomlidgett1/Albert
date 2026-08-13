@@ -318,6 +318,21 @@ export interface TraceNarrativeEvent extends TraceEventBase {
   text: string;
 }
 
+export type TracePlanStepStatus = "pending" | "active" | "done";
+
+/**
+ * The agent's visible working plan: short owner-readable steps ticked off as
+ * the investigation progresses. Each plan event carries the full current
+ * list; the UI renders only the latest one.
+ */
+export interface TracePlanEvent extends TraceEventBase {
+  type: "plan";
+  steps: readonly Readonly<{
+    label: string;
+    status: TracePlanStepStatus;
+  }>[];
+}
+
 export interface TraceQueryEvent extends TraceEventBase {
   type: "query";
   topic: string;
@@ -523,6 +538,7 @@ export interface TraceErrorEvent extends TraceEventBase {
 export type TraceEvent =
   | TraceProgressEvent
   | TraceNarrativeEvent
+  | TracePlanEvent
   | TraceQueryEvent
   | TraceTableEvent
   | TraceChartEvent
