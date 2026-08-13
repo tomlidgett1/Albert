@@ -12,11 +12,15 @@ import { createV3CommentaryState } from "../../packages/albert-v3/src/engine/com
 import type { V3ToolRoute } from "../../packages/albert-v3/src/engine/connector-routing.ts";
 import type { V3TurnContext } from "../../packages/albert-v3/src/engine/context.ts";
 import {
+  elevatedLaneEffort,
   finalAnswerSchema,
+  laneModelSettings,
+  renderRequestContext,
   runAnalyticalLane,
   runQuickLane,
   type LaneRunInput,
 } from "../../packages/albert-v3/src/engine/lanes.ts";
+import { intentSchema } from "../../packages/albert-v3/src/engine/orchestrator.ts";
 import {
   executeGovernedCubeQuery,
   relaxDateConstraints,
@@ -272,6 +276,8 @@ async function captureLaneInstructions(
     intent: {
       lane,
       resolvedQuestion: "What invoices do we have due end of August?",
+      ownerGoal: "Plan which supplier payments must go out this month.",
+      answerMustCover: ["Anything already overdue and unpaid"],
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],
@@ -288,7 +294,7 @@ test("the quick lane can escalate instead of hedging; the analytical lane must r
 
   const quick = await captureLaneInstructions("quick");
   assert.match(quick, /return state=Escalate/u);
-  assert.match(quick, /Escalating always beats hedging/u);
+  assert.match(quick, /Escalating always\s+beats hedging/u);
   assert.match(quick, /lead to investigate, not an answer to report/u);
   assert.match(quick, /Money owed stays owed until paid/u);
   assert.doesNotMatch(quick, /Do not over-investigate\./u);
@@ -297,6 +303,36 @@ test("the quick lane can escalate instead of hedging; the analytical lane must r
   assert.match(analytical, /never return state=Escalate/u);
   assert.match(analytical, /lead to investigate, not an answer to report/u);
   assert.match(analytical, /Money owed stays owed until paid/u);
+});
+
+test("the intent agent infers a goal and useful-answer criteria that reach every lane", () => {
+  const shape = intentSchema.shape;
+  assert.ok(shape.ownerGoal);
+  assert.ok(shape.answerMustCover);
+
+  const context = renderRequestContext({
+    config,
+    question: "What bills are due in August?",
+    ownerGoal: "Plan which supplier payments must go out this month.",
+    answerMustCover: ["Anything already overdue and unpaid", "What falls due inside August"],
+  });
+  assert.match(context, /Owner's practical goal: Plan which supplier payments/u);
+  assert.match(context, /A useful answer must cover:\n- Anything already overdue and unpaid\n- What falls due inside August/u);
+
+  const orchestrator = read("packages/albert-v3/src/engine/orchestrator.ts");
+  assert.match(orchestrator, /answerMustCover: up to 4 short points/u);
+});
+
+test("the user's reasoning effort is a floor for lane effort, never silently downgraded", () => {
+  assert.equal(elevatedLaneEffort("low", "max"), "xhigh");
+  assert.equal(elevatedLaneEffort("low", "high"), "high");
+  assert.equal(elevatedLaneEffort("high", "low"), "high");
+  assert.equal(elevatedLaneEffort("medium", undefined), "medium");
+  const settings = laneModelSettings(
+    { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+    "low",
+  );
+  assert.equal(settings.reasoning?.effort, "xhigh");
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

@@ -16,6 +16,10 @@ export const intentSchema = z.object({
   lane: z.enum(LANES),
   /** The question restated with references and ambiguity resolved. */
   resolvedQuestion: z.string().min(1).max(600),
+  /** One sentence naming the practical goal behind the question; null when purely informational. */
+  ownerGoal: z.string().max(300).nullable(),
+  /** Up to 4 points a genuinely useful answer must cover, from a critical reading of the question. */
+  answerMustCover: z.array(z.string().min(3).max(200)).max(4),
   /** Assumptions made instead of asking; must be disclosed in the answer. */
   assumptions: z.array(z.string().max(200)).max(4),
   clarificationQuestion: z.string().max(240).nullable(),
@@ -122,6 +126,8 @@ export function coerceRefinementIntent(
     return {
       lane: "explain",
       resolvedQuestion: `Explain, from the previous answer and its recorded queries: ${message.trim()}`.slice(0, 600),
+      ownerGoal: decision.ownerGoal,
+      answerMustCover: decision.answerMustCover,
       assumptions: decision.assumptions,
       clarificationQuestion: null,
       clarificationOptions: [],
@@ -134,6 +140,8 @@ export function coerceRefinementIntent(
   return {
     lane: lastAssistant?.resolvedSubject?.kind === "deep" ? "deep" : "quick",
     resolvedQuestion: resolvedQuestion.slice(0, 600),
+    ownerGoal: decision.ownerGoal,
+    answerMustCover: decision.answerMustCover,
     assumptions: decision.assumptions,
     clarificationQuestion: null,
     clarificationOptions: [],
@@ -234,7 +242,23 @@ resolvedQuestion must restate the previous request in full with the change appli
 never just the delta. Such refinements route to the same lane the original needed,
 usually quick. Record any assumptions you made. If lane is clarification, set
 clarificationQuestion and 2-4 short options; otherwise set clarificationQuestion
-to null and options to [].`;
+to null and options to [].
+
+Beyond routing, read the question critically and infer the goal behind it:
+- ownerGoal: one sentence naming what the owner is practically trying to decide
+  or do (null only when the question has no wider goal).
+- answerMustCover: up to 4 short points a genuinely useful answer must cover.
+  Think about the practical meaning, not the literal wording. A question scoped
+  to a period, category or state usually implies the neighbouring reality the
+  owner cares about: someone asking what is due in a period is planning
+  payments, so anything already overdue and unpaid is part of the answer;
+  someone asking for the "top" product is judging performance, so how far ahead
+  it is matters. Reason it out for THIS question rather than copying these
+  examples. The answering lane is required to cover every point or say plainly
+  why the data cannot.
+resolvedQuestion stays faithful to the owner's wording; answerMustCover is where
+the practical reading lives. When covering the points clearly needs several
+queries, route analytical rather than quick.`;
 }
 
 export async function classifyIntent(input: Readonly<{
@@ -254,7 +278,8 @@ export async function classifyIntent(input: Readonly<{
       isXaiModel(input.preferences.model)
         ? { ...input.preferences, reasoningEffort: "low" }
         : input.preferences,
-      "low",
+      // Goal inference needs real thought; routing alone was fine at low.
+      "medium",
       {
         promptCacheKey: v3PromptCacheKey({
           partition: input.cachePartition,
@@ -279,6 +304,8 @@ export async function classifyIntent(input: Readonly<{
     return coerceRefinementIntent({
       lane: "analytical",
       resolvedQuestion: input.message,
+      ownerGoal: null,
+      answerMustCover: [],
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],

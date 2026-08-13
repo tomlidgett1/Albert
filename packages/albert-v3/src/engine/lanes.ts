@@ -65,9 +65,32 @@ export type LaneRunInput = Readonly<{
   intent: IntentDecision;
 }>;
 
+const LANE_EFFORT_ORDER = ["low", "medium", "high", "xhigh"] as const;
+export type LaneEffort = (typeof LANE_EFFORT_ORDER)[number];
+
+/**
+ * The user's chosen reasoning effort is a floor, never silently downgraded: a
+ * lane's configured tier only wins when it is already higher. "max" maps to
+ * the highest lane tier; "none" leaves the lane tier alone.
+ */
+export function elevatedLaneEffort(
+  laneEffort: LaneEffort,
+  preference: ReasoningEffort | undefined,
+): LaneEffort {
+  const preferred: LaneEffort | undefined = preference === "max"
+    ? "xhigh"
+    : (LANE_EFFORT_ORDER as readonly string[]).includes(preference ?? "")
+      ? preference as LaneEffort
+      : undefined;
+  if (!preferred) return laneEffort;
+  return LANE_EFFORT_ORDER.indexOf(preferred) > LANE_EFFORT_ORDER.indexOf(laneEffort)
+    ? preferred
+    : laneEffort;
+}
+
 export function laneModelSettings(
   preferences: AgentRunPreferences,
-  effort: "low" | "medium" | "high" | "xhigh",
+  effort: LaneEffort,
   options?: Readonly<{
     toolChoice?: "auto" | "required" | "none";
     promptCacheKey?: string;
@@ -90,7 +113,7 @@ export function laneModelSettings(
     };
   }
   return {
-    reasoning: { effort },
+    reasoning: { effort: elevatedLaneEffort(effort, preferences.reasoningEffort) },
     ...(options?.promptCacheKey
       ? { promptCacheOptions: { mode: "explicit" as const, ttl: "30m" as const } }
       : {}),
@@ -268,6 +291,8 @@ export function renderRequestContext(input: Readonly<{
   config: AlbertV3AgentConfig;
   question: string;
   assumptions?: readonly string[];
+  ownerGoal?: string | null;
+  answerMustCover?: readonly string[];
 }>): string {
   const matchedRules = matchAgentRequestedRules(input.question, input.config);
   const certified = matchCertifiedQueries(input.question, input.config);
@@ -290,6 +315,15 @@ export function renderRequestContext(input: Readonly<{
     "# Current request",
     `Resolved question: ${input.question}`,
   );
+  if (input.ownerGoal) {
+    sections.push(`Owner's practical goal: ${input.ownerGoal}`);
+  }
+  if (input.answerMustCover && input.answerMustCover.length > 0) {
+    sections.push(
+      "A useful answer must cover:\n"
+      + input.answerMustCover.map((point) => `- ${point}`).join("\n"),
+    );
+  }
   if (input.assumptions && input.assumptions.length > 0) {
     sections.push(
       `Interpretation choices already made (only mention one in the answer if it materially changes the reading): ${input.assumptions.join("; ")}`,
@@ -304,6 +338,8 @@ export function laneConversationInput(input: LaneRunInput): AgentInputItem[] {
       config: input.config,
       question: input.intent.resolvedQuestion,
       assumptions: input.intent.assumptions,
+      ownerGoal: input.intent.ownerGoal,
+      answerMustCover: input.intent.answerMustCover,
     })),
     ...input.conversation,
   ]);
@@ -359,6 +395,7 @@ export const ANSWER_CONTRACT = `# Answer contract
 - Sensible metric naming: say "sales" not "gross takings (inc tax)", "profit" or "gross profit" not "gross-margin measure". Mention GST treatment only if the user asked about tax or the distinction changes the story.
 - Format money as $1,234.56 (no currency code). Whole dollars are fine for large figures in prose.
 - state=Verified when every figure comes straight from query results; Exploratory when you added derived calculations or interpretation; "No data" when the queries ran but returned nothing relevant; Unavailable when the data source failed. state=Escalate hands an unresolved investigation to a deeper pass in the same turn; use it only when your lane instructions explicitly allow it.
+- When the request context lists points a useful answer must cover, cover every point the connected data can support and plainly name any point it cannot. An answer that is literally true but skips those points is a wrong answer, whatever its state.
 - Never return a promise, plan, or "I'll" commitment as the answer. If you do not yet have query results, call a query tool. The answer is the figures, not a description of work you intend to do.
 - followUps are clickable next messages the owner sends. Write each one in the owner's voice: a short question or request they would type (for example "How did that compare to last month?", "Break this down by store", "Which products drove the drop?"). Never write as Albert offering help ("I can look this up if you want", "Would you like me to…", "Happy to dig into…"). No leading "Try:" prefixes.`;
 
@@ -448,6 +485,8 @@ ${renderAlwaysRulesForRoute(input.config, input.context.toolRoute)}
 
 # Request and retrieved evidence
 Resolved question: ${input.intent.resolvedQuestion}
+${input.intent.ownerGoal ? `Owner's practical goal: ${input.intent.ownerGoal}` : ""}
+${input.intent.answerMustCover.length > 0 ? `A useful answer must cover:\n${input.intent.answerMustCover.map((point) => `- ${point}`).join("\n")}` : ""}
 ${input.intent.assumptions.length > 0 ? `Interpretation choices already made (only mention one in the answer if it materially changes the reading): ${input.intent.assumptions.join("; ")}` : ""}
 
 # Queries executed this turn
@@ -547,12 +586,14 @@ different dimension or a shorter stem before concluding the thing does not exist
 
 ${SURPRISE_RESOLUTION_DOCTRINE}
 
-If the evidence still contradicts itself, or an empty result remains unexplained,
-when the query budget runs out, return state=Escalate with a one-line answer naming
-what needs checking. A deeper investigation with a larger query budget continues in
-the same turn, reusing the evidence you gathered. Escalating always beats hedging:
-never hand the owner an answer that says the figures look unreliable or
-inconsistent.
+If, when the query budget runs out, the evidence still contradicts itself, an
+empty result remains unexplained, or the useful-answer points in the request
+context cannot all be covered, return state=Escalate with a one-line answer
+naming what needs checking. A deeper investigation with a larger query budget
+continues in the same turn, reusing the evidence you gathered. Escalating always
+beats hedging: never hand the owner an answer that says the figures look
+unreliable or inconsistent, and never settle for a literally-true answer that
+misses the points a useful answer must cover.
 
 For dateRange use a simple relative expression (today, yesterday, last week, last
 month, this quarter, last year), a single named month ("July", "July 2025"), or an
@@ -585,9 +626,11 @@ using its connected tools (POS, accounting, payroll, workforce and live Shopify 
 using only governed typed query tools.
 
 Method:
-1. Before the first query, call report_progress once with kind=plan. Write one or
-   two natural sentences explaining the checks you will make and why; do not use
-   a numbered list or mention queries, tools, Cube, schemas, or internal reasoning.
+1. Before the first query, call report_progress once with kind=plan. Plan against
+   the owner's practical goal and the useful-answer points in the request context,
+   not just the literal wording. Write one or two natural sentences explaining the
+   checks you will make and why; do not use a numbered list or mention queries,
+   tools, Cube, schemas, or internal reasoning.
 2. Execute the plan: trends, breakdowns and comparisons each get their own query.
    Use compare_periods for period-over-period questions and top_n_breakdown for
    rankings. Stay within ${budget.maxQueries} queries.

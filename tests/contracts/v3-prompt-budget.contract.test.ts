@@ -159,6 +159,8 @@ function laneInput(input: Readonly<{
     intent: {
       lane: input.lane,
       resolvedQuestion: input.question,
+      ownerGoal: null,
+      answerMustCover: [],
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],
