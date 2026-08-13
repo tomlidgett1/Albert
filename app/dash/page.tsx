@@ -433,8 +433,6 @@ const traceEventTypes = new Set([
   "error",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
-/** Opt-in switch for the raw debugger outside development. */
-const rawDebugStorageKey = "albert:chat:raw-debugger";
 
 function parseTraceEvent(value: unknown): TraceEvent | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -655,28 +653,15 @@ export default function DashPage() {
     }
   });
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
-  // Development inspector. Available automatically outside production, and in a
-  // deployed environment only when a developer opts in explicitly.
-  const [rawDebugAvailable, setRawDebugAvailable] = useState(
-    () => process.env.NODE_ENV !== "production",
-  );
+  // Development inspector. Always available, including production, while the
+  // product is in dogfood; it only shows what this client already received.
+  const rawDebugAvailable = true;
   const [rawDebugOpen, setRawDebugOpen] = useState(false);
   const [rawDebugTurns, setRawDebugTurns] = useState<readonly RawDebugTurn[]>([]);
   // Record whenever the inspector is available, not only while it is open, so
   // opening it after a surprising turn still shows that turn.
   const rawDebugOnRef = useRef(false);
   rawDebugOnRef.current = rawDebugAvailable;
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
-    try {
-      const optedIn = window.localStorage.getItem(rawDebugStorageKey) === "true"
-        || new URLSearchParams(window.location.search).get("debug") === "1";
-      if (optedIn) setRawDebugAvailable(true);
-    } catch {
-      // Ignore private-mode storage failures.
-    }
-  }, []);
 
   useEffect(() => {
     try {
