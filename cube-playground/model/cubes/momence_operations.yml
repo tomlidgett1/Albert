@@ -85,7 +85,7 @@ cubes:
              NULLIF(t.payload_json #>> ARRAY['visits', 'appointments'], '')::numeric AS cc_appointment_bookings,
              NULLIF(t.payload_json #>> ARRAY['visits', 'appointmentsVisits'], '')::numeric AS cc_appointment_visits,
              NULLIF(t.payload_json #>> ARRAY['visits', 'openAreaVisits'], '')::numeric AS cc_open_area_visits,
-             COALESCE({CUBE}.payload_json -> 'customerTags', '[]'::jsonb)::text AS cc_customer_tags
+             COALESCE(t.payload_json -> 'customerTags', '[]'::jsonb)::text AS cc_customer_tags
       FROM source_momence.momence_members t
       JOIN latest l USING (tenant_id, connection_id, mapping_version)
       WHERE NOT t.tombstone
