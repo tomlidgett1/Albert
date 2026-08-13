@@ -1,0 +1,345 @@
+cubes:
+  - name: lightspeed_x_customers
+    title: Lightspeed X-Series customers
+    public: false
+    description: >
+      One row per X-Series customer profile with tenant/connection-safe lifetime
+      purchase rollups. Direct contact details, date of birth, notes and custom
+      fields remain private; curated members expose opt-in state and broad
+      geography without enabling bulk contact-data retrieval.
+    meta:
+      ai_context: >
+        Lifetime metrics use closed sales, treat closed return sales as signed
+        reductions, and exclude gift-card load liabilities. Anonymous sales have
+        no customer_id and are absent. Use sales analytics for period sales by
+        customer because lifetime metrics do not change grain under a sale-date
+        filter. Customer balance, loyalty balance, year_to_date and store-credit
+        balances are current snapshots.
+    sql: >
+      WITH sale_facts AS MATERIALIZED (
+        SELECT sale.tenant_id, sale.connection_id,
+               sale.payload_json->>'customer_id' AS customer_id,
+               (sale.payload_json->>'date')::timestamptz AS sold_at,
+               COALESCE((jsonb_extract_path_text(sale.payload_json, 'return', 'is_return'))::boolean, false) AS is_return,
+               COALESCE(NULLIF(jsonb_extract_path_text(sale.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) -
+                 COALESCE(gift_cards.load_value_including_tax, 0) AS earned_value
+        FROM source_lightspeed_x.lx_sales sale
+        LEFT JOIN LATERAL (
+          SELECT SUM(COALESCE(NULLIF(jsonb_extract_path_text(line.value, 'pricing', 'total'), '')::numeric, 0) +
+                            COALESCE(NULLIF(jsonb_extract_path_text(line.value, 'tax', 'total'), '')::numeric, 0)) AS load_value_including_tax
+          FROM jsonb_array_elements(COALESCE(sale.payload_json->'line_items', '[]'::jsonb)) AS line(value)
+          WHERE NULLIF(line.value->>'gift_card_number', '') IS NOT NULL
+        ) gift_cards ON true
+        WHERE NOT sale.tombstone
+          AND sale.payload_json->>'deleted_at' IS NULL
+          AND sale.payload_json->>'state' = 'closed'
+          AND sale.payload_json->>'customer_id' IS NOT NULL
+      ), lifetime AS MATERIALIZED (
+        SELECT tenant_id, connection_id, customer_id,
+               MIN(sold_at) FILTER (WHERE NOT is_return) AS first_purchase_at,
+               MAX(sold_at) FILTER (WHERE NOT is_return) AS last_purchase_at,
+               COUNT(*) FILTER (WHERE NOT is_return) AS lifetime_sales,
+               COUNT(*) FILTER (WHERE is_return) AS lifetime_returns,
+               SUM(earned_value) AS lifetime_net_spend,
+               SUM(earned_value) FILTER (WHERE NOT is_return) AS lifetime_gross_spend,
+               SUM(ABS(earned_value)) FILTER (WHERE is_return) AS lifetime_refunds
+        FROM sale_facts
+        GROUP BY tenant_id, connection_id, customer_id
+      )
+      SELECT customer.namespaced_source_key, customer.tenant_id, customer.connection_id,
+             customer.payload_json, retailer.payload_json AS retailer_payload,
+             lifetime.first_purchase_at, lifetime.last_purchase_at,
+             COALESCE(lifetime.lifetime_sales, 0) AS lifetime_sales,
+             COALESCE(lifetime.lifetime_returns, 0) AS lifetime_returns,
+             COALESCE(lifetime.lifetime_net_spend, 0) AS lifetime_net_spend,
+             COALESCE(lifetime.lifetime_gross_spend, 0) AS lifetime_gross_spend,
+             COALESCE(lifetime.lifetime_refunds, 0) AS lifetime_refunds
+      FROM source_lightspeed_x.lx_customers customer
+      LEFT JOIN lifetime
+        ON lifetime.tenant_id = customer.tenant_id
+       AND lifetime.connection_id = customer.connection_id
+       AND lifetime.customer_id = customer.payload_json->>'id'
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = customer.tenant_id
+       AND retailer.connection_id = customer.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT customer.tombstone
+    joins:
+      - name: lightspeed_x_customer_groups
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_customer_groups}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_customer_groups}.connection_id
+          AND {CUBE}.payload_json->>'customer_group_id' = {lightspeed_x_customer_groups}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: customer_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: display_name, sql: "COALESCE(NULLIF(payload_json->>'name', ''), NULLIF(TRIM(CONCAT_WS(' ', payload_json->>'first_name', payload_json->>'last_name')), ''), payload_json->>'company_name')", type: string, title: Customer }
+      - { name: company_name, sql: "payload_json->>'company_name'", type: string }
+      - { name: customer_code, sql: "payload_json->>'customer_code'", type: string, public: false }
+      - { name: city, sql: "payload_json->>'physical_city'", type: string }
+      - { name: suburb, sql: "payload_json->>'physical_suburb'", type: string }
+      - { name: state, sql: "payload_json->>'physical_state'", type: string }
+      - { name: postcode, sql: "payload_json->>'physical_postcode'", type: string }
+      - { name: country_code, sql: "payload_json->>'physical_country_id'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: email_opted_out, sql: "COALESCE((payload_json->>'do_not_email')::boolean, false)", type: boolean }
+      - { name: promotional_sms_enabled, sql: "COALESCE((payload_json->>'enable_promotional_sms')::boolean, false)", type: boolean }
+      - { name: loyalty_enabled, sql: "COALESCE((payload_json->>'enable_loyalty')::boolean, false)", type: boolean }
+      - { name: has_email, sql: "(NULLIF({CUBE}.payload_json->>'email', '') IS NOT NULL)", type: boolean }
+      - { name: has_mobile, sql: "(NULLIF({CUBE}.payload_json->>'mobile', '') IS NOT NULL)", type: boolean }
+      - { name: current_account_balance, sql: "COALESCE(NULLIF(payload_json->>'balance', '')::numeric, 0)", type: number, format: currency }
+      - { name: current_loyalty_balance, sql: "COALESCE(NULLIF(payload_json->>'loyalty_balance', '')::numeric, 0)", type: number }
+      - { name: on_account_limit, sql: "NULLIF(payload_json->>'on_account_limit', '')::numeric", type: number, format: currency }
+      - { name: source_year_to_date_value, sql: "NULLIF(payload_json->>'year_to_date', '')::numeric", type: number, format: currency, description: Source-managed current year-to-date snapshot; not lifetime value. }
+      - { name: first_purchase_at, sql: first_purchase_at, type: time }
+      - { name: last_purchase_at, sql: last_purchase_at, type: time }
+      - { name: lifetime_sales, sql: lifetime_sales, type: number }
+      - { name: lifetime_returns, sql: lifetime_returns, type: number }
+      - { name: lifetime_net_spend, sql: lifetime_net_spend, type: number, format: currency }
+      - { name: lifetime_gross_spend, sql: lifetime_gross_spend, type: number, format: currency }
+      - { name: lifetime_refunds, sql: lifetime_refunds, type: number, format: currency }
+      - { name: is_repeat_customer, sql: "({CUBE}.lifetime_sales > 1)", type: boolean }
+      - { name: days_since_last_purchase, sql: "EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_purchase_at)) / 86400.0", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: email, sql: "payload_json->>'email'", type: string, public: false }
+      - { name: mobile, sql: "payload_json->>'mobile'", type: string, public: false }
+      - { name: phone, sql: "payload_json->>'phone'", type: string, public: false }
+      - { name: date_of_birth, sql: "payload_json->>'date_of_birth'", type: time, public: false }
+      - { name: note, sql: "payload_json->>'note'", type: string, public: false }
+    measures:
+      - { name: customers, type: count }
+      - name: active_customers
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: customers_with_purchases
+        type: count
+        filters: [{ sql: "{CUBE}.lifetime_sales > 0 AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: repeat_customers
+        type: count
+        filters: [{ sql: "{CUBE}.lifetime_sales > 1 AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: repeat_customer_rate_pct
+        sql: "100.0 * {repeat_customers} / NULLIF({customers_with_purchases}, 0)"
+        type: number
+        format: percent
+      - name: email_contactable_customers
+        type: count
+        filters: [{ sql: "NULLIF({CUBE}.payload_json->>'email', '') IS NOT NULL AND COALESCE(({CUBE}.payload_json->>'do_not_email')::boolean, false) = false AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: sms_opted_in_customers
+        type: count
+        filters: [{ sql: "NULLIF({CUBE}.payload_json->>'mobile', '') IS NOT NULL AND COALESCE(({CUBE}.payload_json->>'enable_promotional_sms')::boolean, false) AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - { name: total_lifetime_net_spend, sql: lifetime_net_spend, type: sum, format: currency }
+      - { name: average_lifetime_net_spend, sql: lifetime_net_spend, type: avg, format: currency }
+      - { name: average_lifetime_sales, sql: lifetime_sales, type: avg }
+      - { name: current_customer_account_balance, sql: "COALESCE(NULLIF(payload_json->>'balance', '')::numeric, 0)", type: sum, format: currency, description: Current snapshot across selected customers; never trend over ingestion time. }
+      - { name: current_customer_loyalty_balance, sql: "COALESCE(NULLIF(payload_json->>'loyalty_balance', '')::numeric, 0)", type: sum, description: Current snapshot across selected customers. }
+
+  - name: lightspeed_x_gift_cards
+    title: Lightspeed X-Series gift cards
+    public: false
+    description: >
+      Current gift-card account snapshot. Card numbers are never public; a masked
+      last-four dimension supports explicit support questions without exposing the secret.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_gift_cards t
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = t.tenant_id
+       AND retailer.connection_id = t.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: gift_card_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: card_last_four, sql: "RIGHT(payload_json->>'number', 4)", type: string, title: Gift card ending }
+      - { name: gift_card_status, sql: "payload_json->>'status'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
+      - { name: lifetime_sold_value, sql: "NULLIF(payload_json->>'total_sold', '')::numeric", type: number, format: currency }
+      - { name: lifetime_redeemed_value, sql: "NULLIF(payload_json->>'total_redeemed', '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: expires_at, sql: "payload_json->>'expires_at'", type: time }
+      - { name: source_sale_id, sql: "payload_json->>'sale_id'", type: string, public: false }
+      - { name: source_sale_type, sql: "payload_json->>'sale_source'", type: string }
+      - { name: card_number, sql: "payload_json->>'number'", type: string, public: false }
+    measures:
+      - { name: gift_cards, type: count }
+      - name: active_gift_cards
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'ACTIVE'" }]
+      - { name: current_gift_card_liability, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never sum over observations. }
+      - { name: lifetime_gift_card_value_sold, sql: "NULLIF(payload_json->>'total_sold', '')::numeric", type: sum, format: currency }
+      - { name: lifetime_gift_card_value_redeemed, sql: "NULLIF(payload_json->>'total_redeemed', '')::numeric", type: sum, format: currency }
+
+  - name: lightspeed_x_gift_card_transactions
+    title: Lightspeed X-Series gift card transactions
+    public: false
+    description: One row per transaction nested in the current gift-card record.
+    sql: >
+      SELECT CONCAT(card.namespaced_source_key, ':transaction:', COALESCE(tx.value->>'id', tx.ordinality::text)) AS row_key,
+             card.tenant_id, card.connection_id, card.payload_json AS card_payload,
+             tx.value AS transaction_payload, retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_gift_cards card
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(card.payload_json->'gift_card_transactions', '[]'::jsonb))
+        WITH ORDINALITY AS tx(value, ordinality)
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = card.tenant_id
+       AND retailer.connection_id = card.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT card.tombstone
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: gift_card_id, sql: "card_payload->>'id'", type: string, public: false }
+      - { name: gift_card_transaction_id, sql: "transaction_payload->>'id'", type: string, public: false }
+      - { name: card_last_four, sql: "RIGHT(card_payload->>'number', 4)", type: string, title: Gift card ending }
+      - { name: transaction_type, sql: "transaction_payload->>'type'", type: string }
+      - { name: transaction_source, sql: "transaction_payload->>'source'", type: string }
+      - { name: source_id, sql: "transaction_payload->>'source_id'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: transaction_amount, sql: "NULLIF(transaction_payload->>'amount', '')::numeric", type: number, format: currency }
+      - { name: transacted_at, sql: "transaction_payload->>'created_at'", type: time }
+    measures:
+      - { name: gift_card_transactions, type: count }
+      - name: gift_card_value_loaded
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' IN ('ACTIVATION', 'IMPORTING', 'RELOADING')" }]
+      - name: gift_card_value_redeemed
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' = 'REDEEMING'" }]
+      - name: gift_card_value_voided_or_expired
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' IN ('VOIDING', 'EXPIRING')" }]
+      - name: gift_card_value_reversed
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' = 'REVERSING'" }]
+        description: Reversal magnitude; direction requires the related transaction and is not inferred.
+      - name: gift_card_liability_movement
+        sql: >
+          CASE
+            WHEN transaction_payload->>'type' IN ('ACTIVATION', 'IMPORTING', 'RELOADING')
+              THEN ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))
+            WHEN transaction_payload->>'type' IN ('REDEEMING', 'VOIDING', 'EXPIRING')
+              THEN -ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))
+            ELSE 0
+          END
+        type: sum
+        format: currency
+        description: >
+          Deterministically signed non-reversal movement. REVERSING is excluded
+          because the source type alone does not identify the direction of the
+          transaction being reversed; use gift_card_value_reversed separately.
+
+  - name: lightspeed_x_store_credit_accounts
+    title: Lightspeed X-Series store-credit accounts
+    public: false
+    description: One current store-credit balance per customer.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_store_credits t
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = t.tenant_id
+       AND retailer.connection_id = t.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_customers}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_customers}.connection_id
+          AND {CUBE}.payload_json->>'customer_id' = {lightspeed_x_customers}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: store_credit_account_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
+      - { name: lifetime_credit_issued, sql: "NULLIF(payload_json->>'total_credit_issued', '')::numeric", type: number, format: currency }
+      - { name: lifetime_credit_redeemed, sql: "NULLIF(payload_json->>'total_credit_redeemed', '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+    measures:
+      - { name: store_credit_accounts, type: count }
+      - { name: current_store_credit_liability, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never trend over ingestion observations. }
+      - { name: lifetime_store_credit_issued, sql: "NULLIF(payload_json->>'total_credit_issued', '')::numeric", type: sum, format: currency }
+      - { name: lifetime_store_credit_redeemed, sql: "NULLIF(payload_json->>'total_credit_redeemed', '')::numeric", type: sum, format: currency }
+
+  - name: lightspeed_x_store_credit_transactions
+    title: Lightspeed X-Series store-credit transactions
+    public: false
+    description: One transaction nested in a customer's store-credit account.
+    sql: >
+      SELECT CONCAT(credit.namespaced_source_key, ':transaction:', COALESCE(tx.value->>'id', tx.ordinality::text)) AS row_key,
+             credit.tenant_id, credit.connection_id, credit.payload_json AS credit_payload,
+             tx.value AS transaction_payload, retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_store_credits credit
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(credit.payload_json->'store_credit_transactions', '[]'::jsonb))
+        WITH ORDINALITY AS tx(value, ordinality)
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = credit.tenant_id
+       AND retailer.connection_id = credit.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT credit.tombstone
+    joins:
+      - name: lightspeed_x_customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_customers}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_customers}.connection_id
+          AND {CUBE}.credit_payload->>'customer_id' = {lightspeed_x_customers}.payload_json->>'id'
+      - name: lightspeed_x_users
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_users}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_users}.connection_id
+          AND {CUBE}.transaction_payload->>'user_id' = {lightspeed_x_users}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: transaction_id, sql: "transaction_payload->>'id'", type: string, public: false }
+      - { name: customer_id, sql: "credit_payload->>'customer_id'", type: string, public: false }
+      - { name: sale_id, sql: "transaction_payload->>'sale_id'", type: string, public: false }
+      - { name: user_id, sql: "transaction_payload->>'user_id'", type: string, public: false }
+      - { name: transaction_type, sql: "transaction_payload->>'type'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: transaction_amount, sql: "NULLIF(transaction_payload->>'amount', '')::numeric", type: number, format: currency }
+      - { name: transacted_at, sql: "transaction_payload->>'created_at'", type: time }
+      - { name: notes, sql: "transaction_payload->>'notes'", type: string, public: false }
+      - { name: client_id, sql: "transaction_payload->>'client_id'", type: string, public: false }
+    measures:
+      - { name: store_credit_transactions, type: count }
+      - name: store_credit_issued
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' = 'ISSUE'" }]
+      - name: store_credit_redeemed
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' = 'REDEMPTION'" }]
+      - name: store_credit_reversed
+        sql: "ABS(COALESCE(NULLIF(transaction_payload->>'amount', '')::numeric, 0))"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.transaction_payload->>'type' = 'REVERSE'" }]

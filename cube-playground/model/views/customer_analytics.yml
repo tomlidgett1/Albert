@@ -1,0 +1,149 @@
+views:
+  - name: customer_analytics
+    title: Customer analytics
+    description: >
+      Customer-centric surface: profiles, types, geography and contactability,
+      lifetime behaviour (first/last purchase, lifetime value, repeat rate),
+      store credit and gift card balances, custom fields and notes. Fact grain
+      is one row per customer profile.
+    meta:
+      ai_context: >
+        Use for "who are my customers" questions: top customers by lifetime value,
+        new vs returning, lapsed customers (days_since_last_purchase), geography,
+        marketing lists, credit balances. Lifetime figures come from completed,
+        non-voided sales. For revenue in a specific period grouped by customer,
+        prefer sales_analytics (customers_* members) so the period filter applies
+        to the sales, not the customer lifetime. Custom-field members
+        (customer_custom_field_values_*) and note members (customer_notes_*) are
+        child grains: combine them with customer dimensions, not with each other.
+
+    cubes:
+      - join_path: customers
+        includes:
+          - tenant_id
+          - customer_id
+          - first_name
+          - last_name
+          - full_name
+          - company
+          - date_of_birth
+          - archived
+          - created_at
+          - updated_at
+          - first_purchase_at
+          - last_purchase_at
+          - lifetime_revenue
+          - lifetime_transactions
+          - lifetime_gross_profit
+          - is_repeat_customer
+          - days_since_last_purchase
+          - customer_count
+          - active_customer_count
+          - customers_with_purchases
+          - repeat_customers
+          - repeat_purchase_rate_pct
+          - total_lifetime_revenue
+          - average_lifetime_revenue
+          - average_lifetime_transactions
+          - active_customers
+          - business_customers
+      - join_path: customers.customer_types
+        prefix: true
+        includes:
+          - name
+      - join_path: customers.contacts
+        prefix: true
+        includes:
+          - address1
+          - address2
+          - city
+          - state
+          - state_code
+          - postcode
+          - country
+          - country_code
+          - no_email
+          - no_mail
+          - no_phone
+          - primary_email
+          - primary_phone
+          - has_email
+      - join_path: customers.credit_accounts
+        prefix: true
+        includes:
+          - name
+          - is_gift_card
+          - balance
+          - archived
+      - join_path: customer_custom_field_values
+        prefix: true
+        includes:
+          - name
+          - data_type
+          - value_text
+          - deleted
+          - count
+      - join_path: customer_notes
+        prefix: true
+        includes:
+          - note
+          - is_public
+          - noted_at
+          - note_count
+          - latest_note_at
+
+    folders:
+      - name: Profile
+        includes:
+          - customer_id
+          - full_name
+          - first_name
+          - last_name
+          - company
+          - date_of_birth
+          - archived
+          - created_at
+          - customer_types_name
+      - name: Lifetime behaviour
+        includes:
+          - first_purchase_at
+          - last_purchase_at
+          - lifetime_revenue
+          - lifetime_transactions
+          - lifetime_gross_profit
+          - is_repeat_customer
+          - days_since_last_purchase
+          - customers_with_purchases
+          - repeat_customers
+          - repeat_purchase_rate_pct
+          - total_lifetime_revenue
+          - average_lifetime_revenue
+          - average_lifetime_transactions
+      - name: Geography and contact
+        includes:
+          - contacts_city
+          - contacts_state
+          - contacts_state_code
+          - contacts_postcode
+          - contacts_country
+          - contacts_country_code
+          - contacts_primary_email
+          - contacts_primary_phone
+          - contacts_has_email
+          - contacts_no_email
+          - contacts_no_mail
+          - contacts_no_phone
+      - name: Credit and gift cards
+        includes:
+          - credit_accounts_name
+          - credit_accounts_is_gift_card
+          - credit_accounts_balance
+      - name: Custom fields and notes
+        includes:
+          - customer_custom_field_values_name
+          - customer_custom_field_values_value_text
+          - customer_custom_field_values_count
+          - customer_notes_note
+          - customer_notes_noted_at
+          - customer_notes_note_count
+          - customer_notes_latest_note_at

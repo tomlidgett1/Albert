@@ -1,0 +1,396 @@
+cubes:
+  - name: square_payments
+    title: Square payments
+    public: false
+    description: >
+      One row per Square Payment object: a mutable tender attempt at one
+      location. Collected-money measures include only status COMPLETED. Payment
+      total includes tip; refunds are separate money-out events in square_refunds.
+    meta:
+      ai_context: >
+        Use for payment method, tender mix, successful/failed payments, tips and
+        offline payments. collected_amount uses total_money and status COMPLETED.
+        Do not subtract Payment.refunded_money as though it happened on the
+        payment date; use square_refunds.updated_at/created_at for refund flow.
+        A payment can have no order_id. source_type is the tender source; detailed
+        card/wallet/bank fields remain available in square_source_explorer.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_payments t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+      - name: square_orders
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_orders}.tenant_id AND {CUBE}.connection_id = {square_orders}.connection_id AND {CUBE}.payload_json->>'order_id' = {square_orders}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payment_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: order_id, sql: "payload_json->>'order_id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
+      - { name: team_member_id, sql: "COALESCE(payload_json->>'team_member_id', payload_json->>'employee_id')", type: string, public: false }
+      - { name: status, sql: "payload_json->>'status'", type: string }
+      - name: source_type
+        sql: >
+          CASE
+            WHEN payload_json ? 'card_details' THEN 'CARD'
+            WHEN payload_json ? 'cash_details' THEN 'CASH'
+            WHEN payload_json ? 'bank_account_details' THEN 'BANK_ACCOUNT'
+            WHEN payload_json ? 'wallet_details' THEN 'WALLET'
+            WHEN payload_json ? 'buy_now_pay_later_details' THEN 'BUY_NOW_PAY_LATER'
+            WHEN payload_json ? 'external_details' THEN 'EXTERNAL'
+            WHEN payload_json ? 'square_account_details' THEN 'SQUARE_ACCOUNT'
+            ELSE COALESCE(payload_json->>'source_type', 'UNKNOWN')
+          END
+        type: string
+        title: Payment method
+      - { name: currency, sql: "payload_json#>> ARRAY['total_money', 'currency']", type: string }
+      - { name: reference_id, sql: "payload_json->>'reference_id'", type: string }
+      - { name: receipt_number, sql: "payload_json->>'receipt_number'", type: string }
+      - { name: statement_description, sql: "payload_json->>'statement_description_identifier'", type: string }
+      - { name: delay_action, sql: "payload_json->>'delay_action'", type: string }
+      - { name: delayed_until, sql: "payload_json->>'delayed_until'", type: time }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Paid / attempted at }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: is_offline_payment, sql: "({CUBE}.payload_json ? 'offline_payment_details')", type: boolean }
+      - { name: is_completed, sql: "({CUBE}.payload_json->>'status' = 'COMPLETED')", type: boolean }
+    measures:
+      - { name: payment_attempts, type: count }
+      - name: completed_payments
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+      - name: failed_payments
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' IN ('FAILED', 'CANCELED')" }]
+      - name: offline_payments
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json ? 'offline_payment_details'" }]
+      - name: collected_amount
+        sql: >
+          (payload_json#>> ARRAY['total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['total_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+      - name: base_payment_amount
+        sql: >
+          (payload_json#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+      - name: payment_tips
+        sql: >
+          (payload_json#>> ARRAY['tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['tip_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+      - name: currently_refunded_amount
+        sql: >
+          (payload_json#>> ARRAY['refunded_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['refunded_money', 'currency']))
+        type: sum
+        format: currency
+        description: Current payment-level refunded balance; not a refund-period flow.
+      - name: average_payment
+        sql: "{collected_amount} / NULLIF({completed_payments}, 0)"
+        type: number
+        format: currency
+
+  - name: square_payment_fees
+    title: Square payment processing fees
+    public: false
+    description: >
+      One row per ProcessingFee element embedded in a Square Payment. Fee
+      adjustments remain signed exactly as Square returns them.
+    sql: >
+      SELECT CONCAT(t.namespaced_source_key, ':fee:', fee.ordinality::text) AS row_key,
+             t.tenant_id, t.connection_id, t.payload_json AS payment_payload, fee.value AS fee_payload,
+             fee.ordinality AS fee_ordinal
+      FROM source_square.square_payments t
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.payload_json->'processing_fee', '[]'::jsonb))
+        WITH ORDINALITY AS fee(value, ordinality)
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_payments
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_payments}.tenant_id AND {CUBE}.connection_id = {square_payments}.connection_id AND {CUBE}.payment_payload->>'id' = {square_payments}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payment_id, sql: "payment_payload->>'id'", type: string, public: false }
+      - { name: fee_type, sql: "fee_payload->>'type'", type: string }
+      - { name: currency, sql: "fee_payload#>> ARRAY['amount_money', 'currency']", type: string }
+      - { name: effective_at, sql: "fee_payload->>'effective_at'", type: time, title: Fee effective at }
+    measures:
+      - { name: fee_entries, type: count }
+      - name: processing_fees
+        sql: >
+          (fee_payload#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(fee_payload#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+
+  - name: square_refunds
+    title: Square refunds
+    public: false
+    description: >
+      One row per Square PaymentRefund. This is money returned to a buyer at the
+      refund-event grain; it is not a line-item return allocation. Completed
+      refund value uses status COMPLETED and updated_at as the closest completion time.
+    meta:
+      ai_context: >
+        Use this cube for refund count/value/reason and linked versus unlinked
+        refunds. Do not join a refund to product lines unless an actual Square
+        order-return line allocation exists. created_at is request time; updated_at
+        is the best available completed-event time for COMPLETED refunds.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_refunds t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_payments
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_payments}.tenant_id AND {CUBE}.connection_id = {square_payments}.connection_id AND {CUBE}.payload_json->>'payment_id' = {square_payments}.payload_json->>'id'"
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: refund_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: payment_id, sql: "payload_json->>'payment_id'", type: string, public: false }
+      - { name: order_id, sql: "payload_json->>'order_id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: status, sql: "payload_json->>'status'", type: string }
+      - { name: reason, sql: "payload_json->>'reason'", type: string }
+      - { name: destination_type, sql: "payload_json->>'destination_type'", type: string }
+      - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Refund requested at }
+      - { name: completed_at, sql: "payload_json->>'updated_at'", type: time, title: Refund completed / updated at }
+      - { name: is_unlinked, sql: "COALESCE((payload_json->>'unlinked')::boolean, false)", type: boolean }
+    measures:
+      - { name: refund_attempts, type: count }
+      - name: completed_refunds
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+      - name: unlinked_refunds
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'unlinked')::boolean, false)" }]
+      - name: refund_value
+        sql: >
+          (payload_json#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'COMPLETED'" }]
+
+  - name: square_payouts
+    title: Square payouts
+    public: false
+    description: >
+      One row per Square Payout settlement transfer. A payout is processor
+      settlement evidence, not a bank-feed transaction. Amounts may be negative
+      for withdrawals or corrections; only status PAID represents arrival.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_payouts t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payout_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: status, sql: "payload_json->>'status'", type: string }
+      - { name: payout_type, sql: "payload_json->>'type'", type: string }
+      - { name: destination_type, sql: "payload_json#>> ARRAY['destination', 'type']", type: string }
+      - { name: end_to_end_id, sql: "payload_json->>'end_to_end_id'", type: string, description: "Reference expected on the destination bank statement." }
+      - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: arrival_date, sql: "payload_json->>'arrival_date'", type: time, title: Expected / actual arrival date }
+    measures:
+      - { name: payouts, type: count }
+      - name: paid_payouts
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'PAID'" }]
+      - name: payout_amount
+        sql: >
+          (payload_json#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+      - name: paid_payout_amount
+        sql: >
+          (payload_json#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'PAID'" }]
+
+  - name: square_payout_entries
+    title: Square payout entries
+    public: false
+    description: >
+      One row per balance activity item enriched into a Square Payout. This is
+      the payout-reconciliation grain: payments, refunds, disputes, fees and
+      adjustments that Square rolled into the transfer.
+    sql: >
+      SELECT t.namespaced_source_key AS row_key, t.tenant_id, t.connection_id,
+             t.parent_context->>'payout_id' AS payout_id,
+             t.payload_json AS entry_payload
+      FROM source_square.square_payout_entries t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_payouts
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_payouts}.tenant_id AND {CUBE}.connection_id = {square_payouts}.connection_id AND {CUBE}.payout_id = {square_payouts}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payout_id, sql: payout_id, type: string, public: false }
+      - { name: payout_entry_id, sql: "entry_payload->>'id'", type: string, public: false }
+      - { name: activity_type, sql: "entry_payload->>'type'", type: string }
+      - { name: currency, sql: "entry_payload#>> ARRAY['net_amount_money', 'currency']", type: string }
+      - { name: effective_at, sql: "entry_payload->>'effective_at'", type: time, title: Activity effective at }
+    measures:
+      - { name: payout_entries, type: count }
+      - name: entry_gross_amount
+        sql: >
+          (entry_payload#>> ARRAY['gross_amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(entry_payload#>> ARRAY['gross_amount_money', 'currency']))
+        type: sum
+        format: currency
+      - name: entry_fees
+        sql: >
+          (entry_payload#>> ARRAY['fee_amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(entry_payload#>> ARRAY['fee_amount_money', 'currency']))
+        type: sum
+        format: currency
+      - name: entry_net_amount
+        sql: >
+          (entry_payload#>> ARRAY['net_amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(entry_payload#>> ARRAY['net_amount_money', 'currency']))
+        type: sum
+        format: currency
+
+  - name: square_disputes
+    title: Square disputes
+    public: false
+    description: >
+      One row per Square card-payment dispute in its current lifecycle state.
+      Dispute amount is exposure, not an expense or refund unless the dispute is
+      ultimately lost; use state and due_at when reporting operational risk.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_disputes t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: dispute_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: state, sql: "payload_json->>'state'", type: string }
+      - { name: reason, sql: "payload_json->>'reason'", type: string }
+      - { name: card_brand, sql: "payload_json->>'card_brand'", type: string }
+      - { name: brand_dispute_id, sql: "payload_json->>'brand_dispute_id'", type: string }
+      - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
+      - { name: due_at, sql: "payload_json->>'due_at'", type: time, title: Evidence due at }
+      - { name: reported_at, sql: "COALESCE(payload_json->>'reported_at', payload_json->>'reported_date')", type: time }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+    measures:
+      - { name: disputes, type: count }
+      - name: dispute_amount
+        sql: >
+          (payload_json#>> ARRAY['amount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['amount_money', 'currency']))
+        type: sum
+        format: currency
+      - name: response_due_disputes
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' IN ('INQUIRY_EVIDENCE_REQUIRED', 'EVIDENCE_REQUIRED') AND {CUBE}.payload_json->>'due_at' IS NOT NULL" }]
+      - name: overdue_response_disputes
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' IN ('INQUIRY_EVIDENCE_REQUIRED', 'EVIDENCE_REQUIRED') AND ({CUBE}.payload_json->>'due_at')::timestamptz < NOW()" }]
+
+  - name: square_gift_cards
+    title: Square gift cards
+    public: false
+    description: >
+      One row per Square stored-value gift-card account. Current balance is a
+      liability-like snapshot, never earned sales and never additive over time.
+      Full GAN values remain only in the exhaustive PII-governed explorer.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_gift_cards t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: gift_card_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: card_type, sql: "payload_json->>'type'", type: string }
+      - { name: gan_source, sql: "payload_json->>'gan_source'", type: string }
+      - { name: state, sql: "payload_json->>'state'", type: string }
+      - { name: currency, sql: "payload_json#>> ARRAY['balance_money', 'currency']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+    measures:
+      - { name: gift_cards, type: count }
+      - name: active_gift_cards
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'ACTIVE'" }]
+      - name: outstanding_gift_card_balance
+        sql: >
+          (payload_json#>> ARRAY['balance_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['balance_money', 'currency']))
+        type: sum
+        format: currency
+
+  - name: square_gift_card_activities
+    title: Square gift card activities
+    public: false
+    description: >
+      One row per Square stored-value activity. Activity amounts are exposed by
+      type without guessing a universal sign across activation, load, redemption,
+      refund, adjustment, import and transfer semantics.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_gift_card_activities t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_gift_cards
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_gift_cards}.tenant_id AND {CUBE}.connection_id = {square_gift_cards}.connection_id AND {CUBE}.payload_json->>'gift_card_id' = {square_gift_cards}.payload_json->>'id'"
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: gift_card_activity_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: gift_card_id, sql: "payload_json->>'gift_card_id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: activity_type, sql: "payload_json->>'type'", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Gift-card activity at }
+    measures:
+      - { name: gift_card_activities, type: count }
+      - name: activations
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'ACTIVATE'" }]
+      - name: loads
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'LOAD'" }]
+      - name: redemptions
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'REDEEM'" }]
+      - name: gift_card_refunds
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' IN ('REFUND', 'UNLINKED_ACTIVITY_REFUND')" }]

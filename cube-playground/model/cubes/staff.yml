@@ -1,0 +1,117 @@
+cubes:
+  - name: employee_hours
+    title: Employee hours (clock in / out shifts)
+    public: false
+    description: >
+      One row per staff shift: when the employee clocked in and out and at
+      which store. check_out is null while the employee is still clocked in.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Hours worked", "shifts", "who was on", "rostered hours" =
+        hours_worked / shift_count here, grouped by employees_full_name or
+        shops_name. clocked_in_at is the business date. Open shifts (no clock
+        out yet) are excluded from hours_worked; sales per staff member belong
+        in sales_analytics.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_employee_hours
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_employee_hours t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_hours_id
+        sql: employee_hours_id
+        type: number
+        public: false
+      - name: clocked_in_at
+        sql: check_in
+        type: time
+        title: Clocked in at
+        description: When the shift started. Business date for hours analysis.
+      - name: clocked_out_at
+        sql: check_out
+        type: time
+        description: When the shift ended. Null while the employee is still clocked in.
+      - name: is_open_shift
+        type: boolean
+        sql: "({CUBE}.check_out IS NULL)"
+        title: Currently clocked in
+        description: True while the employee has not yet clocked out.
+      - name: shift_hours
+        type: number
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.check_out - {CUBE}.check_in)) / 3600.0"
+        title: Shift length (hours)
+        description: Length of the completed shift in hours. Null for open shifts.
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+
+    measures:
+      - name: shift_count
+        type: count
+        title: Shifts
+        description: Number of shifts recorded (open shifts included).
+      - name: completed_shift_count
+        type: count
+        description: Shifts with both a clock in and clock out.
+        filters:
+          - sql: "{CUBE}.check_in IS NOT NULL AND {CUBE}.check_out IS NOT NULL"
+      - name: open_shift_count
+        type: count
+        title: Currently clocked in
+        description: Shifts still open (no clock out recorded).
+        filters:
+          - sql: "{CUBE}.check_out IS NULL"
+      - name: hours_worked
+        type: sum
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.check_out - {CUBE}.check_in)) / 3600.0"
+        title: Hours worked
+        description: Total hours across completed shifts (open shifts excluded).
+        filters:
+          - sql: "{CUBE}.check_in IS NOT NULL AND {CUBE}.check_out IS NOT NULL AND {CUBE}.check_out >= {CUBE}.check_in"
+      - name: avg_shift_hours
+        type: avg
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.check_out - {CUBE}.check_in)) / 3600.0"
+        title: Average shift length (hours)
+        description: Average completed shift length in hours.
+        filters:
+          - sql: "{CUBE}.check_in IS NOT NULL AND {CUBE}.check_out IS NOT NULL AND {CUBE}.check_out >= {CUBE}.check_in"
+
+    segments:
+      - name: completed_shifts
+        sql: "{CUBE}.check_in IS NOT NULL AND {CUBE}.check_out IS NOT NULL"
+        description: Shifts with a recorded clock out.
+      - name: open_shifts
+        sql: "{CUBE}.check_out IS NULL"
+        description: Shifts still open.

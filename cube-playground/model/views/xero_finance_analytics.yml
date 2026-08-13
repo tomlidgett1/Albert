@@ -1,0 +1,535 @@
+views:
+  - name: xero_finance_analytics
+    title: Finance analytics (Xero)
+    description: >
+      The money surface, powered by Xero: invoices and bills with amounts due
+      and ageing, per-line account/item detail, payments received and made,
+      direct bank spending and income with category coding, credit notes,
+      manual journal (GL) activity, bank transfers, recurring invoice
+      templates and the customer/supplier list with live AR/AP balances.
+      Also carries the derived profit-and-loss ledger (pnl_* members):
+      every revenue and expense line across invoices, bank transactions,
+      journals and credit notes. Unprefixed members are invoice grain;
+      line_*, payment_*, bank_*, credit_note_*, journal_*, transfer_*,
+      recurring_* and pnl_* members are their own grains.
+    meta:
+      ai_context: >
+        Use this view for anything about money owed, earned or spent through
+        the accounts: revenue invoiced, bills payable, who owes me / who I
+        owe (debtors, creditors), overdue amounts and ageing bands, payments
+        received or made, bank account spending by category, GST on
+        documents, credit notes, journal debits/credits, and recurring
+        invoices. P&L / PROFIT QUESTIONS: for "P&L", "profit and loss",
+        "net profit", "revenue vs expenses", or "expenses by account",
+        ALWAYS use the pnl_* members (pnl_revenue, pnl_expenses,
+        pnl_net_profit over pnl_date, grouped by pnl_account or
+        pnl_account_type). Never assemble a P&L from invoice lines alone:
+        most trading revenue is posted via journals and bank transactions.
+        Wages/super are posted by system payroll journals this API access
+        cannot see, so they are absent from pnl_* lines: fetch them from
+        xero_payroll_analytics pay runs, present labour as its own line and
+        say so. Sales invoices = document_kind 'Sales invoice'; bills =
+        'Bill'. Use the financially_real segment (AUTHORISED/PAID) for
+        financial totals. issued_on is the invoice business date;
+        payment_paid_on for payments; bank_occurred_on for bank activity;
+        pnl_date for the P&L. GST QUESTIONS: use gst_collected, gst_paid and
+        gst_net over gst_date (group by gst_tax_type or gst_account), and
+        always disclose that gst_collected only covers directly invoiced
+        sales because register sales are posted via tax-blind journals; the
+        authoritative BAS is Xero's GST return. OVERPAYMENTS: for "does anyone
+        have credit" query overpayment_* WITHOUT filtering overpayment_kind,
+        then interpret: RECEIVE-OVERPAYMENT = a customer holds credit with us,
+        SPEND-OVERPAYMENT = we hold credit with a supplier. avg_days_to_pay
+        gives debtor or creditor days (filter invoice_type ACCREC for debtors,
+        ACCPAY for creditors). credit_line_*, batch_*, recurring_line_* and
+        contact_email / contact terms are available. NOT AVAILABLE from this
+        connection, say so honestly: live bank balances, balance sheet,
+        budget line values; and this business has no quotes, purchase
+        orders, projects or expense claims in Xero. Till/POS revenue lives
+        in sales_analytics (Lightspeed): Xero invoices are the accounting
+        ledger, not the register. Wages by employee live in
+        xero_payroll_analytics. Never mix members of different prefixes in
+        one query unless a join exists (invoice members join contact
+        members; line_* joins invoice members and line_account_*).
+
+    cubes:
+      # xero_organisation owns the view's tenant_id: it is exactly one row per
+      # tenant and every cube declares a many_to_one join to it, so the tenant
+      # pin injected by queryRewrite always has a join path regardless of
+      # which grain a query starts from.
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+
+      # Derived P&L ledger: the authoritative source for profit questions.
+      - join_path: xero_pnl_lines
+        includes:
+          - name: occurred_on
+            alias: pnl_date
+          - name: source_kind
+            alias: pnl_source
+          - name: account_name
+            alias: pnl_account
+          - name: account_code
+            alias: pnl_account_code
+          - name: account_class
+            alias: pnl_account_class
+          - name: account_type
+            alias: pnl_account_type
+          - name: contact_name
+            alias: pnl_contact
+          - name: description
+            alias: pnl_description
+          - name: total_revenue
+            alias: pnl_revenue
+          - name: total_expenses
+            alias: pnl_expenses
+          - name: net_profit
+            alias: pnl_net_profit
+          - name: pnl_line_count
+            alias: pnl_line_count
+
+      - join_path: xero_contacts
+        includes:
+          - contact_name
+          - name: email
+            alias: contact_email
+          - name: status
+            alias: contact_status
+          - is_customer
+          - is_supplier
+          - name: sales_payment_terms_day
+            alias: contact_sales_terms_day
+          - name: bills_payment_terms_day
+            alias: contact_bills_terms_day
+          - name: receivable_outstanding_value
+            alias: contact_receivable_outstanding
+          - name: receivable_overdue_value
+            alias: contact_receivable_overdue
+          - name: payable_outstanding_value
+            alias: contact_payable_outstanding
+          - name: payable_overdue_value
+            alias: contact_payable_overdue
+          - contact_count
+          - customer_count
+          - supplier_count
+          - total_receivable_outstanding
+          - total_receivable_overdue
+          - total_payable_outstanding
+          - total_payable_overdue
+          - customers
+          - suppliers
+
+      # Invoice documents are the primary fact: unprefixed.
+      - join_path: xero_invoices
+        includes:
+          - invoice_number
+          - invoice_type
+          - document_kind
+          - name: status
+            alias: invoice_status
+          - name: reference
+            alias: invoice_reference
+          - name: contact_name
+            alias: invoice_contact
+          - issued_on
+          - due_on
+          - fully_paid_on
+          - name: currency_code
+            alias: invoice_currency
+          - days_overdue
+          - ageing_band
+          - days_to_pay
+          - avg_days_to_pay
+          - invoice_count
+          - total_invoiced
+          - total_excl_tax
+          - total_gst
+          - total_amount_due
+          - total_amount_paid
+          - total_amount_credited
+          - overdue_amount
+          - overdue_invoice_count
+          - avg_invoice_value
+          - sales_invoices
+          - bills
+          - financially_real
+          - outstanding
+
+      # Line-level account / item coding.
+      - join_path: xero_invoice_line_items
+        includes:
+          - name: description
+            alias: line_description
+          - name: quantity
+            alias: line_quantity
+          - name: unit_amount
+            alias: line_unit_price
+          - name: tax_type
+            alias: line_tax_type
+          - name: account_code
+            alias: line_account_code
+          - name: item_code
+            alias: line_item_code
+          - name: item_name
+            alias: line_item_name
+          - name: invoice_type
+            alias: line_invoice_type
+          - name: issued_on
+            alias: line_issued_on
+          - name: contact_name
+            alias: line_contact
+          - line_count
+          - total_line_amount
+          - total_line_tax
+          - name: total_quantity
+            alias: line_quantity_total
+          - sales_lines
+          - bill_lines
+      - join_path: xero_invoice_line_items.xero_accounts
+        includes:
+          - name: account_name
+            alias: line_account_name
+          - name: account_class
+            alias: line_account_class
+          - name: account_type
+            alias: line_account_type
+
+      # Payments applied to documents.
+      - join_path: xero_payments
+        includes:
+          - name: paid_on
+            alias: payment_paid_on
+          - payment_type
+          - name: status
+            alias: payment_status
+          - name: is_reconciled
+            alias: payment_reconciled
+          - name: contact_name
+            alias: payment_contact
+          - name: invoice_number
+            alias: payment_invoice_number
+          - name: reference
+            alias: payment_reference
+          - payment_count
+          - total_payments
+          - payments_received
+          - payments_made
+          - name: unreconciled_count
+            alias: unreconciled_payment_count
+
+      # Direct bank activity (spend / receive money).
+      - join_path: xero_bank_transactions
+        includes:
+          - money_direction
+          - name: transaction_type
+            alias: bank_transaction_type
+          - name: occurred_on
+            alias: bank_occurred_on
+          - bank_account_name
+          - name: contact_name
+            alias: bank_contact
+          - name: is_reconciled
+            alias: bank_reconciled
+          - name: status
+            alias: bank_status
+          - name: reference
+            alias: bank_reference
+          - name: transaction_count
+            alias: bank_transaction_count
+          - money_in
+          - money_out
+          - name: gst_total
+            alias: bank_gst
+          - name: total_value
+            alias: bank_total_value
+          - name: unreconciled_count
+            alias: unreconciled_bank_count
+          - money_in_transactions
+          - money_out_transactions
+
+      # Bank activity by GL category.
+      - join_path: xero_bank_transaction_line_items
+        includes:
+          - name: description
+            alias: bank_line_description
+          - name: account_code
+            alias: bank_line_account_code
+          - name: occurred_on
+            alias: bank_line_occurred_on
+          - name: transaction_type
+            alias: bank_line_transaction_type
+          - name: line_count
+            alias: bank_line_count
+          - name: total_line_amount
+            alias: bank_line_total
+          - name: total_line_tax
+            alias: bank_line_gst
+      - join_path: xero_bank_transaction_line_items.xero_accounts
+        includes:
+          - name: account_name
+            alias: bank_line_account_name
+          - name: account_class
+            alias: bank_line_account_class
+
+      # Credit notes.
+      - join_path: xero_credit_notes
+        includes:
+          - name: document_kind
+            alias: credit_note_kind
+          - name: status
+            alias: credit_note_status
+          - name: issued_on
+            alias: credit_note_issued_on
+          - name: contact_name
+            alias: credit_note_contact
+          - credit_note_count
+          - total_credited
+          - total_remaining_credit
+          - customer_credit_notes
+          - supplier_credit_notes
+
+      # Credit note line detail: what was credited, by account.
+      - join_path: xero_credit_note_line_items
+        includes:
+          - name: description
+            alias: credit_line_description
+          - name: account_code
+            alias: credit_line_account_code
+          - name: tax_type
+            alias: credit_line_tax_type
+          - name: line_count
+            alias: credit_line_count
+          - name: total_line_amount
+            alias: credit_line_total
+
+      # Overpayments: customer / supplier credit balances sitting on the books.
+      - join_path: xero_overpayments
+        includes:
+          - name: overpayment_type
+            alias: overpayment_kind
+          - name: status
+            alias: overpayment_status
+          - name: contact_name
+            alias: overpayment_contact
+          - name: occurred_on
+            alias: overpayment_on
+          - overpayment_count
+          - total_overpaid
+          - name: total_remaining_credit
+            alias: overpayment_remaining_credit
+
+      # Batch payments (bulk supplier payment runs).
+      - join_path: xero_batch_payments
+        includes:
+          - name: paid_on
+            alias: batch_paid_on
+          - name: batch_type
+            alias: batch_payment_type
+          - name: status
+            alias: batch_payment_status
+          - batch_count
+          - total_batch_amount
+
+      # GST position, derived from document lines (see gst caveats).
+      - join_path: xero_gst_lines
+        includes:
+          - name: occurred_on
+            alias: gst_date
+          - name: source_kind
+            alias: gst_source
+          - name: tax_type
+            alias: gst_tax_type
+          - name: account_name
+            alias: gst_account
+          - name: account_class
+            alias: gst_account_class
+          - name: contact_name
+            alias: gst_contact
+          - name: total_taxable_amount
+            alias: gst_taxable_amount
+          - name: total_gst_collected
+            alias: gst_collected
+          - name: total_gst_paid
+            alias: gst_paid
+          - name: total_net_gst
+            alias: gst_net
+          - gst_line_count
+
+      # GL journal activity (line grain, includes payroll posting journals).
+      - join_path: xero_manual_journal_lines
+        includes:
+          - name: narration
+            alias: journal_narration
+          - name: journal_status
+            alias: journal_posting_status
+          - name: journal_on
+            alias: journal_date
+          - name: description
+            alias: journal_line_description
+          - name: account_code
+            alias: journal_account_code
+          - name: line_count
+            alias: journal_line_count
+          - name: total_debits
+            alias: journal_debits
+          - name: total_credits
+            alias: journal_credits
+          - name: net_amount
+            alias: journal_net_amount
+      - join_path: xero_manual_journal_lines.xero_accounts
+        includes:
+          - name: account_name
+            alias: journal_account_name
+          - name: account_class
+            alias: journal_account_class
+
+      # Transfers between own bank accounts (not income or spend).
+      - join_path: xero_bank_transfers
+        includes:
+          - transferred_on
+          - name: from_account_name
+            alias: transfer_from_account
+          - name: to_account_name
+            alias: transfer_to_account
+          - transfer_count
+          - total_transferred
+
+      # Recurring invoice / bill templates.
+      - join_path: xero_repeating_invoices
+        includes:
+          - name: invoice_type
+            alias: recurring_invoice_type
+          - name: status
+            alias: recurring_status
+          - name: contact_name
+            alias: recurring_contact
+          - schedule_unit
+          - schedule_period
+          - next_scheduled_on
+          - name: template_count
+            alias: recurring_template_count
+          - name: total_per_cycle
+            alias: recurring_total_per_cycle
+
+      # What each recurring template actually bills, line by line.
+      - join_path: xero_repeating_invoice_line_items
+        includes:
+          - name: description
+            alias: recurring_line_description
+          - name: account_code
+            alias: recurring_line_account_code
+          - name: item_code
+            alias: recurring_line_item_code
+          - name: line_count
+            alias: recurring_line_count
+          - name: total_line_amount
+            alias: recurring_line_total
+
+    folders:
+      - name: Invoices and bills
+        includes:
+          - invoice_count
+          - total_invoiced
+          - total_excl_tax
+          - total_gst
+          - total_amount_due
+          - total_amount_paid
+          - avg_invoice_value
+          - invoice_number
+          - document_kind
+          - invoice_status
+          - invoice_contact
+          - issued_on
+          - due_on
+          - fully_paid_on
+      - name: Overdue and ageing
+        includes:
+          - overdue_amount
+          - overdue_invoice_count
+          - days_overdue
+          - ageing_band
+          - total_receivable_overdue
+          - total_payable_overdue
+      - name: Line detail (accounts and items)
+        includes:
+          - total_line_amount
+          - total_line_tax
+          - line_count
+          - line_quantity_total
+          - line_description
+          - line_account_code
+          - line_account_name
+          - line_account_class
+          - line_item_name
+          - line_contact
+          - line_issued_on
+      - name: Payments
+        includes:
+          - total_payments
+          - payments_received
+          - payments_made
+          - payment_count
+          - unreconciled_payment_count
+          - payment_paid_on
+          - payment_type
+          - payment_contact
+      - name: Bank activity
+        includes:
+          - money_in
+          - money_out
+          - bank_total_value
+          - bank_gst
+          - bank_transaction_count
+          - unreconciled_bank_count
+          - money_direction
+          - bank_occurred_on
+          - bank_account_name
+          - bank_contact
+          - bank_line_total
+          - bank_line_account_name
+          - bank_line_account_class
+      - name: Credit notes
+        includes:
+          - credit_note_count
+          - total_credited
+          - total_remaining_credit
+          - credit_note_kind
+          - credit_note_contact
+          - credit_note_issued_on
+      - name: Journals (GL)
+        includes:
+          - journal_debits
+          - journal_credits
+          - journal_net_amount
+          - journal_line_count
+          - journal_narration
+          - journal_date
+          - journal_account_code
+          - journal_account_name
+          - journal_account_class
+      - name: Customers and suppliers
+        includes:
+          - contact_name
+          - contact_status
+          - is_customer
+          - is_supplier
+          - contact_count
+          - customer_count
+          - supplier_count
+          - total_receivable_outstanding
+          - total_payable_outstanding
+          - contact_receivable_outstanding
+          - contact_payable_outstanding
+      - name: Transfers and recurring
+        includes:
+          - transfer_count
+          - total_transferred
+          - transferred_on
+          - transfer_from_account
+          - transfer_to_account
+          - recurring_template_count
+          - recurring_total_per_cycle
+          - recurring_contact
+          - recurring_status
+          - next_scheduled_on

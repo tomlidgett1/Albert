@@ -1,0 +1,297 @@
+cubes:
+  - name: momence_membership_plans
+    title: Momence membership plans
+    public: false
+    description: >
+      One row per host membership definition, including subscription/package
+      behaviour, booking limits, activation, renewal, rollover, public-sale
+      dates, trial configuration and source-native price fields.
+    meta:
+      ai_context: >
+        This is the plan-definition grain, not a member entitlement, purchase or
+        recurring payment. A disabled plan can remain attached to historical or
+        active bought memberships. Momence documents price as a numeric plan
+        value but this response does not provide a currency code or unit
+        convention, so never label or aggregate it as AUD/USD without separate
+        evidence. Package money credits are also source credit units, not cash.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_memberships
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT t.*,
+             COALESCE(NULLIF(t.payload_json ->> 'name', ''), t.name, 'Membership ' || t.record_id) AS cc_plan_name,
+             NULLIF(t.payload_json ->> 'locationId', '') AS cc_location_id,
+             NULLIF(t.payload_json ->> 'startDate', '')::timestamptz AS cc_start_at,
+             NULLIF(t.payload_json ->> 'endDate', '')::timestamptz AS cc_end_at,
+             NULLIF(t.payload_json ->> 'price', '')::numeric AS cc_price,
+             NULLIF(t.payload_json ->> 'minimumPrice', '')::numeric AS cc_minimum_price,
+             NULLIF(t.payload_json ->> 'maximumPrice', '')::numeric AS cc_maximum_price,
+             NULLIF(t.payload_json ->> 'recommendedPrice', '')::numeric AS cc_recommended_price,
+             NULLIF(t.payload_json ->> 'freeTrialPrice', '')::numeric AS cc_free_trial_price,
+             COALESCE(t.payload_json -> 'tags', '[]'::jsonb)::text AS cc_tags,
+             CASE
+               WHEN COALESCE((t.payload_json ->> 'disabled')::boolean, false) THEN 'Disabled'
+               WHEN NULLIF(t.payload_json ->> 'startDate', '')::timestamptz > NOW() THEN 'Scheduled'
+               WHEN NULLIF(t.payload_json ->> 'endDate', '')::timestamptz < NOW() THEN 'Ended'
+               ELSE 'Available by date'
+             END AS cc_catalogue_state
+      FROM source_momence.momence_memberships t
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      WHERE NOT t.tombstone
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+      - name: momence_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_locations}.tenant_id
+          AND {CUBE}.connection_id = {momence_locations}.connection_id
+          AND {CUBE}.cc_location_id = {momence_locations}.location_id
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: membership_id, sql: record_id, type: string, title: Membership ID }
+      - { name: plan_name, sql: cc_plan_name, type: string, title: Membership plan }
+      - name: description
+        sql: "payload_json ->> 'description'"
+        type: string
+        description: Host-authored plan description, which is untrusted source text and may contain HTML.
+      - name: membership_type
+        sql: "payload_json ->> 'type'"
+        type: string
+        description: Subscription, on-demand subscription, event package, money package or patron plan.
+      - { name: location_id, sql: cc_location_id, type: string, public: false }
+      - { name: disabled, sql: "COALESCE((payload_json ->> 'disabled')::boolean, false)", type: boolean }
+      - { name: featured, sql: "COALESCE((payload_json ->> 'featured')::boolean, false)", type: boolean }
+      - { name: auto_renewing, sql: "COALESCE((payload_json ->> 'autoRenewing')::boolean, false)", type: boolean }
+      - { name: minimum_auto_renews, sql: "NULLIF(payload_json ->> 'minimumAutoRenews', '')::numeric", type: number }
+      - { name: duration, sql: "NULLIF(payload_json ->> 'duration', '')::numeric", type: number }
+      - { name: duration_unit, sql: "payload_json ->> 'durationUnit'", type: string }
+      - { name: start_at, sql: cc_start_at, type: time }
+      - { name: end_at, sql: cc_end_at, type: time }
+      - { name: catalogue_state, sql: cc_catalogue_state, type: string }
+      - { name: display_order, sql: "NULLIF(payload_json ->> 'order', '')::numeric", type: number }
+      - { name: activated_on_first_use, sql: "COALESCE((payload_json ->> 'isActivatedOnFirstUse')::boolean, false)", type: boolean }
+      - { name: activation_deadline_days, sql: "NULLIF(payload_json ->> 'activationDeadlineInDays', '')::numeric", type: number }
+      - { name: has_free_trial, sql: "COALESCE((payload_json ->> 'hasFreeTrial')::boolean, false)", type: boolean }
+      - { name: free_trial_duration_days, sql: "NULLIF(payload_json ->> 'freeTrialDurationInDays', '')::numeric", type: number }
+      - name: free_trial_price_source_value
+        sql: cc_free_trial_price
+        type: number
+        description: Source-native trial price value; currency and minor/major-unit convention are not returned.
+      - { name: is_intro_offer, sql: "COALESCE((payload_json ->> 'isIntroOffer')::boolean, false)", type: boolean }
+      - { name: price_type, sql: "payload_json ->> 'priceType'", type: string }
+      - name: price_source_value
+        sql: cc_price
+        type: number
+        description: Source-native fixed price value; do not format as currency without external currency/unit evidence.
+      - { name: minimum_price_source_value, sql: cc_minimum_price, type: number }
+      - { name: maximum_price_source_value, sql: cc_maximum_price, type: number }
+      - { name: recommended_price_source_value, sql: cc_recommended_price, type: number }
+      - { name: price_includes_tax, sql: "COALESCE((payload_json ->> 'priceIncludesTax')::boolean, false)", type: boolean }
+      - { name: tax_rate_percent, sql: "NULLIF(payload_json ->> 'taxRateInPercent', '')::numeric", type: number }
+      - { name: event_credits_included, sql: "NULLIF(payload_json ->> 'eventCredits', '')::numeric", type: number }
+      - name: money_credits_included
+        sql: "NULLIF(payload_json ->> 'moneyCredits', '')::numeric"
+        type: number
+        description: Source money-credit units, not independently evidenced cash or revenue.
+      - { name: session_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
+      - { name: appointment_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
+      - { name: combined_usage_limit_enabled, sql: "COALESCE((payload_json ->> 'combinedUsageLimitEnabled')::boolean, false)", type: boolean }
+      - { name: combined_usage_limit, sql: "NULLIF(payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
+      - { name: usage_limit_renewal_enabled, sql: "COALESCE((payload_json ->> 'usageLimitRenewalEnabled')::boolean, false)", type: boolean }
+      - { name: usage_limit_renewal_duration, sql: "NULLIF(payload_json ->> 'usageLimitRenewalDuration', '')::numeric", type: number }
+      - { name: usage_limit_renewal_duration_unit, sql: "payload_json ->> 'usageLimitRenewalDurationUnit'", type: string }
+      - { name: usage_rollover_enabled, sql: "COALESCE((payload_json ->> 'usageLimitRolloverEnabled')::boolean, false)", type: boolean }
+      - { name: usage_rollover_mode, sql: "payload_json ->> 'usageLimitRolloverMode'", type: string }
+      - { name: rollover_expiration_duration, sql: "NULLIF(payload_json ->> 'usageLimitRolloverExpirationDuration', '')::numeric", type: number }
+      - { name: rollover_expiration_duration_unit, sql: "payload_json ->> 'usageLimitRolloverExpirationDurationUnit'", type: string }
+      - { name: tags, sql: cc_tags, type: string, description: Plan tags as source JSON text. }
+      - name: contract_agreement
+        sql: "payload_json ->> 'contractAgreement'"
+        type: string
+        public: false
+        description: Potentially sensitive host-authored contract text; use only for an explicit authorized request.
+    measures:
+      - { name: membership_plans, type: count }
+      - name: enabled_membership_plans
+        type: count
+        filters:
+          - sql: "NOT COALESCE(({CUBE}.payload_json ->> 'disabled')::boolean, false)"
+      - name: auto_renewing_plans
+        type: count
+        filters:
+          - sql: "COALESCE(({CUBE}.payload_json ->> 'autoRenewing')::boolean, false)"
+      - name: intro_offer_plans
+        type: count
+        filters:
+          - sql: "COALESCE(({CUBE}.payload_json ->> 'isIntroOffer')::boolean, false)"
+      - name: free_trial_plans
+        type: count
+        filters:
+          - sql: "COALESCE(({CUBE}.payload_json ->> 'hasFreeTrial')::boolean, false)"
+      - name: event_package_plans
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'type' = 'package-events'"
+      - name: money_package_plans
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'type' = 'package-money'"
+
+  - name: momence_member_entitlements
+    title: Momence active member entitlements
+    public: false
+    description: >
+      One row per bought membership currently returned by a member's active
+      bought-memberships endpoint, with current-period usage, credit balances,
+      freeze state, expiry and latest declined-renewal evidence.
+    meta:
+      ai_context: >
+        This is a current entitlement snapshot, not membership-plan inventory,
+        sale history, cancellation history or cash. The endpoint returns active
+        bought memberships only, including frozen rows when requested. Event,
+        session, appointment and money credits are different units and must not
+        be added together. Never sum balances over ingestion dates. A declined
+        renewal is payment-risk evidence, not proof that entitlement ended.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_bought_memberships
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT t.*,
+             t.parent_id AS cc_member_id,
+             NULLIF(t.payload_json #>> ARRAY['membership', 'id'], '') AS cc_membership_id,
+             COALESCE(NULLIF(t.payload_json #>> ARRAY['membership', 'name'], ''), 'Bought membership ' || t.record_id) AS cc_membership_name,
+             NULLIF(t.payload_json ->> 'startDate', '')::timestamptz AS cc_start_at,
+             NULLIF(t.payload_json ->> 'endDate', '')::timestamptz AS cc_end_at,
+             NULLIF(t.payload_json ->> 'usageLimitStartDate', '')::timestamptz AS cc_usage_start_at,
+             NULLIF(t.payload_json ->> 'usageLimitEndDate', '')::timestamptz AS cc_usage_end_at,
+             NULLIF(t.payload_json #>> ARRAY['freeze', 'freezedAt'], '')::timestamptz AS cc_frozen_at,
+             NULLIF(t.payload_json #>> ARRAY['freeze', 'scheduledFreezeAt'], '')::timestamptz AS cc_scheduled_freeze_at,
+             NULLIF(t.payload_json #>> ARRAY['freeze', 'unfrozenAt'], '')::timestamptz AS cc_unfrozen_at,
+             NULLIF(t.payload_json #>> ARRAY['freeze', 'unfreezedScheduledAt'], '')::timestamptz AS cc_scheduled_unfreeze_at,
+             NULLIF(t.payload_json #>> ARRAY['declinedRenewal', 'declinedAt'], '')::timestamptz AS cc_declined_renewal_at,
+             CASE
+               WHEN COALESCE((t.payload_json ->> 'isFrozen')::boolean, false) THEN 'Frozen'
+               WHEN NULLIF(t.payload_json ->> 'startDate', '')::timestamptz > NOW() THEN 'Starts later'
+               WHEN NULLIF(t.payload_json ->> 'endDate', '')::timestamptz < NOW() THEN 'Past end date'
+               ELSE 'Usable by dates'
+             END AS cc_entitlement_state
+      FROM source_momence.momence_bought_memberships t
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      WHERE NOT t.tombstone
+    joins:
+      - name: momence_members
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_members}.tenant_id
+          AND {CUBE}.connection_id = {momence_members}.connection_id
+          AND {CUBE}.cc_member_id = {momence_members}.member_id
+      - name: momence_membership_plans
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_membership_plans}.tenant_id
+          AND {CUBE}.connection_id = {momence_membership_plans}.connection_id
+          AND {CUBE}.cc_membership_id = {momence_membership_plans}.membership_id
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: bought_membership_id, sql: record_id, type: string }
+      - { name: member_id, sql: cc_member_id, type: string, public: false }
+      - { name: membership_id, sql: cc_membership_id, type: string, public: false }
+      - { name: membership_name, sql: cc_membership_name, type: string }
+      - { name: entitlement_type, sql: "payload_json ->> 'type'", type: string }
+      - { name: entitlement_state, sql: cc_entitlement_state, type: string }
+      - { name: starts_at, sql: cc_start_at, type: time }
+      - { name: ends_at, sql: cc_end_at, type: time }
+      - { name: is_frozen, sql: "COALESCE((payload_json ->> 'isFrozen')::boolean, false)", type: boolean }
+      - { name: frozen_at, sql: cc_frozen_at, type: time }
+      - { name: scheduled_freeze_at, sql: cc_scheduled_freeze_at, type: time }
+      - { name: unfrozen_at, sql: cc_unfrozen_at, type: time }
+      - { name: scheduled_unfreeze_at, sql: cc_scheduled_unfreeze_at, type: time }
+      - { name: remaining_frozen_minutes, sql: "NULLIF(payload_json #>> ARRAY['freeze', 'remainingFreezedMinutes'], '')::numeric", type: number }
+      - { name: usage_period_starts_at, sql: cc_usage_start_at, type: time }
+      - { name: usage_period_ends_at, sql: cc_usage_end_at, type: time }
+      - { name: event_credits_left, sql: "NULLIF(payload_json ->> 'eventCreditsLeft', '')::numeric", type: number }
+      - { name: event_credits_total, sql: "NULLIF(payload_json ->> 'eventCreditsTotal', '')::numeric", type: number }
+      - name: money_credits_left
+        sql: "NULLIF(payload_json ->> 'moneyCreditsLeft', '')::numeric"
+        type: number
+        description: Current source money-credit units; currency is not returned on this endpoint.
+      - { name: money_credits_total, sql: "NULLIF(payload_json ->> 'moneyCreditsTotal', '')::numeric", type: number }
+      - { name: session_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
+      - { name: sessions_used, sql: "NULLIF(payload_json ->> 'usedSessions', '')::numeric", type: number }
+      - { name: appointment_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
+      - { name: appointments_used, sql: "NULLIF(payload_json ->> 'usedAppointments', '')::numeric", type: number }
+      - { name: combined_usage_limit, sql: "NULLIF(payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
+      - { name: combined_usage, sql: "NULLIF(payload_json ->> 'combinedUsage', '')::numeric", type: number }
+      - { name: declined_renewal_at, sql: cc_declined_renewal_at, type: time }
+      - { name: has_declined_renewal, sql: "cc_declined_renewal_at IS NOT NULL", type: boolean }
+      - { name: declined_card_last_four, sql: "payload_json #>> ARRAY['declinedRenewal', 'cardLast4']", type: string, public: false }
+    measures:
+      - name: active_endpoint_entitlements
+        type: count
+        description: Bought memberships currently returned by the active endpoint; not all historical purchases.
+      - name: usable_entitlements
+        type: count
+        filters:
+          - sql: >
+              NOT COALESCE(({CUBE}.payload_json ->> 'isFrozen')::boolean, false)
+              AND ({CUBE}.cc_start_at IS NULL OR {CUBE}.cc_start_at <= NOW())
+              AND ({CUBE}.cc_end_at IS NULL OR {CUBE}.cc_end_at >= NOW())
+      - name: frozen_entitlements
+        type: count
+        filters:
+          - sql: "COALESCE(({CUBE}.payload_json ->> 'isFrozen')::boolean, false)"
+      - name: expiring_within_30_days
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_end_at >= NOW() AND {CUBE}.cc_end_at < NOW() + INTERVAL '30 days'"
+      - name: declined_renewal_entitlements
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_declined_renewal_at IS NOT NULL"
+      - { name: current_event_credits, type: sum, sql: "NULLIF(payload_json ->> 'eventCreditsLeft', '')::numeric" }
+      - { name: current_money_credit_units, type: sum, sql: "NULLIF(payload_json ->> 'moneyCreditsLeft', '')::numeric" }
+      - { name: sessions_used_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'usedSessions', '')::numeric" }
+      - { name: appointments_used_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'usedAppointments', '')::numeric" }
+      - { name: combined_usage_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'combinedUsage', '')::numeric" }
+      - name: weighted_usage_limit_utilization_pct
+        type: number
+        sql: >
+          100.0 * SUM(
+            CASE
+              WHEN NULLIF({CUBE}.payload_json ->> 'combinedUsageLimit', '')::numeric IS NOT NULL
+                THEN COALESCE(NULLIF({CUBE}.payload_json ->> 'combinedUsage', '')::numeric, 0)
+              WHEN NULLIF({CUBE}.payload_json ->> 'usageLimitForSessions', '')::numeric IS NOT NULL
+                OR NULLIF({CUBE}.payload_json ->> 'usageLimitForAppointments', '')::numeric IS NOT NULL
+                THEN COALESCE(NULLIF({CUBE}.payload_json ->> 'usedSessions', '')::numeric, 0)
+                   + COALESCE(NULLIF({CUBE}.payload_json ->> 'usedAppointments', '')::numeric, 0)
+              ELSE 0
+            END
+          ) / NULLIF(SUM(
+            CASE
+              WHEN NULLIF({CUBE}.payload_json ->> 'combinedUsageLimit', '')::numeric IS NOT NULL
+                THEN NULLIF({CUBE}.payload_json ->> 'combinedUsageLimit', '')::numeric
+              ELSE COALESCE(NULLIF({CUBE}.payload_json ->> 'usageLimitForSessions', '')::numeric, 0)
+                 + COALESCE(NULLIF({CUBE}.payload_json ->> 'usageLimitForAppointments', '')::numeric, 0)
+            END
+          ), 0)
+        format: percent
+        description: Weighted current-period use divided by comparable current-period limits; rows without limits add neither denominator nor usage.

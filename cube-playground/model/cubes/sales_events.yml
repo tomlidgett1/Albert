@@ -1,0 +1,581 @@
+cubes:
+  - name: sale_voids
+    title: Sale voids
+    public: false
+    description: >
+      One row per void event: who voided which sale, when, and the reason entered
+      at the register. Use for auditing cancellations and register behaviour.
+    meta:
+      ai_context: >
+        Answers "who voided sales", "why were sales voided" and void-rate questions.
+        Join to sales for the voided sale's value and to employees for the person.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_sale_voids t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_sale_voids GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: sale_void_id
+        sql: sale_void_id
+        type: number
+        description: Lightspeed's identifier for the void event.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        description: The sale that was voided.
+      - name: voided_at
+        sql: create_time
+        type: time
+        title: Voided at
+        description: When the void happened.
+      - name: reason
+        sql: reason
+        type: string
+        description: Reason entered when voiding the sale.
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+
+    measures:
+      - name: void_count
+        type: count
+        title: Void events
+        description: Number of void events.
+
+  - name: sale_accounts
+    title: Sale account entries (on-account activity)
+    public: false
+    description: >
+      Links sales activity to customer credit accounts: each row records a credit
+      account being charged or paid down via a sale line or payment. Use with
+      credit_accounts for on-account exposure questions.
+    meta:
+      ai_context: >
+        This is a linkage table: it says which credit account a sale line or sale
+        payment touched. Balances live on credit_accounts; charge/payment values
+        live on the linked sale line or payment.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_sale_accounts t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_sale_accounts GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: credit_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {credit_accounts}.tenant_id
+          AND {CUBE}.credit_account_id = {credit_accounts}.credit_account_id
+      - name: sale_lines
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sale_lines}.tenant_id
+          AND {CUBE}.sale_line_id = {sale_lines}.sale_line_id
+      - name: sale_payments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sale_payments}.tenant_id
+          AND {CUBE}.sale_payment_id = {sale_payments}.sale_payment_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: sale_account_id
+        sql: sale_account_id
+        type: number
+        description: Lightspeed's identifier for the account entry.
+      - name: credit_account_id
+        sql: credit_account_id
+        type: number
+        description: Credit account affected.
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        description: Sale line that charged the account, when the entry came from a line.
+      - name: sale_payment_id
+        sql: sale_payment_id
+        type: number
+        description: Sale payment that drew on or paid down the account, when the entry came from a payment.
+      - name: entry_kind
+        type: string
+        title: Entry kind
+        sql: >
+          CASE
+            WHEN {CUBE}.sale_payment_id IS NOT NULL THEN 'Payment against account'
+            WHEN {CUBE}.sale_line_id IS NOT NULL THEN 'Charge from sale line'
+            ELSE 'Other'
+          END
+        description: Whether this entry charged the account via a sale line or moved money via a payment.
+
+    measures:
+      - name: entry_count
+        type: count
+        title: Account entries
+        description: Number of on-account entries.
+
+  - name: quotes
+    title: Quotes
+    public: false
+    description: >
+      One row per quote issued to a customer. A non-null sale_id means the quote
+      converted into a sale. Use for quote pipeline and conversion questions.
+    meta:
+      ai_context: >
+        Quote conversion rate = converted_quotes / quote_count. Join to sales via
+        sale_id for the value of converted quotes; join to employees for who issued.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_quotes t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_quotes GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: quote_id
+        sql: quote_id
+        type: number
+        description: Lightspeed's identifier for the quote.
+      - name: issued_at
+        sql: issue_date
+        type: time
+        title: Issued at
+        description: When the quote was issued.
+      - name: notes
+        sql: notes
+        type: string
+        description: Free-text notes on the quote.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the quote has been archived.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        description: Sale created from this quote; null while the quote is unconverted.
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: is_converted
+        type: boolean
+        sql: "({CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0)"
+        title: Converted to sale
+        description: True when the quote became a sale.
+
+    measures:
+      - name: quote_count
+        type: count
+        title: Quotes issued
+        description: Number of quotes.
+      - name: converted_quotes
+        type: count
+        title: Converted quotes
+        description: Quotes that became sales (non-null, non-zero sale linkage).
+        filters:
+          - sql: "COALESCE({CUBE}.sale_id, 0) <> 0"
+      - name: conversion_rate_pct
+        type: number
+        sql: "100.0 * {converted_quotes} / NULLIF({quote_count}, 0)"
+        format: percent
+        title: Quote conversion rate %
+        description: Share of quotes that converted into sales.
+
+  - name: discounts
+    title: Discount rules
+    public: false
+    description: >
+      Reference list of discount rules configured in Lightspeed (name, fixed
+      amount or percentage). Sales and sale lines reference these via discount_id.
+    meta:
+      ai_context: >
+        Discount names can repeat across sources: the same visible name may come
+        from a discount rule, a price rule or a loyalty promotion. source_id
+        distinguishes the origin record; group by name plus discount_id when
+        exactness matters. Dollar discount impact lives on sales.discounts_given
+        and sale_lines.line_discounts, not here.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_discounts t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_discounts GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        description: Lightspeed's identifier for the discount rule.
+      - name: name
+        sql: name
+        type: string
+        title: Discount name
+        description: Display name of the discount rule. Names can repeat across rule sources.
+      - name: fixed_amount
+        sql: discount_amount
+        type: number
+        format: currency
+        description: Fixed dollar discount configured, when the rule is amount-based.
+      - name: percent
+        sql: discount_percent
+        type: number
+        description: Percentage discount configured (as a fraction), when the rule is percentage-based.
+      - name: requires_customer
+        sql: require_customer
+        type: boolean
+        description: Whether the discount requires a customer attached to the sale.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the discount rule has been archived.
+      - name: source_id
+        sql: source_id
+        type: number
+        description: Identifier of the originating rule (discount rule, price rule or loyalty promotion).
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When the discount rule was last modified.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of discount rules configured.
+
+  - name: cc_charges
+    title: Card charges
+    public: false
+    description: >
+      One row per card charge attempt processed for a sale: authorisation
+      outcome, amount, entry method and cardholder details. Includes declined
+      and voided charges.
+    meta:
+      ai_context: >
+        Use for card acceptance questions: decline rates, entry methods, refunded
+        card amounts. The processing cost of card acceptance lives in
+        processing_fees, not here.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_cc_charges t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_cc_charges GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: cc_charge_id
+        sql: cc_charge_id
+        type: number
+        description: Lightspeed's identifier for the card charge.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        description: Sale the charge belongs to.
+      - name: charged_at
+        sql: time_stamp
+        type: time
+        title: Charged at
+        description: When the charge was processed.
+      - name: declined
+        sql: declined
+        type: boolean
+        description: True when the processor declined the charge.
+      - name: voided
+        sql: voided
+        type: boolean
+        description: True when the charge was voided before settlement.
+      - name: auth_only
+        sql: auth_only
+        type: boolean
+        description: True for authorisation-only holds (no capture).
+      - name: entry_method
+        sql: entry_method
+        type: string
+        description: How the card was presented (swiped, chip, contactless, keyed).
+      - name: cardholder_name
+        sql: cardholder_name
+        type: string
+        description: Name on the card, as returned by the terminal.
+      - name: auth_code
+        sql: auth_code
+        type: string
+        public: false
+        description: Processor authorisation code.
+      - name: gateway_transaction_id
+        sql: gateway_trans_id
+        type: string
+        public: false
+        description: Gateway transaction reference.
+      - name: xnum
+        sql: xnum
+        type: string
+        public: false
+        description: Terminal transaction number.
+      - name: response
+        sql: response
+        type: string
+        public: false
+        description: Raw processor response text.
+      - name: card_expiry
+        sql: exp
+        type: string
+        public: false
+        description: Card expiry as recorded by the terminal.
+      - name: communication_key
+        sql: communication_key
+        type: string
+        public: false
+
+    measures:
+      - name: charge_count
+        type: count
+        title: Card charges
+        description: Number of card charge attempts.
+      - name: approved_charge_count
+        type: count
+        title: Approved charges
+        description: Card charges that were not declined and not voided.
+        filters:
+          - sql: "COALESCE({CUBE}.declined, false) = false AND COALESCE({CUBE}.voided, false) = false"
+      - name: declined_charge_count
+        type: count
+        title: Declined charges
+        description: Card charges the processor declined.
+        filters:
+          - sql: "COALESCE({CUBE}.declined, false) = true"
+      - name: decline_rate_pct
+        type: number
+        sql: "100.0 * {declined_charge_count} / NULLIF({charge_count}, 0)"
+        format: percent
+        title: Decline rate %
+        description: Share of card charge attempts that were declined.
+      - name: charged_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Card amount charged
+        description: Total card amount across approved (not declined, not voided) charges.
+        filters:
+          - sql: "COALESCE({CUBE}.declined, false) = false AND COALESCE({CUBE}.voided, false) = false"
+      - name: refunded_amount
+        type: sum
+        sql: refunded
+        format: currency
+        title: Card amount refunded
+        description: Total amount refunded back onto cards.
+
+  - name: processing_fees
+    title: Card processing fees
+    public: false
+    description: >
+      One row per processing-fee record for a card payment: what the payments
+      processor charged the merchant, broken into fixed and variable components
+      plus interchange and scheme fee detail.
+    meta:
+      ai_context: >
+        The true cost of a card payment is fixed_fee + variable_fee (surfaced as
+        total_fees). The amount column is the payment amount the fee applies to,
+        NOT the fee itself; never sum amount to answer a fee question.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_processing_fees t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_processing_fees GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: sale_payments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sale_payments}.tenant_id
+          AND {CUBE}.sale_payment_id = {sale_payments}.sale_payment_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: processing_fee_id
+        sql: sale_payment_processing_fee_id
+        type: number
+        description: Lightspeed's identifier for the fee record.
+      - name: sale_payment_id
+        sql: sale_payment_id
+        type: number
+        description: The sale payment this fee was charged on.
+      - name: processor
+        sql: processor
+        type: string
+        description: Payments processor that levied the fee.
+      - name: processing_fee_ref
+        sql: processing_fee_ref
+        type: string
+        public: false
+        description: Processor-side reference for the fee.
+      - name: processed_at
+        sql: processing_time
+        type: time
+        title: Processed at
+        description: When the payment was processed and the fee incurred.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+      - name: updated_at
+        sql: update_time
+        type: time
+        public: false
+      - name: variable_rate_pct
+        sql: variable_pct
+        type: number
+        description: Variable fee rate applied, as a percentage of the payment.
+      - name: interchange_variable_rate_pct
+        sql: interchange_fees_variable_pct
+        type: number
+        public: false
+        description: Interchange variable rate component, as a percentage.
+      - name: scheme_variable_rate_pct
+        sql: scheme_fees_variable_pct
+        type: number
+        public: false
+        description: Card scheme variable rate component, as a percentage.
+
+    measures:
+      - name: fee_record_count
+        type: count
+        title: Fee records
+        description: Number of processing-fee records.
+      - name: total_fees
+        type: sum
+        sql: "COALESCE({CUBE}.fixed_fee, 0) + COALESCE({CUBE}.variable_fee, 0)"
+        format: currency
+        title: Total processing fees
+        description: The merchant's card acceptance cost, fixed fee plus variable fee.
+      - name: fixed_fees
+        type: sum
+        sql: fixed_fee
+        format: currency
+        description: Fixed per-transaction fee component.
+      - name: variable_fees
+        type: sum
+        sql: variable_fee
+        format: currency
+        description: Variable (percentage-based) fee component.
+      - name: interchange_fees
+        type: sum
+        sql: "COALESCE({CUBE}.interchange_fees_fixed_fee, 0) + COALESCE({CUBE}.interchange_fees_variable_fee, 0)"
+        format: currency
+        description: Interchange portion of the fees (paid to the card-issuing bank).
+      - name: scheme_fees
+        type: sum
+        sql: "COALESCE({CUBE}.scheme_fees_fixed_fee, 0) + COALESCE({CUBE}.scheme_fees_variable_fee, 0)"
+        format: currency
+        description: Card scheme portion of the fees (paid to the card network).
+      - name: processed_payment_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Payment amount fees applied to
+        description: The payment value these fees were charged on. Not a fee; use total_fees for cost.
+      - name: effective_fee_rate_pct
+        type: number
+        sql: "100.0 * {total_fees} / NULLIF({processed_payment_amount}, 0)"
+        format: percent
+        title: Effective fee rate %
+        description: Total fees as a percentage of processed payment value.

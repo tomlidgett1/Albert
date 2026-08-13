@@ -1,0 +1,121 @@
+cubes:
+  - name: square_daily_labour_sales
+    title: Square daily labour-to-sales
+    public: false
+    description: >
+      One row per tenant, Square location and local calendar day after sales and
+      completed timecards are independently aggregated to that shared grain.
+      This is the only safe single-query surface for labour-to-sales ratios.
+    meta:
+      ai_context: >
+        Use for sales per labour hour, estimated labour cost percentage and daily
+        staffing efficiency. Square timecard wages are estimates, not payroll:
+        overtime, taxes, benefits/super and later payroll adjustments are absent.
+        Sales use completed order net_total_money and include tax, tips and
+        service charges. A ratio across a period must divide summed labour by
+        summed sales, never average daily percentages.
+    sql: >
+      WITH location_timezones AS (
+        SELECT location.tenant_id, location.connection_id,
+               location.payload_json->>'id' AS location_id,
+               location.payload_json->>'currency' AS location_currency,
+               timezone.name AS timezone_name
+        FROM source_square.square_locations location
+        JOIN pg_timezone_names timezone
+          ON timezone.name = location.payload_json->>'timezone'
+        WHERE NOT location.tombstone
+      ), sales_by_day AS (
+        SELECT orders.tenant_id, orders.connection_id,
+               orders.payload_json->>'location_id' AS location_id,
+               orders.payload_json#>> ARRAY['net_amounts', 'total_money', 'currency'] AS currency,
+               ((orders.payload_json->>'closed_at')::timestamptz AT TIME ZONE location.timezone_name)::date AS business_date,
+               COUNT(*) AS completed_orders,
+               SUM((orders.payload_json#>> ARRAY['net_amounts', 'total_money', 'amount'])::numeric /
+                 POWER(10::numeric, source_square.square_currency_exponent(orders.payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']))) AS net_sales
+        FROM source_square.square_orders orders
+        JOIN location_timezones location
+          ON location.tenant_id = orders.tenant_id
+         AND location.connection_id = orders.connection_id
+         AND location.location_id = orders.payload_json->>'location_id'
+        WHERE NOT orders.tombstone AND orders.payload_json->>'state' = 'COMPLETED'
+          AND orders.payload_json ? 'closed_at'
+        GROUP BY orders.tenant_id, orders.connection_id,
+                 orders.payload_json->>'location_id',
+                 orders.payload_json#>> ARRAY['net_amounts', 'total_money', 'currency'],
+                 ((orders.payload_json->>'closed_at')::timestamptz AT TIME ZONE location.timezone_name)::date
+      ), timecard_rows AS (
+        SELECT t.tenant_id, t.connection_id, t.payload_json,
+               location.timezone_name, location.location_currency,
+               COALESCE(b.unpaid_break_seconds, 0) AS unpaid_break_seconds
+        FROM source_square.square_timecards t
+        JOIN location_timezones location
+          ON location.tenant_id = t.tenant_id
+         AND location.connection_id = t.connection_id
+         AND location.location_id = t.payload_json->>'location_id'
+        LEFT JOIN LATERAL (
+          SELECT SUM(EXTRACT(EPOCH FROM ((break_value->>'end_at')::timestamptz - (break_value->>'start_at')::timestamptz))) AS unpaid_break_seconds
+          FROM jsonb_array_elements(COALESCE(t.payload_json->'breaks', '[]'::jsonb)) AS breaks(break_value)
+          WHERE COALESCE((break_value->>'is_paid')::boolean, false) = false
+            AND break_value ? 'start_at' AND break_value ? 'end_at'
+        ) b ON true
+        WHERE NOT t.tombstone AND t.payload_json ? 'start_at' AND t.payload_json ? 'end_at'
+      ), labour_by_day AS (
+        SELECT tenant_id, connection_id, payload_json->>'location_id' AS location_id,
+               COALESCE(payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'], location_currency) AS currency,
+               ((payload_json->>'start_at')::timestamptz AT TIME ZONE timezone_name)::date AS business_date,
+               COUNT(*) AS completed_timecards,
+               SUM(GREATEST(0, EXTRACT(EPOCH FROM ((payload_json->>'end_at')::timestamptz - (payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0) AS worked_hours,
+               CASE
+                 WHEN COUNT(*) FILTER (
+                   WHERE payload_json#>> ARRAY['wage', 'hourly_rate', 'amount'] IS NULL
+                      OR source_square.square_currency_exponent(
+                           COALESCE(payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'], location_currency)
+                         ) IS NULL
+                 ) > 0 THEN NULL
+                 ELSE SUM((GREATEST(0, EXTRACT(EPOCH FROM ((payload_json->>'end_at')::timestamptz - (payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0) *
+                   ((payload_json#>> ARRAY['wage', 'hourly_rate', 'amount'])::numeric /
+                    POWER(10::numeric, source_square.square_currency_exponent(
+                      COALESCE(payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'], location_currency)
+                    ))))
+               END AS estimated_labour_cost
+        FROM timecard_rows
+        GROUP BY tenant_id, connection_id, payload_json->>'location_id',
+                 COALESCE(payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'], location_currency),
+                 ((payload_json->>'start_at')::timestamptz AT TIME ZONE timezone_name)::date
+      )
+      SELECT CONCAT(COALESCE(s.tenant_id, l.tenant_id), ':', COALESCE(s.connection_id, l.connection_id), ':', COALESCE(s.location_id, l.location_id), ':', COALESCE(s.business_date, l.business_date), ':', COALESCE(s.currency, l.currency)) AS row_key,
+             COALESCE(s.tenant_id, l.tenant_id) AS tenant_id,
+             COALESCE(s.connection_id, l.connection_id) AS connection_id,
+             COALESCE(s.location_id, l.location_id) AS location_id,
+             COALESCE(s.business_date, l.business_date) AS business_date,
+             COALESCE(s.currency, l.currency) AS currency,
+             COALESCE(s.completed_orders, 0) AS completed_orders,
+             CASE WHEN s.tenant_id IS NULL THEN 0::numeric ELSE s.net_sales END AS net_sales,
+             COALESCE(l.completed_timecards, 0) AS completed_timecards,
+             COALESCE(l.worked_hours, 0) AS worked_hours,
+             CASE WHEN l.tenant_id IS NULL THEN 0::numeric ELSE l.estimated_labour_cost END AS estimated_labour_cost
+      FROM sales_by_day s
+      FULL OUTER JOIN labour_by_day l
+        ON l.tenant_id = s.tenant_id AND l.connection_id = s.connection_id
+       AND l.location_id = s.location_id AND l.business_date = s.business_date
+       AND l.currency = s.currency
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.location_id = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: location_id, sql: location_id, type: string, public: false }
+      - { name: business_date, sql: business_date, type: time, title: Business date }
+      - { name: currency, sql: currency, type: string }
+    measures:
+      - { name: completed_orders, sql: completed_orders, type: sum }
+      - { name: net_sales, sql: net_sales, type: sum, format: currency }
+      - { name: completed_timecards, sql: completed_timecards, type: sum }
+      - { name: worked_hours, sql: worked_hours, type: sum }
+      - { name: estimated_labour_cost, sql: estimated_labour_cost, type: sum, format: currency }
+      - { name: sales_per_labour_hour, sql: "{net_sales} / NULLIF({worked_hours}, 0)", type: number, format: currency }
+      - { name: labour_cost_pct, sql: "100.0 * {estimated_labour_cost} / NULLIF({net_sales}, 0)", type: number, format: percent }
+      - { name: orders_per_labour_hour, sql: "{completed_orders} / NULLIF({worked_hours}, 0)", type: number }

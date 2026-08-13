@@ -1,0 +1,30 @@
+views:
+  - name: square_inventory_analytics
+    title: Square inventory analytics
+    description: Current Square inventory quantities by item variation, store and inventory state.
+    meta:
+      ai_context: >
+        Inventory is a latest balance snapshot. Use units_in_stock for sellable
+        IN_STOCK quantity; use quantity_by_state only after grouping/filtering
+        inventory_state. Never sum calculated_at snapshots across time.
+    cubes:
+      - join_path: square_inventory_counts
+        includes:
+          - tenant_id
+          - inventory_state
+          - quantity
+          - is_estimated
+          - calculated_at
+          - is_in_stock
+          - inventory_balances
+          - stocked_variations
+          - quantity_by_state
+          - units_in_stock
+          - estimated_balances
+      - join_path: square_inventory_counts.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+      - join_path: square_inventory_counts.square_catalog_objects
+        prefix: true
+        includes: [object_type, object_name, sku, upc, product_type, track_inventory, sellable, stockable]
+

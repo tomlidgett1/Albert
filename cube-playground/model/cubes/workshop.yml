@@ -1,0 +1,595 @@
+cubes:
+  - name: workorders
+    title: Workorders (workshop / service jobs)
+    public: false
+    description: >
+      One row per workshop service job (repair, fitting, build). A workorder is
+      checked in (time_in), promised back to the customer (eta_out), worked
+      through labour lines and parts, and finally invoiced through a sale
+      (sale_id set once charged). Status comes from workorder_statuses. Warranty
+      jobs are flagged and typically not charged. Tombstoned (remotely deleted)
+      rows are excluded at source.
+    meta:
+      ai_context: >
+        "Workshop", "service", "repairs" and "jobs" mean workorders. Use
+        checked_in_at as the business date for workshop intake volume and
+        promised_at for due dates. The money actually charged for workshop work
+        lives on the linked sale, not here: for workshop revenue use
+        product_sales_analytics filtered to is_workorder = true. Labour effort
+        and parts attached to jobs are in workorder_lines / workorder_items.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_workorders
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_workorders t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: workorder_statuses
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {workorder_statuses}.tenant_id
+          AND {CUBE}.workorder_status_id = {workorder_statuses}.workorder_status_id
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: workorder_id
+        sql: workorder_id
+        type: number
+        title: Workorder ID
+        description: Lightspeed's identifier for the workorder (job number in the POS).
+      - name: checked_in_at
+        sql: time_in
+        type: time
+        title: Checked in at
+        description: When the item was checked in to the workshop. Business date for intake volume.
+      - name: promised_at
+        sql: eta_out
+        type: time
+        title: Promised / due at
+        description: When the job was promised back to the customer (ETA out). Use for due and overdue questions.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this workorder.
+      - name: note
+        sql: note
+        type: string
+        description: Customer-facing job notes (what was requested / done).
+      - name: internal_note
+        sql: internal_note
+        type: string
+        public: false
+        description: Staff-only notes on the job.
+      - name: is_warranty
+        sql: warranty
+        type: boolean
+        title: Warranty job
+        description: True when the job is warranty work, typically done at no charge.
+      - name: is_taxed
+        sql: tax
+        type: boolean
+        public: false
+        description: Whether tax applies to the job.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: >
+          True once the workorder has been closed off and archived. Open
+          workshop questions should look at archived = false.
+      - name: hook_in
+        sql: hook_in
+        type: string
+        public: false
+        description: Physical tag / hook location where the item was stored at check-in.
+      - name: hook_out
+        sql: hook_out
+        type: string
+        public: false
+        description: Physical tag / hook location for pickup.
+      - name: save_parts
+        sql: save_parts
+        type: boolean
+        public: false
+        description: Whether the customer asked to keep replaced parts.
+      - name: serviced_item_description
+        sql: '{CUBE}."description"'
+        type: string
+        title: Serviced item
+        description: Description of the unit being serviced (for example the customer's bike).
+      - name: serviced_item_serial
+        sql: serial
+        type: string
+        description: Serial number of the unit being serviced, when recorded.
+      - name: is_invoiced
+        type: boolean
+        sql: "({CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0)"
+        title: Invoiced to a sale
+        description: True once the workorder has been charged through a sale.
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: sale_id
+        sql: sale_id
+        type: number
+        public: false
+        description: Sale the job was invoiced on, once charged.
+      - name: serialized_id
+        sql: serialized_id
+        type: number
+        public: false
+      - name: workorder_status_id
+        sql: workorder_status_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+
+    measures:
+      - name: workorder_count
+        type: count
+        title: Workorders
+        description: Number of workshop jobs (archived included unless filtered).
+      - name: open_workorders
+        type: count
+        title: Open workorders
+        description: Jobs not yet archived (still live in the workshop).
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false"
+      - name: closed_workorders
+        type: count
+        description: Jobs that have been archived / closed off.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = true"
+      - name: warranty_workorders
+        type: count
+        title: Warranty jobs
+        description: Jobs flagged as warranty work.
+        filters:
+          - sql: "COALESCE({CUBE}.warranty, false) = true"
+      - name: invoiced_workorders
+        type: count
+        title: Invoiced workorders
+        description: Jobs that have been charged through a sale.
+        filters:
+          - sql: "{CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0"
+      - name: overdue_workorders
+        type: count
+        title: Overdue workorders
+        description: Open jobs whose promised date has already passed.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false AND {CUBE}.eta_out IS NOT NULL AND {CUBE}.eta_out < NOW()"
+      - name: avg_promised_turnaround_days
+        type: avg
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.eta_out - {CUBE}.time_in)) / 86400.0"
+        title: Average promised turnaround (days)
+        description: >
+          Average days between check-in and the promised completion date. This
+          is the promised window, not the actual completion time (Lightspeed
+          does not record an actual completion timestamp on the workorder).
+        filters:
+          - sql: "{CUBE}.time_in IS NOT NULL AND {CUBE}.eta_out IS NOT NULL AND {CUBE}.eta_out >= {CUBE}.time_in"
+
+    segments:
+      - name: open_jobs
+        sql: "COALESCE({CUBE}.archived, false) = false"
+        description: Workorders still live in the workshop (not archived).
+      - name: warranty_jobs
+        sql: "COALESCE({CUBE}.warranty, false) = true"
+        description: Warranty jobs.
+      - name: invoiced_jobs
+        sql: "{CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0"
+        description: Jobs already charged through a sale.
+
+  - name: workorder_lines
+    title: Workorder labour lines
+    public: false
+    description: >
+      One row per labour / service line on a workorder: the work performed,
+      hours and minutes of labour, per-unit cost and any price override. done
+      marks the work as finished, approved marks customer approval. Tombstoned
+      rows are excluded at source.
+    meta:
+      ai_context: >
+        Labour effort ("workshop hours", "labour booked") = labour_hours.
+        unit_price_override is only set when staff override the standard labour
+        price, so it is not a complete revenue figure; charged labour revenue
+        lives on the linked sale lines (product_sales_analytics with
+        is_workorder = true).
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_workorder_lines
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_workorder_lines t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: workorders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {workorders}.tenant_id
+          AND {CUBE}.workorder_id = {workorders}.workorder_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: workorder_line_id
+        sql: workorder_line_id
+        type: number
+        description: Lightspeed's identifier for the labour line.
+      - name: note
+        sql: note
+        type: string
+        description: What the labour line covers (the work description).
+      - name: labour_hours_entry
+        type: number
+        sql: "COALESCE({CUBE}.hours, 0) + COALESCE({CUBE}.minutes, 0) / 60.0"
+        title: Labour hours (line)
+        description: Hours of labour recorded on this line (hours plus minutes converted).
+      - name: unit_price_override
+        sql: unit_price_override
+        type: number
+        format: currency
+        description: Manual price override for the labour, when staff set one. Null/0 means the standard item price applies.
+      - name: unit_quantity
+        sql: unit_quantity
+        type: number
+        description: Quantity of the labour item on this line.
+      - name: unit_cost
+        sql: unit_cost
+        type: number
+        format: currency
+        description: Per-unit internal cost recorded for the labour line (ex tax).
+      - name: is_done
+        sql: done
+        type: boolean
+        title: Work done
+        description: True when the work on this line is finished.
+      - name: is_approved
+        sql: approved
+        type: boolean
+        description: True when the customer approved this line of work.
+      - name: is_warranty
+        sql: warranty
+        type: boolean
+        description: True when this line is warranty work.
+      - name: is_taxed
+        sql: tax
+        type: boolean
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this line.
+      - name: workorder_id
+        sql: workorder_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: sale_id
+        sql: sale_id
+        type: number
+        public: false
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+      - name: tax_class_id
+        sql: tax_class_id
+        type: number
+        public: false
+
+    measures:
+      - name: labour_line_count
+        type: count
+        title: Labour lines
+        description: Number of labour / service lines across workorders.
+      - name: labour_hours
+        type: sum
+        sql: "COALESCE({CUBE}.hours, 0) + COALESCE({CUBE}.minutes, 0) / 60.0"
+        title: Labour hours booked
+        description: Total labour hours recorded on workorder lines (hours plus minutes).
+      - name: lines_done
+        type: count
+        title: Lines completed
+        description: Labour lines marked done.
+        filters:
+          - sql: "COALESCE({CUBE}.done, false) = true"
+      - name: lines_pending
+        type: count
+        title: Lines pending
+        description: Labour lines not yet marked done.
+        filters:
+          - sql: "COALESCE({CUBE}.done, false) = false"
+      - name: lines_approved
+        type: count
+        description: Labour lines the customer has approved.
+        filters:
+          - sql: "COALESCE({CUBE}.approved, false) = true"
+      - name: warranty_lines
+        type: count
+        description: Labour lines flagged as warranty work.
+        filters:
+          - sql: "COALESCE({CUBE}.warranty, false) = true"
+      - name: labour_cost
+        type: sum
+        sql: "COALESCE({CUBE}.unit_cost, 0) * COALESCE(NULLIF({CUBE}.unit_quantity, 0), 1)"
+        format: currency
+        title: Labour cost (internal)
+        description: Internal cost of labour recorded on lines (unit cost times quantity, ex tax). Not the amount charged to customers.
+
+    segments:
+      - name: done_lines
+        sql: "COALESCE({CUBE}.done, false) = true"
+        description: Labour lines marked done.
+      - name: outstanding_lines
+        sql: "COALESCE({CUBE}.done, false) = false"
+        description: Labour lines still to be worked.
+
+  - name: workorder_items
+    title: Workorder parts
+    public: false
+    description: >
+      One row per part / product attached to a workorder, with the quantity and
+      unit price captured when the part was added. is_special_order marks parts
+      that had to be specially ordered for the job. Tombstoned rows are
+      excluded at source.
+    meta:
+      ai_context: >
+        "Parts used in the workshop" = parts_quantity / parts_value here.
+        parts_value is the attach-time estimate (unit price times quantity);
+        the amount actually charged is on the linked sale lines
+        (product_sales_analytics, is_workorder = true).
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_workorder_items
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_workorder_items t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: workorders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {workorders}.tenant_id
+          AND {CUBE}.workorder_id = {workorders}.workorder_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: workorder_item_id
+        sql: workorder_item_id
+        type: number
+        description: Lightspeed's identifier for the workorder part row.
+      - name: unit_price
+        sql: unit_price
+        type: number
+        format: currency
+        description: Per-unit price of the part captured when it was attached to the job.
+      - name: unit_quantity
+        sql: unit_quantity
+        type: number
+        description: Quantity of the part attached.
+      - name: is_approved
+        sql: approved
+        type: boolean
+        description: True when the customer approved this part.
+      - name: is_warranty
+        sql: warranty
+        type: boolean
+        description: True when the part is supplied under warranty.
+      - name: is_taxed
+        sql: tax
+        type: boolean
+        public: false
+      - name: is_special_order
+        sql: is_special_order
+        type: boolean
+        title: Special ordered part
+        description: True when the part had to be specially ordered in for this job.
+      - name: note
+        sql: note
+        type: string
+        description: Notes on the part.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this row.
+      - name: workorder_id
+        sql: workorder_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: sale_id
+        sql: sale_id
+        type: number
+        public: false
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+
+    measures:
+      - name: part_line_count
+        type: count
+        title: Part lines
+        description: Number of part rows attached to workorders.
+      - name: parts_quantity
+        type: sum
+        sql: unit_quantity
+        title: Parts quantity
+        description: Total units of parts attached to workorders.
+      - name: parts_value
+        type: sum
+        sql: "COALESCE({CUBE}.unit_price, 0) * COALESCE({CUBE}.unit_quantity, 0)"
+        format: currency
+        title: Parts value (attach-time)
+        description: Unit price times quantity at the moment the part was attached. An estimate, not charged revenue.
+      - name: approved_part_lines
+        type: count
+        description: Part rows the customer approved.
+        filters:
+          - sql: "COALESCE({CUBE}.approved, false) = true"
+      - name: special_order_part_lines
+        type: count
+        title: Special ordered parts
+        description: Part rows that were specially ordered for the job.
+        filters:
+          - sql: "COALESCE({CUBE}.is_special_order, false) = true"
+
+  - name: workorder_statuses
+    title: Workorder statuses
+    public: false
+    description: >
+      The workshop's status ladder (for example New, In progress, Waiting on
+      parts, Done, Picked up). Workorders join here. sort_order gives the
+      ladder position; system_value is set on Lightspeed's built-in statuses.
+    meta:
+      ai_context: '"Job status" means workorder_statuses.name. Lower sort_order = earlier in the workflow.'
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_workorder_statuses
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_workorder_statuses t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: workorder_status_id
+        sql: workorder_status_id
+        type: number
+        description: Lightspeed's identifier for the status.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Job status
+        description: Status label shown in the workshop board.
+      - name: sort_order
+        sql: sort_order
+        type: number
+        description: Position of the status in the workflow ladder (lower = earlier).
+      - name: system_value
+        sql: system_value
+        type: string
+        public: false
+        description: Internal value for Lightspeed's built-in statuses.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of statuses defined.

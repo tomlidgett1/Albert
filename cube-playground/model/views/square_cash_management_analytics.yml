@@ -1,0 +1,28 @@
+views:
+  - name: square_cash_management_analytics
+    title: Square cash management analytics
+    description: Square cash drawer sessions with expected cash, counted cash and closed-shift over/short variance.
+    meta:
+      ai_context: >
+        cash_variance = counted cash minus expected cash for CLOSED drawers.
+        Positive is over; negative is short. Open drawers have no counted result
+        and must not enter variance. Use closed_at as the audit date.
+    cubes:
+      - join_path: square_cash_drawer_shifts
+        includes:
+          - tenant_id
+          - state
+          - description
+          - device_name
+          - currency
+          - opened_at
+          - ended_at
+          - closed_at
+          - drawer_shifts
+          - closed_drawer_shifts
+          - expected_cash
+          - counted_cash
+          - cash_variance
+      - join_path: square_cash_drawer_shifts.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]

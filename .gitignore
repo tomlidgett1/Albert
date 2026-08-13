@@ -51,3 +51,8 @@ next-env.d.ts
 /.albert-agent-qa-out/
 /supabase/.temp/
 /supabase/.branches/
+
+# Cube playground local artifacts
+cube-playground/node_modules/
+cube-playground/bridge/node_modules/
+cube-playground/.cubestore/

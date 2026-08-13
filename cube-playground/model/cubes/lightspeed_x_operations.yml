@@ -1,0 +1,531 @@
+cubes:
+  - name: lightspeed_x_inventory
+    title: Lightspeed X-Series current inventory
+    public: false
+    description: >
+      One current inventory balance per product/outlet. Inventory and cost are
+      semi-additive snapshots: aggregate across products/outlets at the current
+      loaded state, never across versions or ingestion observations.
+    meta:
+      ai_context: >
+        current_inventory_level is stock available to sell. quantity_to_procure
+        is stock needed for current fulfilments/service orders; do not subtract
+        it unless the user explicitly asks for an after-commitments planning
+        estimate. average_cost can be null when cost visibility is not granted.
+        reorder_amount can be non-zero above reorder_point for MIN_MAX and is not
+        itself proof that an order should be placed.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_inventory t
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = t.tenant_id
+       AND retailer.connection_id = t.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_products}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_products}.connection_id
+          AND {CUBE}.payload_json->>'product_id' = {lightspeed_x_products}.payload_json->>'id'
+      - name: lightspeed_x_outlets
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_outlets}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_outlets}.connection_id
+          AND {CUBE}.payload_json->>'outlet_id' = {lightspeed_x_outlets}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: inventory_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: product_id, sql: "payload_json->>'product_id'", type: string, public: false }
+      - { name: outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: units_on_hand, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric", type: number }
+      - { name: average_cost, sql: "NULLIF(payload_json->>'average_cost', '')::numeric", type: number, format: currency }
+      - { name: stock_value, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric * NULLIF(payload_json->>'average_cost', '')::numeric", type: number, format: currency }
+      - { name: quantity_to_procure, sql: "NULLIF(payload_json->>'quantity_to_procure', '')::numeric", type: number }
+      - { name: planning_available_units, sql: "COALESCE(NULLIF(payload_json->>'current_inventory_level', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'quantity_to_procure', '')::numeric, 0)", type: number, description: Planning estimate only; current_inventory_level is the API available-to-sell balance. }
+      - { name: reorder_method, sql: "payload_json->>'reorder_method'", type: string }
+      - { name: reorder_point, sql: "NULLIF(payload_json->>'reorder_point', '')::numeric", type: number }
+      - { name: reorder_target, sql: "NULLIF(payload_json->>'reorder_target', '')::numeric", type: number }
+      - { name: reorder_amount, sql: "NULLIF(payload_json->>'reorder_amount', '')::numeric", type: number }
+      - { name: at_or_below_reorder_point, sql: "(NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric)", type: boolean }
+      - { name: out_of_stock, sql: "(COALESCE(NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric, 0) <= 0)", type: boolean }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - name: inventory_balances
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - { name: stocked_products, sql: "payload_json->>'product_id'", type: count_distinct, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_units_on_hand, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }], description: Current snapshot across selected products/outlets. }
+      - { name: current_stock_value, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric * NULLIF(payload_json->>'average_cost', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_quantity_to_procure, sql: "NULLIF(payload_json->>'quantity_to_procure', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_suggested_reorder_units, sql: "NULLIF(payload_json->>'reorder_amount', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric" }] }
+      - name: out_of_stock_balances
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND COALESCE(NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric, 0) <= 0" }]
+      - name: reorder_point_breaches
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric" }]
+
+  - name: lightspeed_x_consignments
+    title: Lightspeed X-Series consignments
+    public: false
+    description: >
+      Stock workflow headers. SUPPLIER means a stock/purchase order, OUTLET an
+      inter-outlet transfer, RETURN a supplier return and STOCKTAKE a stocktake.
+      SENT is a workflow notification and does not by itself create stock movement.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_consignments t
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = t.tenant_id
+       AND retailer.connection_id = t.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_outlets
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_outlets}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_outlets}.connection_id
+          AND {CUBE}.payload_json->>'outlet_id' = {lightspeed_x_outlets}.payload_json->>'id'
+      - name: lightspeed_x_suppliers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_suppliers}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_suppliers}.connection_id
+          AND {CUBE}.payload_json->>'supplier_id' = {lightspeed_x_suppliers}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: consignment_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: destination_outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
+      - { name: source_outlet_id, sql: "payload_json->>'source_outlet_id'", type: string, public: false }
+      - { name: supplier_id, sql: "payload_json->>'supplier_id'", type: string, public: false }
+      - { name: consignment_name, sql: "payload_json->>'name'", type: string, title: Consignment }
+      - { name: consignment_type, sql: "payload_json->>'type'", type: string }
+      - { name: consignment_status, sql: "payload_json->>'status'", type: string }
+      - { name: reference, sql: "payload_json->>'reference'", type: string }
+      - { name: supplier_invoice, sql: "payload_json->>'supplier_invoice'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: consignment_date, sql: "payload_json->>'consignment_date'", type: time }
+      - { name: due_at, sql: "payload_json->>'due_at'", type: time }
+      - { name: received_at, sql: "payload_json->>'received_at'", type: time }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM ((payload_json->>'received_at')::timestamptz - (payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: number }
+      - { name: total_count_gain, sql: "NULLIF(payload_json->>'total_count_gain', '')::numeric", type: number }
+      - { name: total_count_loss, sql: "NULLIF(payload_json->>'total_count_loss', '')::numeric", type: number }
+      - { name: total_cost_gain, sql: "NULLIF(payload_json->>'total_cost_gain', '')::numeric", type: number, format: currency }
+      - { name: total_cost_loss, sql: "NULLIF(payload_json->>'total_cost_loss', '')::numeric", type: number, format: currency }
+    measures:
+      - { name: consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: supplier_orders, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'SUPPLIER'" }] }
+      - { name: outlet_transfers, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'OUTLET'" }] }
+      - { name: supplier_returns, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'RETURN'" }] }
+      - { name: stocktakes, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: open_consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'status' NOT IN ('RECEIVED', 'CLOSED', 'CANCELLED', 'STOCKTAKE_COMPLETE')" }] }
+      - { name: received_consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'status' = 'RECEIVED'" }] }
+      - { name: average_receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM ((payload_json->>'received_at')::timestamptz - (payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'received_at' IS NOT NULL AND {CUBE}.payload_json->>'consignment_date' IS NOT NULL" }] }
+      - { name: stocktake_units_gained, sql: "NULLIF(payload_json->>'total_count_gain', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_units_lost, sql: "NULLIF(payload_json->>'total_count_loss', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_cost_gain, sql: "NULLIF(payload_json->>'total_cost_gain', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_cost_loss, sql: "NULLIF(payload_json->>'total_cost_loss', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+
+  - name: lightspeed_x_consignment_products
+    title: Lightspeed X-Series consignment products
+    public: false
+    description: >
+      One product line returned from a consignment child endpoint. The connector
+      adds only `_albert.parent.consignment_id` to retain endpoint context; all
+      official fields remain unchanged. Cost is unit cost and count/received are quantities.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_consignment_products t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_consignments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_consignments}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_consignments}.connection_id
+          AND COALESCE(jsonb_extract_path_text({CUBE}.payload_json, '_albert', 'parent', 'consignment_id'), {CUBE}.payload_json->>'consignment_id') = {lightspeed_x_consignments}.payload_json->>'id'
+      - name: lightspeed_x_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_products}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_products}.connection_id
+          AND {CUBE}.payload_json->>'product_id' = {lightspeed_x_products}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: consignment_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, '_albert', 'parent', 'consignment_id'), payload_json->>'consignment_id')", type: string, public: false }
+      - { name: product_id, sql: "payload_json->>'product_id'", type: string, public: false }
+      - { name: product_sku, sql: "payload_json->>'product_sku'", type: string }
+      - { name: line_status, sql: "payload_json->>'status'", type: string }
+      - { name: is_included, sql: "COALESCE((payload_json->>'is_included')::boolean, false)", type: boolean }
+      - { name: unit_cost, sql: "NULLIF(payload_json->>'cost', '')::numeric", type: number, format: currency }
+      - { name: ordered_quantity, sql: "NULLIF(payload_json->>'count', '')::numeric", type: number }
+      - { name: received_quantity, sql: "NULLIF(payload_json->>'received', '')::numeric", type: number }
+      - { name: outstanding_quantity, sql: "GREATEST(COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0), 0)", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: consignment_lines, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: ordered_units, sql: "NULLIF(payload_json->>'count', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: received_units, sql: "NULLIF(payload_json->>'received', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: outstanding_units, sql: "GREATEST(COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0), 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: ordered_cost, sql: "COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) * COALESCE(NULLIF(payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: received_cost, sql: "COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0) * COALESCE(NULLIF(payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+
+  - name: lightspeed_x_fulfillments
+    title: Lightspeed X-Series fulfillments
+    public: false
+    description: >
+      Current fulfillment summary per sale/outlet. State progresses OPEN,
+      STARTED, PICKED, PACKED, FULFILLED. Snapshot state is not an event ledger;
+      use history fields through the source explorer when exact transitions are required.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_fulfillments t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_outlets
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_outlets}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_outlets}.connection_id
+          AND {CUBE}.payload_json->>'outlet_id' = {lightspeed_x_outlets}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: fulfillment_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: sale_id, sql: "payload_json->>'sale_id'", type: string, public: false }
+      - { name: outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
+      - { name: fulfillment_type, sql: "payload_json->>'type'", type: string }
+      - { name: fulfillment_state, sql: "COALESCE(payload_json->>'state', payload_json->>'status')", type: string }
+      - { name: note, sql: "payload_json->>'note'", type: string, public: false }
+      - { name: assigned_user_count, sql: "jsonb_array_length(COALESCE(payload_json->'user_ids', '[]'::jsonb))", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: observed_cycle_hours, sql: "EXTRACT(EPOCH FROM ((payload_json->>'updated_at')::timestamptz - (payload_json->>'created_at')::timestamptz)) / 3600.0", type: number, description: Created-to-last-update duration; exact fulfilment transition time needs history. }
+    measures:
+      - { name: fulfillments, type: count }
+      - { name: open_fulfillments, type: count, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('OPEN', 'STARTED', 'PICKED', 'PACKED')" }] }
+      - { name: fulfilled_fulfillments, type: count, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('FULFILLED', 'SHIPPED', 'PICKED_UP')" }] }
+      - { name: dispatch_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'DISPATCH'" }] }
+      - { name: pickup_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'PICKUP'" }] }
+      - { name: service_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'SERVICE'" }] }
+      - { name: average_observed_cycle_hours, sql: "EXTRACT(EPOCH FROM ((payload_json->>'updated_at')::timestamptz - (payload_json->>'created_at')::timestamptz)) / 3600.0", type: avg, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('FULFILLED', 'SHIPPED', 'PICKED_UP')" }] }
+
+  - name: lightspeed_x_fulfillment_lines
+    title: Lightspeed X-Series fulfillment lines
+    public: false
+    description: One current fulfillment summary line per sale line/product.
+    sql: >
+      SELECT CONCAT(t.namespaced_source_key, ':line:', COALESCE(line.value->>'sale_line_item_id', line.ordinality::text)) AS row_key,
+             t.tenant_id, t.connection_id, t.payload_json AS fulfillment_payload,
+             line.value AS line_payload
+      FROM source_lightspeed_x.lx_fulfillments t
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.payload_json->'line_items', '[]'::jsonb))
+        WITH ORDINALITY AS line(value, ordinality)
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_fulfillments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_fulfillments}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_fulfillments}.connection_id
+          AND {CUBE}.fulfillment_payload->>'id' = {lightspeed_x_fulfillments}.payload_json->>'id'
+      - name: lightspeed_x_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_products}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_products}.connection_id
+          AND {CUBE}.line_payload->>'product_id' = {lightspeed_x_products}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: fulfillment_id, sql: "fulfillment_payload->>'id'", type: string, public: false }
+      - { name: sale_id, sql: "fulfillment_payload->>'sale_id'", type: string, public: false }
+      - { name: sale_line_item_id, sql: "line_payload->>'sale_line_item_id'", type: string, public: false }
+      - { name: product_id, sql: "line_payload->>'product_id'", type: string, public: false }
+      - { name: fulfillment_state, sql: "COALESCE(fulfillment_payload->>'state', fulfillment_payload->>'status')", type: string }
+      - { name: required_quantity, sql: "NULLIF(line_payload->>'quantity', '')::numeric", type: number }
+      - { name: picked_quantity, sql: "NULLIF(line_payload->>'picked_quantity', '')::numeric", type: number }
+      - { name: packed_quantity, sql: "NULLIF(line_payload->>'packed_quantity', '')::numeric", type: number }
+      - { name: fulfilled_quantity, sql: "NULLIF(line_payload->>'fulfilled_quantity', '')::numeric", type: number }
+      - { name: remaining_quantity, sql: "GREATEST(COALESCE(NULLIF(line_payload->>'quantity', '')::numeric, 0) - COALESCE(NULLIF(line_payload->>'fulfilled_quantity', '')::numeric, 0), 0)", type: number }
+      - { name: created_at, sql: "fulfillment_payload->>'created_at'", type: time }
+      - { name: updated_at, sql: "fulfillment_payload->>'updated_at'", type: time }
+    measures:
+      - { name: fulfillment_lines, type: count }
+      - { name: required_units, sql: "NULLIF(line_payload->>'quantity', '')::numeric", type: sum }
+      - { name: picked_units, sql: "NULLIF(line_payload->>'picked_quantity', '')::numeric", type: sum }
+      - { name: packed_units, sql: "NULLIF(line_payload->>'packed_quantity', '')::numeric", type: sum }
+      - { name: fulfilled_units, sql: "NULLIF(line_payload->>'fulfilled_quantity', '')::numeric", type: sum }
+      - { name: remaining_units, sql: "GREATEST(COALESCE(NULLIF(line_payload->>'quantity', '')::numeric, 0) - COALESCE(NULLIF(line_payload->>'fulfilled_quantity', '')::numeric, 0), 0)", type: sum }
+
+  - name: lightspeed_x_promotions
+    title: Lightspeed X-Series promotions
+    public: false
+    description: Current promotion definitions, eligibility, action, time and code requirements.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_promotions t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: promotion_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: promotion_name, sql: "payload_json->>'name'", type: string, title: Promotion }
+      - { name: description, sql: "payload_json->>'description'", type: string }
+      - { name: promotion_status, sql: "payload_json->>'status'", type: string }
+      - { name: action_type, sql: "jsonb_extract_path_text(payload_json, 'action', 'type')", type: string }
+      - { name: action_value, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'action', 'value'), '')::numeric", type: number }
+      - { name: condition_type, sql: "jsonb_extract_path_text(payload_json, 'condition', 'type')", type: string }
+      - { name: condition_quantity, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'condition', 'quantity'), '')::numeric", type: number }
+      - { name: minimum_price, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'condition', 'min_price'), '')::numeric", type: number, format: currency }
+      - { name: requires_promo_code, sql: "COALESCE((payload_json->>'use_promo_code')::boolean, false)", type: boolean }
+      - { name: loyalty_multiplier, sql: "NULLIF(payload_json->>'loyalty_multiplier', '')::numeric", type: number }
+      - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlet_ids', '[]'::jsonb))", type: number }
+      - { name: channel_count, sql: "jsonb_array_length(COALESCE(payload_json->'channels', '[]'::jsonb))", type: number }
+      - { name: customer_group_count, sql: "jsonb_array_length(COALESCE(payload_json->'customer_group_ids', '[]'::jsonb))", type: number }
+      - { name: starts_at, sql: "payload_json->>'start_time'", type: time }
+      - { name: ends_at, sql: "payload_json->>'end_time'", type: time }
+      - name: is_currently_scheduled
+        sql: >
+          (({CUBE}.payload_json->>'start_time' IS NULL OR ({CUBE}.payload_json->>'start_time')::timestamptz <= NOW())
+           AND ({CUBE}.payload_json->>'end_time' IS NULL OR ({CUBE}.payload_json->>'end_time')::timestamptz >= NOW()))
+        type: boolean
+    measures:
+      - { name: promotion_definitions, type: count }
+      - name: currently_scheduled_promotions
+        type: count
+        filters:
+          - sql: >
+              ({CUBE}.payload_json->>'start_time' IS NULL OR ({CUBE}.payload_json->>'start_time')::timestamptz <= NOW())
+              AND ({CUBE}.payload_json->>'end_time' IS NULL OR ({CUBE}.payload_json->>'end_time')::timestamptz >= NOW())
+
+  - name: lightspeed_x_services
+    title: Lightspeed X-Series service orders
+    public: false
+    description: >
+      One service order from the module-gated Services API. List responses are
+      job wrappers; single-service responses are DetailedService wrappers, so
+      members tolerate service at payload.service or the root. Each service has
+      a corresponding sale; service financial totals must not be added to sales revenue.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             retailer.payload_json AS retailer_payload
+      FROM source_lightspeed_x.lx_services t
+      LEFT JOIN source_lightspeed_x.lx_retailer retailer
+        ON retailer.tenant_id = t.tenant_id
+       AND retailer.connection_id = t.connection_id
+       AND NOT retailer.tombstone
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_users
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_users}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_users}.connection_id
+          AND COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'assigned_user_id'), {CUBE}.payload_json->>'assigned_user_id') = {lightspeed_x_users}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: service_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'id'), payload_json->>'id')", type: string, public: false }
+      - { name: sale_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'sale_id'), payload_json->>'sale_id')", type: string, public: false }
+      - { name: assigned_user_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'assigned_user_id'), payload_json->>'assigned_user_id')", type: string, public: false }
+      - { name: service_status, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status'), payload_json->>'status')", type: string }
+      - { name: service_status_name, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status_details', 'display_name'), jsonb_extract_path_text(payload_json, 'status_details', 'display_name'))", type: string }
+      - { name: service_status_key, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status_details', 'status_key'), jsonb_extract_path_text(payload_json, 'status_details', 'status_key'))", type: string }
+      - { name: location, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'location'), payload_json->>'location')", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
+      - { name: scheduled_for, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text(payload_json, 'agenda', 'date'))", type: time }
+      - { name: scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: number }
+      - { name: subtotal, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'sub_total'), jsonb_extract_path_text(payload_json, 'totals', 'sub_total')), '')::numeric", type: number, format: currency }
+      - { name: total_amount, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text(payload_json, 'totals', 'total_amount')), '')::numeric", type: number, format: currency }
+      - { name: total_tax, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_tax'), jsonb_extract_path_text(payload_json, 'totals', 'total_tax')), '')::numeric", type: number, format: currency }
+      - { name: total_promotion, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_promotion'), jsonb_extract_path_text(payload_json, 'totals', 'total_promotion')), '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'created_at'), payload_json->>'created_at')", type: time }
+      - { name: updated_at, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'updated_at'), payload_json->>'updated_at')", type: time }
+      - { name: scheduled_date_has_passed, sql: "(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'date'))::timestamptz < NOW())", type: boolean, description: Scheduling fact only; custom status determines whether work is actually overdue. }
+      - { name: notes, sql: "CAST(payload_json->'notes' AS text)", type: string, public: false }
+    measures:
+      - { name: service_orders, type: count }
+      - { name: scheduled_service_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: sum }
+      - { name: scheduled_dates_passed, type: count, filters: [{ sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'date'))::timestamptz < NOW()" }], description: Not automatically overdue because service statuses can be custom. }
+      - { name: service_order_total_reference, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text(payload_json, 'totals', 'total_amount')), '')::numeric", type: sum, format: currency, description: Reference value already represented by the linked sale; never add to sales revenue. }
+      - { name: average_scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: avg }
+
+  - name: lightspeed_x_service_lines
+    title: Lightspeed X-Series service order lines
+    public: false
+    description: One product/labour line nested under a service order; linked sale remains revenue truth.
+    sql: >
+      SELECT CONCAT(t.namespaced_source_key, ':line:', COALESCE(line.value->>'id', line.ordinality::text)) AS row_key,
+             t.tenant_id, t.connection_id, t.payload_json AS service_payload,
+             line.value AS line_payload
+      FROM source_lightspeed_x.lx_services t
+      CROSS JOIN LATERAL jsonb_array_elements(
+        COALESCE(jsonb_extract_path(t.payload_json, 'service', 'line_items'), t.payload_json->'line_items', '[]'::jsonb)
+      ) WITH ORDINALITY AS line(value, ordinality)
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_services
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_services}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_services}.connection_id
+          AND COALESCE(jsonb_extract_path_text({CUBE}.service_payload, 'service', 'id'), {CUBE}.service_payload->>'id') = COALESCE(jsonb_extract_path_text({lightspeed_x_services}.payload_json, 'service', 'id'), {lightspeed_x_services}.payload_json->>'id')
+      - name: lightspeed_x_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_products}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_products}.connection_id
+          AND {CUBE}.line_payload->>'product_id' = {lightspeed_x_products}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: service_id, sql: "COALESCE(jsonb_extract_path_text(service_payload, 'service', 'id'), service_payload->>'id')", type: string, public: false }
+      - { name: sale_id, sql: "COALESCE(jsonb_extract_path_text(service_payload, 'service', 'sale_id'), service_payload->>'sale_id')", type: string, public: false }
+      - { name: line_item_id, sql: "line_payload->>'id'", type: string, public: false }
+      - { name: product_id, sql: "line_payload->>'product_id'", type: string, public: false }
+      - { name: sku, sql: "line_payload->>'sku'", type: string }
+      - { name: line_state, sql: "line_payload->>'state'", type: string }
+      - { name: fulfillment_type, sql: "line_payload->>'fulfillment_type'", type: string }
+      - { name: quantity, sql: "NULLIF(line_payload->>'quantity', '')::numeric", type: number }
+      - { name: unit_price, sql: "NULLIF(line_payload->>'unit_price', '')::numeric", type: number, format: currency }
+      - { name: unit_discount, sql: "NULLIF(line_payload->>'unit_discount', '')::numeric", type: number, format: currency }
+      - { name: note, sql: "line_payload->>'note'", type: string, public: false }
+    measures:
+      - { name: service_lines, type: count }
+      - { name: service_line_units, sql: "NULLIF(line_payload->>'quantity', '')::numeric", type: sum }
+      - { name: service_line_reference_value, sql: "COALESCE(NULLIF(line_payload->>'quantity', '')::numeric, 0) * COALESCE(NULLIF(line_payload->>'unit_price', '')::numeric, 0)", type: sum, format: currency, description: Reference only; linked sale lines are revenue truth. }
+
+  - name: lightspeed_x_service_items
+    title: Lightspeed X-Series customer service items
+    public: false
+    description: >
+      Serviceable customer-owned item history. Connector parent context retains
+      customer_id when the API child object omits it. Serial numbers and condition
+      notes are private and available only through explicit tenant-authorised lookup.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_service_items t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_customers}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_customers}.connection_id
+          AND COALESCE(jsonb_extract_path_text({CUBE}.payload_json, '_albert', 'parent', 'customer_id'), {CUBE}.payload_json->>'customer_id') = {lightspeed_x_customers}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: customer_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, '_albert', 'parent', 'customer_id'), payload_json->>'customer_id')", type: string, public: false }
+      - { name: service_item_id, sql: "COALESCE(payload_json->>'item_id', jsonb_extract_path_text(payload_json, 'item_details', 'item_id'))", type: string, public: false }
+      - { name: item_name, sql: "COALESCE(payload_json->>'item_name', jsonb_extract_path_text(payload_json, 'item_details', 'item_name'))", type: string, title: Service item }
+      - { name: service_location, sql: "payload_json->>'location'", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: serial_number, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'serial_number'), payload_json->>'serial_number')", type: string, public: false }
+      - { name: description, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'description'), payload_json->>'description')", type: string, public: false }
+      - { name: initial_condition, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'initial_condition'), payload_json->>'initial_condition')", type: string, public: false }
+    measures:
+      - { name: service_items, type: count }
+
+  - name: lightspeed_x_shifts
+    title: Lightspeed X-Series user shifts
+    public: false
+    description: >
+      POS user time-in/time-out shifts. These are operational till login hours,
+      not roster, award interpretation, payroll or fully loaded labour cost.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_shifts t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_users
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_users}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_users}.connection_id
+          AND {CUBE}.payload_json->>'user_id' = {lightspeed_x_users}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: shift_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: user_id, sql: "payload_json->>'user_id'", type: string, public: false }
+      - { name: time_in, sql: "payload_json->>'time_in'", type: time }
+      - { name: time_out, sql: "payload_json->>'time_out'", type: time }
+      - { name: is_open_shift, sql: "({CUBE}.payload_json->>'time_out' IS NULL)", type: boolean }
+      - { name: shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+    measures:
+      - { name: shifts, type: count }
+      - { name: completed_shifts, type: count, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
+      - { name: open_shifts, type: count, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NULL" }] }
+      - { name: worked_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
+      - { name: average_shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
+
+  - name: lightspeed_x_audit_log_events
+    title: Lightspeed X-Series audit log events
+    public: false
+    description: >
+      Audit activity by entity type, action, user and occurrence time. Changed
+      values, old values, IP address and user agent stay private because they can
+      contain credentials, contact data or other sensitive free-form content.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_audit_log_events t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_users
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_users}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_users}.connection_id
+          AND {CUBE}.payload_json->>'user_id' = {lightspeed_x_users}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: audit_event_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: entity_id, sql: "payload_json->>'entity_id'", type: string, public: false }
+      - { name: user_id, sql: "payload_json->>'user_id'", type: string, public: false }
+      - { name: entity_type, sql: "payload_json->>'type'", type: string }
+      - { name: action, sql: "payload_json->>'action'", type: string }
+      - { name: occurred_at, sql: "payload_json->>'occurred_at'", type: time }
+      - { name: persisted_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: changed_data, sql: "CAST(payload_json->'data' AS text)", type: string, public: false }
+      - { name: old_data, sql: "CAST(payload_json->'old_data' AS text)", type: string, public: false }
+      - { name: ip_address, sql: "payload_json->>'ip_address'", type: string, public: false }
+      - { name: user_agent, sql: "payload_json->>'user_agent'", type: string, public: false }
+    measures:
+      - { name: audit_events, type: count }
+      - { name: insert_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'insert'" }] }
+      - { name: update_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'update'" }] }
+      - { name: delete_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'delete'" }] }
+      - { name: affected_entities, sql: "payload_json->>'entity_id'", type: count_distinct }
+      - { name: acting_users, sql: "payload_json->>'user_id'", type: count_distinct }

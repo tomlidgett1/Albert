@@ -1,0 +1,507 @@
+cubes:
+  - name: items
+    title: Items (product catalogue)
+    public: false
+    description: >
+      One row per product in the Lightspeed catalogue: identifiers (SKUs, UPC,
+      EAN), naming, cost basis, tax class, brand/category/season links, physical
+      attributes and ecommerce flags. Sale lines join here for product-level
+      analysis.
+    meta:
+      ai_context: >
+        "Product", "item" and "SKU" all mean this cube. default_cost is the
+        configured replenishment cost and avg_cost is the rolling average cost;
+        both are per-unit and ex tax. For margin on actual sales, use the sale_lines
+        cost measures (line totals), not these catalogue costs.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_items t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_items GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {categories}.tenant_id
+          AND {CUBE}.category_id = {categories}.category_id
+      - name: manufacturers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {manufacturers}.tenant_id
+          AND {CUBE}.manufacturer_id = {manufacturers}.manufacturer_id
+      - name: seasons
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {seasons}.tenant_id
+          AND {CUBE}.season_id = {seasons}.season_id
+      - name: tax_classes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_classes}.tenant_id
+          AND {CUBE}.tax_class_id = {tax_classes}.tax_class_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        description: Lightspeed's identifier for the item.
+      # Lightspeed R-Series stores the item's display name in "description";
+      # "name"/"full_path_name" arrive empty from the connector. Fall back so
+      # name-based filters and groupings always resolve.
+      - name: name
+        sql: >
+          COALESCE(NULLIF({CUBE}."name", ''), NULLIF({CUBE}.full_path_name, ''),
+                   {CUBE}."description")
+        type: string
+        title: Item name
+        description: Product display name (falls back to the point-of-sale description when unnamed).
+      - name: full_path_name
+        sql: >
+          COALESCE(NULLIF({CUBE}.full_path_name, ''), NULLIF({CUBE}."name", ''),
+                   {CUBE}."description")
+        type: string
+        description: >
+          Item name including its matrix/parent path, when part of a matrix
+          (falls back to the plain name or description when the path is absent).
+      - name: description
+        sql: description
+        type: string
+        description: Product description shown at the point of sale.
+      - name: long_description
+        sql: long_description
+        type: string
+        public: false
+        description: Extended (often ecommerce) description.
+      - name: short_description
+        sql: short_description
+        type: string
+        public: false
+        description: Short ecommerce description.
+      - name: system_sku
+        sql: system_sku
+        type: string
+        title: System SKU
+        description: Lightspeed-generated SKU.
+      - name: custom_sku
+        sql: custom_sku
+        type: string
+        title: Custom SKU
+        description: Merchant-assigned SKU.
+      - name: manufacturer_sku
+        sql: manufacturer_sku
+        type: string
+        description: Manufacturer's SKU for the product.
+      - name: upc
+        sql: upc
+        type: string
+        description: UPC barcode.
+      - name: ean
+        sql: ean
+        type: string
+        description: EAN barcode.
+      - name: item_type
+        sql: item_type
+        type: string
+        description: Lightspeed item type (default, labor, serialized, non_inventory, box and similar).
+      - name: serialized
+        sql: serialized
+        type: boolean
+        description: True when units carry serial numbers.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the item has been archived from the catalogue.
+      - name: discountable
+        sql: discountable
+        type: boolean
+        description: Whether discounts may apply to this item.
+      - name: is_taxed
+        sql: tax
+        type: boolean
+        description: Whether the item is taxable.
+      - name: default_cost
+        sql: default_cost
+        type: number
+        format: currency
+        description: Configured per-unit replenishment cost (ex tax).
+      - name: average_cost
+        sql: avg_cost
+        type: number
+        format: currency
+        description: Rolling average per-unit cost (ex tax).
+      - name: default_price
+        sql: amount_where_use_type_default
+        type: number
+        format: currency
+        title: Default retail price
+        description: The item's default selling price from its price list.
+      - name: msrp
+        sql: amount_where_use_type_msrp
+        type: number
+        format: currency
+        title: MSRP
+        description: Manufacturer's suggested retail price from the price list.
+      - name: model_year
+        sql: model_year
+        type: number
+        description: Model year, common for bikes and seasonal goods.
+      - name: created_at
+        sql: create_time
+        type: time
+        description: When the item was created in the catalogue.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When the item was last modified.
+      - name: publish_to_ecom
+        sql: publish_to_ecom
+        type: boolean
+        description: Whether the item is published to the ecommerce store.
+      - name: listed_on_store
+        sql: list_on_store
+        type: boolean
+        public: false
+        description: Legacy ecommerce listing flag.
+      - name: attribute1
+        sql: attribute1
+        type: string
+        description: First matrix attribute value (for example colour).
+      - name: attribute2
+        sql: attribute2
+        type: string
+        description: Second matrix attribute value (for example size).
+      - name: attribute3
+        sql: attribute3
+        type: string
+        description: Third matrix attribute value.
+      - name: attribute_name1
+        sql: attribute_name1
+        type: string
+        public: false
+        description: Name of the first matrix attribute.
+      - name: attribute_name2
+        sql: attribute_name2
+        type: string
+        public: false
+        description: Name of the second matrix attribute.
+      - name: attribute_name3
+        sql: attribute_name3
+        type: string
+        public: false
+        description: Name of the third matrix attribute.
+      - name: weight
+        sql: weight
+        type: number
+        public: false
+        description: Shipping weight.
+      - name: width
+        sql: width
+        type: number
+        public: false
+      - name: height
+        sql: height
+        type: number
+        public: false
+      - name: length
+        sql: '{CUBE}."length"'
+        type: number
+        public: false
+      - name: category_id
+        sql: category_id
+        type: number
+        public: false
+      - name: manufacturer_id
+        sql: manufacturer_id
+        type: number
+        public: false
+      - name: season_id
+        sql: season_id
+        type: number
+        public: false
+      - name: tax_class_id
+        sql: tax_class_id
+        type: number
+        public: false
+      - name: department_id
+        sql: department_id
+        type: number
+        public: false
+        description: Department link, when departments are used.
+      - name: item_matrix_id
+        sql: item_matrix_id
+        type: number
+        public: false
+        description: Matrix (parent product) this variant belongs to, 0/null for standalone items.
+      - name: default_vendor_id
+        sql: default_vendor_id
+        type: number
+        public: false
+        description: Default purchasing vendor.
+      - name: item_attribute_set_id
+        sql: item_attribute_set_id
+        type: number
+        public: false
+      - name: item_e_commerce_id
+        sql: item_e_commerce_id
+        type: number
+        public: false
+
+    measures:
+      - name: item_count
+        type: count
+        title: Catalogue items
+        description: Number of items in the catalogue (archived included unless filtered).
+      - name: active_item_count
+        type: count
+        title: Active items
+        description: Items not archived.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false"
+
+    segments:
+      - name: active_items
+        sql: "COALESCE({CUBE}.archived, false) = false"
+        description: Items not archived from the catalogue.
+
+  - name: categories
+    title: Categories
+    public: false
+    description: >
+      Product category tree. full_path_name carries the whole path (for example
+      "Bikes / Mountain / 29er"), node_depth its level, parent_id its parent.
+      Items join here; category revenue questions go through sale_lines to items
+      to categories.
+    meta:
+      ai_context: >
+        For "sales by category" group sale_lines measures by
+        items.categories.full_path_name (or name for the leaf only). The hierarchy
+        is parent_id-based; full_path_name is the easiest rollup label.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_categories t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_categories GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: category_id
+        sql: category_id
+        type: number
+        description: Lightspeed's identifier for the category.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Category name
+        description: Leaf category name.
+      - name: full_path_name
+        sql: full_path_name
+        type: string
+        title: Category path
+        description: Full path from the root category to this one.
+      - name: parent_id
+        sql: parent_id
+        type: number
+        description: Parent category; 0 for root-level categories.
+      - name: node_depth
+        sql: node_depth
+        type: number
+        description: Depth in the category tree (0 = root level).
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of categories.
+
+  - name: manufacturers
+    title: Manufacturers (brands)
+    public: false
+    description: >
+      Brand / manufacturer reference list. Items join here; brand revenue
+      questions go through sale_lines to items to manufacturers.
+    meta:
+      ai_context: '"Brand" means manufacturers.name. Group sale_lines measures by it for sales-by-brand.'
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_manufacturers t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_manufacturers GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: manufacturer_id
+        sql: manufacturer_id
+        type: number
+        description: Lightspeed's identifier for the manufacturer.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Brand
+        description: Manufacturer / brand name.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of manufacturers.
+
+  - name: seasons
+    title: Seasons
+    public: false
+    description: >
+      Season labels merchants assign to items (for example "Winter 2025").
+      Items join here for seasonal assortment analysis.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_seasons t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_seasons GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: season_id
+        sql: season_id
+        type: number
+        description: Lightspeed's identifier for the season.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Season
+        description: Season label.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of seasons defined.
+
+  - name: tags
+    title: Item tags
+    public: false
+    description: >
+      Free-form tags merchants attach to items. The item-to-tag relation is not
+      staged, so tags are queryable as a reference list only (no revenue join).
+    meta:
+      ai_context: >
+        There is no join between tags and items in this model; if asked for sales
+        by tag, say the tag-to-item link is not available in the ingested data.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_tags t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_tags GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: tag_id
+        sql: tag_id
+        type: number
+        description: Lightspeed's identifier for the tag.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Tag
+        description: Tag text.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of tags defined.
+
+  - name: tag_groups
+    title: Tag groups
+    public: false
+    description: Groupings of item tags. Reference list only, like tags.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_tag_groups t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_tag_groups GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Tag group
+        description: Tag group name.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of tag groups defined.

@@ -1,0 +1,933 @@
+cubes:
+  - name: vendors
+    title: Vendors (suppliers)
+    public: false
+    description: >
+      One row per supplier the business buys from. Purchase orders, vendor
+      returns and item vendor numbers join here. code / rate carry the
+      vendor's purchasing currency when it differs from the shop currency.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: '"Supplier", "vendor", "distributor" all mean vendors.name.'
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_vendors
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_vendors t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: vendor_id
+        sql: vendor_id
+        type: number
+        description: Lightspeed's identifier for the vendor.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Vendor
+        description: Supplier display name.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the vendor has been archived.
+      - name: account_number
+        sql: account_number
+        type: string
+        description: The business's account number with this supplier.
+      - name: currency_code
+        sql: code
+        type: string
+        description: Vendor's purchasing currency code, when foreign.
+      - name: currency_rate
+        sql: rate
+        type: number
+        public: false
+        description: Exchange rate configured for the vendor's currency.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of vendors on file.
+      - name: active_count
+        type: count
+        description: Vendors not archived.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false"
+
+    segments:
+      - name: active_vendors
+        sql: "COALESCE({CUBE}.archived, false) = false"
+        description: Vendors not archived.
+
+  - name: purchase_orders
+    title: Purchase orders
+    public: false
+    description: >
+      One row per purchase order raised on a vendor: when it was ordered, when
+      stock arrived (received_date / arrival_date), shipping and other costs,
+      total ordered quantity and completion state. Line detail is in
+      purchase_order_lines; goods receipts are in order_shipments. Costs in
+      the shop currency; *_vendor_cost fields (kept internal) carry the
+      vendor-currency amounts. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Purchase orders", "POs", "what did we order from suppliers" = this
+        grain. Use ordered_at as the business date for buying activity and
+        received_at for goods-in. Open POs = po not complete and not archived.
+        Merchandise spend by item lives in purchase_order_lines (ordered_value);
+        header ship/other costs are freight and fees, not merchandise.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_purchase_orders
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_purchase_orders t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.vendor_id = {vendors}.vendor_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.created_by_employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: order_id
+        sql: order_id
+        type: number
+        title: Purchase order ID
+        description: Lightspeed's identifier for the purchase order.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: PO name
+        description: Purchase order name / label.
+      - name: reference_number
+        sql: ref_num
+        type: string
+        description: Reference number on the PO (often the vendor's order or invoice reference).
+      - name: ordered_at
+        sql: ordered_date
+        type: time
+        title: Ordered at
+        description: When the order was placed with the vendor. Business date for buying activity.
+      - name: received_at
+        sql: received_date
+        type: time
+        title: Received at
+        description: When stock on the order was received.
+      - name: expected_arrival_at
+        sql: arrival_date
+        type: time
+        description: When the order is expected to arrive.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+        description: When the PO record was created in Lightspeed.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this PO.
+      - name: is_complete
+        sql: complete
+        type: boolean
+        title: Complete
+        description: True when the PO has been fully received and closed.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the PO has been archived.
+      - name: po_status
+        type: string
+        title: PO status
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.complete, false) THEN 'Complete'
+            WHEN COALESCE({CUBE}.archived, false) THEN 'Archived'
+            WHEN {CUBE}.received_date IS NOT NULL THEN 'Partially received'
+            WHEN {CUBE}.ordered_date IS NOT NULL THEN 'Ordered'
+            ELSE 'Draft'
+          END
+        description: Lifecycle of the PO - Draft, Ordered, Partially received, Complete or Archived.
+      - name: has_shipments
+        sql: has_shipments
+        type: boolean
+        public: false
+        description: Whether goods receipts (shipments) exist for this PO.
+      - name: ship_instructions
+        sql: ship_instructions
+        type: string
+        public: false
+      - name: stock_instructions
+        sql: stock_instructions
+        type: string
+        public: false
+      - name: shipping_cost
+        sql: ship_cost
+        type: number
+        format: currency
+        description: Freight cost on the PO, in the shop currency.
+      - name: other_cost
+        sql: other_cost
+        type: number
+        format: currency
+        description: Other fees on the PO (duties, handling), in the shop currency.
+      - name: total_ordered_quantity
+        sql: total_quantity
+        type: number
+        description: Total units ordered across the PO's lines.
+      - name: vendor_currency_code
+        sql: vendor_currency_code
+        type: string
+        description: Currency the vendor bills in, when foreign.
+      - name: vendor_currency_rate
+        sql: vendor_currency_rate
+        type: number
+        public: false
+      - name: vendor_id
+        sql: vendor_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: created_by_employee_id
+        sql: created_by_employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: po_count
+        type: count
+        title: Purchase orders
+        description: Number of purchase orders (archived included unless filtered).
+      - name: open_pos
+        type: count
+        title: Open purchase orders
+        description: POs not yet complete and not archived (stock still expected).
+        filters:
+          - sql: "COALESCE({CUBE}.complete, false) = false AND COALESCE({CUBE}.archived, false) = false"
+      - name: completed_pos
+        type: count
+        description: POs fully received and closed.
+        filters:
+          - sql: "COALESCE({CUBE}.complete, false) = true"
+      - name: units_ordered_total
+        type: sum
+        sql: total_quantity
+        title: Units ordered (header total)
+        description: Total units ordered across POs, from the header quantity.
+      - name: freight_cost_total
+        type: sum
+        sql: ship_cost
+        format: currency
+        title: Freight costs
+        description: Shipping / freight costs across POs, in the shop currency.
+      - name: other_cost_total
+        type: sum
+        sql: other_cost
+        format: currency
+        description: Other fees (duties, handling) across POs, in the shop currency.
+      - name: avg_lead_time_days
+        type: avg
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.received_date - {CUBE}.ordered_date)) / 86400.0"
+        title: Average lead time (days)
+        description: Average days from placing the order to receiving stock, over POs with both dates.
+        filters:
+          - sql: >
+              {CUBE}.ordered_date IS NOT NULL AND {CUBE}.received_date IS NOT NULL
+              AND {CUBE}.received_date >= {CUBE}.ordered_date
+
+    segments:
+      - name: open_purchase_orders
+        sql: "COALESCE({CUBE}.complete, false) = false AND COALESCE({CUBE}.archived, false) = false"
+        description: POs with stock still expected.
+      - name: completed_purchase_orders
+        sql: "COALESCE({CUBE}.complete, false) = true"
+        description: POs fully received and closed.
+
+  - name: purchase_order_lines
+    title: Purchase order lines
+    public: false
+    description: >
+      One row per item line on a purchase order: units ordered, unit price paid
+      to the vendor (shop currency), units received and checked in, line total
+      and per-line shipping / discounts. Tombstoned rows are excluded at
+      source.
+    meta:
+      ai_context: >
+        Merchandise spend ("how much did we buy from X", "purchases of brand
+        Y") = ordered_value here, grouped by vendor or item. units_outstanding
+        flags stock ordered but not yet received. price is the per-unit cost
+        to the business (ex tax), not the retail price.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_purchase_order_lines
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_purchase_order_lines t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: purchase_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {purchase_orders}.tenant_id
+          AND {CUBE}.order_id = {purchase_orders}.order_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: order_line_id
+        sql: order_line_id
+        type: number
+        public: false
+      - name: quantity_ordered
+        sql: quantity
+        type: number
+        description: Units ordered on this line.
+      - name: unit_price
+        sql: price
+        type: number
+        format: currency
+        description: Per-unit price paid to the vendor, in the shop currency (ex tax).
+      - name: original_unit_price
+        sql: original_price
+        type: number
+        format: currency
+        public: false
+        description: Per-unit price before PO-level discounts.
+      - name: quantity_received
+        sql: num_received
+        type: number
+        description: Units received against this line so far.
+      - name: quantity_checked_in
+        sql: checked_in
+        type: number
+        description: Units checked in to stock against this line.
+      - name: line_total
+        sql: total
+        type: number
+        format: currency
+        description: Line total (units times unit price, less line discounts), in the shop currency.
+      - name: created_at
+        sql: create_time
+        type: time
+        description: When the line was added to the PO.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: order_id
+        sql: order_id
+        type: number
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+
+    measures:
+      - name: po_line_count
+        type: count
+        title: PO lines
+        description: Number of item lines across purchase orders.
+      - name: units_ordered
+        type: sum
+        sql: quantity
+        title: Units ordered
+        description: Units ordered across PO lines.
+      - name: units_received
+        type: sum
+        sql: num_received
+        title: Units received
+        description: Units received against PO lines.
+      - name: units_outstanding
+        type: sum
+        sql: "GREATEST(COALESCE({CUBE}.quantity, 0) - COALESCE({CUBE}.num_received, 0), 0)"
+        title: Units outstanding
+        description: Units ordered but not yet received (never negative per line).
+      - name: ordered_value
+        type: sum
+        sql: "COALESCE({CUBE}.total, COALESCE({CUBE}.price, 0) * COALESCE({CUBE}.quantity, 0))"
+        format: currency
+        title: Ordered value (merchandise)
+        description: >
+          Merchandise value ordered, in the shop currency (ex tax). Uses the
+          line total when present, otherwise unit price times quantity.
+      - name: received_value
+        type: sum
+        sql: "COALESCE({CUBE}.price, 0) * COALESCE({CUBE}.num_received, 0)"
+        format: currency
+        title: Received value (merchandise)
+        description: Unit price times units received, in the shop currency (ex tax).
+
+    segments:
+      - name: lines_awaiting_stock
+        sql: "COALESCE({CUBE}.quantity, 0) > COALESCE({CUBE}.num_received, 0)"
+        description: PO lines with units still to be received.
+
+  - name: order_shipments
+    title: Goods receipts (PO shipments)
+    public: false
+    description: >
+      One row per goods receipt (shipment / check-in) against a purchase
+      order: when it was received, units and cost in the receipt, and payment
+      due date. Per-item detail is in order_shipment_items. Tombstoned rows
+      are excluded at source.
+    meta:
+      ai_context: >
+        "Deliveries", "goods in", "receipts from suppliers" = this grain. Use
+        received_at as the business date. total_cost is the receipt's landed
+        cost in the shop currency.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_order_shipments
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_order_shipments t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: purchase_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {purchase_orders}.tenant_id
+          AND {CUBE}.order_id = {purchase_orders}.order_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: order_shipment_id
+        sql: order_shipment_id
+        type: number
+        public: false
+      - name: sequence_number
+        sql: sequence_number
+        type: number
+        public: false
+        description: Order of receipts against the same PO.
+      - name: received_at
+        sql: reception_date
+        type: time
+        title: Received at
+        description: When this shipment was received. Business date for goods-in.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+      - name: payment_due_on
+        sql: payment_due_date
+        type: time
+        description: When payment for this receipt falls due.
+      - name: packing_reference
+        sql: shipment_packing_ref_num
+        type: string
+        description: Packing slip / delivery reference for the receipt.
+      - name: status
+        sql: status
+        type: string
+        description: Receipt status from Lightspeed.
+      - name: currency_code
+        sql: currency_code
+        type: string
+        public: false
+      - name: vendor_currency_code
+        sql: vendor_currency_code
+        type: string
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: order_id
+        sql: order_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: shipment_count
+        type: count
+        title: Goods receipts
+        description: Number of shipments received against purchase orders.
+      - name: units_received
+        type: sum
+        sql: total_qty_received
+        title: Units received
+        description: Units received across goods receipts.
+      - name: received_cost
+        type: sum
+        sql: total_cost
+        format: currency
+        title: Received cost
+        description: Cost of goods received, in the shop currency (ex tax).
+      - name: shipping_cost_total
+        type: sum
+        sql: shipping_cost
+        format: currency
+        description: Freight allocated to receipts, in the shop currency.
+
+  - name: order_shipment_items
+    title: Goods receipt lines
+    public: false
+    description: >
+      One row per item within a goods receipt: units received and unit /
+      total cost for that item in the shop currency. Tombstoned rows are
+      excluded at source.
+    meta:
+      ai_context: >
+        Landed cost per item per receipt. Use for "what did we receive and at
+        what cost" by item; join up to order_shipments for the receipt date.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_order_shipment_items
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_order_shipment_items t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: order_shipments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {order_shipments}.tenant_id
+          AND {CUBE}.order_shipment_id = {order_shipments}.order_shipment_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: order_shipment_item_id
+        sql: order_shipment_item_id
+        type: number
+        public: false
+      - name: quantity_received
+        sql: qty_received
+        type: number
+        description: Units of the item received in this receipt.
+      - name: unit_cost
+        sql: cost
+        type: number
+        format: currency
+        description: Per-unit cost in the shop currency (ex tax).
+      - name: line_cost
+        sql: total_cost
+        type: number
+        format: currency
+        description: Total cost for the item in this receipt, shop currency (ex tax).
+      - name: item_description
+        sql: item_description
+        type: string
+        public: false
+        description: Denormalised item description on the receipt line; prefer items.name.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: order_shipment_id
+        sql: order_shipment_id
+        type: number
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+
+    measures:
+      - name: receipt_line_count
+        type: count
+        title: Receipt lines
+        description: Number of item lines across goods receipts.
+      - name: line_units_received
+        type: sum
+        sql: qty_received
+        title: Units received (lines)
+        description: Units received across receipt lines.
+      - name: line_cost_received
+        type: sum
+        sql: total_cost
+        format: currency
+        title: Cost received (lines)
+        description: Cost of goods received across receipt lines, shop currency (ex tax).
+
+  - name: vendor_returns
+    title: Vendor returns
+    public: false
+    description: >
+      One row per return of stock back to a supplier: status, when it was
+      sent, shipping / other costs and the return's subtotal and total value.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Returns to suppliers", "sent back to the vendor" = this grain (stock
+        going back to suppliers, not customer refunds). Use sent_at as the
+        business date and return_value for the value returned.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_vendor_returns
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_vendor_returns t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.vendor_id = {vendors}.vendor_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: vendor_return_id
+        sql: vendor_return_id
+        type: number
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        description: Name / label of the return.
+      - name: reference_number
+        sql: ref_num
+        type: string
+        description: Reference number for the return (for example the vendor's RMA).
+      - name: status
+        sql: status
+        type: string
+        title: Return status
+        description: Lifecycle status of the return.
+      - name: sent_at
+        sql: sent_date
+        type: time
+        title: Sent at
+        description: When the stock was sent back to the vendor.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the return has been archived.
+      - name: shipping_cost
+        sql: ship_cost
+        type: number
+        format: currency
+        public: false
+      - name: other_cost
+        sql: other_cost
+        type: number
+        format: currency
+        public: false
+      - name: subtotal
+        sql: subtotal
+        type: number
+        format: currency
+        description: Merchandise value of the return before costs.
+      - name: total
+        sql: total
+        type: number
+        format: currency
+        description: Total value of the return.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: vendor_id
+        sql: vendor_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+
+    measures:
+      - name: return_count
+        type: count
+        title: Vendor returns
+        description: Number of returns raised on suppliers.
+      - name: return_value
+        type: sum
+        sql: total
+        format: currency
+        title: Value returned to vendors
+        description: Total value of stock returned to suppliers.
+      - name: sent_returns
+        type: count
+        description: Returns already dispatched to the vendor.
+        filters:
+          - sql: "{CUBE}.sent_date IS NOT NULL"
+
+  - name: item_vendor_numbers
+    title: Item vendor numbers (supplier SKUs)
+    public: false
+    description: >
+      One row per item-vendor pairing: the supplier's part number for the item
+      and the negotiated per-unit cost from that supplier. Tombstoned rows
+      are excluded at source.
+    meta:
+      ai_context: >
+        Answers "who supplies this item and at what cost" and maps supplier
+        part numbers to catalogue items.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_item_vendor_nums
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_item_vendor_nums t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.vendor_id = {vendors}.vendor_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_vendor_num_id
+        sql: item_vendor_num_id
+        type: number
+        public: false
+      - name: vendor_sku
+        sql: '{CUBE}."value"'
+        type: string
+        title: Supplier part number
+        description: The supplier's SKU / part number for the item.
+      - name: vendor_unit_cost
+        sql: cost
+        type: number
+        format: currency
+        description: Negotiated per-unit cost from this supplier (ex tax).
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: vendor_id
+        sql: vendor_id
+        type: number
+        public: false
+
+    measures:
+      - name: mapping_count
+        type: count
+        description: Number of item-supplier pairings on file.
+
+  - name: catalog_vendor_items
+    title: Vendor catalogue items (B2B price lists)
+    public: false
+    description: >
+      One row per product in a supplier's B2B catalogue: the supplier's part
+      numbers, description, brand, cost tiers and MSRP. Reference data for
+      buying decisions; these are not the shop's own catalogue items.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        Supplier price-list reference only. The shop's own products are in
+        items; do not mix the two when counting catalogue size.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_catalog_vendor_items
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_catalog_vendor_items t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.catalog_vendor_id = {vendors}.vendor_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: catalog_vendor_item_id
+        sql: catalog_vendor_item_id
+        type: number
+        public: false
+      - name: vendor_number
+        sql: vendor_number
+        type: string
+        description: The supplier's part number in their catalogue.
+      - name: manufacturer_number
+        sql: manufacturer_number
+        type: string
+        description: The manufacturer's part number.
+      - name: description
+        sql: '{CUBE}."description"'
+        type: string
+        description: Catalogue description of the product.
+      - name: brand
+        sql: brand
+        type: string
+        description: Brand in the supplier's catalogue.
+      - name: category
+        sql: category
+        type: string
+        description: Category in the supplier's catalogue.
+      - name: model
+        sql: model
+        type: string
+        public: false
+      - name: model_year
+        sql: '{CUBE}."year"'
+        type: string
+        public: false
+      - name: upc
+        sql: upc
+        type: string
+        public: false
+      - name: cost
+        sql: cost
+        type: number
+        format: currency
+        description: Supplier's list cost for the product (tier 1).
+      - name: msrp
+        sql: msrp
+        type: number
+        format: currency
+        description: Manufacturer's suggested retail price in the catalogue.
+      - name: status
+        sql: status
+        type: string
+        description: Availability status in the supplier's catalogue.
+      - name: archived
+        sql: archived
+        type: boolean
+        public: false
+
+    measures:
+      - name: catalogue_item_count
+        type: count
+        description: Number of products in supplier B2B catalogues.

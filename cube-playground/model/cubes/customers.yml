@@ -1,0 +1,1030 @@
+cubes:
+  - name: customers
+    title: Customers
+    public: false
+    description: >
+      One row per customer profile: names, company, type, contact linkage,
+      tax exemption and lifetime behaviour (first/last purchase, lifetime value)
+      derived from their completed sales. Tombstoned rows are excluded.
+    meta:
+      ai_context: >
+        Lifetime dimensions (first_purchase_at, last_purchase_at, lifetime_revenue,
+        lifetime_transactions) are computed from completed, non-voided sales.
+        A "new" customer in a period is one whose first_purchase_at falls in that
+        period; "returning" means they purchased before it. Anonymous walk-in
+        sales have no customer row, so customer-based analyses cover attributed
+        sales only and answers should say so when relevant.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_customers t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_customers GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: customer_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customer_types}.tenant_id
+          AND {CUBE}.customer_type_id = {customer_types}.customer_type_id
+      - name: contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {contacts}.tenant_id
+          AND {CUBE}.contact_id = {contacts}.contact_id
+      - name: credit_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {credit_accounts}.tenant_id
+          AND {CUBE}.credit_account_id = {credit_accounts}.credit_account_id
+      - name: discounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {discounts}.tenant_id
+          AND {CUBE}.discount_id = {discounts}.discount_id
+      - name: tax_categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_categories}.tenant_id
+          AND {CUBE}.tax_category_id = {tax_categories}.tax_category_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: customer_id
+        sql: customer_id
+        type: number
+        description: Lightspeed's identifier for the customer.
+      - name: first_name
+        sql: first_name
+        type: string
+        description: Given name.
+      - name: last_name
+        sql: last_name
+        type: string
+        description: Family name.
+      - name: full_name
+        type: string
+        sql: "TRIM(COALESCE({CUBE}.first_name, '') || ' ' || COALESCE({CUBE}.last_name, ''))"
+        title: Customer name
+        description: Full display name.
+      - name: title
+        sql: title
+        type: string
+        public: false
+        description: Salutation (Mr, Ms and similar).
+      - name: company
+        sql: company
+        type: string
+        description: Company name for business customers.
+      - name: company_registration_number
+        sql: company_registration_number
+        type: string
+        public: false
+        description: Company registration number (for example ABN/ACN).
+      - name: vat_number
+        sql: vat_number
+        type: string
+        public: false
+        description: VAT/GST registration number, indicating tax-exempt or business handling.
+      - name: date_of_birth
+        sql: dob
+        type: time
+        description: Date of birth, when captured (birthday promotions, age bands).
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the customer profile is archived.
+      - name: created_at
+        sql: create_time
+        type: time
+        title: Customer since
+        description: When the profile was created. Use first_purchase_at for actual buying start.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When the profile was last modified.
+      - name: customer_type_id
+        sql: customer_type_id
+        type: number
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: credit_account_id
+        sql: credit_account_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+        description: Standing discount rule attached to this customer, when present.
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+
+      # Lifetime behaviour (sub-query dimensions computed from the sales cube)
+      - name: first_purchase_at
+        sql: "{sales.first_sale_at}"
+        type: time
+        sub_query: true
+        title: First purchase at
+        description: Time of this customer's first completed, non-voided sale. Defines when they became a "new" customer.
+      - name: last_purchase_at
+        sql: "{sales.last_sale_at}"
+        type: time
+        sub_query: true
+        title: Last purchase at
+        description: Time of this customer's most recent completed, non-voided sale.
+      - name: lifetime_revenue
+        sql: "{sales.gross_takings}"
+        type: number
+        format: currency
+        sub_query: true
+        title: Lifetime revenue
+        description: Tax-inclusive lifetime spend across completed, non-voided sales (refunds subtract).
+      - name: lifetime_transactions
+        sql: "{sales.transactions}"
+        type: number
+        sub_query: true
+        title: Lifetime transactions
+        description: Number of completed, non-voided transactions this customer has made.
+      - name: lifetime_gross_profit
+        sql: "{sales.gross_profit}"
+        type: number
+        format: currency
+        sub_query: true
+        title: Lifetime gross profit
+        description: Gross profit this customer has generated across their completed sales.
+      - name: is_repeat_customer
+        type: boolean
+        sql: "(COALESCE({lifetime_transactions}, 0) > 1)"
+        title: Repeat customer
+        description: True when the customer has more than one completed transaction.
+      - name: days_since_last_purchase
+        type: number
+        sql: "EXTRACT(EPOCH FROM (NOW() - {last_purchase_at})) / 86400.0"
+        title: Days since last purchase
+        description: Days elapsed since the customer's most recent completed sale. Null for customers who never purchased.
+
+    measures:
+      - name: customer_count
+        type: count
+        title: Customer count
+        description: Number of customer profiles (archived included unless filtered).
+      - name: active_customer_count
+        type: count
+        title: Active customer profiles
+        description: Customer profiles not archived.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false"
+      - name: customers_with_purchases
+        type: count
+        title: Customers who have purchased
+        description: Customer profiles with at least one completed transaction.
+        filters:
+          - sql: "COALESCE({lifetime_transactions}, 0) > 0"
+      - name: repeat_customers
+        type: count
+        title: Repeat customers
+        description: Customers with more than one completed transaction.
+        filters:
+          - sql: "COALESCE({lifetime_transactions}, 0) > 1"
+      - name: repeat_purchase_rate_pct
+        type: number
+        sql: "100.0 * {repeat_customers} / NULLIF({customers_with_purchases}, 0)"
+        format: percent
+        title: Repeat purchase rate %
+        description: Share of purchasing customers who bought more than once.
+      - name: total_lifetime_revenue
+        type: sum
+        sql: "{lifetime_revenue}"
+        format: currency
+        title: Total lifetime revenue
+        description: Summed lifetime revenue across the selected customers.
+      - name: average_lifetime_revenue
+        type: avg
+        sql: "{lifetime_revenue}"
+        format: currency
+        title: Average lifetime revenue per customer
+        description: Mean lifetime spend across the selected customers (null lifetimes excluded).
+      - name: average_lifetime_transactions
+        type: avg
+        sql: "{lifetime_transactions}"
+        title: Average transactions per customer
+        description: Mean completed-transaction count across the selected customers.
+
+    segments:
+      - name: active_customers
+        sql: "COALESCE({CUBE}.archived, false) = false"
+        description: Customer profiles not archived.
+      - name: business_customers
+        sql: "{CUBE}.company IS NOT NULL AND {CUBE}.company <> ''"
+        description: Customers with a company name (trade/business accounts).
+
+  - name: customer_types
+    title: Customer types
+    public: false
+    description: >
+      Merchant-defined customer groupings (for example Retail, Wholesale, VIP).
+      Customers join here.
+    meta:
+      ai_context: 'Group customers or their sales by customer_types.name for segment questions like "wholesale vs retail".'
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_customer_types t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_customer_types GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: customer_type_id
+        sql: customer_type_id
+        type: number
+        description: Lightspeed's identifier for the customer type.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Customer type
+        description: Type name (Retail, Wholesale, VIP and similar).
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+        description: Standing discount rule automatically applied to this type.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of customer types defined.
+
+  - name: contacts
+    title: Contacts (addresses and preferences)
+    public: false
+    description: >
+      Contact record referenced by customers (also by shops and employees):
+      postal address, geography and do-not-contact preferences. Emails, phones
+      and websites hang off this record.
+    meta:
+      ai_context: >
+        Geography questions (customers by city, state, postcode, country) group by
+        these address dimensions. no_email/no_mail/no_phone are opt-out flags to
+        respect in any marketing-list answer.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_contacts t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_contacts GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        description: Lightspeed's identifier for the contact record.
+      - name: address1
+        sql: address1
+        type: string
+        description: Street address line 1.
+      - name: address2
+        sql: address2
+        type: string
+        description: Street address line 2.
+      - name: city
+        sql: city
+        type: string
+        title: City / suburb
+        description: City or suburb.
+      - name: state
+        sql: state
+        type: string
+        description: State or region name.
+      - name: state_code
+        sql: state_code
+        type: string
+        description: State code (for example NSW, VIC).
+      - name: postcode
+        sql: zip
+        type: string
+        title: Postcode
+        description: Postal code.
+      - name: country
+        sql: country
+        type: string
+        description: Country name.
+      - name: country_code
+        sql: country_code
+        type: string
+        description: ISO country code.
+      - name: no_email
+        sql: no_email
+        type: boolean
+        description: Customer opted out of email contact.
+      - name: no_mail
+        sql: no_mail
+        type: boolean
+        description: Customer opted out of postal mail.
+      - name: no_phone
+        sql: no_phone
+        type: boolean
+        description: Customer opted out of phone contact.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: ship_to_id
+        sql: ship_to_id
+        type: number
+        public: false
+      - name: primary_email
+        sql: "{contact_emails.any_address}"
+        type: string
+        sub_query: true
+        title: Email address
+        description: An email address on file for this contact (the first, when several exist).
+      - name: primary_phone
+        sql: "{contact_phones.any_number}"
+        type: string
+        sub_query: true
+        title: Phone number
+        description: A phone number on file for this contact (the first, when several exist).
+      - name: email_count
+        sql: "{contact_emails.count}"
+        type: number
+        sub_query: true
+        public: false
+        description: How many email addresses are on file.
+      - name: has_email
+        type: boolean
+        sql: "(COALESCE({email_count}, 0) > 0)"
+        title: Has email on file
+        description: True when at least one email address is recorded.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of contact records.
+      - name: contactable_by_email
+        type: count
+        title: Contactable by email
+        description: Contacts with an email on file who have not opted out.
+        filters:
+          - sql: "COALESCE({no_email}, false) = false AND COALESCE({email_count}, 0) > 0"
+
+  - name: contact_emails
+    title: Contact email addresses
+    public: false
+    description: One row per email address attached to a contact.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_contact_emails t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_contact_emails GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {contacts}.tenant_id
+          AND {CUBE}.contact_id = {contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: address
+        sql: address
+        type: string
+        title: Email address
+        description: The email address.
+      - name: entry_index
+        sql: contact_email
+        type: number
+        public: false
+        description: Position of this email within the contact record.
+      - name: use_type
+        sql: use_type
+        type: string
+        description: Label for the address (Primary, Secondary).
+
+    measures:
+      - name: count
+        type: count
+        description: Number of email addresses on file.
+      - name: any_address
+        type: max
+        sql: address
+        public: false
+        description: Sub-query source surfacing one email per contact.
+
+  - name: contact_phones
+    title: Contact phone numbers
+    public: false
+    description: One row per phone number attached to a contact.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_contact_phones t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_contact_phones GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {contacts}.tenant_id
+          AND {CUBE}.contact_id = {contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: number
+        sql: '{CUBE}."number"'
+        type: string
+        title: Phone number
+        description: The phone number.
+      - name: entry_index
+        sql: contact_phone
+        type: number
+        public: false
+        description: Position of this phone number within the contact record.
+      - name: use_type
+        sql: use_type
+        type: string
+        description: Label for the number (Home, Work, Mobile, Fax, Pager).
+
+    measures:
+      - name: count
+        type: count
+        description: Number of phone numbers on file.
+      - name: any_number
+        type: max
+        sql: '{CUBE}."number"'
+        public: false
+        description: Sub-query source surfacing one phone number per contact.
+
+  - name: contact_websites
+    title: Contact websites
+    public: false
+    description: One row per website URL attached to a contact.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_contact_websites t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_contact_websites GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {contacts}.tenant_id
+          AND {CUBE}.contact_id = {contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: url
+        sql: url
+        type: string
+        title: Website
+        description: The website URL.
+      - name: entry_index
+        sql: contact_website
+        type: number
+        public: false
+        description: Position of this website within the contact record.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of websites on file.
+
+  - name: credit_accounts
+    title: Credit accounts (store credit and gift cards)
+    public: false
+    description: >
+      One row per credit account: customer store-credit/on-account facilities and
+      gift cards (gift_card = true). balance is the current position at last sync.
+    meta:
+      ai_context: >
+        On-account exposure questions sum balance over non-gift-card accounts;
+        outstanding gift card liability sums balance over gift_card accounts.
+        Balance sign follows Lightspeed: a positive balance is money owed on the
+        account.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_credit_accounts t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_credit_accounts GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: credit_account_id
+        sql: credit_account_id
+        type: number
+        description: Lightspeed's identifier for the credit account.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        description: Account display name.
+      - name: code
+        sql: code
+        type: string
+        description: Account code (gift cards carry the card number here).
+      - name: description
+        sql: description
+        type: string
+        public: false
+        description: Free-text description of the account.
+      - name: is_gift_card
+        sql: gift_card
+        type: boolean
+        title: Is gift card
+        description: True for gift cards, false for customer credit/on-account facilities.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the account has been archived.
+      - name: balance
+        sql: balance
+        type: number
+        format: currency
+        description: Current account balance at last sync.
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+        description: Customer who owns the account, when customer-linked.
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: account_count
+        type: count
+        title: Credit accounts
+        description: Number of credit accounts (gift cards included).
+      - name: total_balance
+        type: sum
+        sql: balance
+        format: currency
+        title: Total balance
+        description: Summed balance across the selected accounts.
+      - name: on_account_balance
+        type: sum
+        sql: balance
+        format: currency
+        title: On-account balance (non gift card)
+        description: Outstanding balance across customer credit accounts, excluding gift cards.
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = false"
+      - name: gift_card_balance
+        type: sum
+        sql: balance
+        format: currency
+        title: Gift card balance outstanding
+        description: Outstanding value loaded on gift cards.
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = true"
+
+    segments:
+      - name: gift_cards
+        sql: "COALESCE({CUBE}.gift_card, false) = true"
+        description: Gift card accounts.
+      - name: customer_credit_accounts
+        sql: "COALESCE({CUBE}.gift_card, false) = false"
+        description: Customer credit / on-account facilities (not gift cards).
+
+  - name: ship_tos
+    title: Shipping destinations
+    public: false
+    description: >
+      One row per shipping destination attached to a sale: recipient name,
+      shipped flag and note. The address itself lives on the linked contact.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_ship_tos t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_ship_tos GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {contacts}.tenant_id
+          AND {CUBE}.contact_id = {contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: ship_to_id
+        sql: ship_to_id
+        type: number
+        description: Lightspeed's identifier for the shipping destination.
+      - name: shipped
+        sql: shipped
+        type: boolean
+        description: Whether the order has been shipped.
+      - name: ship_note
+        sql: ship_note
+        type: string
+        description: Shipping note.
+      - name: recipient_first_name
+        sql: first_name
+        type: string
+        description: Recipient given name.
+      - name: recipient_last_name
+        sql: last_name
+        type: string
+        description: Recipient family name.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        public: false
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: shipment_count
+        type: count
+        title: Shipping destinations
+        description: Number of sales with shipping destinations.
+      - name: shipped_count
+        type: count
+        title: Shipped
+        description: Destinations marked as shipped.
+        filters:
+          - sql: "COALESCE({CUBE}.shipped, false) = true"
+
+  - name: custom_fields
+    title: Custom field definitions
+    public: false
+    description: >
+      Merchant-defined custom field definitions for customers (name, data type,
+      unit). Values live in customer_custom_field_values.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_custom_fields t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_custom_fields GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: custom_field_id
+        sql: custom_field_id
+        type: number
+        description: Lightspeed's identifier for the field definition.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Custom field
+        description: Field name as shown in Lightspeed.
+      - name: data_type
+        sql: '{CUBE}."type"'
+        type: string
+        description: Field data type (text, number, date, choice and similar).
+      - name: unit_of_measure
+        sql: uom
+        type: string
+        description: Unit label for numeric fields.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the field definition is archived.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of custom field definitions.
+
+  - name: custom_field_choices
+    title: Custom field choices
+    public: false
+    description: Selectable options for choice-type custom fields.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_custom_field_choices t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_custom_field_choices GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: custom_fields
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {custom_fields}.tenant_id
+          AND {CUBE}.custom_field_id = {custom_fields}.custom_field_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: custom_field_choice_id
+        sql: custom_field_choice_id
+        type: number
+        description: Lightspeed's identifier for the choice.
+      - name: custom_field_id
+        sql: custom_field_id
+        type: number
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        description: Choice label.
+      - name: value
+        sql: '{CUBE}."value"'
+        type: string
+        description: Stored value for the choice.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of custom field choices.
+
+  - name: customer_custom_field_values
+    title: Customer custom field values
+    public: false
+    description: >
+      One row per custom field value on a customer, so tenant-specific customer
+      attributes (memberships, sizes, preferences) are queryable.
+    meta:
+      ai_context: >
+        Filter by name (the field) and value_text (the value) to answer questions
+        about merchant-specific customer attributes. value_text is the JSON value
+        rendered as text.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_customer_custom_field_values t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_customer_custom_field_values GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: custom_fields
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {custom_fields}.tenant_id
+          AND {CUBE}.custom_field_id = {custom_fields}.custom_field_id
+      - name: custom_field_choices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {custom_field_choices}.tenant_id
+          AND {CUBE}.custom_field_choice_id = {custom_field_choices}.custom_field_choice_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: custom_field_value_id
+        sql: custom_field_value_id
+        type: number
+        description: Lightspeed's identifier for the value record.
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: custom_field_id
+        sql: custom_field_id
+        type: number
+        public: false
+      - name: custom_field_choice_id
+        sql: custom_field_choice_id
+        type: number
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Field name
+        description: The custom field's name, denormalised onto the value row.
+      - name: data_type
+        sql: '{CUBE}."type"'
+        type: string
+        description: The field's data type.
+      - name: value_text
+        type: string
+        sql: "{CUBE}.value #>> ARRAY[]::text[]"
+        title: Value
+        description: The stored value rendered as text.
+      - name: deleted
+        sql: deleted
+        type: boolean
+        description: True when the value has been removed in Lightspeed.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of custom field values.
+        filters:
+          - sql: "COALESCE({CUBE}.deleted, false) = false"
+
+  - name: customer_notes
+    title: Customer notes
+    public: false
+    description: >
+      Free-text notes staff attach to customer profiles, with counts and recency
+      for engagement questions.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_customer_notes t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_customer_notes GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: note_id
+        sql: note_id
+        type: number
+        description: Lightspeed's identifier for the note.
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: note
+        sql: note
+        type: string
+        description: The note text.
+      - name: is_public
+        sql: is_public
+        type: boolean
+        description: Whether the note is visible at the register.
+      - name: noted_at
+        sql: time_stamp
+        type: time
+        title: Noted at
+        description: When the note was last touched.
+
+    measures:
+      - name: note_count
+        type: count
+        title: Notes
+        description: Number of customer notes.
+      - name: latest_note_at
+        type: max
+        sql: time_stamp
+        description: Most recent note time across the selected customers.

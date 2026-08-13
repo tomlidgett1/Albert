@@ -1,0 +1,32 @@
+views:
+  - name: square_labour_sales_analytics
+    title: Square labour-to-sales analytics
+    description: Daily, store-aligned Square completed sales and actual worked time, safely joined after aggregation.
+    meta:
+      ai_context: >
+        This is the only single-query Square view for labour-to-sales. Ratios are
+        computed from period totals. Sales are tax-inclusive net order value;
+        labour cost is a wage-rate estimate, not payroll or fully loaded employment cost.
+        Money never converts across currencies; filter/group currency and do not
+        combine stores whose sale and wage currencies differ. Wage-less timecards
+        contribute hours once under their connection-scoped Square Location currency,
+        while their estimated labour cost remains absent. If any timecard in a
+        store-day-currency group cannot be costed, the group cost is null rather
+        than a partial wage total.
+    cubes:
+      - join_path: square_daily_labour_sales
+        includes:
+          - tenant_id
+          - business_date
+          - currency
+          - completed_orders
+          - net_sales
+          - completed_timecards
+          - worked_hours
+          - estimated_labour_cost
+          - sales_per_labour_hour
+          - labour_cost_pct
+          - orders_per_labour_hour
+      - join_path: square_daily_labour_sales.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]

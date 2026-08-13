@@ -1,0 +1,563 @@
+cubes:
+  # ---------------------------------------------------------------------------
+  # Deputy (workforce management) staging cubes.
+  #
+  # Source: source_deputy.dp_* views, which stamp tenant_id, enforce the
+  # capability check and normalise Deputy's API fields to snake_case. Field
+  # semantics follow the Deputy Resource API (developer.deputy.com):
+  # a Timesheet is actual worked (or leave) time, a Roster is a scheduled
+  # shift, Leave is a request spanning one or more days.
+  # ---------------------------------------------------------------------------
+
+  - name: deputy_employees
+    title: Staff (Deputy)
+    public: false
+    description: >
+      One row per person in Deputy, the workforce management system: name,
+      position, whether they are an active team member, and their start and
+      termination dates. This is the authoritative staff roster for hours,
+      rosters and leave.
+    meta:
+      ai_context: >
+        The staff list for workforce questions. "Team", "staff", "employees"
+        by name resolve here via display_name. active = true means currently
+        employed. Names may differ slightly from the Lightspeed POS staff list
+        (e.g. "Thomas" vs "Tom"); match colloquially per tool, never join
+        across tools by exact string.
+    sql: SELECT * FROM source_deputy.dp_employees
+
+    joins:
+      - name: deputy_employee_roles
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_employee_roles}.tenant_id
+          AND {CUBE}.role_id = {deputy_employee_roles}.role_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: display_name
+        sql: display_name
+        type: string
+        title: Staff member
+        description: The person's display name in Deputy.
+      - name: position
+        sql: position
+        type: string
+        description: Job title / position recorded in Deputy, when set.
+      - name: active
+        sql: active
+        type: boolean
+        title: Currently employed
+        description: True while the person is an active team member in Deputy.
+      - name: started_on
+        sql: started_on
+        type: time
+        description: Employment start date.
+      - name: terminated_on
+        sql: terminated_on
+        type: time
+        description: Termination date; null while still employed.
+
+    measures:
+      - name: staff_count
+        type: count
+        title: Staff members
+        description: Number of people on the Deputy staff list (including former staff).
+      - name: active_staff_count
+        type: count
+        title: Active staff
+        description: People currently employed (active in Deputy).
+        filters:
+          - sql: "{CUBE}.active"
+
+  - name: deputy_employee_roles
+    title: Staff roles (Deputy)
+    public: false
+    description: One row per Deputy permission role (System Administrator, Employee...).
+    sql: SELECT * FROM source_deputy.dp_employee_roles
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: role_id
+        sql: role_id
+        type: number
+        public: false
+      - name: role_name
+        sql: role_name
+        type: string
+        title: Deputy role
+        description: Deputy access role (an access level, not a job title).
+
+  - name: deputy_operational_units
+    title: Work areas (Deputy)
+    public: false
+    description: >
+      One row per Deputy operational unit: the area / location shifts are
+      scheduled against (for example "Retail" or "RACE DAY"), with its parent
+      company (workplace).
+    sql: SELECT * FROM source_deputy.dp_operational_units
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: operational_unit_id
+        sql: operational_unit_id
+        type: number
+        public: false
+      - name: unit_name
+        sql: unit_name
+        type: string
+        title: Work area
+        description: The area / department shifts are worked in.
+      - name: company_name
+        sql: company_name
+        type: string
+        title: Workplace
+        description: The workplace (location) this area belongs to.
+      - name: active
+        sql: active
+        type: boolean
+
+  - name: deputy_timesheets
+    title: Timesheets (Deputy, actual worked time)
+    public: false
+    description: >
+      One row per Deputy timesheet: actual time a staff member worked (or took
+      as leave when is_leave is true). paid_hours is the total time to be paid
+      for the shift; wage_cost is the cost of the shift from the employee's
+      pay rates; loaded_cost additionally includes on-costs. Voided
+      (discarded) timesheets are excluded at source. time_approved and
+      pay_approved track the two-step supervisor approval.
+    meta:
+      ai_context: >
+        The authoritative record of hours actually worked. "Hours worked",
+        "how many hours did X do", "wage cost", "labour cost" = hours_worked /
+        wage_cost here, grouped by employee_name or unit_name, with shift_date
+        as the business date. Leave-generated timesheets are excluded from
+        hours_worked (use leave measures or is_leave). For scheduled /
+        upcoming shifts use deputy_rosters; for leave requests deputy_leave.
+    sql: SELECT * FROM source_deputy.dp_timesheets
+
+    joins:
+      - name: deputy_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_employees}.tenant_id
+          AND {CUBE}.employee_id = {deputy_employees}.employee_id
+      - name: deputy_operational_units
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_operational_units}.tenant_id
+          AND {CUBE}.operational_unit_id = {deputy_operational_units}.operational_unit_id
+      - name: deputy_leave_rules
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_leave_rules}.tenant_id
+          AND {CUBE}.leave_rule_id = {deputy_leave_rules}.leave_rule_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: timesheet_id
+        sql: timesheet_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: employee_name
+        sql: employee_name
+        type: string
+        title: Staff member
+        description: Display name of the person who worked the shift.
+      - name: shift_date
+        sql: shift_date
+        type: time
+        title: Shift date
+        description: The date of the shift. Business date for hours and wage analysis.
+      - name: started_at
+        sql: started_at
+        type: time
+        description: When the shift started (local time).
+      - name: ended_at
+        sql: ended_at
+        type: time
+        description: When the shift ended (local time). Null while still on shift.
+      - name: shift_hours
+        sql: paid_hours
+        type: number
+        title: Shift length (paid hours)
+        description: Total paid hours on this single timesheet.
+      - name: is_leave
+        sql: is_leave
+        type: boolean
+        title: Leave timesheet
+        description: True when this timesheet was generated by a leave request rather than worked time.
+      - name: time_approved
+        sql: time_approved
+        type: boolean
+        description: True once a supervisor approved the time component.
+      - name: pay_approved
+        sql: pay_approved
+        type: boolean
+        description: True once the timesheet is approved for payroll export.
+      - name: in_progress
+        sql: in_progress
+        type: boolean
+        title: Currently on shift
+        description: True while the employee is clocked on and the timesheet is still open.
+      - name: unit_name
+        sql: unit_name
+        type: string
+        title: Work area
+        description: The Deputy area / department the shift was worked in.
+      - name: company_name
+        sql: company_name
+        type: string
+        title: Workplace
+        description: The workplace (location) of the shift.
+
+    measures:
+      - name: hours_worked
+        type: sum
+        sql: paid_hours
+        title: Hours worked
+        description: >
+          Total paid hours actually worked (leave-generated timesheets
+          excluded).
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false)"
+      - name: paid_hours_total
+        type: sum
+        sql: paid_hours
+        title: Paid hours (incl. leave)
+        description: Total paid hours including paid leave timesheets.
+      - name: leave_hours_paid
+        type: sum
+        sql: paid_hours
+        title: Leave hours (from timesheets)
+        description: Paid hours on leave-generated timesheets.
+        filters:
+          - sql: "COALESCE({CUBE}.is_leave, false)"
+      - name: wage_cost
+        type: sum
+        sql: wage_cost
+        format: currency
+        title: Wage cost
+        description: >
+          Cost of shifts from each employee's pay rates (Deputy Cost field).
+          Not populated on every timesheet; treat totals as the cost of
+          costed shifts.
+      - name: loaded_wage_cost
+        type: sum
+        sql: loaded_cost
+        format: currency
+        title: Wage cost incl. on-costs
+        description: Shift cost including employer on-costs, where recorded.
+      - name: worked_shift_count
+        type: count
+        title: Shifts worked
+        description: Number of worked timesheets (leave excluded).
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false)"
+      - name: avg_shift_hours
+        type: avg
+        sql: paid_hours
+        title: Average shift length (hours)
+        description: Average paid hours per worked shift.
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false)"
+      - name: unapproved_shift_count
+        type: count
+        title: Shifts awaiting time approval
+        description: Worked timesheets whose time is not yet supervisor-approved.
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false) AND NOT COALESCE({CUBE}.time_approved, false)"
+      - name: on_shift_now_count
+        type: count
+        title: Currently on shift
+        description: Timesheets still open (employee clocked on right now).
+        filters:
+          - sql: "COALESCE({CUBE}.in_progress, false)"
+
+    segments:
+      - name: worked_shifts
+        sql: "NOT COALESCE({CUBE}.is_leave, false)"
+        description: Timesheets for actually worked time (excludes leave).
+      - name: leave_timesheets
+        sql: "COALESCE({CUBE}.is_leave, false)"
+        description: Timesheets generated by leave requests.
+
+  - name: deputy_rosters
+    title: Rosters (Deputy, scheduled shifts)
+    public: false
+    description: >
+      One row per Deputy rostered (scheduled) shift: who is meant to work,
+      when, in which area, and the scheduled hours and cost. published means
+      staff can see the shift; open_shift means it is unassigned and offered
+      for pickup; matched_timesheet_id links to the timesheet once the shift
+      was actually worked.
+    meta:
+      ai_context: >
+        The schedule / roster. "Who is rostered on", "who works tomorrow",
+        "scheduled hours", "planned labour cost" = rostered measures here,
+        grouped by employee_name or unit_name, with shift_date as the business
+        date. For actual worked hours use deputy_timesheets; comparing
+        rostered vs worked hours is a two-query comparison.
+    sql: SELECT * FROM source_deputy.dp_rosters
+
+    joins:
+      - name: deputy_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_employees}.tenant_id
+          AND {CUBE}.employee_id = {deputy_employees}.employee_id
+      - name: deputy_operational_units
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_operational_units}.tenant_id
+          AND {CUBE}.operational_unit_id = {deputy_operational_units}.operational_unit_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: roster_id
+        sql: roster_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: employee_name
+        sql: employee_name
+        type: string
+        title: Staff member
+        description: Who the shift is scheduled for. Null on unassigned open shifts.
+      - name: shift_date
+        sql: shift_date
+        type: time
+        title: Rostered date
+        description: The date of the scheduled shift.
+      - name: starts_at
+        sql: starts_at
+        type: time
+        description: Scheduled start (local time).
+      - name: ends_at
+        sql: ends_at
+        type: time
+        description: Scheduled end (local time).
+      - name: scheduled_shift_hours
+        sql: scheduled_hours
+        type: number
+        title: Scheduled shift length (hours)
+      - name: published
+        sql: published
+        type: boolean
+        description: True once the shift is published and visible to staff.
+      - name: open_shift
+        sql: open_shift
+        type: boolean
+        title: Open (unassigned) shift
+        description: True when the shift is offered for pickup rather than assigned.
+      - name: unit_name
+        sql: unit_name
+        type: string
+        title: Work area
+      - name: company_name
+        sql: company_name
+        type: string
+        title: Workplace
+
+    measures:
+      - name: rostered_shift_count
+        type: count
+        title: Rostered shifts
+        description: Number of scheduled shifts.
+      - name: rostered_hours
+        type: sum
+        sql: scheduled_hours
+        title: Rostered hours
+        description: Total scheduled hours.
+      - name: rostered_cost
+        type: sum
+        sql: scheduled_cost
+        format: currency
+        title: Rostered wage cost
+        description: Planned labour cost of scheduled shifts, from pay rates.
+      - name: open_shift_count
+        type: count
+        title: Open shifts
+        description: Scheduled shifts not yet assigned to anyone.
+        filters:
+          - sql: "COALESCE({CUBE}.open_shift, false)"
+
+  - name: deputy_leave
+    title: Leave requests (Deputy)
+    public: false
+    description: >
+      One row per Deputy leave request: who, the date span, how many days and
+      hours it represents, its approval status (Awaiting approval, Approved,
+      Declined, Cancelled) and the leave type via the leave rule.
+    meta:
+      ai_context: >
+        Leave and absence. "Who is on leave", "upcoming holidays", "annual
+        leave taken" = leave measures here. status = 'Approved' is the normal
+        filter for actual leave; starts_on is the business date. The leave
+        type name (Annual Leave, Sick Leave...) comes from the joined leave
+        rule.
+    sql: SELECT * FROM source_deputy.dp_leave
+
+    joins:
+      - name: deputy_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_employees}.tenant_id
+          AND {CUBE}.employee_id = {deputy_employees}.employee_id
+      - name: deputy_leave_rules
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_leave_rules}.tenant_id
+          AND {CUBE}.leave_rule_id = {deputy_leave_rules}.leave_rule_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: leave_id
+        sql: leave_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: employee_name
+        sql: employee_name
+        type: string
+        title: Staff member
+      - name: starts_on
+        sql: starts_on
+        type: time
+        title: Leave starts
+        description: First day of the leave request. Business date for leave analysis.
+      - name: ends_on
+        sql: ends_on
+        type: time
+        title: Leave ends
+      - name: status
+        sql: status
+        type: string
+        title: Approval status
+        description: "Awaiting approval, Approved, Declined, Cancelled, Date approved or Pay approved."
+      - name: comment
+        sql: comment
+        type: string
+        description: Comment left with the request.
+
+    measures:
+      - name: leave_request_count
+        type: count
+        title: Leave requests
+      - name: leave_days
+        type: sum
+        sql: days
+        title: Leave days
+        description: Total days requested (fractional for part days).
+      - name: leave_hours
+        type: sum
+        sql: total_hours
+        title: Leave hours
+        description: Total hours represented by the leave requests.
+      - name: approved_leave_days
+        type: sum
+        sql: days
+        title: Approved leave days
+        description: Days on requests whose status is Approved.
+        filters:
+          - sql: "{CUBE}.status = 'Approved'"
+
+    segments:
+      - name: approved_leave
+        sql: "{CUBE}.status = 'Approved'"
+        description: Leave requests that have been approved.
+      - name: pending_leave
+        sql: "{CUBE}.status = 'Awaiting approval'"
+        description: Leave requests still awaiting approval.
+
+  - name: deputy_leave_rules
+    title: Leave types (Deputy)
+    public: false
+    description: >
+      One row per Deputy leave rule: the leave type (Annual Leave, Sick Leave,
+      Long Service Leave...) and whether it is paid.
+    sql: SELECT * FROM source_deputy.dp_leave_rules
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: leave_rule_id
+        sql: leave_rule_id
+        type: number
+        public: false
+      - name: rule_name
+        sql: rule_name
+        type: string
+        title: Leave type
+        description: The kind of leave (Annual Leave, Sick Leave, Time Off In Lieu...).
+      - name: paid_leave
+        sql: paid_leave
+        type: boolean
+        description: True when this leave type is paid.

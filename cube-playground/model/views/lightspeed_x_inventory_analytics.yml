@@ -1,0 +1,57 @@
+views:
+  - name: lightspeed_x_inventory_analytics
+    title: Lightspeed X-Series inventory analytics
+    description: >
+      Current product/outlet stock, value, procurement demand, reorder strategy,
+      out-of-stock and reorder-point risk. This is a semi-additive snapshot.
+    meta:
+      ai_context: >
+        Never trend or sum inventory across API versions/ingestion observations.
+        current_units_on_hand is the API available-to-sell balance. Quantity to
+        procure is demand for fulfilments/service orders, not extra stock.
+        A non-zero reorder_amount is not automatically a breach: filter
+        at_or_below_reorder_point/reorder_point_breaches. Cost values can be null
+        without product:cost:view visibility.
+    cubes:
+      - join_path: lightspeed_x_inventory
+        includes:
+          - tenant_id
+          - currency_code
+          - units_on_hand
+          - average_cost
+          - stock_value
+          - quantity_to_procure
+          - planning_available_units
+          - reorder_method
+          - reorder_point
+          - reorder_target
+          - reorder_amount
+          - at_or_below_reorder_point
+          - out_of_stock
+          - inventory_balances
+          - stocked_products
+          - current_units_on_hand
+          - current_stock_value
+          - current_quantity_to_procure
+          - current_suggested_reorder_units
+          - out_of_stock_balances
+          - reorder_point_breaches
+      - join_path: lightspeed_x_inventory.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku, active, tracks_inventory, retail_price_including_tax, supply_price]
+      - join_path: lightspeed_x_inventory.lightspeed_x_products.lightspeed_x_product_categories
+        prefix: true
+        includes: [category_name]
+      - join_path: lightspeed_x_inventory.lightspeed_x_products.lightspeed_x_brands
+        prefix: true
+        includes: [brand_name]
+      - join_path: lightspeed_x_inventory.lightspeed_x_products.lightspeed_x_suppliers
+        prefix: true
+        includes: [supplier_name]
+      - join_path: lightspeed_x_inventory.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+    folders:
+      - { name: Current stock, includes: [current_units_on_hand, current_stock_value, units_on_hand, average_cost, stock_value, stocked_products] }
+      - { name: Replenishment, includes: [quantity_to_procure, current_quantity_to_procure, planning_available_units, reorder_method, reorder_point, reorder_target, reorder_amount, at_or_below_reorder_point, current_suggested_reorder_units, reorder_point_breaches, out_of_stock, out_of_stock_balances] }
+      - { name: Product and outlet, includes: [lightspeed_x_products_product_name, lightspeed_x_products_variant_name, lightspeed_x_products_sku, lightspeed_x_product_categories_category_name, lightspeed_x_brands_brand_name, lightspeed_x_suppliers_supplier_name, lightspeed_x_outlets_outlet_name] }

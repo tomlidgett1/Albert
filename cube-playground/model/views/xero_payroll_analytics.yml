@@ -1,0 +1,267 @@
+views:
+  - name: xero_payroll_analytics
+    title: Payroll analytics (Xero)
+    description: >
+      The AU payroll surface, powered by Xero: per-employee payslips (wages,
+      PAYG tax, super, deductions, net pay), pay run totals per cycle,
+      payroll timesheets with daily hours by earnings rate, standard pay
+      templates (salaries and rates), super fund memberships and the payroll
+      employee list. Unprefixed members are payslip grain (one employee per
+      pay run); pay_run_*, timesheet_*, daily_* and template_* members are
+      their own grains.
+    meta:
+      ai_context: >
+        Use this view for pay and payroll cost: "how much did X earn", wages
+        by employee, PAYG withheld, super paid or payable, net pay, payroll
+        cost per pay cycle, salaries and hourly rates, payroll hours by day
+        or earnings rate, and super funds. paid_on is the business date for
+        payslips; filter pay_run_status = 'POSTED' for finalised pay.
+        Employer payroll cost = wages + super (pay_run_payroll_cost at pay
+        run grain). Operational rostered/worked hours and shift-level wage
+        cost live in workforce_analytics (Deputy); this view is what payroll
+        actually paid. Tax File Numbers and bank details are never available.
+        The same people may appear in Deputy or Lightspeed under slightly
+        different names: match per tool, never join across tools by string.
+
+    cubes:
+      # xero_organisation owns the view's tenant_id: one row per tenant, and
+      # every payroll cube joins it many_to_one, so the tenant pin always has
+      # a join path whichever grain the query starts from.
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+
+      - join_path: xero_payroll_employees
+        includes:
+          - name: full_name
+            alias: employee_name
+          - name: status
+            alias: employee_status
+          - job_title
+          - employment_type
+          - income_type
+          - employment_basis
+          - name: started_on
+            alias: employee_started_on
+          - employee_count
+          - active_employee_count
+          - active_employees
+
+      # Payslips are the primary fact: unprefixed.
+      - join_path: xero_payslips
+        includes:
+          - name: employee_name
+            alias: paid_employee
+          - paid_on
+          - period_started_on
+          - period_ended_on
+          - pay_run_status
+          - payslip_count
+          - total_wages
+          - total_tax
+          - total_super
+          - total_deductions
+          - total_reimbursements
+          - total_net_pay
+          - avg_net_pay
+          - posted_payslips
+
+      # Pay run (cycle) totals.
+      - join_path: xero_pay_runs
+        includes:
+          - name: paid_on
+            alias: pay_run_paid_on
+          - name: period_started_on
+            alias: pay_run_period_start
+          - name: period_ended_on
+            alias: pay_run_period_end
+          - name: status
+            alias: pay_run_state
+          - pay_run_count
+          - name: total_wages
+            alias: pay_run_wages
+          - name: total_tax
+            alias: pay_run_tax
+          - name: total_super
+            alias: pay_run_super
+          - name: total_deductions
+            alias: pay_run_deductions
+          - name: total_reimbursements
+            alias: pay_run_reimbursements
+          - name: total_net_pay
+            alias: pay_run_net_pay
+          - name: total_payroll_cost
+            alias: pay_run_payroll_cost
+          - posted_pay_runs
+
+      # Payroll timesheets (per pay period).
+      - join_path: xero_payroll_timesheets
+        includes:
+          - name: period_started_on
+            alias: timesheet_period_start
+          - name: period_ended_on
+            alias: timesheet_period_end
+          - name: status
+            alias: timesheet_status
+          - timesheet_count
+          - name: total_hours
+            alias: timesheet_hours
+
+      # Daily hours by earnings rate.
+      - join_path: xero_timesheet_day_hours
+        includes:
+          - worked_on
+          - day_hours
+      # Earnings rate catalogue (also joins day hours for hours-by-rate).
+      - join_path: xero_earnings_rates
+        includes:
+          - name: rate_name
+            alias: earnings_rate
+          - name: earnings_type
+            alias: earnings_rate_type
+          - name: rate_per_unit
+            alias: earnings_rate_per_unit
+          - name: rate_type
+            alias: earnings_rate_calc_type
+          - name: type_of_units
+            alias: earnings_rate_units
+          - name: is_exempt_from_super
+            alias: earnings_rate_super_exempt
+          - name: rate_count
+            alias: earnings_rate_count
+
+      # Standard pay setup per employee.
+      - join_path: xero_employee_pay_templates
+        includes:
+          - calculation_type
+          - annual_salary
+          - name: rate_per_unit
+            alias: template_rate_per_unit
+          - name: normal_number_of_units
+            alias: template_normal_units
+          - name: template_line_count
+            alias: pay_template_line_count
+          - total_annual_salary
+
+      # Super memberships and funds.
+      - join_path: xero_super_memberships
+        includes:
+          - name: membership_count
+            alias: super_membership_count
+      - join_path: xero_super_memberships.xero_super_funds
+        includes:
+          - name: fund_name
+            alias: super_fund
+          - name: fund_type
+            alias: super_fund_type
+
+      # Leave type reference (entitlements).
+      - join_path: xero_leave_types
+        includes:
+          - name: leave_name
+            alias: leave_type
+          - name: is_paid_leave
+            alias: leave_type_is_paid
+          - name: normal_entitlement
+            alias: leave_type_entitlement
+          - leave_type_count
+
+      # Deduction and reimbursement type reference.
+      - join_path: xero_deduction_types
+        includes:
+          - name: deduction_name
+            alias: deduction_type
+          - name: reduces_tax
+            alias: deduction_reduces_tax
+          - name: reduces_super
+            alias: deduction_reduces_super
+          - deduction_type_count
+      - join_path: xero_reimbursement_types
+        includes:
+          - name: reimbursement_name
+            alias: reimbursement_type
+          - reimbursement_type_count
+
+      # Pay calendars: how often and when staff are paid.
+      - join_path: xero_payroll_calendars
+        includes:
+          - name: calendar_name
+            alias: pay_calendar_name
+          - name: calendar_type
+            alias: pay_frequency
+          - name: payment_date
+            alias: pay_calendar_next_payment
+          - name: calendar_count
+            alias: pay_calendar_count
+
+      # Which GL accounts payroll posts to (wages/super/tax liability).
+      - join_path: xero_payroll_settings_accounts
+        includes:
+          - name: account_purpose
+            alias: payroll_account_purpose
+          - name: account_code
+            alias: payroll_account_code
+          - name: account_name
+            alias: payroll_account_name
+
+    folders:
+      - name: Pay by employee (payslips)
+        includes:
+          - total_wages
+          - total_tax
+          - total_super
+          - total_deductions
+          - total_reimbursements
+          - total_net_pay
+          - avg_net_pay
+          - payslip_count
+          - paid_employee
+          - paid_on
+          - period_started_on
+          - period_ended_on
+          - pay_run_status
+      - name: Pay cycles (pay runs)
+        includes:
+          - pay_run_wages
+          - pay_run_tax
+          - pay_run_super
+          - pay_run_net_pay
+          - pay_run_payroll_cost
+          - pay_run_count
+          - pay_run_paid_on
+          - pay_run_period_start
+          - pay_run_period_end
+          - pay_run_state
+      - name: Hours (payroll timesheets)
+        includes:
+          - timesheet_hours
+          - timesheet_count
+          - timesheet_period_start
+          - timesheet_period_end
+          - timesheet_status
+          - day_hours
+          - worked_on
+          - earnings_rate
+          - earnings_rate_type
+      - name: Salaries and rates
+        includes:
+          - annual_salary
+          - total_annual_salary
+          - template_rate_per_unit
+          - template_normal_units
+          - calculation_type
+      - name: Employees and super
+        includes:
+          - employee_name
+          - employee_status
+          - job_title
+          - employment_type
+          - employee_started_on
+          - employee_count
+          - active_employee_count
+          - super_fund
+          - super_fund_type
+          - super_membership_count
+          - leave_type
+          - leave_type_is_paid
+          - leave_type_entitlement

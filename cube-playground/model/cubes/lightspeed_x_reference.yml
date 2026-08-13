@@ -1,0 +1,517 @@
+cubes:
+  - name: lightspeed_x_retailer
+    title: Lightspeed X-Series retailer
+    public: false
+    description: One row per connected X-Series retailer account and its reporting defaults.
+    meta:
+      ai_context: >
+        Account configuration only. Currency values elsewhere are already decimal
+        major units in this retailer's/outlet's currency. Outlet timezone overrides
+        the retailer timezone for outlet-associated business dates.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_retailer t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: retailer_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: retailer_name, sql: "payload_json->>'name'", type: string, title: Retailer }
+      - { name: account_status, sql: "payload_json->>'account_status'", type: string }
+      - { name: account_type, sql: "payload_json->>'account_type'", type: string }
+      - { name: country_code, sql: "payload_json->>'country'", type: string }
+      - { name: culture, sql: "payload_json->>'culture'", type: string }
+      - { name: currency_code, sql: "jsonb_extract_path_text(payload_json, 'currency', 'code')", type: string }
+      - { name: currency_symbol, sql: "jsonb_extract_path_text(payload_json, 'currency', 'symbol')", type: string }
+      - { name: retailer_timezone, sql: "payload_json->>'timezone'", type: string }
+      - { name: domain_prefix, sql: "payload_json->>'domain_prefix'", type: string, public: false }
+      - { name: tax_exclusive, sql: "COALESCE((payload_json->>'tax_exclusive')::boolean, false)", type: boolean }
+      - { name: gift_cards_enabled, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'gift_cards', 'enabled'))::boolean, false)", type: boolean }
+      - { name: gift_cards_never_enabled, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'gift_cards', 'never_enabled'))::boolean, false)", type: boolean }
+      - { name: loyalty_enabled, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'loyalty', 'enabled'))::boolean, false)", type: boolean }
+      - { name: loyalty_ratio, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'loyalty', 'ratio'), '')::numeric", type: number }
+      - { name: store_credit_enabled, sql: "COALESCE((payload_json->>'store_credit')::boolean, false)", type: boolean }
+      - { name: automatic_sku_enabled, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'sku_sequence', 'enabled'))::boolean, false)", type: boolean }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: activated_at, sql: "payload_json->>'activated_at'", type: time }
+    measures:
+      - { name: retailer_accounts, type: count }
+
+  - name: lightspeed_x_outlets
+    title: Lightspeed X-Series outlets
+    public: false
+    description: One row per X-Series outlet, including deleted lifecycle records.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_outlets t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_retailer
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_retailer}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_retailer}.connection_id
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: outlet_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: outlet_name, sql: "payload_json->>'name'", type: string, title: Outlet }
+      - { name: currency_code, sql: "payload_json->>'currency'", type: string }
+      - { name: currency_symbol, sql: "payload_json->>'currency_symbol'", type: string }
+      - { name: display_prices, sql: "payload_json->>'display_prices'", type: string, description: inclusive or exclusive. }
+      - { name: outlet_timezone, sql: "payload_json->>'time_zone'", type: string }
+      - { name: city, sql: "payload_json->>'physical_city'", type: string }
+      - { name: suburb, sql: "payload_json->>'physical_suburb'", type: string }
+      - { name: state, sql: "payload_json->>'physical_state'", type: string }
+      - { name: postcode, sql: "payload_json->>'physical_postcode'", type: string }
+      - { name: country_code, sql: "payload_json->>'physical_country_id'", type: string }
+      - { name: latitude, sql: "NULLIF(payload_json->>'latitude', '')::numeric", type: number }
+      - { name: longitude, sql: "NULLIF(payload_json->>'longitude', '')::numeric", type: number }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: is_active, sql: "({CUBE}.payload_json->>'deleted_at' IS NULL)", type: boolean }
+      - { name: email, sql: "payload_json->>'email'", type: string, public: false }
+      - { name: phone, sql: "payload_json->>'phone'", type: string, public: false }
+      - { name: physical_address_1, sql: "payload_json->>'physical_address_1'", type: string, public: false }
+      - { name: physical_address_2, sql: "payload_json->>'physical_address_2'", type: string, public: false }
+    measures:
+      - { name: outlets, type: count }
+      - name: active_outlets
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
+
+  - name: lightspeed_x_registers
+    title: Lightspeed X-Series registers
+    public: false
+    description: One row per register and its current open/closed state.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_registers t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_outlets
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_outlets}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_outlets}.connection_id
+          AND {CUBE}.payload_json->>'outlet_id' = {lightspeed_x_outlets}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: register_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
+      - { name: register_name, sql: "payload_json->>'name'", type: string, title: Register }
+      - { name: is_open, sql: "COALESCE((payload_json->>'is_open')::boolean, false)", type: boolean }
+      - { name: invoice_prefix, sql: "payload_json->>'invoice_prefix'", type: string }
+      - { name: invoice_suffix, sql: "payload_json->>'invoice_suffix'", type: string }
+      - { name: invoice_sequence, sql: "NULLIF(payload_json->>'invoice_sequence', '')::numeric", type: number }
+      - { name: print_receipt, sql: "COALESCE((payload_json->>'print_receipt')::boolean, false)", type: boolean }
+      - { name: email_receipt, sql: "COALESCE((payload_json->>'email_receipt')::boolean, false)", type: boolean }
+      - { name: ask_for_user_on_sale, sql: "COALESCE((payload_json->>'ask_for_user_on_sale')::boolean, false)", type: boolean }
+      - { name: opened_at, sql: "payload_json->>'register_open_time'", type: time }
+      - { name: closed_at, sql: "payload_json->>'register_close_time'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: is_active, sql: "({CUBE}.payload_json->>'deleted_at' IS NULL)", type: boolean }
+    measures:
+      - { name: registers, type: count }
+      - name: active_registers
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: open_registers
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'is_open')::boolean, false)" }]
+
+  - name: lightspeed_x_users
+    title: Lightspeed X-Series users
+    public: false
+    description: >
+      One row per X-Series user. Curated members omit login and contact details;
+      those remain tenant-scoped in the source explorer for explicit requests.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_users t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: user_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: display_name, sql: "payload_json->>'display_name'", type: string, title: User }
+      - { name: account_type, sql: "payload_json->>'account_type'", type: string }
+      - { name: enabled, sql: "COALESCE((payload_json->>'enabled')::boolean, false)", type: boolean }
+      - { name: is_primary_user, sql: "COALESCE((payload_json->>'is_primary_user')::boolean, false)", type: boolean }
+      - { name: mfa_enabled, sql: "(payload_json->'enabled_mfa' IS NOT NULL AND payload_json->'enabled_mfa' <> 'null'::jsonb)", type: boolean }
+      - { name: restricted_outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'restricted_outlet_ids', '[]'::jsonb))", type: number }
+      - { name: daily_sales_target, sql: "NULLIF(payload_json->>'target_daily', '')::numeric", type: number, format: currency }
+      - { name: weekly_sales_target, sql: "NULLIF(payload_json->>'target_weekly', '')::numeric", type: number, format: currency }
+      - { name: monthly_sales_target, sql: "NULLIF(payload_json->>'target_monthly', '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: last_seen_at, sql: "payload_json->>'seen_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: email, sql: "payload_json->>'email'", type: string, public: false }
+      - { name: username, sql: "payload_json->>'username'", type: string, public: false }
+    measures:
+      - { name: users, type: count }
+      - name: enabled_users
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'enabled')::boolean, false) AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: mfa_enabled_users
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->'enabled_mfa' IS NOT NULL AND {CUBE}.payload_json->'enabled_mfa' <> 'null'::jsonb" }]
+
+  - name: lightspeed_x_product_categories
+    title: Lightspeed X-Series product categories
+    public: false
+    description: Hierarchical product categories, including root and parent relationships.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_product_categories t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: category_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: category_name, sql: "payload_json->>'name'", type: string, title: Product category }
+      - { name: parent_category_id, sql: "payload_json->>'parent_category_id'", type: string, public: false }
+      - { name: root_category_id, sql: "payload_json->>'root_category_id'", type: string, public: false }
+      - { name: is_leaf_category, sql: "COALESCE((payload_json->>'leaf_category')::boolean, false)", type: boolean }
+      - { name: category_path, sql: "CAST(payload_json->'category_path' AS text)", type: string }
+    measures:
+      - { name: categories, type: count }
+      - name: leaf_categories
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'leaf_category')::boolean, false)" }]
+
+  - name: lightspeed_x_product_types
+    title: Lightspeed X-Series product types
+    public: false
+    description: X-Series product type hierarchy.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_product_types t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: product_type_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: product_type_name, sql: "payload_json->>'name'", type: string, title: Product type }
+      - { name: is_leaf_type, sql: "COALESCE((payload_json->>'leaf_category')::boolean, false)", type: boolean }
+      - { name: category_path, sql: "CAST(payload_json->'category_path' AS text)", type: string }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: product_types, type: count }
+
+  - name: lightspeed_x_brands
+    title: Lightspeed X-Series brands
+    public: false
+    description: Merchant product brands/manufacturers.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_brands t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: brand_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: brand_name, sql: "payload_json->>'name'", type: string, title: Brand }
+      - { name: description, sql: "payload_json->>'description'", type: string }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: brands, type: count }
+
+  - name: lightspeed_x_suppliers
+    title: Lightspeed X-Series suppliers
+    public: false
+    description: Supplier master data; supplier contact details are deliberately private.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_suppliers t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: supplier_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: supplier_name, sql: "payload_json->>'name'", type: string, title: Supplier }
+      - { name: source, sql: "payload_json->>'source'", type: string }
+      - { name: description, sql: "payload_json->>'description'", type: string }
+      - { name: default_markup_pct, sql: "NULLIF(payload_json->>'default_markup', '')::numeric", type: number, format: percent }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: contact_json, sql: "CAST(payload_json->'contact' AS text)", type: string, public: false }
+    measures:
+      - { name: suppliers, type: count }
+      - name: active_suppliers
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
+
+  - name: lightspeed_x_products
+    title: Lightspeed X-Series products and variants
+    public: false
+    description: >
+      One row per X-Series Product object. A row may be a family/root or sellable
+      variant; variant_parent_id and family_id preserve those relationships.
+      Prices and supply cost are current catalogue snapshots, not revenue flows.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_products t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_product_categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_product_categories}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_product_categories}.connection_id
+          AND COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'product_category', 'id'), jsonb_extract_path_text({CUBE}.payload_json, 'categories', '0', 'id')) = {lightspeed_x_product_categories}.payload_json->>'id'
+      - name: lightspeed_x_product_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_product_types}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_product_types}.connection_id
+          AND {CUBE}.payload_json->>'product_type_id' = {lightspeed_x_product_types}.payload_json->>'id'
+      - name: lightspeed_x_brands
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_brands}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_brands}.connection_id
+          AND {CUBE}.payload_json->>'brand_id' = {lightspeed_x_brands}.payload_json->>'id'
+      - name: lightspeed_x_suppliers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_suppliers}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_suppliers}.connection_id
+          AND {CUBE}.payload_json->>'supplier_id' = {lightspeed_x_suppliers}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: product_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: family_id, sql: "payload_json->>'family_id'", type: string, public: false }
+      - { name: variant_parent_id, sql: "payload_json->>'variant_parent_id'", type: string, public: false }
+      - { name: product_name, sql: "payload_json->>'name'", type: string, title: Product }
+      - { name: variant_name, sql: "payload_json->>'variant_name'", type: string }
+      - { name: sku, sql: "payload_json->>'sku'", type: string }
+      - { name: handle, sql: "payload_json->>'handle'", type: string }
+      - { name: supplier_code, sql: "payload_json->>'supplier_code'", type: string }
+      - { name: source, sql: "payload_json->>'source'", type: string }
+      - { name: source_id, sql: "payload_json->>'source_id'", type: string }
+      - { name: active, sql: "COALESCE((payload_json->>'active')::boolean, false)", type: boolean }
+      - { name: is_variant, sql: "({CUBE}.payload_json->>'variant_parent_id' IS NOT NULL)", type: boolean }
+      - { name: has_variants, sql: "COALESCE((payload_json->>'has_variants')::boolean, false)", type: boolean }
+      - { name: tracks_inventory, sql: "COALESCE((payload_json->>'has_inventory')::boolean, false)", type: boolean }
+      - { name: is_composite, sql: "COALESCE((payload_json->>'is_composite')::boolean, false)", type: boolean }
+      - { name: tax_category, sql: "payload_json->>'tax_category'", type: string }
+      - { name: description, sql: "payload_json->>'description'", type: string }
+      - { name: retail_price_including_tax, sql: "NULLIF(payload_json->>'price_including_tax', '')::numeric", type: number, format: currency }
+      - { name: retail_price_excluding_tax, sql: "NULLIF(payload_json->>'price_excluding_tax', '')::numeric", type: number, format: currency }
+      - { name: supply_price, sql: "NULLIF(payload_json->>'supply_price', '')::numeric", type: number, format: currency }
+      - { name: catalogue_margin, sql: "NULLIF(payload_json->>'price_excluding_tax', '')::numeric - NULLIF(payload_json->>'supply_price', '')::numeric", type: number, format: currency }
+      - { name: catalogue_margin_pct, sql: "100.0 * (NULLIF(payload_json->>'price_excluding_tax', '')::numeric - NULLIF(payload_json->>'supply_price', '')::numeric) / NULLIF(NULLIF(payload_json->>'price_excluding_tax', '')::numeric, 0)", type: number, format: percent }
+      - { name: loyalty_amount, sql: "NULLIF(payload_json->>'loyalty_amount', '')::numeric", type: number }
+      - { name: weight, sql: "NULLIF(payload_json->>'weight', '')::numeric", type: number }
+      - { name: weight_unit, sql: "payload_json->>'weight_unit'", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: products_and_variants, type: count }
+      - name: active_products_and_variants
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'active')::boolean, false) AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
+      - name: sellable_variants
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'active')::boolean, false) AND ({CUBE}.payload_json->>'variant_parent_id' IS NOT NULL OR COALESCE(({CUBE}.payload_json->>'has_variants')::boolean, false) = false)" }]
+      - name: inventory_tracked_products
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'has_inventory')::boolean, false)" }]
+      - { name: average_retail_price_including_tax, sql: "NULLIF(payload_json->>'price_including_tax', '')::numeric", type: avg, format: currency }
+      - { name: average_supply_price, sql: "NULLIF(payload_json->>'supply_price', '')::numeric", type: avg, format: currency }
+
+  - name: lightspeed_x_customer_groups
+    title: Lightspeed X-Series customer groups
+    public: false
+    description: Merchant-defined customer groups used by price books and promotions.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_customer_groups t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: customer_group_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: customer_group_name, sql: "payload_json->>'name'", type: string, title: Customer group }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: customer_groups, type: count }
+
+  - name: lightspeed_x_price_books
+    title: Lightspeed X-Series price books
+    public: false
+    description: Price-book definitions and their date, platform, outlet and customer-group scope.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_price_books t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: price_book_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: price_book_name, sql: "payload_json->>'name'", type: string, title: Price book }
+      - { name: price_book_type, sql: "payload_json->>'type'", type: string }
+      - { name: platform_scope, sql: "payload_json->>'restrict_to_platform_label'", type: string }
+      - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlets', '[]'::jsonb))", type: number }
+      - { name: customer_group_count, sql: "jsonb_array_length(COALESCE(payload_json->'customer_group_ids', '[]'::jsonb))", type: number }
+      - { name: valid_from, sql: "payload_json->>'valid_from'", type: time }
+      - { name: valid_to, sql: "payload_json->>'valid_to'", type: time }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - name: is_currently_valid
+        sql: >
+          ({CUBE}.payload_json->>'deleted_at' IS NULL
+           AND ({CUBE}.payload_json->>'valid_from' IS NULL OR ({CUBE}.payload_json->>'valid_from')::timestamptz <= NOW())
+           AND ({CUBE}.payload_json->>'valid_to' IS NULL OR ({CUBE}.payload_json->>'valid_to')::timestamptz >= NOW()))
+        type: boolean
+    measures:
+      - { name: price_books, type: count }
+      - name: currently_valid_price_books
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.payload_json->>'deleted_at' IS NULL
+              AND ({CUBE}.payload_json->>'valid_from' IS NULL OR ({CUBE}.payload_json->>'valid_from')::timestamptz <= NOW())
+              AND ({CUBE}.payload_json->>'valid_to' IS NULL OR ({CUBE}.payload_json->>'valid_to')::timestamptz >= NOW())
+
+  - name: lightspeed_x_price_book_products
+    title: Lightspeed X-Series price-book product prices
+    public: false
+    description: One current price rule per price-book/product association.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_price_book_products t
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_price_books
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_price_books}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_price_books}.connection_id
+          AND {CUBE}.payload_json->>'price_book_id' = {lightspeed_x_price_books}.payload_json->>'id'
+      - name: lightspeed_x_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_products}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_products}.connection_id
+          AND {CUBE}.payload_json->>'product_id' = {lightspeed_x_products}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: price_book_product_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: price_book_id, sql: "payload_json->>'price_book_id'", type: string, public: false }
+      - { name: product_id, sql: "payload_json->>'product_id'", type: string, public: false }
+      - { name: adjustment_type, sql: "payload_json->>'adjustment_type'", type: string }
+      - { name: rounding, sql: "payload_json->>'rounding'", type: string }
+      - { name: price, sql: "NULLIF(payload_json->>'price', '')::numeric", type: number, format: currency }
+      - { name: default_display_price, sql: "NULLIF(payload_json->>'default_display_price', '')::numeric", type: number, format: currency }
+      - { name: adjustment, sql: "NULLIF(payload_json->>'adjustment', '')::numeric", type: number }
+      - { name: discount, sql: "NULLIF(payload_json->>'discount', '')::numeric", type: number, format: currency }
+      - { name: retail_tax, sql: "NULLIF(payload_json->>'retail_tax', '')::numeric", type: number, format: currency }
+      - { name: loyalty_value, sql: "NULLIF(payload_json->>'loyalty_value', '')::numeric", type: number }
+      - { name: min_units, sql: "NULLIF(payload_json->>'min_units', '')::numeric", type: number }
+      - { name: max_units, sql: "NULLIF(payload_json->>'max_units', '')::numeric", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: price_book_product_rules, type: count }
+      - { name: average_price_book_price, sql: "NULLIF(payload_json->>'price', '')::numeric", type: avg, format: currency }
+      - { name: minimum_price_book_price, sql: "NULLIF(payload_json->>'price', '')::numeric", type: min, format: currency }
+      - { name: maximum_price_book_price, sql: "NULLIF(payload_json->>'price', '')::numeric", type: max, format: currency }
+
+  - name: lightspeed_x_taxes
+    title: Lightspeed X-Series taxes
+    public: false
+    description: Tax groups with potentially multiple component rates.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_taxes t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: tax_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: tax_name, sql: "COALESCE(payload_json->>'display_name', payload_json->>'name')", type: string, title: Tax }
+      - { name: is_default, sql: "COALESCE((payload_json->>'is_default')::boolean, false)", type: boolean }
+      - { name: component_rate_count, sql: "jsonb_array_length(COALESCE(payload_json->'rates', '[]'::jsonb))", type: number }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: tax_groups, type: count }
+
+  - name: lightspeed_x_tax_rates
+    title: Lightspeed X-Series tax component rates
+    public: false
+    description: One row per component rate nested under an X-Series tax group.
+    sql: >
+      SELECT CONCAT(t.namespaced_source_key, ':rate:', COALESCE(rate.value->>'id', rate.ordinality::text)) AS row_key,
+             t.tenant_id, t.connection_id, t.payload_json AS tax_payload, rate.value AS rate_payload
+      FROM source_lightspeed_x.lx_taxes t
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.payload_json->'rates', '[]'::jsonb))
+        WITH ORDINALITY AS rate(value, ordinality)
+      WHERE NOT t.tombstone
+    joins:
+      - name: lightspeed_x_taxes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {lightspeed_x_taxes}.tenant_id
+          AND {CUBE}.connection_id = {lightspeed_x_taxes}.connection_id
+          AND {CUBE}.tax_payload->>'id' = {lightspeed_x_taxes}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: tax_id, sql: "tax_payload->>'id'", type: string, public: false }
+      - { name: tax_rate_id, sql: "rate_payload->>'id'", type: string, public: false }
+      - { name: tax_rate_name, sql: "COALESCE(rate_payload->>'display_name', rate_payload->>'name')", type: string, title: Tax rate }
+      - { name: tax_rate_pct, sql: "100.0 * NULLIF(rate_payload->>'rate', '')::numeric", type: number, format: percent, description: Source rate converted from fraction to percent. }
+    measures:
+      - { name: tax_rates, type: count }
+      - { name: average_tax_rate_pct, sql: "100.0 * NULLIF(rate_payload->>'rate', '')::numeric", type: avg, format: percent }
+
+  - name: lightspeed_x_payment_types
+    title: Lightspeed X-Series payment types
+    public: false
+    description: Tender configurations available to the retailer and their outlet scope.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_lightspeed_x.lx_payment_types t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payment_type_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: payment_type_name, sql: "payload_json->>'name'", type: string, title: Payment type }
+      - { name: global_payment_type_id, sql: "payload_json->>'type_id'", type: string }
+      - { name: gateway, sql: "COALESCE((payload_json->>'gateway')::boolean, false)", type: boolean }
+      - { name: disabled, sql: "COALESCE((payload_json->>'disabled')::boolean, false)", type: boolean }
+      - { name: internal, sql: "COALESCE((payload_json->>'internal')::boolean, false)", type: boolean }
+      - { name: editable, sql: "COALESCE((payload_json->>'is_editable')::boolean, false)", type: boolean }
+      - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlet_ids', '[]'::jsonb))", type: number }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+    measures:
+      - { name: payment_types, type: count }
+      - name: enabled_payment_types
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'disabled')::boolean, false) = false AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]

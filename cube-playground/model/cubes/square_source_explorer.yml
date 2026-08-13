@@ -1,0 +1,154 @@
+cubes:
+  - name: square_source_fields
+    title: Square source fields (exhaustive explorer)
+    public: false
+    description: >
+      One row per scalar field occurrence returned by the Square API, plus a
+      marker for an explicitly empty array or object. This governed long-form
+      projection is the completeness backstop for the Square semantic layer: it
+      retains every returned field path, including fields not yet promoted into
+      a curated business view. Array positions are preserved separately from the
+      stable path, so repeated values can be counted without making array order
+      part of the field's semantic identity.
+    meta:
+      ai_context: >
+        Use only when a Square question needs a field that is absent from the
+        curated Square views. First filter source_object_type or parent_stream,
+        then filter field_path exactly. Select the matching typed value member:
+        string_value, number_value, boolean_value, timestamp_value, date_value or
+        json_value. Never sum number_value until the exact field_path is fixed
+        and the source field is known to be additive. Do not combine values from
+        two field paths in one aggregate. Array ordinal paths identify individual
+        occurrences but are not durable business keys. This view contains PII
+        when Square returned it; answer only within the caller's tenant and avoid
+        listing contact details unless the user explicitly asks for them.
+      completeness_contract: >
+        Every field_index entry emitted by every Square stream is expanded into
+        source_square.sq_source_fields. Curated fields improve usability but are
+        not allowed to replace or suppress this exhaustive projection.
+    sql: SELECT * FROM source_square.sq_source_fields
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+        description: Stable tenant-scoped identity for this source-record field occurrence.
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: parent_stream
+        sql: parent_stream
+        type: string
+        title: Square stream
+        description: Connector stream that returned the parent source record.
+      - name: source_object_type
+        sql: source_object_type
+        type: string
+        title: Square object type
+        description: Square object represented by the parent source record.
+      - name: source_record_id
+        sql: source_record_id
+        type: string
+        title: Source record ID
+        description: Square or deterministic connector identity of the parent record.
+      - name: field_path
+        sql: field_path
+        type: string
+        title: Stable field path
+        description: >
+          Canonical dotted path of the returned field. Array positions are
+          represented with [] so this path remains stable across records.
+      - name: field_ordinal_path
+        sql: field_ordinal_path
+        type: string
+        title: Field occurrence path
+        description: Concrete JSON pointer including array positions for this occurrence.
+      - name: field_name
+        sql: field_name
+        type: string
+        title: Field name
+        description: Final property name in field_path.
+      - name: value_type
+        sql: value_type
+        type: string
+        title: Value type
+        description: null, boolean, number, string, array or object. Array/object identify explicit empty containers; parsed timestamps/dates retain string source kind.
+      - name: string_value
+        sql: string_value
+        type: string
+        title: Text value
+        description: Typed value for string fields; null for other value types.
+      - name: number_value
+        sql: number_value
+        type: number
+        title: Numeric value
+        description: >
+          Exact numeric representation for number fields. Filter field_path
+          before using this value and do not assume it is additive or currency.
+      - name: boolean_value
+        sql: boolean_value
+        type: boolean
+        title: Boolean value
+      - name: timestamp_value
+        sql: timestamp_value
+        type: time
+        title: Timestamp value
+      - name: date_value
+        sql: date_value
+        type: time
+        title: Date value
+      - name: json_value
+        sql: "CAST(json_value AS text)"
+        type: string
+        title: JSON value
+        description: Exact JSON representation of the returned scalar or explicit empty-container marker.
+      - name: money_amount_minor
+        sql: money_amount_minor
+        type: number
+        title: Money amount (minor units)
+        description: >
+          Integer amount in the smallest unit of money. It is not dollars unless
+          paired with money_currency and converted using that currency's exponent.
+      - name: money_currency
+        sql: money_currency
+        type: string
+        title: Currency
+        description: ISO 4217 currency code paired with money_amount_minor.
+
+    measures:
+      - name: field_occurrences
+        type: count
+        title: Field occurrences
+        description: Number of returned occurrences after filters.
+      - name: source_records
+        sql: "CONCAT(connection_id, ':', parent_stream, ':', source_record_id)"
+        type: count_distinct
+        title: Source records
+        description: Distinct Square source records containing the selected field.
+      - name: numeric_value_sum
+        sql: number_value
+        type: sum
+        title: Numeric value sum
+        description: >
+          Sum after filtering to one exact, documented additive field_path.
+          Never use for identifiers, versions, rates, balances or snapshots.
+      - name: numeric_value_average
+        sql: number_value
+        type: avg
+        title: Numeric value average
+        description: Average after filtering to one exact numeric field_path.
+      - name: numeric_value_minimum
+        sql: number_value
+        type: min
+        title: Numeric value minimum
+      - name: numeric_value_maximum
+        sql: number_value
+        type: max
+        title: Numeric value maximum

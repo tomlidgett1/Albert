@@ -1,0 +1,35 @@
+views:
+  - name: square_settlements_analytics
+    title: Square settlements analytics
+    description: >
+      Square payouts and the payment/refund/fee/dispute/adjustment entries rolled
+      into each settlement transfer. A payout is not a bank-feed transaction.
+    meta:
+      ai_context: >
+        Use paid_payout_amount over arrival_date for deposited settlements.
+        payout_entries_* is a different grain used to explain a payout bridge;
+        do not mix payout count with entry count in one query. Reconcile entry
+        net amounts to the payout and show end_to_end_id for bank matching.
+    cubes:
+      - join_path: square_payouts
+        includes:
+          - tenant_id
+          - status
+          - payout_type
+          - destination_type
+          - end_to_end_id
+          - currency
+          - created_at
+          - updated_at
+          - arrival_date
+          - payouts
+          - paid_payouts
+          - payout_amount
+          - paid_payout_amount
+      - join_path: square_payouts.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+      - join_path: square_payout_entries
+        prefix: true
+        includes: [activity_type, currency, effective_at, payout_entries, entry_gross_amount, entry_fees, entry_net_amount]
+

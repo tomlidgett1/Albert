@@ -1,0 +1,387 @@
+cubes:
+  - name: register_counts
+    title: Register counts (till open / close)
+    public: false
+    description: >
+      One row per register count session - the till being opened and later
+      counted / closed. open_time is when the drawer was opened, counted_at
+      when the count (usually the close) was performed. Per-tender expected
+      vs actual amounts are in register_count_amounts. Tombstoned rows are
+      excluded at source.
+    meta:
+      ai_context: >
+        "Till counts", "register close", "end of day count" = this grain. The
+        employee joined here is the one who closed / performed the count. Cash
+        over/short lives in register_count_amounts (variance members).
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_register_counts
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_register_counts t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: registers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {registers}.tenant_id
+          AND {CUBE}.register_id = {registers}.register_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.close_employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: register_count_id
+        sql: register_count_id
+        type: number
+        description: Lightspeed's identifier for the count session.
+      - name: counted_at
+        sql: create_time
+        type: time
+        title: Counted at
+        description: When the count was performed (usually the till close). Business date for reconciliation.
+      - name: opened_at
+        sql: open_time
+        type: time
+        description: When the drawer was opened for the session.
+      - name: notes
+        sql: notes
+        type: string
+        description: Notes recorded with the count.
+      - name: register_id
+        sql: register_id
+        type: number
+        public: false
+      - name: open_employee_id
+        sql: open_employee_id
+        type: number
+        public: false
+        description: Employee who opened the drawer.
+      - name: close_employee_id
+        sql: close_employee_id
+        type: number
+        public: false
+        description: Employee who closed / counted the drawer (the employees join).
+
+    measures:
+      - name: count_sessions
+        type: count
+        title: Count sessions
+        description: Number of till count sessions.
+
+  - name: register_count_amounts
+    title: Register count amounts (expected vs counted)
+    public: false
+    description: >
+      One row per tender type within a register count: the amount the system
+      calculated should be in the drawer against what was actually counted.
+      The difference is the over/short for that tender. Tombstoned rows are
+      excluded at source.
+    meta:
+      ai_context: >
+        "Cash over/short", "till variance", "did the till balance" =
+        variance_total here (actual minus expected; negative = short, positive
+        = over). Group by payment_types_name for per-tender reconciliation and
+        by register_counts members for the session and date.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_register_count_amounts
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_register_count_amounts t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: register_counts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {register_counts}.tenant_id
+          AND {CUBE}.register_count_id = {register_counts}.register_count_id
+      - name: payment_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {payment_types}.tenant_id
+          AND {CUBE}.payment_type_id = {payment_types}.payment_type_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: register_count_amount_id
+        sql: register_count_amount_id
+        type: number
+        public: false
+      - name: expected_amount
+        sql: calculated
+        type: number
+        format: currency
+        description: Amount the system calculated should be in the drawer for this tender.
+      - name: counted_amount
+        sql: actual
+        type: number
+        format: currency
+        description: Amount actually counted in the drawer for this tender.
+      - name: variance_amount
+        type: number
+        format: currency
+        sql: "COALESCE({CUBE}.actual, 0) - COALESCE({CUBE}.calculated, 0)"
+        title: Over / short
+        description: Counted minus expected. Negative = short, positive = over.
+      - name: register_count_id
+        sql: register_count_id
+        type: number
+        public: false
+      - name: payment_type_id
+        sql: payment_type_id
+        type: number
+        public: false
+
+    measures:
+      - name: amount_line_count
+        type: count
+        description: Number of tender rows across count sessions.
+      - name: expected_total
+        type: sum
+        sql: calculated
+        format: currency
+        title: Expected in drawer
+        description: Total the system expected across counted tenders.
+      - name: counted_total
+        type: sum
+        sql: '{CUBE}."actual"'
+        format: currency
+        title: Counted in drawer
+        description: Total actually counted across tenders.
+      - name: variance_total
+        type: sum
+        sql: "COALESCE({CUBE}.actual, 0) - COALESCE({CUBE}.calculated, 0)"
+        format: currency
+        title: Over / short total
+        description: Net over/short across counted tenders (negative = short).
+      - name: short_counts
+        type: count
+        title: Short counts
+        description: Tender rows counted short of the expected amount.
+        filters:
+          - sql: "COALESCE({CUBE}.actual, 0) < COALESCE({CUBE}.calculated, 0)"
+      - name: over_counts
+        type: count
+        title: Over counts
+        description: Tender rows counted over the expected amount.
+        filters:
+          - sql: "COALESCE({CUBE}.actual, 0) > COALESCE({CUBE}.calculated, 0)"
+
+    segments:
+      - name: short_lines
+        sql: "COALESCE({CUBE}.actual, 0) < COALESCE({CUBE}.calculated, 0)"
+        description: Tender rows that came up short.
+      - name: balanced_lines
+        sql: "COALESCE({CUBE}.actual, 0) = COALESCE({CUBE}.calculated, 0)"
+        description: Tender rows that balanced exactly.
+
+  - name: register_withdraws
+    title: Register withdrawals (cash pulled from the till)
+    public: false
+    description: >
+      One row per withdrawal of money from a register drawer outside a sale -
+      banking drops, petty cash, payouts. Tombstoned rows are excluded at
+      source.
+    meta:
+      ai_context: >
+        "Cash taken out of the till", "banking drops", "payouts" =
+        amount_withdrawn here. occurred_at is the business date; the employee
+        joined is who made the withdrawal.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_register_withdraws
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_register_withdraws t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: registers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {registers}.tenant_id
+          AND {CUBE}.register_id = {registers}.register_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: payment_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {payment_types}.tenant_id
+          AND {CUBE}.payment_type_id = {payment_types}.payment_type_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: register_withdraw_id
+        sql: register_withdraw_id
+        type: number
+        public: false
+      - name: amount
+        sql: amount
+        type: number
+        format: currency
+        description: Amount withdrawn from the drawer.
+      - name: occurred_at
+        sql: create_time
+        type: time
+        title: Withdrawn at
+        description: When the money was taken out. Business date for cash handling.
+      - name: notes
+        sql: notes
+        type: string
+        description: Reason recorded for the withdrawal.
+      - name: register_id
+        sql: register_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: payment_type_id
+        sql: payment_type_id
+        type: number
+        public: false
+
+    measures:
+      - name: withdrawal_count
+        type: count
+        title: Withdrawals
+        description: Number of till withdrawals.
+      - name: amount_withdrawn
+        type: sum
+        sql: amount
+        format: currency
+        title: Amount withdrawn
+        description: Total money taken out of registers.
+
+  - name: register_calculated
+    title: Register drawer position (current)
+    public: false
+    description: >
+      Live snapshot per register and tender of payments taken, money added and
+      money withdrawn since the drawer was last reconciled. The expected
+      drawer content is payments plus additions minus withdrawals. A snapshot,
+      not history: for historical reconciliations use register_counts /
+      register_count_amounts. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "What should be in the till right now" = expected_in_drawer. This has
+        no time dimension; for end-of-day reconciliation history use the
+        register count members instead.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_register_calculated
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_register_calculated t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: registers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {registers}.tenant_id
+          AND {CUBE}.register_calculated_path_parameter_register_id = {registers}.register_id
+      - name: payment_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {payment_types}.tenant_id
+          AND {CUBE}.payment_type_id = {payment_types}.payment_type_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: register_id
+        sql: register_calculated_path_parameter_register_id
+        type: number
+        public: false
+      - name: payments_taken
+        sql: payment
+        type: number
+        format: currency
+        description: Payments taken into the drawer for this tender since last reconcile.
+      - name: money_added
+        sql: '{CUBE}."add"'
+        type: number
+        format: currency
+        description: Money added to the drawer (floats, top-ups).
+      - name: money_withdrawn
+        sql: withdraw
+        type: number
+        format: currency
+        description: Money withdrawn from the drawer.
+      - name: payment_type_id
+        sql: payment_type_id
+        type: number
+        public: false
+
+    measures:
+      - name: expected_in_drawer
+        type: sum
+        sql: "COALESCE({CUBE}.payment, 0) + COALESCE({CUBE}.\"add\", 0) - COALESCE({CUBE}.withdraw, 0)"
+        format: currency
+        title: Expected in drawer (now)
+        description: Payments plus additions minus withdrawals - what should currently be in the drawer.
+      - name: payments_taken_total
+        type: sum
+        sql: payment
+        format: currency
+        description: Payments taken across registers since last reconcile.
+      - name: money_added_total
+        type: sum
+        sql: '{CUBE}."add"'
+        format: currency
+        description: Money added across registers.
+      - name: money_withdrawn_total
+        type: sum
+        sql: withdraw
+        format: currency
+        description: Money withdrawn across registers.

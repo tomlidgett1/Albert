@@ -1,0 +1,76 @@
+views:
+  - name: staff_analytics
+    title: Staff analytics
+    description: >
+      The staffing surface: clock in / out shifts, hours worked, average shift
+      length and who is currently clocked in, by staff member and store. Also
+      carries the staff roster reference (active vs archived staff). Sales
+      performance per staff member lives in sales_analytics, not here.
+    meta:
+      ai_context: >
+        Use this view for "hours worked", "shifts", "who was rostered on",
+        "who is clocked in" and headcount questions. Default time dimension:
+        clocked_in_at. For revenue or transactions per staff member use
+        sales_analytics (employees_full_name there); combine the two surfaces
+        narratively, not in one query.
+
+    cubes:
+      # employees owns the view's tenant_id: shifts reach employees via a
+      # declared many_to_one join, and headcount questions stay answerable
+      # even before any clock in/out data has been ingested.
+      - join_path: employees
+        includes:
+          - tenant_id
+          - name: employee_id
+            alias: employees_employee_id
+          - name: full_name
+            alias: employees_full_name
+          - name: archived
+            alias: employees_archived
+          - name: locked_out
+            alias: employees_locked_out
+          - name: count
+            alias: employees_count
+          - name: active_count
+            alias: employees_active_count
+          - name: active_employees
+            alias: employees_active_employees
+      - join_path: employee_hours
+        includes:
+          - clocked_in_at
+          - clocked_out_at
+          - is_open_shift
+          - shift_hours
+          - shift_count
+          - completed_shift_count
+          - open_shift_count
+          - hours_worked
+          - avg_shift_hours
+          - completed_shifts
+          - open_shifts
+      - join_path: employee_hours.shops
+        prefix: true
+        includes:
+          - name
+
+    folders:
+      - name: Hours and shifts
+        includes:
+          - hours_worked
+          - shift_count
+          - completed_shift_count
+          - avg_shift_hours
+          - clocked_in_at
+          - clocked_out_at
+          - shift_hours
+      - name: Live status
+        includes:
+          - open_shift_count
+          - is_open_shift
+      - name: Staff and store
+        includes:
+          - employees_full_name
+          - employees_archived
+          - employees_count
+          - employees_active_count
+          - shops_name

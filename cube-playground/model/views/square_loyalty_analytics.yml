@@ -1,0 +1,23 @@
+views:
+  - name: square_loyalty_analytics
+    title: Square loyalty analytics
+    description: Current Square loyalty membership, outstanding points and lifetime points earned.
+    meta:
+      ai_context: >
+        Point balance is a current liability-like snapshot, not a historical
+        flow. Do not sum it over time. Use square_loyalty_activity_analytics for
+        earning, expiry, adjustment and reward event trends.
+    cubes:
+      - join_path: square_loyalty_accounts
+        includes:
+          - tenant_id
+          - point_balance
+          - lifetime_points
+          - enrolled_at
+          - created_at
+          - updated_at
+          - loyalty_members
+          - current_points_outstanding
+          - lifetime_points_earned
+          - average_point_balance
+

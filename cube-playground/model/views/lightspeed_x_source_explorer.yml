@@ -1,0 +1,45 @@
+views:
+  - name: lightspeed_x_source_explorer
+    title: Lightspeed X-Series source field explorer
+    description: >
+      Exhaustive field-level access to every value returned by every ingested
+      X-Series stream. This is a governed fallback for uncommon, module-specific
+      or newly introduced fields; curated views remain the default because they
+      encode lifecycle, currency, timezone, privacy and grain rules.
+    meta:
+      ai_context: >
+        Route here only after checking all curated lightspeed_x_* views. Always
+        filter parent_stream or source_object_type and one exact field_path before
+        selecting a typed value. Numeric fields are not automatically additive
+        or currency. X-Series monetary values are decimal major units in the
+        associated retailer/outlet currency. If a path is absent, say that the
+        API returned no value rather than inventing one. This explorer can contain
+        customer/user/supplier contact data, free-text notes, audit changes and
+        security details; reveal PII only for an explicit tenant-authorised need.
+    cubes:
+      - join_path: lightspeed_x_source_fields
+        includes:
+          - parent_stream
+          - source_object_type
+          - source_record_id
+          - field_path
+          - field_ordinal_path
+          - field_name
+          - value_type
+          - string_value
+          - number_value
+          - boolean_value
+          - timestamp_value
+          - date_value
+          - json_value
+          - field_occurrences
+          - source_records
+          - numeric_value_sum
+          - numeric_value_average
+          - numeric_value_minimum
+          - numeric_value_maximum
+    folders:
+      - { name: Field identity, includes: [parent_stream, source_object_type, source_record_id, field_path, field_ordinal_path, field_name, value_type] }
+      - { name: Typed value, includes: [string_value, number_value, boolean_value, timestamp_value, date_value, json_value] }
+      - { name: Safe field statistics, includes: [field_occurrences, source_records, numeric_value_average, numeric_value_minimum, numeric_value_maximum] }
+      - { name: Additive only after review, includes: [numeric_value_sum] }

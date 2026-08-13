@@ -1,0 +1,35 @@
+views:
+  - name: square_workforce_analytics
+    title: Square workforce analytics
+    description: Actual Square timecards, open clock-ins, worked hours, wage-rate labour estimate and declared cash tips.
+    meta:
+      ai_context: >
+        Use for actual worked time and who is currently clocked in. This is not
+        the roster. estimated_labour_cost excludes overtime, taxes, benefits/super
+        and payroll adjustments. Use square_labour_sales_analytics for safe ratios.
+    cubes:
+      - join_path: square_timecards
+        includes:
+          - tenant_id
+          - status
+          - timezone
+          - job_title
+          - wage_currency
+          - start_at
+          - end_at
+          - created_at
+          - updated_at
+          - is_open
+          - timecards
+          - completed_timecards
+          - open_timecards
+          - completed_worked_hours
+          - estimated_labour_cost
+          - declared_cash_tips
+      - join_path: square_timecards.square_team_members
+        prefix: true
+        includes: [display_name, status, is_owner, location_assignment_type]
+      - join_path: square_timecards.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+

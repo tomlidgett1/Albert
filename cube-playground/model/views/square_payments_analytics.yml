@@ -1,0 +1,48 @@
+views:
+  - name: square_payments_analytics
+    title: Square payments analytics
+    description: >
+      Square tender attempts and completed collections by payment method, with
+      tips, failure/offline state and processing-fee entries.
+    meta:
+      ai_context: >
+        Use collected_amount over created_at for payment mix and takings. Only
+        COMPLETED payments contribute. Payment totals include payment tips.
+        payment_fees_* is fee-event grain: never combine fee-entry counts with
+        payment counts in one query. Refunds use square_refunds_analytics.
+    cubes:
+      - join_path: square_payments
+        includes:
+          - tenant_id
+          - status
+          - source_type
+          - currency
+          - reference_id
+          - receipt_number
+          - statement_description
+          - delay_action
+          - delayed_until
+          - created_at
+          - updated_at
+          - is_offline_payment
+          - is_completed
+          - payment_attempts
+          - completed_payments
+          - failed_payments
+          - offline_payments
+          - collected_amount
+          - base_payment_amount
+          - payment_tips
+          - currently_refunded_amount
+          - average_payment
+      - join_path: square_payments.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+      - join_path: square_payment_fees
+        prefix: true
+        includes: [fee_type, currency, effective_at, fee_entries, processing_fees]
+    folders:
+      - { name: Payment mix, includes: [source_type, collected_amount, completed_payments, average_payment, payment_tips] }
+      - { name: Payment quality, includes: [status, payment_attempts, failed_payments, offline_payments, is_offline_payment, delay_action] }
+      - { name: Processing fees, includes: [square_payment_fees_fee_type, square_payment_fees_effective_at, square_payment_fees_fee_entries, square_payment_fees_processing_fees] }
+

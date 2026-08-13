@@ -1,0 +1,332 @@
+cubes:
+  - name: momence_instructors
+    title: Momence instructors
+    public: false
+    description: >
+      One row per distinct Momence teacher identity observed on a current session
+      or appointment payload, with deduplicated assignment counts and schedule
+      bounds across primary, additional and original-teacher roles.
+    meta:
+      ai_context: >
+        Teacher is a Momence service instructor identity, not proof of employee
+        status, payroll, rostered hours or time actually worked. Current primary
+        and additional assignments count as scheduled assignments; original
+        teacher is retained separately as historical assignment metadata. One
+        activity is counted once per teacher even if repeated in source roles.
+        Use the schedule/attendance views for capacity and member outcomes.
+    sql: >
+      WITH latest_sessions AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sessions
+        GROUP BY tenant_id, connection_id
+      ), sessions AS MATERIALIZED (
+        SELECT s.* FROM source_momence.momence_sessions s
+        JOIN latest_sessions l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      ), latest_details AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_session_details
+        GROUP BY tenant_id, connection_id
+      ), details AS MATERIALIZED (
+        SELECT d.* FROM source_momence.momence_session_details d
+        JOIN latest_details l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT d.tombstone
+      ), latest_appointments AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_appointments
+        GROUP BY tenant_id, connection_id
+      ), appointments AS MATERIALIZED (
+        SELECT a.* FROM source_momence.momence_appointments a
+        JOIN latest_appointments l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT a.tombstone
+      ), assignments AS (
+        SELECT s.tenant_id, s.connection_id, 'Session'::text AS activity_kind,
+               s.record_id AS activity_id, 'primary'::text AS assignment_role,
+               true AS current_assignment,
+               NULLIF(s.payload_json #>> ARRAY['teacher', 'id'], '') AS teacher_id,
+               s.payload_json #>> ARRAY['teacher', 'firstName'] AS first_name,
+               s.payload_json #>> ARRAY['teacher', 'lastName'] AS last_name,
+               NULLIF(s.payload_json ->> 'startsAt', '')::timestamptz AS starts_at,
+               NULLIF(s.payload_json #>> ARRAY['inPersonLocation', 'id'], '') AS location_id,
+               COALESCE((s.payload_json ->> 'isCancelled')::boolean, false) AS activity_cancelled
+        FROM sessions s
+        UNION ALL
+        SELECT d.tenant_id, d.connection_id, 'Session', d.record_id, 'additional', true,
+               NULLIF(teacher.value ->> 'id', ''), teacher.value ->> 'firstName', teacher.value ->> 'lastName',
+               NULLIF(d.payload_json ->> 'startsAt', '')::timestamptz,
+               NULLIF(d.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+               COALESCE((d.payload_json ->> 'isCancelled')::boolean, false)
+        FROM details d
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(d.payload_json -> 'additionalTeachers', '[]'::jsonb)) teacher(value)
+        UNION ALL
+        SELECT d.tenant_id, d.connection_id, 'Session', d.record_id, 'original', false,
+               NULLIF(d.payload_json #>> ARRAY['originalTeacher', 'id'], ''),
+               d.payload_json #>> ARRAY['originalTeacher', 'firstName'], d.payload_json #>> ARRAY['originalTeacher', 'lastName'],
+               NULLIF(d.payload_json ->> 'startsAt', '')::timestamptz,
+               NULLIF(d.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+               COALESCE((d.payload_json ->> 'isCancelled')::boolean, false)
+        FROM details d
+        UNION ALL
+        SELECT a.tenant_id, a.connection_id, 'Appointment', a.record_id, 'primary', true,
+               NULLIF(a.payload_json #>> ARRAY['teacher', 'id'], ''),
+               a.payload_json #>> ARRAY['teacher', 'firstName'], a.payload_json #>> ARRAY['teacher', 'lastName'],
+               NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz,
+               NULLIF(a.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+               a.payload_json ->> 'cancelledAt' IS NOT NULL
+        FROM appointments a
+        UNION ALL
+        SELECT a.tenant_id, a.connection_id, 'Appointment', a.record_id, 'additional', true,
+               NULLIF(a.payload_json #>> ARRAY['additionalTeacher', 'id'], ''),
+               a.payload_json #>> ARRAY['additionalTeacher', 'firstName'], a.payload_json #>> ARRAY['additionalTeacher', 'lastName'],
+               NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz,
+               NULLIF(a.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+               a.payload_json ->> 'cancelledAt' IS NOT NULL
+        FROM appointments a
+      ), deduplicated AS (
+        SELECT tenant_id, connection_id, activity_kind, activity_id, teacher_id,
+               BOOL_OR(current_assignment) AS current_assignment,
+               BOOL_OR(assignment_role = 'original') AS appeared_as_original,
+               (ARRAY_AGG(first_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(first_name, '') IS NOT NULL))[1] AS first_name,
+               (ARRAY_AGG(last_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(last_name, '') IS NOT NULL))[1] AS last_name,
+               MAX(starts_at) AS starts_at,
+               MAX(location_id) AS location_id,
+               BOOL_OR(activity_cancelled) AS activity_cancelled
+        FROM assignments
+        WHERE teacher_id IS NOT NULL
+        GROUP BY tenant_id, connection_id, activity_kind, activity_id, teacher_id
+      )
+      SELECT tenant_id, connection_id,
+             'momence:instructor:' || connection_id || ':' || teacher_id AS row_key,
+             teacher_id,
+             (ARRAY_AGG(first_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(first_name, '') IS NOT NULL))[1] AS first_name,
+             (ARRAY_AGG(last_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(last_name, '') IS NOT NULL))[1] AS last_name,
+             NULLIF(BTRIM(CONCAT_WS(' ',
+               (ARRAY_AGG(first_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(first_name, '') IS NOT NULL))[1],
+               (ARRAY_AGG(last_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(last_name, '') IS NOT NULL))[1]
+             )), '') AS display_name,
+             COUNT(*) FILTER (WHERE current_assignment AND NOT activity_cancelled) AS assigned_occurrences,
+             COUNT(*) FILTER (WHERE current_assignment AND activity_kind = 'Session' AND NOT activity_cancelled) AS session_assignments,
+             COUNT(*) FILTER (WHERE current_assignment AND activity_kind = 'Appointment' AND NOT activity_cancelled) AS appointment_assignments,
+             COUNT(*) FILTER (WHERE current_assignment AND NOT activity_cancelled AND starts_at > NOW()) AS upcoming_assignments,
+             COUNT(*) FILTER (WHERE appeared_as_original) AS original_teacher_occurrences,
+             COUNT(DISTINCT location_id) FILTER (WHERE current_assignment AND location_id IS NOT NULL) AS assigned_location_count,
+             MIN(starts_at) FILTER (WHERE current_assignment AND NOT activity_cancelled) AS first_scheduled_at,
+             MAX(starts_at) FILTER (WHERE current_assignment AND NOT activity_cancelled) AS last_scheduled_at
+      FROM deduplicated
+      GROUP BY tenant_id, connection_id, teacher_id
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: instructor_id, sql: teacher_id, type: string, public: false }
+      - { name: first_name, sql: first_name, type: string }
+      - { name: last_name, sql: last_name, type: string }
+      - { name: instructor_name, sql: display_name, type: string }
+      - { name: assigned_occurrence_count, sql: assigned_occurrences, type: number }
+      - { name: session_assignment_count, sql: session_assignments, type: number }
+      - { name: appointment_assignment_count, sql: appointment_assignments, type: number }
+      - { name: upcoming_assignment_count, sql: upcoming_assignments, type: number }
+      - { name: original_teacher_occurrence_count, sql: original_teacher_occurrences, type: number }
+      - { name: assigned_location_count, sql: assigned_location_count, type: number }
+      - { name: first_scheduled_at, sql: first_scheduled_at, type: time }
+      - { name: last_scheduled_at, sql: last_scheduled_at, type: time }
+      - { name: has_upcoming_assignment, sql: "upcoming_assignments > 0", type: boolean }
+    measures:
+      - { name: instructors, type: count }
+      - { name: scheduled_instructor_assignments, type: sum, sql: assigned_occurrences }
+      - { name: scheduled_session_instructor_assignments, type: sum, sql: session_assignments }
+      - { name: scheduled_appointment_instructor_assignments, type: sum, sql: appointment_assignments }
+      - { name: upcoming_instructor_assignments, type: sum, sql: upcoming_assignments }
+      - name: instructors_with_upcoming_assignments
+        type: count
+        filters:
+          - sql: "{CUBE}.upcoming_assignments > 0"
+
+  - name: momence_locations
+    title: Momence locations
+    public: false
+    description: >
+      One row per Momence location identity observed in the optional public host
+      location catalogue or embedded on a host session or appointment, enriched
+      with address/timezone coordinates when the catalogue is available.
+    meta:
+      ai_context: >
+        Public host locations provide address, physical/virtual, coordinates and
+        timezone, but that optional endpoint may be unavailable. Embedded
+        schedule locations provide only id and name and are retained as a safe
+        fallback without inventing address or timezone. Activity counts exclude
+        cancelled occurrences and are current schedule facts, not revenue or
+        attendance. Use schedule analytics for capacity and booking measures.
+    sql: >
+      WITH latest_locations AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_public_locations
+        GROUP BY tenant_id, connection_id
+      ), location_profiles AS MATERIALIZED (
+        SELECT l.tenant_id, l.connection_id,
+               NULLIF(l.payload_json ->> 'id', '') AS location_id,
+               l.payload_json
+        FROM source_momence.momence_public_locations l
+        JOIN latest_locations v USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT l.tombstone
+      ), latest_sessions AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sessions
+        GROUP BY tenant_id, connection_id
+      ), sessions AS MATERIALIZED (
+        SELECT s.* FROM source_momence.momence_sessions s
+        JOIN latest_sessions v USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      ), latest_appointments AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_appointments
+        GROUP BY tenant_id, connection_id
+      ), appointments AS MATERIALIZED (
+        SELECT a.* FROM source_momence.momence_appointments a
+        JOIN latest_appointments v USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT a.tombstone
+      ), activities AS (
+        SELECT s.tenant_id, s.connection_id,
+               NULLIF(s.payload_json #>> ARRAY['inPersonLocation', 'id'], '') AS location_id,
+               s.payload_json #>> ARRAY['inPersonLocation', 'name'] AS location_name,
+               'Session'::text AS activity_kind,
+               NULLIF(s.payload_json ->> 'startsAt', '')::timestamptz AS starts_at,
+               COALESCE((s.payload_json ->> 'isCancelled')::boolean, false) AS cancelled
+        FROM sessions s
+        UNION ALL
+        SELECT a.tenant_id, a.connection_id,
+               NULLIF(a.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+               a.payload_json #>> ARRAY['inPersonLocation', 'name'], 'Appointment',
+               NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz,
+               a.payload_json ->> 'cancelledAt' IS NOT NULL
+        FROM appointments a
+      ), activity_stats AS (
+        SELECT tenant_id, connection_id, location_id,
+               (ARRAY_AGG(location_name ORDER BY starts_at DESC) FILTER (WHERE NULLIF(location_name, '') IS NOT NULL))[1] AS location_name,
+               COUNT(*) FILTER (WHERE NOT cancelled) AS scheduled_occurrences,
+               COUNT(*) FILTER (WHERE NOT cancelled AND activity_kind = 'Session') AS session_occurrences,
+               COUNT(*) FILTER (WHERE NOT cancelled AND activity_kind = 'Appointment') AS appointment_occurrences,
+               COUNT(*) FILTER (WHERE NOT cancelled AND starts_at > NOW()) AS upcoming_occurrences,
+               MIN(starts_at) FILTER (WHERE NOT cancelled) AS first_scheduled_at,
+               MAX(starts_at) FILTER (WHERE NOT cancelled) AS last_scheduled_at
+        FROM activities
+        WHERE location_id IS NOT NULL
+        GROUP BY tenant_id, connection_id, location_id
+      ), location_ids AS (
+        SELECT tenant_id, connection_id, location_id FROM location_profiles WHERE location_id IS NOT NULL
+        UNION
+        SELECT tenant_id, connection_id, location_id FROM activity_stats
+      )
+      SELECT ids.tenant_id, ids.connection_id,
+             'momence:location:' || ids.connection_id || ':' || ids.location_id AS row_key,
+             ids.location_id,
+             COALESCE(NULLIF(profile.payload_json ->> 'name', ''), stats.location_name, 'Location ' || ids.location_id) AS location_name,
+             profile.payload_json ->> 'address' AS address,
+             profile.payload_json ->> 'city' AS city,
+             profile.payload_json ->> 'countryCode' AS country_code,
+             profile.payload_json ->> 'fullAddress' AS full_address,
+             profile.payload_json ->> 'zipCode' AS postcode,
+             profile.payload_json ->> 'timeZone' AS timezone,
+             NULLIF(profile.payload_json ->> 'parentLocationId', '') AS parent_location_id,
+             CASE WHEN profile.payload_json ? 'isPhysical' THEN (profile.payload_json ->> 'isPhysical')::boolean END AS is_physical,
+             NULLIF(profile.payload_json ->> 'latitude', '')::numeric AS latitude,
+             NULLIF(profile.payload_json ->> 'longitude', '')::numeric AS longitude,
+             profile.location_id IS NOT NULL AS has_public_location_profile,
+             COALESCE(stats.scheduled_occurrences, 0) AS scheduled_occurrences,
+             COALESCE(stats.session_occurrences, 0) AS session_occurrences,
+             COALESCE(stats.appointment_occurrences, 0) AS appointment_occurrences,
+             COALESCE(stats.upcoming_occurrences, 0) AS upcoming_occurrences,
+             stats.first_scheduled_at, stats.last_scheduled_at
+      FROM location_ids ids
+      LEFT JOIN location_profiles profile USING (tenant_id, connection_id, location_id)
+      LEFT JOIN activity_stats stats USING (tenant_id, connection_id, location_id)
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: location_id, sql: location_id, type: string, public: false }
+      - { name: location_name, sql: location_name, type: string }
+      - { name: address, sql: address, type: string }
+      - { name: city, sql: city, type: string }
+      - { name: country_code, sql: country_code, type: string }
+      - { name: full_address, sql: full_address, type: string }
+      - { name: postcode, sql: postcode, type: string }
+      - { name: timezone, sql: timezone, type: string }
+      - { name: parent_location_id, sql: parent_location_id, type: string, public: false }
+      - { name: is_physical, sql: is_physical, type: boolean }
+      - { name: latitude, sql: latitude, type: number, public: false }
+      - { name: longitude, sql: longitude, type: number, public: false }
+      - { name: has_public_location_profile, sql: has_public_location_profile, type: boolean }
+      - { name: scheduled_occurrence_count, sql: scheduled_occurrences, type: number }
+      - { name: session_occurrence_count, sql: session_occurrences, type: number }
+      - { name: appointment_occurrence_count, sql: appointment_occurrences, type: number }
+      - { name: upcoming_occurrence_count, sql: upcoming_occurrences, type: number }
+      - { name: first_scheduled_at, sql: first_scheduled_at, type: time }
+      - { name: last_scheduled_at, sql: last_scheduled_at, type: time }
+    measures:
+      - { name: locations, type: count }
+      - name: physical_locations
+        type: count
+        filters:
+          - sql: "{CUBE}.is_physical = true"
+      - name: locations_with_upcoming_activity
+        type: count
+        filters:
+          - sql: "{CUBE}.upcoming_occurrences > 0"
+      - { name: scheduled_location_occurrences, type: sum, sql: scheduled_occurrences }
+      - { name: upcoming_location_occurrences, type: sum, sql: upcoming_occurrences }
+
+  - name: momence_tags
+    title: Momence tags
+    public: false
+    description: One row per host tag definition used to classify customers, sessions and membership plans.
+    meta:
+      ai_context: >
+        This is the tag-definition grain. A tag count is not a tagged-member or
+        tagged-session count; those relationships are embedded on the relevant
+        source objects and can be inspected in curated JSON tag dimensions or
+        through the exhaustive source-field explorer.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_tags
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT t.* FROM source_momence.momence_tags t
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: tag_id, sql: record_id, type: string, public: false }
+      - { name: tag_name, sql: "COALESCE(NULLIF(payload_json ->> 'name', ''), name)", type: string }
+      - { name: badge_label, sql: "payload_json ->> 'badgeLabel'", type: string }
+      - { name: badge_color, sql: "payload_json ->> 'badgeColor'", type: string }
+      - { name: corporate_tag_id, sql: "payload_json ->> 'corporateTagId'", type: string, public: false }
+      - { name: is_customer_badge, sql: "COALESCE((payload_json ->> 'isCustomerBadge')::boolean, false)", type: boolean }
+    measures:
+      - { name: tags, type: count }
+      - name: customer_badge_tags
+        type: count
+        filters:
+          - sql: "COALESCE(({CUBE}.payload_json ->> 'isCustomerBadge')::boolean, false)"

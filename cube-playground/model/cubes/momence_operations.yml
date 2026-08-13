@@ -1,0 +1,883 @@
+cubes:
+  - name: momence_host_accounts
+    title: Momence connected accounts
+    public: false
+    description: >
+      One row per connected Momence authorising profile. This is the common
+      tenant-and-connection anchor for Momence views; it is not a studio legal
+      entity because public API v2 does not return an unambiguous selected host id.
+    meta:
+      ai_context: >
+        Use only as the secure connection anchor. The profile identifies the
+        authorising user, not necessarily a studio owner, teacher, member or
+        location. Never infer host identity or business ownership from this row.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_profile
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT t.*
+      FROM source_momence.momence_profile t
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      WHERE NOT t.tombstone
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: source_account_reference
+        sql: external_account_reference
+        type: string
+        public: false
+      - name: profile_id
+        sql: record_id
+        type: string
+        public: false
+    measures:
+      - name: connected_accounts
+        type: count
+        public: false
+
+  - name: momence_members
+    title: Momence members
+    public: false
+    description: >
+      One row per Momence member profile. Visit counters are lifetime-style
+      source snapshots; firstSeen and lastSeen are observed member activity
+      bounds, not necessarily signup and churn dates. Contact values remain private.
+    meta:
+      ai_context: >
+        Member means a customer profile, not an active membership entitlement.
+        A member can have zero, one or several active bought memberships. Use
+        first_seen and last_seen for observed engagement bounds and disclose that
+        available API history may bound them. Visit counters are source snapshots:
+        do not sum them over time or call last_seen a cancellation/churn date.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_members
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT t.*,
+             COALESCE(
+               NULLIF(BTRIM(CONCAT_WS(' ', payload_json ->> 'firstName', payload_json ->> 'lastName')), ''),
+               NULLIF(name, ''),
+               'Member ' || record_id
+             ) AS cc_full_name,
+             NULLIF(payload_json ->> 'firstSeen', '')::timestamptz AS cc_first_seen,
+             NULLIF(payload_json ->> 'lastSeen', '')::timestamptz AS cc_last_seen,
+             NULLIF(payload_json #>> ARRAY['visits', 'total'], '')::numeric AS cc_visit_total,
+             NULLIF(payload_json #>> ARRAY['visits', 'totalVisits'], '')::numeric AS cc_total_visits,
+             NULLIF(payload_json #>> ARRAY['visits', 'bookings'], '')::numeric AS cc_session_bookings,
+             NULLIF(payload_json #>> ARRAY['visits', 'bookingsVisits'], '')::numeric AS cc_session_visits,
+             NULLIF(payload_json #>> ARRAY['visits', 'appointments'], '')::numeric AS cc_appointment_bookings,
+             NULLIF(payload_json #>> ARRAY['visits', 'appointmentsVisits'], '')::numeric AS cc_appointment_visits,
+             NULLIF(payload_json #>> ARRAY['visits', 'openAreaVisits'], '')::numeric AS cc_open_area_visits,
+             COALESCE(payload_json -> 'customerTags', '[]'::jsonb)::text AS cc_customer_tags
+      FROM source_momence.momence_members t
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      WHERE NOT t.tombstone
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: member_id
+        sql: record_id
+        type: string
+        title: Member ID
+      - name: full_name
+        sql: cc_full_name
+        type: string
+        title: Member
+      - name: email
+        sql: "payload_json ->> 'email'"
+        type: string
+        public: false
+      - name: phone_number
+        sql: "payload_json ->> 'phoneNumber'"
+        type: string
+        public: false
+      - name: has_email
+        sql: "NULLIF(BTRIM(payload_json ->> 'email'), '') IS NOT NULL"
+        type: boolean
+      - name: has_phone_number
+        sql: "NULLIF(BTRIM(payload_json ->> 'phoneNumber'), '') IS NOT NULL"
+        type: boolean
+      - name: first_seen
+        sql: cc_first_seen
+        type: time
+        description: Earliest member activity timestamp returned by Momence; not guaranteed to be signup time.
+      - name: last_seen
+        sql: cc_last_seen
+        type: time
+        description: Latest member activity timestamp returned by Momence; not a churn or cancellation timestamp.
+      - name: customer_tags
+        sql: cc_customer_tags
+        type: string
+        description: Momence member tags as source JSON text; exact tag-level analysis is available in the source explorer.
+      - name: observed_visit_count
+        sql: "COALESCE(cc_total_visits, cc_visit_total)"
+        type: number
+        description: Current source-reported total visit counter for this member.
+      - name: session_booking_count
+        sql: cc_session_bookings
+        type: number
+      - name: session_visit_count
+        sql: cc_session_visits
+        type: number
+      - name: appointment_booking_count
+        sql: cc_appointment_bookings
+        type: number
+      - name: appointment_visit_count
+        sql: cc_appointment_visits
+        type: number
+      - name: open_area_visit_count
+        sql: cc_open_area_visits
+        type: number
+      - name: engagement_band
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) = 0 THEN 'No observed visits'
+            WHEN COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) = 1 THEN 'One observed visit'
+            WHEN COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) BETWEEN 2 AND 5 THEN '2-5 observed visits'
+            WHEN COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) BETWEEN 6 AND 20 THEN '6-20 observed visits'
+            ELSE '21+ observed visits'
+          END
+        type: string
+    measures:
+      - name: member_count
+        type: count
+        title: Members
+      - name: members_with_observed_visits
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) > 0"
+      - name: repeat_visitors
+        type: count
+        description: Members whose current source visit counter is at least two; not a period-cohort retention metric.
+        filters:
+          - sql: "COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) >= 2"
+      - name: observed_visits
+        type: sum
+        sql: "COALESCE(cc_total_visits, cc_visit_total, 0)"
+        description: Sum of current member visit counters. Do not trend this snapshot as event-level visits.
+      - name: observed_session_visits
+        type: sum
+        sql: "COALESCE(cc_session_visits, 0)"
+      - name: observed_appointment_visits
+        type: sum
+        sql: "COALESCE(cc_appointment_visits, 0)"
+      - name: observed_open_area_visits
+        type: sum
+        sql: "COALESCE(cc_open_area_visits, 0)"
+      - name: average_observed_visits_per_member
+        type: avg
+        sql: "COALESCE(cc_total_visits, cc_visit_total, 0)"
+      - name: repeat_visitor_rate_pct
+        type: number
+        sql: >
+          100.0 * COUNT(*) FILTER (
+            WHERE COALESCE({CUBE}.cc_total_visits, {CUBE}.cc_visit_total, 0) >= 2
+          ) / NULLIF(COUNT(*), 0)
+        format: percent
+        description: Share of member profiles with at least two source-reported lifetime-style visits.
+
+  - name: momence_schedule_events
+    title: Momence sessions and appointments
+    public: false
+    description: >
+      One row per scheduled Momence activity occurrence: either one class/session
+      occurrence or one appointment reservation block. Session templates are not
+      present in this API surface; recurring marks an occurrence generated by a
+      series and must not be counted as the series itself.
+    meta:
+      ai_context: >
+        This is the schedule-occurrence grain. Session and appointment rows share
+        time, teacher, location, capacity and reservation measures, but retain
+        activity_kind. Session bookingCount is Momence's header count. Appointment
+        reservations are counted from non-cancelled attendees because the request
+        deliberately includes cancelled attendees. Capacity minus reservations is
+        an availability estimate, never a guarantee of bookability. Draft and
+        cancelled activities are excluded from scheduled measures. Teacher means
+        assigned instructor, not an employment shift or paid labour interval.
+    sql: >
+      WITH latest_sessions AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sessions
+        GROUP BY tenant_id, connection_id
+      ), current_sessions AS MATERIALIZED (
+        SELECT s.*
+        FROM source_momence.momence_sessions s
+        JOIN latest_sessions l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      ), latest_details AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_session_details
+        GROUP BY tenant_id, connection_id
+      ), current_details AS MATERIALIZED (
+        SELECT d.*
+        FROM source_momence.momence_session_details d
+        JOIN latest_details l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT d.tombstone
+      ), latest_appointments AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_appointments
+        GROUP BY tenant_id, connection_id
+      ), current_appointments AS MATERIALIZED (
+        SELECT a.*
+        FROM source_momence.momence_appointments a
+        JOIN latest_appointments l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT a.tombstone
+      )
+      SELECT
+        s.tenant_id, s.connection_id, s.namespaced_source_key AS row_key,
+        'Session'::text AS activity_kind, s.record_id AS activity_id,
+        COALESCE(NULLIF(s.payload_json ->> 'name', ''), s.name, 'Session ' || s.record_id) AS activity_name,
+        s.payload_json ->> 'type' AS activity_type,
+        COALESCE(s.payload_json -> 'tags', '[]'::jsonb)::text AS activity_tags,
+        NULL::text AS service_name, NULL::text AS service_variant_name,
+        NULLIF(s.payload_json ->> 'startsAt', '')::timestamptz AS starts_at,
+        NULLIF(s.payload_json ->> 'endsAt', '')::timestamptz AS ends_at,
+        NULLIF(s.payload_json ->> 'durationInMinutes', '')::numeric AS duration_minutes,
+        NULLIF(s.payload_json #>> ARRAY['teacher', 'id'], '') AS teacher_id,
+        NULLIF(BTRIM(CONCAT_WS(' ', s.payload_json #>> ARRAY['teacher', 'firstName'], s.payload_json #>> ARRAY['teacher', 'lastName'])), '') AS teacher_name,
+        NULLIF(s.payload_json #>> ARRAY['inPersonLocation', 'id'], '') AS location_id,
+        s.payload_json #>> ARRAY['inPersonLocation', 'name'] AS location_name,
+        COALESCE((s.payload_json ->> 'isInPerson')::boolean, false) AS is_in_person,
+        COALESCE((s.payload_json ->> 'isRecurring')::boolean, false) AS is_recurring,
+        COALESCE((s.payload_json ->> 'isDraft')::boolean, false) AS is_draft,
+        COALESCE((s.payload_json ->> 'isCancelled')::boolean, false) AS is_cancelled,
+        NULLIF(s.payload_json ->> 'capacity', '')::numeric AS capacity,
+        NULLIF(s.payload_json ->> 'bookingCount', '')::numeric AS reservation_count,
+        NULLIF(d.payload_json ->> 'waitlistCapacity', '')::numeric AS waitlist_capacity,
+        NULLIF(d.payload_json ->> 'waitlistBookingCount', '')::numeric AS waitlist_reservation_count,
+        GREATEST(
+          COALESCE(NULLIF(s.payload_json ->> 'capacity', '')::numeric, 0)
+          - COALESCE(NULLIF(s.payload_json ->> 'bookingCount', '')::numeric, 0),
+          0
+        ) AS available_places,
+        jsonb_array_length(COALESCE(d.payload_json -> 'additionalTeachers', '[]'::jsonb))::numeric AS additional_teacher_count,
+        NULL::numeric AS listed_price, NULL::text AS currency
+      FROM current_sessions s
+      LEFT JOIN current_details d
+        ON d.tenant_id = s.tenant_id
+       AND d.connection_id = s.connection_id
+       AND d.record_id = s.record_id
+      UNION ALL
+      SELECT
+        a.tenant_id, a.connection_id, a.namespaced_source_key,
+        'Appointment'::text, a.record_id,
+        COALESCE(
+          NULLIF(a.payload_json #>> ARRAY['serviceVariant', 'name'], ''),
+          NULLIF(a.payload_json #>> ARRAY['service', 'name'], ''),
+          a.name,
+          'Appointment ' || a.record_id
+        ),
+        'appointment'::text,
+        '[]'::jsonb::text,
+        a.payload_json #>> ARRAY['service', 'name'],
+        a.payload_json #>> ARRAY['serviceVariant', 'name'],
+        NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz,
+        NULLIF(a.payload_json ->> 'endsAt', '')::timestamptz,
+        NULLIF(a.payload_json ->> 'durationInMinutes', '')::numeric,
+        NULLIF(a.payload_json #>> ARRAY['teacher', 'id'], ''),
+        NULLIF(BTRIM(CONCAT_WS(' ', a.payload_json #>> ARRAY['teacher', 'firstName'], a.payload_json #>> ARRAY['teacher', 'lastName'])), ''),
+        NULLIF(a.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+        a.payload_json #>> ARRAY['inPersonLocation', 'name'],
+        COALESCE((a.payload_json ->> 'isInPerson')::boolean, false),
+        false,
+        false,
+        a.payload_json ->> 'cancelledAt' IS NOT NULL,
+        NULLIF(a.payload_json ->> 'capacity', '')::numeric,
+        (
+          SELECT COUNT(*)::numeric
+          FROM jsonb_array_elements(COALESCE(a.payload_json -> 'appointmentAttendees', '[]'::jsonb)) attendee
+          WHERE attendee ->> 'cancelledAt' IS NULL
+            AND COALESCE(attendee ->> 'attendanceStatus', 'booked') <> 'cancelled'
+        ),
+        NULL::numeric,
+        NULL::numeric,
+        GREATEST(
+          COALESCE(NULLIF(a.payload_json ->> 'capacity', '')::numeric, 0)
+          - (
+              SELECT COUNT(*)::numeric
+              FROM jsonb_array_elements(COALESCE(a.payload_json -> 'appointmentAttendees', '[]'::jsonb)) attendee
+              WHERE attendee ->> 'cancelledAt' IS NULL
+                AND COALESCE(attendee ->> 'attendanceStatus', 'booked') <> 'cancelled'
+            ),
+          0
+        ),
+        CASE WHEN a.payload_json #>> ARRAY['additionalTeacher', 'id'] IS NULL THEN 0::numeric ELSE 1::numeric END,
+        NULLIF(a.payload_json ->> 'priceInCurrency', '')::numeric,
+        NULLIF(a.payload_json ->> 'currency', '')
+      FROM current_appointments a
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: activity_kind
+        sql: activity_kind
+        type: string
+        description: Session or Appointment; always retain this distinction when interpreting counts.
+      - name: activity_id
+        sql: activity_id
+        type: string
+      - name: activity_name
+        sql: activity_name
+        type: string
+      - name: activity_type
+        sql: activity_type
+        type: string
+      - name: activity_tags
+        sql: activity_tags
+        type: string
+        description: Momence session tags as JSON text. Appointments do not expose tags on this endpoint.
+      - name: service_name
+        sql: service_name
+        type: string
+      - name: service_variant_name
+        sql: service_variant_name
+        type: string
+      - name: starts_at
+        sql: starts_at
+        type: time
+        title: Scheduled start
+      - name: ends_at
+        sql: ends_at
+        type: time
+      - name: duration_minutes
+        sql: duration_minutes
+        type: number
+      - name: teacher_id
+        sql: teacher_id
+        type: string
+        public: false
+      - name: teacher_name
+        sql: teacher_name
+        type: string
+        title: Instructor
+        description: Assigned Momence teacher; this does not prove employee status, hours worked or payroll cost.
+      - name: location_id
+        sql: location_id
+        type: string
+        public: false
+      - name: location_name
+        sql: location_name
+        type: string
+      - name: is_in_person
+        sql: is_in_person
+        type: boolean
+      - name: is_recurring
+        sql: is_recurring
+        type: boolean
+        description: This occurrence belongs to a recurring setup; it is still one occurrence, not the series.
+      - name: is_draft
+        sql: is_draft
+        type: boolean
+      - name: is_cancelled
+        sql: is_cancelled
+        type: boolean
+      - name: capacity
+        sql: capacity
+        type: number
+      - name: reservations
+        sql: reservation_count
+        type: number
+        description: Session header booking count or non-cancelled appointment attendee count.
+      - name: available_places_estimate
+        sql: available_places
+        type: number
+        description: Capacity minus current reservations, floored at zero; pricing, sales cutoffs and booking rules may still prevent booking.
+      - name: waitlist_capacity
+        sql: waitlist_capacity
+        type: number
+      - name: waitlist_reservations
+        sql: waitlist_reservation_count
+        type: number
+      - name: additional_teacher_count
+        sql: additional_teacher_count
+        type: number
+      - name: appointment_listed_price
+        sql: listed_price
+        type: number
+        description: Appointment price only. Session occurrence price is unavailable on the required host schedule endpoint.
+      - name: currency_code
+        sql: currency
+        type: string
+      - name: schedule_state
+        sql: >
+          CASE
+            WHEN {CUBE}.is_cancelled THEN 'Cancelled'
+            WHEN {CUBE}.is_draft THEN 'Draft'
+            WHEN {CUBE}.ends_at < NOW() THEN 'Completed time window'
+            WHEN {CUBE}.starts_at <= NOW() THEN 'In progress'
+            ELSE 'Upcoming'
+          END
+        type: string
+    measures:
+      - name: activity_occurrences
+        type: count
+        description: All session and appointment occurrences, including draft and cancelled rows.
+      - name: scheduled_occurrences
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: session_occurrences
+        type: count
+        filters:
+          - sql: "{CUBE}.activity_kind = 'Session'"
+      - name: appointment_occurrences
+        type: count
+        filters:
+          - sql: "{CUBE}.activity_kind = 'Appointment'"
+      - name: cancelled_occurrences
+        type: count
+        filters:
+          - sql: "{CUBE}.is_cancelled"
+      - name: draft_sessions
+        type: count
+        filters:
+          - sql: "{CUBE}.is_draft"
+      - name: booked_places
+        type: sum
+        sql: reservation_count
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: capacity_places
+        type: sum
+        sql: capacity
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: available_places
+        type: sum
+        sql: available_places
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: waitlist_booking_count
+        type: sum
+        sql: waitlist_reservation_count
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: scheduled_minutes
+        type: sum
+        sql: duration_minutes
+        filters:
+          - sql: "NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft"
+      - name: full_or_overbooked_occurrences
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft
+              AND {CUBE}.capacity > 0
+              AND {CUBE}.reservation_count >= {CUBE}.capacity
+      - name: capacity_utilization_pct
+        type: number
+        sql: >
+          100.0 * SUM({CUBE}.reservation_count) FILTER (
+            WHERE NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft
+          ) / NULLIF(
+            SUM({CUBE}.capacity) FILTER (
+              WHERE NOT {CUBE}.is_cancelled AND NOT {CUBE}.is_draft
+            ),
+            0
+          )
+        format: percent
+        description: Weighted reserved-place utilization across non-draft, non-cancelled occurrences; not attendance utilization.
+
+  - name: momence_attendance_events
+    title: Momence booking and attendance events
+    public: false
+    description: >
+      One row per member reservation record: a session booking or the member's
+      reservation on an appointment. A session booking can carry ticketsBought
+      greater than one, but checkedIn applies to the booking record, not each
+      unnamed ticket-holder.
+    meta:
+      ai_context: >
+        This is reservation/attendance grain, not schedule occurrence, sale or
+        payment grain. Cancelled and late-cancelled reservations are retained.
+        Checked in is source-reported. Momence does not publish a session no-show
+        flag; no_show_proxy means the activity has ended, the reservation was
+        not cancelled and no check-in was returned. Always label it as a proxy.
+        Attendance rate is reservation-record weighted, not ticket/people weighted.
+        Upcoming unchecked bookings are never no-shows. Appointment paid/deposit
+        flags describe the reservation and are not captured-payment evidence.
+    sql: >
+      WITH latest_bookings AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_session_bookings
+        GROUP BY tenant_id, connection_id
+      ), current_bookings AS MATERIALIZED (
+        SELECT b.*
+        FROM source_momence.momence_session_bookings b
+        JOIN latest_bookings l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT b.tombstone
+      ), latest_sessions AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sessions
+        GROUP BY tenant_id, connection_id
+      ), current_sessions AS MATERIALIZED (
+        SELECT s.*
+        FROM source_momence.momence_sessions s
+        JOIN latest_sessions l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      ), latest_member_appointments AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_member_appointments
+        GROUP BY tenant_id, connection_id
+      ), current_member_appointments AS MATERIALIZED (
+        SELECT a.*
+        FROM source_momence.momence_member_appointments a
+        JOIN latest_member_appointments l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT a.tombstone
+      )
+      SELECT
+        b.tenant_id, b.connection_id, b.namespaced_source_key AS row_key,
+        'Session'::text AS activity_kind,
+        b.record_id AS reservation_id, b.parent_id AS activity_id,
+        COALESCE(NULLIF(s.payload_json ->> 'name', ''), 'Session ' || b.parent_id) AS activity_name,
+        NULLIF(s.payload_json ->> 'startsAt', '')::timestamptz AS starts_at,
+        NULLIF(s.payload_json ->> 'endsAt', '')::timestamptz AS ends_at,
+        NULLIF(b.payload_json ->> 'createdAt', '')::timestamptz AS booked_at,
+        NULLIF(b.payload_json ->> 'cancelledAt', '')::timestamptz AS cancelled_at,
+        NULL::timestamptz AS checked_in_at,
+        CASE
+          WHEN b.payload_json ->> 'cancelledAt' IS NOT NULL THEN 'cancelled'
+          WHEN COALESCE((b.payload_json ->> 'checkedIn')::boolean, false) THEN 'checkedIn'
+          ELSE 'booked'
+        END AS source_attendance_status,
+        CASE
+          WHEN COALESCE((s.payload_json ->> 'isCancelled')::boolean, false) THEN 'Activity cancelled'
+          WHEN b.payload_json ->> 'cancelledAt' IS NOT NULL THEN 'Cancelled'
+          WHEN COALESCE((b.payload_json ->> 'checkedIn')::boolean, false) THEN 'Checked in'
+          WHEN NULLIF(s.payload_json ->> 'endsAt', '')::timestamptz < NOW() THEN 'No-show proxy'
+          WHEN NULLIF(s.payload_json ->> 'startsAt', '')::timestamptz > NOW() THEN 'Upcoming'
+          ELSE 'Booked / unresolved'
+        END AS attendance_outcome,
+        NULLIF(b.payload_json #>> ARRAY['member', 'id'], '') AS member_id,
+        NULLIF(BTRIM(CONCAT_WS(' ', b.payload_json #>> ARRAY['member', 'firstName'], b.payload_json #>> ARRAY['member', 'lastName'])), '') AS member_name,
+        NULLIF(s.payload_json #>> ARRAY['teacher', 'id'], '') AS teacher_id,
+        NULLIF(BTRIM(CONCAT_WS(' ', s.payload_json #>> ARRAY['teacher', 'firstName'], s.payload_json #>> ARRAY['teacher', 'lastName'])), '') AS teacher_name,
+        NULLIF(s.payload_json #>> ARRAY['inPersonLocation', 'id'], '') AS location_id,
+        s.payload_json #>> ARRAY['inPersonLocation', 'name'] AS location_name,
+        COALESCE((s.payload_json ->> 'isCancelled')::boolean, false) AS activity_cancelled,
+        COALESCE((b.payload_json ->> 'checkedIn')::boolean, false) AS checked_in,
+        false AS is_late_cancelled,
+        NULL::boolean AS is_paid,
+        NULL::boolean AS is_deposit_paid,
+        COALESCE(NULLIF(b.payload_json ->> 'ticketsBought', '')::numeric, 1) AS reserved_places,
+        NULL::numeric AS listed_price,
+        NULL::text AS currency
+      FROM current_bookings b
+      LEFT JOIN current_sessions s
+        ON s.tenant_id = b.tenant_id
+       AND s.connection_id = b.connection_id
+       AND s.record_id = b.parent_id
+      UNION ALL
+      SELECT
+        a.tenant_id, a.connection_id, a.namespaced_source_key,
+        'Appointment'::text,
+        a.record_id,
+        NULLIF(a.payload_json ->> 'id', ''),
+        COALESCE(
+          NULLIF(a.payload_json #>> ARRAY['serviceVariant', 'name'], ''),
+          NULLIF(a.payload_json #>> ARRAY['service', 'name'], ''),
+          'Appointment ' || a.payload_json ->> 'id'
+        ),
+        NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz,
+        NULLIF(a.payload_json ->> 'endsAt', '')::timestamptz,
+        COALESCE(
+          NULLIF(a.payload_json #>> ARRAY['member', 'bookedAt'], '')::timestamptz,
+          NULLIF(a.payload_json ->> 'createdAt', '')::timestamptz
+        ),
+        COALESCE(
+          NULLIF(a.payload_json #>> ARRAY['member', 'cancelledAt'], '')::timestamptz,
+          NULLIF(a.payload_json ->> 'cancelledAt', '')::timestamptz
+        ),
+        NULLIF(a.payload_json #>> ARRAY['member', 'checkedInAt'], '')::timestamptz,
+        a.payload_json #>> ARRAY['member', 'attendanceStatus'],
+        CASE
+          WHEN a.payload_json ->> 'cancelledAt' IS NOT NULL THEN 'Activity cancelled'
+          WHEN COALESCE((a.payload_json #>> ARRAY['member', 'isLateCancelled'])::boolean, false) THEN 'Late cancelled'
+          WHEN a.payload_json #>> ARRAY['member', 'cancelledAt'] IS NOT NULL
+            OR a.payload_json #>> ARRAY['member', 'attendanceStatus'] = 'cancelled' THEN 'Cancelled'
+          WHEN a.payload_json #>> ARRAY['member', 'checkedInAt'] IS NOT NULL
+            OR a.payload_json #>> ARRAY['member', 'attendanceStatus'] = 'checkedIn' THEN 'Checked in'
+          WHEN NULLIF(a.payload_json ->> 'endsAt', '')::timestamptz < NOW() THEN 'No-show proxy'
+          WHEN NULLIF(a.payload_json ->> 'startsAt', '')::timestamptz > NOW() THEN 'Upcoming'
+          ELSE 'Booked / unresolved'
+        END,
+        COALESCE(NULLIF(a.payload_json #>> ARRAY['member', 'id'], ''), a.parent_id),
+        NULLIF(BTRIM(CONCAT_WS(' ', a.payload_json #>> ARRAY['member', 'firstName'], a.payload_json #>> ARRAY['member', 'lastName'])), ''),
+        NULLIF(a.payload_json #>> ARRAY['teacher', 'id'], ''),
+        NULLIF(BTRIM(CONCAT_WS(' ', a.payload_json #>> ARRAY['teacher', 'firstName'], a.payload_json #>> ARRAY['teacher', 'lastName'])), ''),
+        NULLIF(a.payload_json #>> ARRAY['inPersonLocation', 'id'], ''),
+        a.payload_json #>> ARRAY['inPersonLocation', 'name'],
+        a.payload_json ->> 'cancelledAt' IS NOT NULL,
+        a.payload_json #>> ARRAY['member', 'checkedInAt'] IS NOT NULL
+          OR a.payload_json #>> ARRAY['member', 'attendanceStatus'] = 'checkedIn',
+        COALESCE((a.payload_json #>> ARRAY['member', 'isLateCancelled'])::boolean, false),
+        CASE WHEN a.payload_json #>> ARRAY['member', 'isPaid'] IS NULL THEN NULL
+             ELSE (a.payload_json #>> ARRAY['member', 'isPaid'])::boolean END,
+        CASE WHEN a.payload_json #>> ARRAY['member', 'isDepositPaid'] IS NULL THEN NULL
+             ELSE (a.payload_json #>> ARRAY['member', 'isDepositPaid'])::boolean END,
+        1::numeric,
+        NULLIF(a.payload_json ->> 'priceInCurrency', '')::numeric,
+        NULLIF(a.payload_json ->> 'currency', '')
+      FROM current_member_appointments a
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+      - name: momence_members
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_members}.tenant_id
+          AND {CUBE}.connection_id = {momence_members}.connection_id
+          AND {CUBE}.member_id = {momence_members}.member_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: activity_kind
+        sql: activity_kind
+        type: string
+      - name: reservation_id
+        sql: reservation_id
+        type: string
+      - name: activity_id
+        sql: activity_id
+        type: string
+      - name: activity_name
+        sql: activity_name
+        type: string
+      - name: starts_at
+        sql: starts_at
+        type: time
+        title: Activity start
+      - name: ends_at
+        sql: ends_at
+        type: time
+      - name: booked_at
+        sql: booked_at
+        type: time
+        description: When the reservation was created; not the attendance or revenue date.
+      - name: cancelled_at
+        sql: cancelled_at
+        type: time
+      - name: checked_in_at
+        sql: checked_in_at
+        type: time
+        description: Exact appointment check-in timestamp when supplied; session bookings expose only a checked-in boolean.
+      - name: source_attendance_status
+        sql: source_attendance_status
+        type: string
+      - name: attendance_outcome
+        sql: attendance_outcome
+        type: string
+        description: Source check-in/cancellation state plus explicitly labelled no-show proxy for ended unresolved reservations.
+      - name: member_id
+        sql: member_id
+        type: string
+        public: false
+      - name: member_name
+        sql: member_name
+        type: string
+      - name: teacher_id
+        sql: teacher_id
+        type: string
+        public: false
+      - name: teacher_name
+        sql: teacher_name
+        type: string
+        title: Instructor
+      - name: location_id
+        sql: location_id
+        type: string
+        public: false
+      - name: location_name
+        sql: location_name
+        type: string
+      - name: activity_cancelled
+        sql: activity_cancelled
+        type: boolean
+        description: The whole session/appointment was cancelled, distinct from one member cancelling.
+      - name: checked_in
+        sql: checked_in
+        type: boolean
+      - name: is_late_cancelled
+        sql: is_late_cancelled
+        type: boolean
+        description: Momence reports this only for appointment attendees; session booking rows do not expose it.
+      - name: is_paid
+        sql: is_paid
+        type: boolean
+        description: Appointment reservation flag, not proof of a captured payment transaction.
+      - name: is_deposit_paid
+        sql: is_deposit_paid
+        type: boolean
+      - name: reserved_places
+        sql: reserved_places
+        type: number
+        description: ticketsBought for a session booking and one for a member appointment reservation.
+      - name: appointment_listed_price
+        sql: listed_price
+        type: number
+      - name: currency_code
+        sql: currency
+        type: string
+    measures:
+      - name: reservation_records
+        type: count
+        description: Booking records, not necessarily people; a session booking may represent multiple tickets.
+      - name: active_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled"
+      - name: eligible_past_reservations
+        type: count
+        description: Ended, non-cancelled reservation records eligible for the reservation-level attendance rate.
+        filters:
+          - sql: >
+              {CUBE}.ends_at < NOW()
+              AND {CUBE}.cancelled_at IS NULL
+              AND NOT {CUBE}.activity_cancelled
+      - name: checked_in_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.checked_in AND {CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled"
+      - name: checked_in_past_reservations
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.ends_at < NOW() AND {CUBE}.checked_in
+              AND {CUBE}.cancelled_at IS NULL
+              AND NOT {CUBE}.activity_cancelled
+      - name: cancelled_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.cancelled_at IS NOT NULL AND NOT {CUBE}.activity_cancelled"
+      - name: late_cancelled_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.is_late_cancelled AND NOT {CUBE}.activity_cancelled"
+      - name: no_show_proxy_reservations
+        type: count
+        description: Ended, non-cancelled records without a returned check-in. This is an Albert proxy, not a Momence no-show flag.
+        filters:
+          - sql: >
+              {CUBE}.ends_at < NOW() AND NOT {CUBE}.checked_in
+              AND {CUBE}.cancelled_at IS NULL
+              AND NOT {CUBE}.activity_cancelled
+      - name: upcoming_reservations
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.starts_at > NOW()
+              AND {CUBE}.cancelled_at IS NULL
+              AND NOT {CUBE}.activity_cancelled
+      - name: reserved_place_count
+        type: sum
+        sql: reserved_places
+        filters:
+          - sql: "{CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled"
+      - name: paid_appointment_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.activity_kind = 'Appointment' AND {CUBE}.is_paid = true"
+      - name: deposit_paid_appointment_reservations
+        type: count
+        filters:
+          - sql: "{CUBE}.activity_kind = 'Appointment' AND {CUBE}.is_deposit_paid = true"
+      - name: reservation_attendance_rate_pct
+        type: number
+        sql: >
+          100.0 * COUNT(*) FILTER (
+            WHERE {CUBE}.ends_at < NOW() AND {CUBE}.checked_in
+              AND {CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled
+          ) / NULLIF(
+            COUNT(*) FILTER (
+              WHERE {CUBE}.ends_at < NOW()
+                AND {CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled
+            ),
+            0
+          )
+        format: percent
+        description: Reservation-record attendance rate; not attendee/ticket weighted.
+      - name: no_show_proxy_rate_pct
+        type: number
+        sql: >
+          100.0 * COUNT(*) FILTER (
+            WHERE {CUBE}.ends_at < NOW() AND NOT {CUBE}.checked_in
+              AND {CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled
+          ) / NULLIF(
+            COUNT(*) FILTER (
+              WHERE {CUBE}.ends_at < NOW()
+                AND {CUBE}.cancelled_at IS NULL AND NOT {CUBE}.activity_cancelled
+            ),
+            0
+          )
+        format: percent
+        description: Albert's unresolved-after-end proxy rate; never present it as a source-certified no-show rate.

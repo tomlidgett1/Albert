@@ -1,0 +1,1002 @@
+cubes:
+  # ---------------------------------------------------------------------------
+  # Xero AU payroll cubes.
+  #
+  # Source: source_xero_official.xo_* views over XER_OFFICIAL. Privacy: Tax
+  # File Numbers and employee bank account digits are never landed in these
+  # views. Semantics follow the Xero Payroll AU API: a PayRun is a pay cycle
+  # execution, a Payslip is one employee's slice of a pay run, a Timesheet is
+  # submitted hours for a period, pay items define earnings/deduction/leave/
+  # reimbursement types.
+  # ---------------------------------------------------------------------------
+
+  - name: xero_payroll_employees
+    title: Payroll employees (Xero)
+    public: false
+    description: >
+      One row per employee in Xero AU payroll: name, job title, employment
+      type and basis, income type, start date, status, payroll calendar and
+      tax declaration flags. Tax File Numbers and bank details are never
+      exposed.
+    meta:
+      ai_context: >
+        The payroll staff list. "Employees on payroll", "full time vs casual"
+        (employment_type), "salaried staff" resolve here via full_name. status
+        = 'ACTIVE' means currently employed. This is Xero's payroll list; the
+        same people may also appear in Deputy under slightly different names,
+        never join across tools by exact string.
+    sql: SELECT * FROM source_xero_official.xo_payroll_employees
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_calendars
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_calendars}.tenant_id
+          AND {CUBE}.payroll_calendar_id = {xero_payroll_calendars}.payroll_calendar_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: full_name
+        sql: full_name
+        type: string
+        title: Employee
+      - name: first_name
+        sql: first_name
+        type: string
+        public: false
+      - name: last_name
+        sql: last_name
+        type: string
+        public: false
+      - name: status
+        sql: status
+        type: string
+        description: ACTIVE or TERMINATED.
+      - name: email
+        sql: email
+        type: string
+        public: false
+      - name: date_of_birth
+        sql: date_of_birth
+        type: time
+        public: false
+      - name: gender
+        sql: gender
+        type: string
+      - name: job_title
+        sql: job_title
+        type: string
+        title: Job title
+      - name: classification
+        sql: classification
+        type: string
+        description: Award classification, when recorded.
+      - name: employment_type
+        sql: employment_type
+        type: string
+        title: Employment type
+        description: FULLTIME, PARTTIME, CASUAL, LABOURHIRE or SUPERINCOMESTREAM.
+      - name: income_type
+        sql: income_type
+        type: string
+        description: STP income type (SALARYANDWAGES, CLOSELYHELDPAYEES, WORKINGHOLIDAYMAKER...).
+      - name: started_on
+        sql: started_on
+        type: time
+        title: Start date
+      - name: ordinary_earnings_rate_id
+        sql: ordinary_earnings_rate_id
+        type: string
+        public: false
+      - name: payroll_calendar_id
+        sql: payroll_calendar_id
+        type: string
+        public: false
+      - name: approves_leave
+        sql: approves_leave
+        type: boolean
+        description: Authorised to approve leave requests.
+      - name: approves_timesheets
+        sql: approves_timesheets
+        type: boolean
+        description: Authorised to approve timesheets.
+      - name: employment_basis
+        sql: employment_basis
+        type: string
+        description: Tax declaration employment basis (FULLTIME, PARTTIME, CASUAL...).
+      - name: australian_tax_resident
+        sql: australian_tax_resident
+        type: boolean
+      - name: tax_free_threshold_claimed
+        sql: tax_free_threshold_claimed
+        type: boolean
+      - name: has_loan_or_student_debt
+        sql: has_loan_or_student_debt
+        type: boolean
+        description: HELP/study-loan repayment flag on the tax declaration.
+      - name: home_city
+        sql: home_city
+        type: string
+        public: false
+      - name: home_region
+        sql: home_region
+        type: string
+        public: false
+      - name: home_postal_code
+        sql: home_postal_code
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: employee_count
+        type: count
+        title: Employees
+      - name: active_employee_count
+        type: count
+        title: Active employees
+        filters:
+          - sql: "{CUBE}.status = 'ACTIVE'"
+
+    segments:
+      - name: active_employees
+        sql: "{CUBE}.status = 'ACTIVE'"
+
+  - name: xero_pay_runs
+    title: Pay runs (Xero)
+    public: false
+    description: >
+      One row per Xero pay run: a pay cycle execution with period start/end,
+      payment date and totals for wages, tax, super, deductions,
+      reimbursements and net pay across all employees in the run.
+    meta:
+      ai_context: >
+        Aggregate payroll cost by pay cycle. "Payroll cost", "wages paid",
+        "PAYG withheld", "super paid" = wages / tax / super measures here with
+        paid_on as the business date. status POSTED means finalised. For
+        per-employee amounts use xero_payslips.
+    sql: SELECT * FROM source_xero_official.xo_pay_runs
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_calendars
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_calendars}.tenant_id
+          AND {CUBE}.payroll_calendar_id = {xero_payroll_calendars}.payroll_calendar_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: pay_run_id
+        sql: pay_run_id
+        type: string
+        public: false
+      - name: payroll_calendar_id
+        sql: payroll_calendar_id
+        type: string
+        public: false
+      - name: period_started_on
+        sql: period_started_on
+        type: time
+        title: Period start
+      - name: period_ended_on
+        sql: period_ended_on
+        type: time
+        title: Period end
+      - name: paid_on
+        sql: paid_on
+        type: time
+        title: Payment date
+        description: When employees were paid. Business date for payroll cost analysis.
+      - name: status
+        sql: status
+        type: string
+        description: DRAFT or POSTED (finalised).
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: pay_run_count
+        type: count
+        title: Pay runs
+      - name: total_wages
+        type: sum
+        sql: wages
+        format: currency
+        title: Gross wages
+      - name: total_tax
+        type: sum
+        sql: tax
+        format: currency
+        title: PAYG tax withheld
+      - name: total_super
+        type: sum
+        sql: super
+        format: currency
+        title: Superannuation
+      - name: total_deductions
+        type: sum
+        sql: deductions
+        format: currency
+        title: Deductions
+      - name: total_reimbursements
+        type: sum
+        sql: reimbursements
+        format: currency
+        title: Reimbursements
+      - name: total_net_pay
+        type: sum
+        sql: net_pay
+        format: currency
+        title: Net pay
+      - name: total_payroll_cost
+        type: sum
+        sql: "COALESCE({CUBE}.wages, 0) + COALESCE({CUBE}.super, 0)"
+        format: currency
+        title: Payroll cost (wages + super)
+        description: Employer cost approximation, gross wages plus superannuation.
+
+    segments:
+      - name: posted_pay_runs
+        sql: "{CUBE}.status = 'POSTED'"
+
+  - name: xero_payslips
+    title: Payslips (Xero)
+    public: false
+    description: >
+      One row per employee payslip within a pay run: that employee's wages,
+      tax, super, deductions, reimbursements and net pay for the period, with
+      the pay run's dates and status.
+    meta:
+      ai_context: >
+        Per-employee payroll. "How much did X earn", "wages by employee",
+        "highest paid staff" = wages / net_pay grouped by employee_name, with
+        paid_on as the business date. Filter pay_run_status = 'POSTED' for
+        finalised pay only.
+    sql: SELECT * FROM source_xero_official.xo_payslip_summaries
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_employees}.tenant_id
+          AND {CUBE}.employee_id = {xero_payroll_employees}.employee_id
+      - name: xero_pay_runs
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_pay_runs}.tenant_id
+          AND {CUBE}.pay_run_id = {xero_pay_runs}.pay_run_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: payslip_id
+        sql: payslip_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: employee_name
+        sql: employee_name
+        type: string
+        title: Employee
+      - name: pay_run_id
+        sql: pay_run_id
+        type: string
+        public: false
+      - name: period_started_on
+        sql: period_started_on
+        type: time
+        title: Period start
+      - name: period_ended_on
+        sql: period_ended_on
+        type: time
+        title: Period end
+      - name: paid_on
+        sql: paid_on
+        type: time
+        title: Payment date
+      - name: pay_run_status
+        sql: pay_run_status
+        type: string
+        description: DRAFT or POSTED (finalised).
+
+    measures:
+      - name: payslip_count
+        type: count
+        title: Payslips
+      - name: total_wages
+        type: sum
+        sql: wages
+        format: currency
+        title: Gross wages
+      - name: total_tax
+        type: sum
+        sql: tax
+        format: currency
+        title: PAYG tax withheld
+      - name: total_super
+        type: sum
+        sql: super
+        format: currency
+        title: Superannuation
+      - name: total_deductions
+        type: sum
+        sql: deductions
+        format: currency
+        title: Deductions
+      - name: total_reimbursements
+        type: sum
+        sql: reimbursements
+        format: currency
+        title: Reimbursements
+      - name: total_net_pay
+        type: sum
+        sql: net_pay
+        format: currency
+        title: Net pay
+      - name: avg_net_pay
+        type: avg
+        sql: net_pay
+        format: currency
+        title: Average net pay per payslip
+
+    segments:
+      - name: posted_payslips
+        sql: "{CUBE}.pay_run_status = 'POSTED'"
+
+  - name: xero_payroll_timesheets
+    title: Payroll timesheets (Xero)
+    public: false
+    description: >
+      One row per Xero payroll timesheet: an employee's submitted hours for a
+      pay period, with total hours and approval status.
+    meta:
+      ai_context: >
+        Hours submitted to payroll per pay period. "Hours paid through
+        payroll" = total_hours here; per-day detail is in
+        xero_timesheet_day_hours. For operational rostered/worked hours
+        Deputy timesheets are the richer source; these are what payroll
+        actually processed.
+    sql: SELECT * FROM source_xero_official.xo_payroll_timesheets
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_employees}.tenant_id
+          AND {CUBE}.employee_id = {xero_payroll_employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: timesheet_id
+        sql: timesheet_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: period_started_on
+        sql: period_started_on
+        type: time
+        title: Period start
+      - name: period_ended_on
+        sql: period_ended_on
+        type: time
+        title: Period end
+      - name: status
+        sql: status
+        type: string
+        description: DRAFT, PROCESSED or APPROVED.
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: timesheet_count
+        type: count
+        title: Timesheets
+      - name: total_hours
+        type: sum
+        sql: total_hours
+        title: Hours
+        description: Total hours across the selected timesheets.
+
+  - name: xero_timesheet_day_hours
+    title: Timesheet daily hours (Xero)
+    public: false
+    description: >
+      One row per timesheet line per day: the hours an employee recorded on a
+      specific date at a specific earnings rate. Derived from the timesheet
+      line's per-day units array.
+    meta:
+      ai_context: >
+        Daily payroll hours. "Hours worked on <date> per payroll", hours by
+        earnings rate (ordinary vs overtime etc. via xero_earnings_rates)
+        group by worked_on here.
+    sql: SELECT * FROM source_xero_official.xo_timesheet_day_units
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_employees}.tenant_id
+          AND {CUBE}.employee_id = {xero_payroll_employees}.employee_id
+      - name: xero_earnings_rates
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_earnings_rates}.tenant_id
+          AND {CUBE}.earnings_rate_id = {xero_earnings_rates}.earnings_rate_id
+      - name: xero_payroll_timesheets
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_timesheets}.tenant_id
+          AND {CUBE}.timesheet_id = {xero_payroll_timesheets}.timesheet_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: timesheet_id
+        sql: timesheet_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: earnings_rate_id
+        sql: earnings_rate_id
+        type: string
+        public: false
+      - name: worked_on
+        sql: worked_on
+        type: time
+        title: Date worked
+
+    measures:
+      - name: day_hours
+        type: sum
+        sql: hours
+        title: Hours
+      - name: day_entry_count
+        type: count
+        public: false
+
+  - name: xero_earnings_rates
+    title: Earnings rates (Xero pay items)
+    public: false
+    description: >
+      One row per earnings rate defined in Xero payroll: ordinary hours,
+      overtime, allowances etc., with rate type, per-unit rate and tax/super
+      exemption flags.
+    sql: SELECT * FROM source_xero_official.xo_earnings_rates
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: earnings_rate_id
+        sql: earnings_rate_id
+        type: string
+        public: false
+      - name: rate_name
+        sql: rate_name
+        type: string
+        title: Earnings rate
+        description: e.g. Ordinary Hours, Overtime Hours (x1.5), Tool Allowance.
+      - name: earnings_type
+        sql: earnings_type
+        type: string
+        description: ORDINARYTIMEEARNINGS, OVERTIMEEARNINGS, ALLOWANCE, LUMPSUMD...
+      - name: rate_type
+        sql: rate_type
+        type: string
+        description: FIXEDAMOUNT, MULTIPLE (of ordinary rate) or RATEPERUNIT.
+      - name: rate_per_unit
+        sql: rate_per_unit
+        type: number
+      - name: type_of_units
+        sql: type_of_units
+        type: string
+        description: Usually Hours.
+      - name: account_code
+        sql: account_code
+        type: string
+        description: GL account wages at this rate post to.
+      - name: is_exempt_from_tax
+        sql: is_exempt_from_tax
+        type: boolean
+      - name: is_exempt_from_super
+        sql: is_exempt_from_super
+        type: boolean
+      - name: allowance_type
+        sql: allowance_type
+        type: string
+      - name: is_current
+        sql: is_current
+        type: boolean
+    measures:
+      - name: rate_count
+        type: count
+
+  - name: xero_deduction_types
+    title: Deduction types (Xero pay items)
+    public: false
+    description: One row per payroll deduction type (e.g. salary sacrifice, union fees).
+    sql: SELECT * FROM source_xero_official.xo_deduction_types
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: deduction_type_id
+        sql: deduction_type_id
+        type: string
+        public: false
+      - name: deduction_name
+        sql: deduction_name
+        type: string
+        title: Deduction type
+      - name: category
+        sql: category
+        type: string
+        description: NONE, UNIONFEES, SALARYSACRIFICE, WORKPLACEGIVING...
+      - name: account_code
+        sql: account_code
+        type: string
+      - name: reduces_tax
+        sql: reduces_tax
+        type: boolean
+      - name: reduces_super
+        sql: reduces_super
+        type: boolean
+      - name: is_current
+        sql: is_current
+        type: boolean
+    measures:
+      - name: deduction_type_count
+        type: count
+
+  - name: xero_leave_types
+    title: Leave types (Xero pay items)
+    public: false
+    description: >
+      One row per payroll leave type (Annual Leave, Personal/Carer's Leave,
+      Long Service Leave...), with entitlement and whether it is paid.
+    sql: SELECT * FROM source_xero_official.xo_leave_types
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: leave_type_id
+        sql: leave_type_id
+        type: string
+        public: false
+      - name: leave_name
+        sql: leave_name
+        type: string
+        title: Leave type
+      - name: type_of_units
+        sql: type_of_units
+        type: string
+      - name: normal_entitlement
+        sql: normal_entitlement
+        type: number
+        description: Standard annual entitlement in units (usually hours).
+      - name: is_paid_leave
+        sql: is_paid_leave
+        type: boolean
+      - name: show_on_payslip
+        sql: show_on_payslip
+        type: boolean
+      - name: leave_category_code
+        sql: leave_category_code
+        type: string
+        description: STP leave category (ANNUALLEAVE, PERSONALLEAVE...).
+      - name: is_current
+        sql: is_current
+        type: boolean
+    measures:
+      - name: leave_type_count
+        type: count
+
+  - name: xero_reimbursement_types
+    title: Reimbursement types (Xero pay items)
+    public: false
+    description: One row per payroll reimbursement type.
+    sql: SELECT * FROM source_xero_official.xo_reimbursement_types
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: reimbursement_type_id
+        sql: reimbursement_type_id
+        type: string
+        public: false
+      - name: reimbursement_name
+        sql: reimbursement_name
+        type: string
+        title: Reimbursement type
+      - name: account_code
+        sql: account_code
+        type: string
+      - name: is_current
+        sql: is_current
+        type: boolean
+    measures:
+      - name: reimbursement_type_count
+        type: count
+
+  - name: xero_payroll_calendars
+    title: Payroll calendars (Xero)
+    public: false
+    description: >
+      One row per payroll calendar: the pay cycle definition (weekly,
+      fortnightly, monthly) that employees and pay runs attach to.
+    sql: SELECT * FROM source_xero_official.xo_payroll_calendars
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: payroll_calendar_id
+        sql: payroll_calendar_id
+        type: string
+        public: false
+      - name: calendar_name
+        sql: calendar_name
+        type: string
+        title: Pay calendar
+      - name: calendar_type
+        sql: calendar_type
+        type: string
+        description: WEEKLY, FORTNIGHTLY, MONTHLY...
+      - name: starts_on
+        sql: starts_on
+        type: time
+      - name: payment_date
+        sql: payment_date
+        type: time
+        public: false
+    measures:
+      - name: calendar_count
+        type: count
+
+  - name: xero_super_funds
+    title: Super funds (Xero)
+    public: false
+    description: >
+      One row per superannuation fund registered in payroll (regulated funds
+      and SMSFs), identified by name and USI.
+    sql: SELECT * FROM source_xero_official.xo_super_funds
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: super_fund_id
+        sql: super_fund_id
+        type: string
+        public: false
+      - name: fund_name
+        sql: fund_name
+        type: string
+        title: Super fund
+      - name: fund_type
+        sql: fund_type
+        type: string
+        description: REGULATED or SMSF.
+      - name: usi
+        sql: usi
+        type: string
+        description: Unique Superannuation Identifier.
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: fund_count
+        type: count
+
+  - name: xero_super_memberships
+    title: Super memberships (Xero)
+    public: false
+    description: One row per employee's membership of a super fund.
+    sql: SELECT * FROM source_xero_official.xo_super_memberships
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_employees}.tenant_id
+          AND {CUBE}.employee_id = {xero_payroll_employees}.employee_id
+      - name: xero_super_funds
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_super_funds}.tenant_id
+          AND {CUBE}.super_fund_id = {xero_super_funds}.super_fund_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: super_membership_id
+        sql: super_membership_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: super_fund_id
+        sql: super_fund_id
+        type: string
+        public: false
+      - name: employee_number
+        sql: employee_number
+        type: string
+        public: false
+    measures:
+      - name: membership_count
+        type: count
+
+  - name: xero_employee_pay_templates
+    title: Employee pay templates (Xero)
+    public: false
+    description: >
+      One row per earnings line on an employee's pay template: their standard
+      pay setup including annual salary or rate per unit and normal hours.
+    meta:
+      ai_context: >
+        Standard pay settings per employee. "What is X's salary / hourly
+        rate" = annual_salary or rate_per_unit here (calculation_type
+        ANNUALSALARY vs USEEARNINGSRATE), joined to xero_payroll_employees
+        for the name.
+    sql: SELECT * FROM source_xero_official.xo_employee_pay_template_earnings
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_payroll_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_payroll_employees}.tenant_id
+          AND {CUBE}.employee_id = {xero_payroll_employees}.employee_id
+      - name: xero_earnings_rates
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_earnings_rates}.tenant_id
+          AND {CUBE}.earnings_rate_id = {xero_earnings_rates}.earnings_rate_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: string
+        public: false
+      - name: earnings_rate_id
+        sql: earnings_rate_id
+        type: string
+        public: false
+      - name: calculation_type
+        sql: calculation_type
+        type: string
+        description: USEEARNINGSRATE, ENTEREARNINGSRATE or ANNUALSALARY.
+      - name: annual_salary
+        sql: annual_salary
+        type: number
+        title: Annual salary
+      - name: rate_per_unit
+        sql: rate_per_unit
+        type: number
+        title: Rate per unit
+      - name: normal_number_of_units
+        sql: normal_number_of_units
+        type: number
+        description: Standard units (hours) per pay period.
+      - name: units_per_week
+        sql: units_per_week
+        type: number
+    measures:
+      - name: template_line_count
+        type: count
+      - name: total_annual_salary
+        type: sum
+        sql: annual_salary
+        format: currency
+        title: Combined annual salaries
+
+  - name: xero_payroll_settings_accounts
+    title: Payroll GL accounts (Xero)
+    public: false
+    description: >
+      One row per GL account payroll posts to (wages expense, PAYG liability,
+      super liability...).
+    sql: SELECT * FROM source_xero_official.xo_payroll_settings_accounts
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_purpose
+        sql: account_purpose
+        type: string
+        description: What payroll uses the account for (BANK, PAYGLIABILITY, SUPERANNUATIONEXPENSE...).
+      - name: account_code
+        sql: account_code
+        type: string
+      - name: account_name
+        sql: account_name
+        type: string
+    measures:
+      - name: account_count
+        type: count

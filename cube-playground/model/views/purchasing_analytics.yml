@@ -1,0 +1,243 @@
+views:
+  - name: purchasing_analytics
+    title: Purchasing analytics
+    description: >
+      The buying surface: purchase orders and their lifecycle, merchandise
+      spend by vendor / item / brand, goods receipts and lead times, stock
+      returned to suppliers, and supplier reference data (part numbers,
+      negotiated costs, B2B catalogues). Unprefixed members are PO-header
+      grain; purchase_order_lines_* are item lines; order_shipments_* /
+      order_shipment_items_* are goods receipts; vendor_returns_* are returns
+      to suppliers.
+    meta:
+      ai_context: >
+        Use this view for "purchase orders", "buying", "supplier spend",
+        "deliveries", "lead times" and "returns to vendors". Default time
+        dimension: ordered_at (PO placement); goods-in questions use
+        order_shipments_received_at. Merchandise spend =
+        purchase_order_lines_ordered_value; freight and fees are the header
+        freight_cost_total / other_cost_total. All costs are ex tax in the
+        shop currency. Combine any grain with vendors_*, shops_* or
+        employees_* reference dimensions. items_*, categories_* and
+        manufacturers_* dimensions ride the PO line grain: pair them with
+        purchase_order_lines_* members or PO headers, not with
+        order_shipment_*, vendor_returns_* or item_vendor_numbers_* members.
+        Do not mix two event grains (for example purchase_order_lines_* with
+        vendor_returns_*) in one query. Customer refunds are NOT here; they
+        are refunds in sales_analytics.
+
+    cubes:
+      # vendors owns the view's tenant_id: POs, PO lines, goods receipts,
+      # vendor returns, part-number mappings and B2B catalogues all reach
+      # vendors via declared many_to_one chains, so the injected tenant pin
+      # always resolves whichever grain is queried.
+      - join_path: vendors
+        includes:
+          - tenant_id
+          - name: vendor_id
+            alias: vendors_vendor_id
+          - name: name
+            alias: vendors_name
+          - name: archived
+            alias: vendors_archived
+          - name: account_number
+            alias: vendors_account_number
+          - name: currency_code
+            alias: vendors_currency_code
+          - name: count
+            alias: vendors_count
+          - name: active_count
+            alias: vendors_active_count
+          - name: active_vendors
+            alias: vendors_active_vendors
+      - join_path: purchase_orders
+        includes:
+          - order_id
+          - name
+          - reference_number
+          - ordered_at
+          - received_at
+          - expected_arrival_at
+          - updated_at
+          - is_complete
+          - archived
+          - po_status
+          - shipping_cost
+          - other_cost
+          - total_ordered_quantity
+          - vendor_currency_code
+          - po_count
+          - open_pos
+          - completed_pos
+          - units_ordered_total
+          - freight_cost_total
+          - other_cost_total
+          - avg_lead_time_days
+          - open_purchase_orders
+          - completed_purchase_orders
+      # Item reference is anchored through PO lines so item dimensions always
+      # ride a grain that reaches the vendors-rooted tenant pin.
+      - join_path: purchase_order_lines.items
+        prefix: true
+        includes:
+          - item_id
+          - name
+          - full_path_name
+          - system_sku
+          - custom_sku
+          - item_type
+          - default_cost
+          - average_cost
+          - default_price
+      - join_path: purchase_order_lines.items.categories
+        prefix: true
+        includes:
+          - name
+          - full_path_name
+      - join_path: purchase_order_lines.items.manufacturers
+        prefix: true
+        includes:
+          - name
+      - join_path: shops
+        prefix: true
+        includes:
+          - name
+      - join_path: employees
+        prefix: true
+        includes:
+          - full_name
+      - join_path: purchase_order_lines
+        prefix: true
+        includes:
+          - quantity_ordered
+          - unit_price
+          - quantity_received
+          - quantity_checked_in
+          - line_total
+          - created_at
+          - po_line_count
+          - units_ordered
+          - units_received
+          - units_outstanding
+          - ordered_value
+          - received_value
+          - lines_awaiting_stock
+      - join_path: order_shipments
+        prefix: true
+        includes:
+          - received_at
+          - payment_due_on
+          - packing_reference
+          - status
+          - shipment_count
+          - units_received
+          - received_cost
+          - shipping_cost_total
+      - join_path: order_shipment_items
+        prefix: true
+        includes:
+          - quantity_received
+          - unit_cost
+          - line_cost
+          - receipt_line_count
+          - line_units_received
+          - line_cost_received
+      - join_path: vendor_returns
+        prefix: true
+        includes:
+          - name
+          - reference_number
+          - status
+          - sent_at
+          - archived
+          - subtotal
+          - total
+          - return_count
+          - return_value
+          - sent_returns
+      - join_path: item_vendor_numbers
+        prefix: true
+        includes:
+          - vendor_sku
+          - vendor_unit_cost
+          - mapping_count
+      - join_path: catalog_vendor_items
+        prefix: true
+        includes:
+          - vendor_number
+          - manufacturer_number
+          - description
+          - brand
+          - category
+          - cost
+          - msrp
+          - status
+          - catalogue_item_count
+
+    folders:
+      - name: Purchase order pipeline
+        includes:
+          - po_count
+          - open_pos
+          - completed_pos
+          - units_ordered_total
+          - avg_lead_time_days
+          - po_status
+          - ordered_at
+          - received_at
+          - expected_arrival_at
+      - name: Merchandise spend
+        includes:
+          - purchase_order_lines_ordered_value
+          - purchase_order_lines_received_value
+          - purchase_order_lines_units_ordered
+          - purchase_order_lines_units_received
+          - purchase_order_lines_units_outstanding
+          - purchase_order_lines_po_line_count
+          - purchase_order_lines_unit_price
+      - name: Freight and fees
+        includes:
+          - freight_cost_total
+          - other_cost_total
+          - shipping_cost
+          - other_cost
+      - name: Goods receipts
+        includes:
+          - order_shipments_shipment_count
+          - order_shipments_units_received
+          - order_shipments_received_cost
+          - order_shipments_shipping_cost_total
+          - order_shipments_received_at
+          - order_shipments_payment_due_on
+          - order_shipment_items_line_units_received
+          - order_shipment_items_line_cost_received
+          - order_shipment_items_receipt_line_count
+      - name: Returns to suppliers
+        includes:
+          - vendor_returns_return_count
+          - vendor_returns_return_value
+          - vendor_returns_sent_returns
+          - vendor_returns_status
+          - vendor_returns_sent_at
+      - name: Supplier reference
+        includes:
+          - vendors_name
+          - vendors_account_number
+          - vendors_currency_code
+          - vendors_count
+          - vendors_active_count
+          - item_vendor_numbers_vendor_sku
+          - item_vendor_numbers_vendor_unit_cost
+          - catalog_vendor_items_brand
+          - catalog_vendor_items_cost
+          - catalog_vendor_items_msrp
+      - name: Product and store reference
+        includes:
+          - items_name
+          - items_full_path_name
+          - items_system_sku
+          - items_item_type
+          - categories_full_path_name
+          - manufacturers_name
+          - shops_name
+          - employees_full_name

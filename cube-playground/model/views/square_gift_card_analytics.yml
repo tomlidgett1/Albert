@@ -1,0 +1,23 @@
+views:
+  - name: square_gift_card_analytics
+    title: Square gift card analytics
+    description: Current Square gift-card account count, state and outstanding stored-value balance.
+    meta:
+      ai_context: >
+        Outstanding gift-card balance is a current liability-like snapshot, not
+        revenue and not additive over time. Full gift-card numbers are PII-like
+        payment credentials and intentionally absent. Use the activity view for
+        activation/load/redemption/refund event counts.
+    cubes:
+      - join_path: square_gift_cards
+        includes:
+          - tenant_id
+          - card_type
+          - gan_source
+          - state
+          - currency
+          - created_at
+          - gift_cards
+          - active_gift_cards
+          - outstanding_gift_card_balance
+

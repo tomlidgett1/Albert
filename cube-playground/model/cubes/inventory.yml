@@ -1,0 +1,1205 @@
+cubes:
+  - name: item_shops
+    title: Stock on hand (item per store)
+    public: false
+    description: >
+      Current inventory position for each item at each store: quantity on hand
+      (qoh), sellable units, backorders, reorder point and level, and the
+      rolling average unit cost. This is a live snapshot, not history; for
+      movement history use inventory_logs. Lightspeed also emits a roll-up row
+      per item with shop_id = 0 that totals all stores, so store-level measures
+      exclude shop_id = 0 to avoid double counting. Tombstoned rows are
+      excluded at source.
+    meta:
+      ai_context: >
+        "Stock", "stock on hand", "inventory levels", "how many do we have" =
+        units_on_hand here, grouped by items or shops. Stock value =
+        stock_value (qoh times unit cost, ex tax); unit cost falls back from
+        the store-level average cost to the item's average then default cost
+        when the store figure is missing. Reorder questions use
+        positions_below_reorder / stock_status. This is the current position
+        only; "how did stock change" belongs to inventory_logs members.
+        "Aged inventory", "old stock", "how long have we held this" = group
+        units_on_hand / stock_value by stock_age_band (or use
+        days_since_last_receipt / last_received_at), with the in_stock
+        segment. Age is days since the item's last stock-in movement.
+    # effective_unit_cost: Lightspeed often leaves avg_cost empty on the
+    # store-position row, so valuation falls back to the item catalogue's
+    # average cost, then its configured default cost.
+    # last_stock_in_at: latest positive movement (PO reception, transfer in,
+    # adjustment up...) for the item at the store, from the inventory audit
+    # log. This is the ageing anchor: Lightspeed does not link on-hand units
+    # to their receipt, so "age of stock" is days since stock last came in.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_item_shops
+        ORDER BY tenant_id, ingested_at DESC
+      ),
+      iv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_items
+        ORDER BY tenant_id, ingested_at DESC
+      ),
+      gl AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_inventory_logs
+        ORDER BY tenant_id, ingested_at DESC
+      ),
+      last_in AS MATERIALIZED (
+        SELECT l.tenant_id, l.item_id, l.shop_id,
+               MAX(l.create_time) AS last_stock_in_at
+        FROM source_lightspeed.ls_inventory_logs l
+        JOIN gl ON gl.tenant_id = l.tenant_id AND l.mapping_version = gl.latest_pack
+        WHERE NOT l.tombstone AND COALESCE(l.qoh_change, 0) > 0
+        GROUP BY 1, 2, 3
+      )
+      SELECT t.*,
+        COALESCE(NULLIF(t.avg_cost, 0), NULLIF(i.avg_cost, 0), i.default_cost, 0)
+          AS effective_unit_cost,
+        li.last_stock_in_at
+      FROM source_lightspeed.ls_item_shops t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      LEFT JOIN iv ON iv.tenant_id = t.tenant_id
+      LEFT JOIN source_lightspeed.ls_items i
+        ON i.tenant_id = t.tenant_id AND i.item_id = t.item_id
+        AND i.mapping_version = iv.latest_pack AND NOT i.tombstone
+      LEFT JOIN last_in li
+        ON li.tenant_id = t.tenant_id AND li.item_id = t.item_id
+        AND li.shop_id = t.shop_id
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_shop_id
+        sql: item_shop_id
+        type: number
+        public: false
+      - name: quantity_on_hand
+        sql: qoh
+        type: number
+        title: Quantity on hand
+        description: Units currently on hand for this item at this store. Negative means oversold.
+      - name: sellable_quantity
+        sql: sellable
+        type: number
+        description: Units available to sell (on hand minus units committed to orders or layaways).
+      - name: backorder_quantity
+        sql: backorder
+        type: number
+        description: Units on customer backorder at this store.
+      - name: component_quantity_on_hand
+        sql: component_qoh
+        type: number
+        public: false
+        description: On-hand quantity held inside assemblies / box components.
+      - name: reorder_point
+        sql: reorder_point
+        type: number
+        description: When on-hand units fall to or below this point, the item should be reordered.
+      - name: reorder_level
+        sql: reorder_level
+        type: number
+        description: Target stock level to reorder up to.
+      - name: average_unit_cost
+        sql: effective_unit_cost
+        type: number
+        format: currency
+        description: >
+          Per-unit cost of this item at this store (ex tax). Uses the store's
+          rolling average cost, falling back to the item's average then default
+          cost when the store figure is missing.
+      - name: stock_status
+        type: string
+        title: Stock status
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.qoh, 0) <= 0 THEN 'Out of stock'
+            WHEN COALESCE({CUBE}.reorder_point, 0) > 0
+                 AND {CUBE}.qoh <= {CUBE}.reorder_point THEN 'At or below reorder point'
+            ELSE 'In stock'
+          END
+        description: Classifies the position as Out of stock, At or below reorder point, or In stock.
+      - name: last_received_at
+        sql: last_stock_in_at
+        type: time
+        title: Last stock-in at
+        description: >
+          When stock of this item last came in at this store (latest positive
+          movement in the inventory log: PO reception, transfer in or upward
+          adjustment). Null when no stock-in movement is on record.
+      - name: days_since_last_receipt
+        type: number
+        title: Days since last stock-in
+        sql: >
+          FLOOR(EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_stock_in_at)) / 86400.0)
+        description: >
+          Whole days since stock of this item last came in at this store.
+          Null when no stock-in movement is on record.
+      - name: stock_age_band
+        type: string
+        title: Stock age band
+        sql: >
+          CASE
+            WHEN {CUBE}.last_stock_in_at IS NULL THEN 'No stock-in recorded'
+            WHEN {CUBE}.last_stock_in_at >= NOW() - INTERVAL '30 days' THEN '0-30 days'
+            WHEN {CUBE}.last_stock_in_at >= NOW() - INTERVAL '60 days' THEN '31-60 days'
+            WHEN {CUBE}.last_stock_in_at >= NOW() - INTERVAL '90 days' THEN '61-90 days'
+            WHEN {CUBE}.last_stock_in_at >= NOW() - INTERVAL '180 days' THEN '91-180 days'
+            WHEN {CUBE}.last_stock_in_at >= NOW() - INTERVAL '365 days' THEN '181-365 days'
+            ELSE 'Over 365 days'
+          END
+        description: >
+          Age band for the position based on days since stock last came in:
+          0-30, 31-60, 61-90, 91-180, 181-365, Over 365 days, or No stock-in
+          recorded. Group units_on_hand and stock_value by this for an aged
+          inventory report.
+      - name: is_all_stores_rollup
+        type: boolean
+        sql: "({CUBE}.shop_id = 0 OR {CUBE}.shop_id IS NULL)"
+        public: false
+        description: True on Lightspeed's per-item roll-up row that totals all stores.
+      - name: snapshot_updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last updated this stock position.
+      - name: item_description
+        sql: '{CUBE}."description"'
+        type: string
+        public: false
+        description: Denormalised item description carried on the stock row; prefer items.name.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+
+    measures:
+      - name: units_on_hand
+        type: sum
+        sql: qoh
+        title: Units on hand
+        description: Total units on hand across store-level positions (the all-stores roll-up row is excluded).
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: sellable_units
+        type: sum
+        sql: sellable
+        title: Sellable units
+        description: Units available to sell across store-level positions.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: backordered_units
+        type: sum
+        sql: backorder
+        description: Units on customer backorder across store-level positions.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: stock_value
+        type: sum
+        sql: "COALESCE({CUBE}.qoh, 0) * COALESCE({CUBE}.effective_unit_cost, 0)"
+        format: currency
+        title: Stock value (at cost)
+        description: >
+          On-hand units times unit cost (ex tax), across store-level positions.
+          Unit cost is the store average cost, falling back to the item's
+          average then default cost when the store figure is missing.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: stocked_positions
+        type: count
+        title: Stocked positions
+        description: Item-store positions with units on hand.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) > 0"
+      - name: out_of_stock_positions
+        type: count
+        title: Out-of-stock positions
+        description: Item-store positions with zero or negative units on hand.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) <= 0"
+      - name: negative_stock_positions
+        type: count
+        description: Item-store positions oversold below zero (data hygiene signal).
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) < 0"
+      - name: positions_below_reorder
+        type: count
+        title: Positions at or below reorder point
+        description: Item-store positions at or below their configured reorder point (reorder point set).
+        filters:
+          - sql: >
+              {CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0
+              AND COALESCE({CUBE}.reorder_point, 0) > 0
+              AND COALESCE({CUBE}.qoh, 0) <= {CUBE}.reorder_point
+      - name: distinct_items_in_stock
+        type: count_distinct
+        sql: item_id
+        title: Distinct items in stock
+        description: Distinct items with units on hand at any store.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) > 0"
+
+    segments:
+      - name: store_positions
+        sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+        description: Store-level positions (excludes the all-stores roll-up row).
+      - name: in_stock
+        sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) > 0"
+        description: Positions with units on hand.
+      - name: needs_reorder
+        sql: >
+          {CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0
+          AND COALESCE({CUBE}.reorder_point, 0) > 0
+          AND COALESCE({CUBE}.qoh, 0) <= {CUBE}.reorder_point
+        description: Positions at or below their reorder point.
+
+  - name: inventory_logs
+    title: Inventory movements (audit log)
+    public: false
+    description: >
+      One row per stock movement: sales, purchase order receptions, transfers,
+      stocktake reconciliations, vendor returns, imports and manual
+      adjustments. qoh_change is the signed unit change, cost_change the signed
+      inventory value change. reason describes the cause; automated separates
+      system-driven movements from manual edits. Tombstoned rows are excluded
+      at source.
+    meta:
+      ai_context: >
+        Use for "how did stock change", shrinkage / adjustment questions and
+        movement audits. occurred_at is the business date. units_added /
+        units_removed split the signed movement; net_units_change is the sum.
+        Manual adjustments are automated = false. For current stock levels use
+        item_shops members instead.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_inventory_logs
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_inventory_logs t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: inventory_log_id
+        sql: inventory_log_id
+        type: number
+        public: false
+      - name: occurred_at
+        sql: create_time
+        type: time
+        title: Movement time
+        description: When the stock movement happened. Business date for movement analysis.
+      - name: quantity_change
+        sql: qoh_change
+        type: number
+        description: Signed unit change (positive = stock in, negative = stock out).
+      - name: value_change
+        sql: cost_change
+        type: number
+        format: currency
+        description: Signed inventory value change at cost (ex tax).
+      - name: reason
+        sql: reason
+        type: string
+        title: Movement reason
+        description: Cause of the movement (for example sale, order received, transfer, adjustment).
+      - name: is_automated
+        sql: automated
+        type: boolean
+        description: True for system-driven movements (sales, receptions); false for manual edits.
+      - name: caused_negative_stock
+        sql: caused_negative
+        type: boolean
+        description: True when this movement pushed the item's stock below zero.
+      - name: movement_source
+        type: string
+        title: Movement source
+        sql: >
+          CASE
+            WHEN {CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0 THEN 'Sale'
+            WHEN {CUBE}.order_id IS NOT NULL AND {CUBE}.order_id <> 0 THEN 'Purchase order'
+            WHEN {CUBE}.transfer_id IS NOT NULL AND {CUBE}.transfer_id <> 0 THEN 'Transfer'
+            WHEN {CUBE}.inventory_count_id IS NOT NULL AND {CUBE}.inventory_count_id <> 0 THEN 'Stocktake'
+            WHEN {CUBE}.vendor_return_id IS NOT NULL AND {CUBE}.vendor_return_id <> 0 THEN 'Vendor return'
+            WHEN {CUBE}.item_import_id IS NOT NULL AND {CUBE}.item_import_id <> 0 THEN 'Import'
+            ELSE 'Manual adjustment'
+          END
+        description: >
+          Classifies the movement by the document that caused it: Sale,
+          Purchase order, Transfer, Stocktake, Vendor return, Import or Manual
+          adjustment.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: sale_id
+        sql: sale_id
+        type: number
+        public: false
+      - name: order_id
+        sql: order_id
+        type: number
+        public: false
+      - name: transfer_id
+        sql: transfer_id
+        type: number
+        public: false
+      - name: inventory_count_id
+        sql: inventory_count_id
+        type: number
+        public: false
+      - name: vendor_return_id
+        sql: vendor_return_id
+        type: number
+        public: false
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: item_import_id
+        sql: item_import_id
+        type: number
+        public: false
+
+    measures:
+      - name: movement_count
+        type: count
+        title: Stock movements
+        description: Number of stock movement events.
+      - name: units_added
+        type: sum
+        sql: qoh_change
+        title: Units added
+        description: Units moved into stock (positive movements only).
+        filters:
+          - sql: "COALESCE({CUBE}.qoh_change, 0) > 0"
+      - name: units_removed
+        type: sum
+        sql: "-{CUBE}.qoh_change"
+        title: Units removed
+        description: Units moved out of stock (negative movements, shown positive).
+        filters:
+          - sql: "COALESCE({CUBE}.qoh_change, 0) < 0"
+      - name: net_units_change
+        type: sum
+        sql: qoh_change
+        title: Net unit change
+        description: Net signed unit change across movements.
+      - name: net_value_change
+        type: sum
+        sql: cost_change
+        format: currency
+        title: Net stock value change
+        description: >
+          Net signed inventory value change at cost (ex tax). Lightspeed
+          frequently leaves the cost off movement rows, so this can be zero
+          even when units moved; cross-check against units before citing it
+          as a valuation.
+      - name: manual_adjustments
+        type: count
+        title: Manual adjustments
+        description: Movements entered by hand rather than driven by a document.
+        filters:
+          - sql: "COALESCE({CUBE}.automated, false) = false"
+      - name: negative_stock_events
+        type: count
+        description: Movements that pushed an item below zero on hand.
+        filters:
+          - sql: "COALESCE({CUBE}.caused_negative, false) = true"
+
+    segments:
+      - name: stock_in
+        sql: "COALESCE({CUBE}.qoh_change, 0) > 0"
+        description: Movements that added stock.
+      - name: stock_out
+        sql: "COALESCE({CUBE}.qoh_change, 0) < 0"
+        description: Movements that removed stock.
+      - name: manual_movements
+        sql: "COALESCE({CUBE}.automated, false) = false"
+        description: Manually entered movements.
+
+  - name: serialized_units
+    title: Serialised units
+    public: false
+    description: >
+      One row per serial-numbered unit (for example a bike frame or ebike
+      battery): its serial, colour / size, the item it belongs to, and the sale
+      line and customer once sold. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Serial numbers", "serialised stock" = this grain. A unit is sold once
+        sale_line_id is set (is_sold); otherwise it is still in stock.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_serialized
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_serialized t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: serialized_id
+        sql: serialized_id
+        type: number
+        public: false
+      - name: serial_number
+        sql: serial
+        type: string
+        title: Serial number
+        description: The unit's serial number.
+      - name: unit_description
+        sql: '{CUBE}."description"'
+        type: string
+        description: Description recorded for this serialised unit.
+      - name: color_name
+        sql: color_name
+        type: string
+        description: Colour of the unit, when recorded.
+      - name: size_name
+        sql: size_name
+        type: string
+        description: Size of the unit, when recorded.
+      - name: is_sold
+        type: boolean
+        sql: "({CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0)"
+        title: Sold
+        description: True once the unit has been sold on a sale line.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this unit.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        public: false
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+
+    measures:
+      - name: serial_count
+        type: count
+        title: Serialised units
+        description: Number of serialised units on file.
+      - name: sold_serials
+        type: count
+        title: Sold units
+        description: Serialised units already sold.
+        filters:
+          - sql: "{CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0"
+      - name: in_stock_serials
+        type: count
+        title: Units in stock
+        description: Serialised units not yet attached to a sale line.
+        filters:
+          - sql: "{CUBE}.sale_line_id IS NULL OR {CUBE}.sale_line_id = 0"
+
+    segments:
+      - name: unsold_serials
+        sql: "{CUBE}.sale_line_id IS NULL OR {CUBE}.sale_line_id = 0"
+        description: Serialised units still in stock.
+
+  - name: transfers
+    title: Stock transfers (between stores)
+    public: false
+    description: >
+      One row per stock transfer document moving inventory between locations.
+      sent / received flags track the document lifecycle; sent_on and need_by
+      the timing. Line detail (units and values) is in transfer_items.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Transfers", "stock moved between stores" = this grain. A transfer in
+        flight is sent = true and received = false. transfer_from_id /
+        transfer_to_id are Lightspeed location references for the source and
+        destination.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_transfers
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_transfers t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: transfer_id
+        sql: transfer_id
+        type: number
+        title: Transfer ID
+        description: Lightspeed's identifier for the transfer.
+      - name: is_sent
+        sql: sent
+        type: boolean
+        description: True once the transfer has been dispatched from the source location.
+      - name: is_received
+        sql: received
+        type: boolean
+        description: True once the destination has received the transfer.
+      - name: transfer_status
+        type: string
+        title: Transfer status
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.received, false) THEN 'Received'
+            WHEN COALESCE({CUBE}.sent, false) THEN 'In transit'
+            ELSE 'Draft'
+          END
+        description: Lifecycle of the transfer - Draft, In transit or Received.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the transfer has been archived.
+      - name: sent_at
+        sql: sent_on
+        type: time
+        title: Sent at
+        description: When the transfer was dispatched.
+      - name: needed_by
+        sql: need_by
+        type: time
+        description: When the destination needs the stock by.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this transfer.
+      - name: note
+        sql: note
+        type: string
+        description: Notes on the transfer.
+      - name: transfer_from_id
+        sql: transfer_from_id
+        type: number
+        public: false
+        description: Source location reference.
+      - name: transfer_to_id
+        sql: transfer_to_id
+        type: number
+        public: false
+        description: Destination location reference.
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: order_id
+        sql: order_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: transfer_count
+        type: count
+        title: Transfers
+        description: Number of transfer documents.
+      - name: transfers_in_transit
+        type: count
+        title: Transfers in transit
+        description: Transfers dispatched but not yet received.
+        filters:
+          - sql: "COALESCE({CUBE}.sent, false) = true AND COALESCE({CUBE}.received, false) = false"
+      - name: transfers_received
+        type: count
+        description: Transfers received at the destination.
+        filters:
+          - sql: "COALESCE({CUBE}.received, false) = true"
+      - name: draft_transfers
+        type: count
+        description: Transfers created but not yet dispatched.
+        filters:
+          - sql: "COALESCE({CUBE}.sent, false) = false AND COALESCE({CUBE}.received, false) = false"
+
+    segments:
+      - name: in_transit
+        sql: "COALESCE({CUBE}.sent, false) = true AND COALESCE({CUBE}.received, false) = false"
+        description: Transfers on the road.
+
+  - name: transfer_items
+    title: Transfer lines
+    public: false
+    description: >
+      One row per item line on a stock transfer: units requested, sent and
+      received, and the stock value sent / received at cost. Tombstoned rows
+      are excluded at source.
+    meta:
+      ai_context: >
+        Units and value moved between stores. A shortfall between units_sent
+        and units_received flags transfer shrinkage.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_transfer_items
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_transfer_items t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: transfers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {transfers}.tenant_id
+          AND {CUBE}.transfer_id = {transfers}.transfer_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: transfer_item_id
+        sql: transfer_item_id
+        type: number
+        public: false
+      - name: quantity_to_send
+        sql: to_send
+        type: number
+        description: Units requested to send on this line.
+      - name: quantity_sent
+        sql: sent
+        type: number
+        description: Units actually dispatched.
+      - name: quantity_received
+        sql: received
+        type: number
+        description: Units received at the destination.
+      - name: comment
+        sql: '{CUBE}."comment"'
+        type: string
+        description: Line comment.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this line.
+      - name: transfer_id
+        sql: transfer_id
+        type: number
+        public: false
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+
+    measures:
+      - name: transfer_line_count
+        type: count
+        title: Transfer lines
+        description: Number of item lines on transfers.
+      - name: units_requested
+        type: sum
+        sql: to_send
+        description: Units requested for transfer.
+      - name: units_sent
+        type: sum
+        sql: sent
+        title: Units sent
+        description: Units dispatched from the source store.
+      - name: units_received
+        type: sum
+        sql: received
+        title: Units received
+        description: Units received at the destination store.
+      - name: value_sent
+        type: sum
+        sql: sent_value
+        format: currency
+        title: Value sent (at cost)
+        description: Stock value dispatched, at cost (ex tax).
+      - name: value_received
+        type: sum
+        sql: received_value
+        format: currency
+        title: Value received (at cost)
+        description: Stock value received, at cost (ex tax).
+
+  - name: special_orders
+    title: Special orders (customer requests)
+    public: false
+    description: >
+      One row per customer special order: stock specially ordered in for a
+      customer, tracked through contact (customer told it arrived) and
+      completion. Links to the driving sale line, purchase order line or
+      transfer line. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Special orders" and "customer orders waiting" = this grain.
+        outstanding_special_orders are not yet completed;
+        awaiting_contact means the stock flow finished but nobody has told the
+        customer yet.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_special_orders
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_special_orders t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      # Every special order is raised from a sale line; this join carries the
+      # item (via sale_lines -> items) so the view's items-rooted tenant pin
+      # can reach this grain.
+      - name: sale_lines
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sale_lines}.tenant_id
+          AND {CUBE}.sale_line_id = {sale_lines}.sale_line_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: special_order_id
+        sql: special_order_id
+        type: number
+        public: false
+      - name: unit_quantity
+        sql: unit_quantity
+        type: number
+        description: Units the customer ordered.
+      - name: customer_contacted
+        sql: contacted
+        type: boolean
+        description: True once the customer has been contacted about their order.
+      - name: is_completed
+        sql: completed
+        type: boolean
+        description: True once the special order is fulfilled and closed.
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        public: false
+      - name: order_line_id
+        sql: order_line_id
+        type: number
+        public: false
+        description: Purchase order line fulfilling this special order, when ordered from a vendor.
+      - name: transfer_item_id
+        sql: transfer_item_id
+        type: number
+        public: false
+        description: Transfer line fulfilling this special order, when sourced from another store.
+
+    measures:
+      - name: special_order_count
+        type: count
+        title: Special orders
+        description: Number of customer special orders.
+      - name: outstanding_special_orders
+        type: count
+        title: Outstanding special orders
+        description: Special orders not yet completed.
+        filters:
+          - sql: "COALESCE({CUBE}.completed, false) = false"
+      - name: completed_special_orders
+        type: count
+        description: Special orders fulfilled and closed.
+        filters:
+          - sql: "COALESCE({CUBE}.completed, false) = true"
+      - name: awaiting_contact
+        type: count
+        title: Awaiting customer contact
+        description: Open special orders where the customer has not yet been contacted.
+        filters:
+          - sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.contacted, false) = false"
+      - name: special_order_units
+        type: sum
+        sql: unit_quantity
+        description: Units across special orders.
+
+    segments:
+      - name: open_special_orders
+        sql: "COALESCE({CUBE}.completed, false) = false"
+        description: Special orders still open.
+
+  - name: inventory_count_calcs
+    title: Stocktake results (expected vs counted)
+    public: false
+    description: >
+      One row per item in a stocktake with the system-expected quantity
+      (calc_qoh) against the physically counted quantity (counted_qoh). The
+      variance between them is the stocktake discrepancy before
+      reconciliation. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "Stocktake variance", "count discrepancies" = variance_units here
+        (counted minus expected; negative = missing stock / shrinkage).
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_inventory_count_calcs
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_inventory_count_calcs t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: inventory_count_calc_id
+        sql: inventory_count_calc_id
+        type: number
+        public: false
+      - name: expected_quantity
+        sql: calc_qoh
+        type: number
+        description: Units the system expected on hand at count time.
+      - name: counted_quantity
+        sql: counted_qoh
+        type: number
+        description: Units physically counted.
+      - name: counted_at
+        sql: time_stamp
+        type: time
+        title: Counted at
+        description: When the count row was recorded.
+      - name: inventory_count_id
+        sql: inventory_count_id
+        type: number
+        description: The stocktake session this row belongs to.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+
+    measures:
+      - name: counted_item_count
+        type: count
+        title: Items counted
+        description: Item rows included in stocktakes.
+      - name: expected_units
+        type: sum
+        sql: calc_qoh
+        description: Units the system expected across counted items.
+      - name: counted_units
+        type: sum
+        sql: counted_qoh
+        description: Units physically counted.
+      - name: variance_units
+        type: sum
+        sql: "COALESCE({CUBE}.counted_qoh, 0) - COALESCE({CUBE}.calc_qoh, 0)"
+        title: Stocktake variance (units)
+        description: Counted minus expected. Negative = stock missing (shrinkage); positive = surplus found.
+      - name: items_with_variance
+        type: count
+        description: Counted items where the physical count differed from the expected quantity.
+        filters:
+          - sql: "COALESCE({CUBE}.counted_qoh, 0) <> COALESCE({CUBE}.calc_qoh, 0)"
+
+  - name: inventory_count_items
+    title: Stocktake scans
+    public: false
+    description: >
+      One row per scan / entry during a stocktake: who counted what quantity
+      and when. Multiple scans of the same item roll up into
+      inventory_count_calcs. Tombstoned rows are excluded at source.
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_inventory_count_items
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_inventory_count_items t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: inventory_count_item_id
+        sql: inventory_count_item_id
+        type: number
+        public: false
+      - name: scanned_quantity
+        sql: qty
+        type: number
+        description: Units recorded in this scan.
+      - name: scanned_at
+        sql: time_stamp
+        type: time
+        description: When the scan was recorded.
+      - name: inventory_count_id
+        sql: inventory_count_id
+        type: number
+        description: The stocktake session this scan belongs to.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: scan_count
+        type: count
+        title: Stocktake scans
+        description: Number of scan entries recorded during stocktakes.
+      - name: scanned_units
+        type: sum
+        sql: qty
+        description: Units recorded across scans.
+
+  - name: inventory_count_reconciles
+    title: Stocktake reconciliations
+    public: false
+    description: >
+      One row per reconciliation adjustment applied when a stocktake was
+      finalised: the unit and value corrections written back to stock.
+      Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        The stock corrections actually applied after a stocktake. Negative
+        units_adjusted is written-off stock (shrinkage made official).
+    sql: >
+      WITH lv AS MATERIALIZED (
+        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
+        FROM source_lightspeed.ls_inventory_count_reconciles
+        ORDER BY tenant_id, ingested_at DESC
+      )
+      SELECT t.* FROM source_lightspeed.ls_inventory_count_reconciles t
+      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: inventory_count_reconcile_id
+        sql: inventory_count_reconcile_id
+        type: number
+        public: false
+      - name: reconciled_at
+        sql: create_time
+        type: time
+        title: Reconciled at
+        description: When the adjustment was applied.
+      - name: quantity_adjustment
+        sql: qoh_change
+        type: number
+        description: Signed unit correction applied to stock.
+      - name: value_adjustment
+        sql: cost_change
+        type: number
+        format: currency
+        description: Signed stock value correction at cost (ex tax).
+      - name: inventory_count_id
+        sql: inventory_count_id
+        type: number
+        description: The stocktake session that produced this adjustment.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+
+    measures:
+      - name: reconcile_count
+        type: count
+        title: Reconciliation adjustments
+        description: Number of stock corrections applied from stocktakes.
+      - name: units_adjusted
+        type: sum
+        sql: qoh_change
+        title: Units adjusted
+        description: Net signed unit corrections (negative = written off).
+      - name: value_adjusted
+        type: sum
+        sql: cost_change
+        format: currency
+        title: Value adjusted
+        description: Net signed stock value corrections at cost (ex tax).

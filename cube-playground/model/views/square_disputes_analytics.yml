@@ -1,0 +1,30 @@
+views:
+  - name: square_disputes_analytics
+    title: Square disputes analytics
+    description: Current Square card-dispute exposure by state, reason, card brand, store and evidence due date.
+    meta:
+      ai_context: >
+        A dispute amount is exposure, not automatically an expense or refund.
+        Group by state and use due_at for response workload. State transitions
+        mutate the same dispute; use the current state unless the user asks for
+        history, which requires the exhaustive field/source surface.
+    cubes:
+      - join_path: square_disputes
+        includes:
+          - tenant_id
+          - state
+          - reason
+          - card_brand
+          - brand_dispute_id
+          - currency
+          - due_at
+          - reported_at
+          - created_at
+          - updated_at
+          - disputes
+          - dispute_amount
+          - response_due_disputes
+          - overdue_response_disputes
+      - join_path: square_disputes.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]

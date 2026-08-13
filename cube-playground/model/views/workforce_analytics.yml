@@ -1,0 +1,182 @@
+views:
+  - name: workforce_analytics
+    title: Workforce analytics (Deputy)
+    description: >
+      The workforce surface, powered by Deputy: actual hours worked and wage
+      cost from timesheets, the schedule from rosters (including open and
+      published shifts), leave requests with types and approval status, and
+      the staff list with positions and employment dates. Staff grain is the
+      hub; timesheets, rosters and leave all relate to a staff member and a
+      work area.
+    meta:
+      ai_context: >
+        Use this view for anything about staff time and labour: hours worked,
+        wage / labour cost, who worked or is on shift now, who is rostered on
+        and when, scheduled vs planned cost, leave taken or upcoming, staff
+        headcount and positions. shift_date is the business date for worked
+        hours, rostered_date for the schedule, leave_starts for leave.
+        Sales per staff member are NOT here: they live in sales_analytics
+        (Lightspeed). For questions linking hours to sales, query both views
+        separately and combine narratively; match people by name per view
+        (spellings can differ between the two systems: use explore_entities
+        on each).
+
+    cubes:
+      # deputy_employees owns the view's tenant_id and is the hub: every
+      # workforce fact (timesheets, rosters, leave) reaches it many_to_one,
+      # so headcount stays answerable even with no facts in range.
+      - join_path: deputy_employees
+        includes:
+          - tenant_id
+          - name: display_name
+            alias: staff_name
+          - name: position
+            alias: staff_position
+          - name: active
+            alias: staff_active
+          - name: started_on
+            alias: staff_started_on
+          - name: terminated_on
+            alias: staff_terminated_on
+          - name: staff_count
+          - name: active_staff_count
+      - join_path: deputy_employees.deputy_employee_roles
+        includes:
+          - name: role_name
+            alias: staff_access_role
+
+      # Actual worked time (timesheets) is the primary fact: unprefixed.
+      - join_path: deputy_timesheets
+        includes:
+          - name: employee_name
+            alias: worked_by
+          - shift_date
+          - started_at
+          - ended_at
+          - shift_hours
+          - is_leave
+          - time_approved
+          - pay_approved
+          - in_progress
+          - name: unit_name
+            alias: worked_area
+          - name: company_name
+            alias: workplace
+          - hours_worked
+          - paid_hours_total
+          - leave_hours_paid
+          - wage_cost
+          - loaded_wage_cost
+          - worked_shift_count
+          - avg_shift_hours
+          - unapproved_shift_count
+          - on_shift_now_count
+          - worked_shifts
+          - leave_timesheets
+
+      # The schedule.
+      - join_path: deputy_rosters
+        includes:
+          - name: employee_name
+            alias: rostered_staff
+          - name: shift_date
+            alias: rostered_date
+          - name: starts_at
+            alias: roster_starts_at
+          - name: ends_at
+            alias: roster_ends_at
+          - name: scheduled_shift_hours
+            alias: rostered_shift_hours
+          - name: published
+            alias: roster_published
+          - name: open_shift
+            alias: roster_open_shift
+          - name: unit_name
+            alias: rostered_area
+          - rostered_shift_count
+          - rostered_hours
+          - rostered_cost
+          - open_shift_count
+
+      # Leave requests.
+      - join_path: deputy_leave
+        includes:
+          - name: employee_name
+            alias: leave_staff
+          - name: starts_on
+            alias: leave_starts
+          - name: ends_on
+            alias: leave_ends
+          - name: status
+            alias: leave_status
+          - leave_request_count
+          - leave_days
+          - leave_hours
+          - approved_leave_days
+          - approved_leave
+          - pending_leave
+      - join_path: deputy_leave.deputy_leave_rules
+        includes:
+          - name: rule_name
+            alias: leave_type
+          - name: paid_leave
+            alias: leave_is_paid
+
+    folders:
+      - name: Hours worked and wage cost
+        includes:
+          - hours_worked
+          - wage_cost
+          - loaded_wage_cost
+          - worked_shift_count
+          - avg_shift_hours
+          - paid_hours_total
+          - shift_date
+          - started_at
+          - ended_at
+          - shift_hours
+          - worked_by
+          - worked_area
+      - name: Live and approvals
+        includes:
+          - on_shift_now_count
+          - in_progress
+          - unapproved_shift_count
+          - time_approved
+          - pay_approved
+      - name: Roster (schedule)
+        includes:
+          - rostered_shift_count
+          - rostered_hours
+          - rostered_cost
+          - open_shift_count
+          - rostered_date
+          - roster_starts_at
+          - roster_ends_at
+          - rostered_staff
+          - rostered_area
+          - roster_published
+          - roster_open_shift
+      - name: Leave
+        includes:
+          - leave_request_count
+          - leave_days
+          - leave_hours
+          - approved_leave_days
+          - leave_starts
+          - leave_ends
+          - leave_status
+          - leave_type
+          - leave_is_paid
+          - leave_staff
+          - leave_hours_paid
+      - name: Staff list
+        includes:
+          - staff_name
+          - staff_position
+          - staff_active
+          - staff_started_on
+          - staff_terminated_on
+          - staff_count
+          - active_staff_count
+          - staff_access_role

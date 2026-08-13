@@ -1,0 +1,420 @@
+cubes:
+  - name: sales
+    title: Sales (transaction headers)
+    public: false
+    description: >
+      One row per Lightspeed sale transaction (ticket). Includes completed sales,
+      refunds (negative totals), voided/cancelled sales and still-open tickets.
+      All money comes from Lightspeed's calc_* fields: calc_total is tax-inclusive
+      gross takings, calc_subtotal is ex-tax net sales. Default revenue measures
+      count only completed, non-voided sales. Refunds are completed sales with a
+      negative total and are included in net figures (they reduce revenue).
+      Tombstoned (remotely deleted) rows are excluded at source.
+    meta:
+      ai_context: >
+        Use complete_time as the business date for any revenue/turnover question;
+        create_time is only when the ticket was opened. "Revenue", "takings",
+        "turnover" and "sales" all mean gross_takings (tax inclusive) unless the
+        user asks for ex-tax/ex-GST figures, then use net_sales_ex_tax.
+        Profitability means gross profit (revenue minus cost of goods); Lightspeed
+        has no operating expenses, so answers must say "gross profit/margin".
+        Never mix tax-inclusive calc_total with ex-tax calc_subtotal in one ratio.
+    sql: >
+      SELECT t.* FROM source_lightspeed.ls_sales t
+      JOIN (
+        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
+        FROM source_lightspeed.ls_sales GROUP BY tenant_id
+      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: registers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {registers}.tenant_id
+          AND {CUBE}.register_id = {registers}.register_id
+      - name: discounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {discounts}.tenant_id
+          AND {CUBE}.discount_id = {discounts}.discount_id
+      - name: tax_categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_categories}.tenant_id
+          AND {CUBE}.tax_category_id = {tax_categories}.tax_category_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: sale_id
+        sql: sale_id
+        type: number
+        title: Sale ID
+        description: Lightspeed's numeric identifier for the sale (ticket number in the POS).
+      - name: completed
+        sql: completed
+        type: boolean
+        description: True once the sale has been finalised at the register. Open tickets are false.
+      - name: voided
+        sql: voided
+        type: boolean
+        description: True when the sale was voided/cancelled. Voided sales must be excluded from revenue.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the sale has been archived in Lightspeed.
+      - name: sale_type
+        title: Sale type
+        type: string
+        sql: >
+          CASE
+            WHEN {CUBE}.voided THEN 'Voided'
+            WHEN NOT {CUBE}.completed THEN 'Open ticket'
+            WHEN {CUBE}.calc_total < 0 THEN 'Refund'
+            ELSE 'Sale'
+          END
+        description: >
+          Classifies each transaction: Sale (completed, positive), Refund (completed,
+          negative total), Open ticket (not yet completed) or Voided.
+        meta:
+          ai_context: Use this to separate refunds from regular sales in breakdowns.
+      - name: completed_at
+        sql: complete_time
+        type: time
+        title: Completed at (business date)
+        description: When the sale was finalised. This is the business date for all revenue reporting.
+      - name: created_at
+        sql: create_time
+        type: time
+        description: When the ticket was first opened at the register. Not the revenue date.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this sale record.
+      - name: vendor_updated_at
+        sql: updatetime
+        type: time
+        public: false
+        description: Vendor updateTime field; updated_at (timeStamp) is the canonical modification time.
+      - name: vendor_total
+        sql: total
+        type: number
+        format: currency
+        public: false
+        description: Vendor-computed total snapshot; use gross takings measures for revenue.
+      - name: displayable_total
+        sql: displayable_total
+        type: number
+        format: currency
+        public: false
+        description: Receipt display total; use gross takings measures for revenue.
+      - name: reference_number
+        sql: reference_number
+        type: string
+        description: External reference number attached to the sale (for example an ecommerce order id).
+      - name: reference_number_source
+        sql: reference_number_source
+        type: string
+        description: System that supplied the reference number (for example an ecommerce integration).
+      - name: tax1_rate
+        sql: tax1_rate
+        type: number
+        description: Primary tax rate applied to the sale, as a fraction (0.1 = 10% GST).
+      - name: tax2_rate
+        sql: tax2_rate
+        type: number
+        description: Secondary tax rate applied to the sale, as a fraction. Usually 0 in Australia.
+      - name: tip_enabled
+        sql: tip_enabled
+        type: boolean
+        description: Whether tipping was enabled on this sale.
+      - name: promotions_enabled
+        sql: enable_promotions
+        type: boolean
+        description: Whether automatic promotions were allowed to apply to this sale.
+      - name: discount_percent
+        sql: discount_percent
+        type: number
+        description: Whole-sale discount percentage applied at the header level, as a fraction.
+      - name: total_due
+        sql: total_due
+        type: number
+        format: currency
+        description: Amount still due on the sale at last sync.
+      - name: balance
+        sql: balance
+        type: number
+        format: currency
+        description: Outstanding balance on the sale (unpaid remainder, for example on layaways or on-account sales).
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: tip_employee_id
+        sql: tip_employee_id
+        type: number
+        public: false
+        description: Employee credited with the tip.
+      - name: register_id
+        sql: register_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: quote_id
+        sql: quote_id
+        type: number
+        description: Quote this sale was created from, when the sale converted a quote.
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+      - name: ship_to_id
+        sql: ship_to_id
+        type: number
+        public: false
+        description: Shipping destination attached to the sale, when shipped.
+      - name: has_customer
+        type: boolean
+        sql: "({CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0)"
+        title: Has attached customer
+        description: True when the sale was rung up against a customer profile rather than anonymously.
+
+    measures:
+      - name: transactions
+        type: count
+        title: Transactions
+        description: >
+          Number of completed, non-voided sale transactions (refund transactions included).
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: gross_takings
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Gross takings (inc tax)
+        description: >
+          Tax-inclusive revenue across completed, non-voided sales. Refunds subtract.
+          This is what "revenue", "sales" or "takings" means by default.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: net_sales_ex_tax
+        type: sum
+        sql: calc_subtotal
+        format: currency
+        title: Net sales (ex tax)
+        description: >
+          Ex-tax revenue across completed, non-voided sales. Use this side of any
+          margin calculation because cost fields are also ex tax.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: tax_collected
+        type: sum
+        sql: "COALESCE({CUBE}.calc_tax1, 0) + COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Tax collected
+        description: Total tax (tax1 + tax2, for example GST) on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: tax1_collected
+        type: sum
+        sql: calc_tax1
+        format: currency
+        description: Primary tax (tax1) collected on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: tax2_collected
+        type: sum
+        sql: calc_tax2
+        format: currency
+        description: Secondary tax (tax2) collected on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: taxable_amount
+        type: sum
+        sql: calc_taxable
+        format: currency
+        description: Portion of completed, non-voided sales that was subject to tax.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: non_taxable_amount
+        type: sum
+        sql: calc_non_taxable
+        format: currency
+        description: Portion of completed, non-voided sales that was tax exempt.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: discounts_given
+        type: sum
+        sql: calc_discount
+        format: currency
+        title: Discounts given
+        description: Total discount value given away on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: tips_collected
+        type: sum
+        sql: calc_tips
+        format: currency
+        description: Tips collected on completed, non-voided sales. Tips are not merchandise revenue.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: payments_received
+        type: sum
+        sql: calc_payments
+        format: currency
+        description: Total tender applied to completed, non-voided sales (may differ from takings when change is given).
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: change_given
+        type: sum
+        sql: '{CUBE}."change"'
+        format: currency
+        description: Change handed back to customers on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: cost_of_goods
+        type: sum
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.calc_fifo_cost, 0) = 0 AND COALESCE({CUBE}.calc_subtotal, 0) <> 0
+              THEN COALESCE({CUBE}.calc_avg_cost, 0)
+            ELSE COALESCE({CUBE}.calc_fifo_cost, 0)
+          END
+        format: currency
+        title: Cost of goods sold
+        description: >
+          Ex-tax cost of goods for completed, non-voided sales. Uses FIFO cost and
+          falls back to average cost when FIFO is zero on a sale with real revenue
+          (early or migrated data often lacks FIFO layers).
+        meta:
+          ai_context: >
+            Cost is ex tax. Only ever compare against net_sales_ex_tax, never
+            against tax-inclusive gross_takings.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: gross_profit
+        type: number
+        sql: "{net_sales_ex_tax} - {cost_of_goods}"
+        format: currency
+        title: Gross profit
+        description: >
+          Net sales (ex tax) minus cost of goods sold. This is gross profit;
+          Lightspeed carries no operating expenses, so "profit" questions can only
+          be answered at gross margin level and answers should say so.
+      - name: gross_margin_pct
+        type: number
+        sql: "100.0 * ({net_sales_ex_tax} - {cost_of_goods}) / NULLIF({net_sales_ex_tax}, 0)"
+        format: percent
+        title: Gross margin %
+        description: Gross profit as a percentage of net sales (ex tax).
+      - name: average_sale_value
+        type: number
+        sql: "{gross_takings} / NULLIF({transactions}, 0)"
+        format: currency
+        title: Average sale value
+        description: Gross takings divided by transaction count (tax inclusive AOV).
+      - name: refund_transactions
+        type: count
+        title: Refund transactions
+        description: Completed, non-voided transactions whose total is negative (refunds/returns).
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.calc_total < 0"
+      - name: refund_value
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Refund value
+        description: >
+          Tax-inclusive value of refund transactions. Negative by construction;
+          multiply by -1 when presenting "refund dollars".
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.calc_total < 0"
+      - name: voided_transactions
+        type: count
+        description: Transactions that were voided/cancelled. Never part of revenue.
+        filters:
+          - sql: "COALESCE({CUBE}.voided, false) = true"
+      - name: open_tickets
+        type: count
+        description: Tickets that are neither completed nor voided (still open at the register).
+        filters:
+          - sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false"
+      - name: outstanding_balance
+        type: sum
+        sql: balance
+        format: currency
+        description: Total unpaid balance across non-voided sales (layaways, on-account sales).
+        filters:
+          - sql: "COALESCE({CUBE}.voided, false) = false"
+      - name: purchasing_customers
+        type: count_distinct
+        sql: customer_id
+        title: Distinct purchasing customers
+        description: Distinct customer profiles attached to completed, non-voided sales. Anonymous sales are not counted.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
+      - name: first_sale_at
+        type: min
+        sql: complete_time
+        public: false
+        description: Earliest completed sale time; used as the sub-query source for customer first-purchase dates.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: last_sale_at
+        type: max
+        sql: complete_time
+        public: false
+        description: Latest completed sale time; used as the sub-query source for customer last-purchase dates.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+
+    segments:
+      - name: completed_sales
+        sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+        description: Completed, non-voided transactions (the default revenue population).
+      - name: refunds
+        sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.calc_total < 0"
+        description: Completed transactions with a negative total, i.e. refunds/returns.
+      - name: voided_sales
+        sql: "COALESCE({CUBE}.voided, false) = true"
+        description: Voided/cancelled transactions.
+      - name: open_sales
+        sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false"
+        description: Open tickets not yet completed.
+      - name: customer_attached_sales
+        sql: "{CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
+        description: Sales rung up against a customer profile (excludes anonymous walk-ins).

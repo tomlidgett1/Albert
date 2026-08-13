@@ -1,0 +1,336 @@
+cubes:
+  - name: square_locations
+    title: Square locations
+    public: false
+    description: One row per Square business location, active or inactive.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_locations t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: name, sql: "payload_json->>'name'", type: string, title: Location }
+      - { name: business_name, sql: "payload_json->>'business_name'", type: string }
+      - { name: status, sql: "payload_json->>'status'", type: string }
+      - { name: location_type, sql: "payload_json->>'type'", type: string }
+      - { name: timezone, sql: "payload_json->>'timezone'", type: string }
+      - { name: currency, sql: "payload_json->>'currency'", type: string }
+      - { name: country, sql: "payload_json->>'country'", type: string }
+      - { name: locality, sql: "payload_json#>> ARRAY['address', 'locality']", type: string, title: Suburb / locality }
+      - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string, title: State / region }
+      - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+    measures:
+      - { name: locations, type: count }
+      - name: active_locations
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'ACTIVE'" }]
+
+  - name: square_customers
+    title: Square customers
+    public: false
+    description: >
+      One row per Square Customer Directory profile. Direct contact details stay
+      in the exhaustive source explorer; this curated cube exposes lifecycle and
+      customer-behaviour dimensions without inviting bulk PII retrieval.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_customers t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: customer_id, sql: "payload_json->>'id'", type: string, public: false }
+      - name: display_name
+        sql: "NULLIF(TRIM(CONCAT_WS(' ', payload_json->>'given_name', payload_json->>'family_name')), '')"
+        type: string
+        title: Customer
+      - { name: company_name, sql: "payload_json->>'company_name'", type: string }
+      - { name: creation_source, sql: "payload_json->>'creation_source'", type: string }
+      - { name: email_unsubscribed, sql: "(payload_json#>> ARRAY['preferences', 'email_unsubscribed'])::boolean", type: boolean }
+      - { name: locality, sql: "payload_json#>> ARRAY['address', 'locality']", type: string }
+      - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string }
+      - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
+      - { name: country, sql: "payload_json#>> ARRAY['address', 'country']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+    measures:
+      - { name: customers, type: count }
+      - name: contactable_customers
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json#>> ARRAY['preferences', 'email_unsubscribed'])::boolean, false) = false" }]
+
+  - name: square_catalog_objects
+    title: Square catalogue
+    public: false
+    description: >
+      One row per current Square CatalogObject. ITEM, ITEM_VARIATION and CATEGORY
+      carry different payload shapes and are classified explicitly. ITEM is a
+      product family; ITEM_VARIATION is the sellable SKU and owns price/stock flags.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_catalog_objects t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: catalog_object_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: object_type, sql: "payload_json->>'type'", type: string, title: Catalogue object type }
+      - name: object_name
+        sql: >
+          COALESCE(payload_json#>> ARRAY['item_data', 'name'], payload_json#>> ARRAY['item_variation_data', 'name'],
+                   payload_json#>> ARRAY['category_data', 'name'], payload_json#>> ARRAY['modifier_list_data', 'name'],
+                   payload_json#>> ARRAY['tax_data', 'name'], payload_json#>> ARRAY['discount_data', 'name'])
+        type: string
+        title: Catalogue name
+      - { name: item_id, sql: "payload_json#>> ARRAY['item_variation_data', 'item_id']", type: string, public: false }
+      - { name: category_id, sql: "payload_json#>> ARRAY['item_data', 'category_id']", type: string, public: false }
+      - { name: sku, sql: "payload_json#>> ARRAY['item_variation_data', 'sku']", type: string }
+      - { name: upc, sql: "payload_json#>> ARRAY['item_variation_data', 'upc']", type: string }
+      - { name: product_type, sql: "payload_json#>> ARRAY['item_data', 'product_type']", type: string }
+      - { name: is_taxable, sql: "(payload_json#>> ARRAY['item_data', 'is_taxable'])::boolean", type: boolean }
+      - { name: is_archived, sql: "(payload_json->>'is_archived')::boolean", type: boolean }
+      - { name: is_alcoholic, sql: "(payload_json#>> ARRAY['item_data', 'is_alcoholic'])::boolean", type: boolean }
+      - { name: track_inventory, sql: "(payload_json#>> ARRAY['item_variation_data', 'track_inventory'])::boolean", type: boolean }
+      - { name: sellable, sql: "(payload_json#>> ARRAY['item_variation_data', 'sellable'])::boolean", type: boolean }
+      - { name: stockable, sql: "(payload_json#>> ARRAY['item_variation_data', 'stockable'])::boolean", type: boolean }
+      - { name: price_currency, sql: "payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']", type: string }
+      - name: price
+        sql: >
+          (payload_json#>> ARRAY['item_variation_data', 'price_money', 'amount'])::numeric /
+          POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']))
+        type: number
+        format: currency
+        title: Variation price
+        description: Currency-exponent-aware decimal price; populated only for variations with fixed pricing.
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+    measures:
+      - { name: catalogue_objects, type: count }
+      - name: items
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'ITEM'" }]
+      - name: variations
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'ITEM_VARIATION'" }]
+      - name: categories
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'CATEGORY'" }]
+      - name: active_catalogue_objects
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'is_archived')::boolean, false) = false" }]
+
+  - name: square_orders
+    title: Square orders
+    public: false
+    description: >
+      One row per Square order header in any state. Money is converted from
+      integer base units using the ISO currency exponent. Revenue measures use
+      only COMPLETED orders. net_order_value is sale money less Square order returns.
+    meta:
+      ai_context: >
+        closed_at is a revenue date only for state COMPLETED. OPEN and DRAFT
+        orders may have complete-looking totals, and CANCELED orders retain
+        totals, so never include them in sales. total_order_value is before order
+        returns; net_order_value is after them. Both include tax, tips and service
+        charges. source_name is last-touch application, not reliable origin channel.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_orders t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+      - name: square_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_customers}.tenant_id AND {CUBE}.connection_id = {square_customers}.connection_id AND {CUBE}.payload_json->>'customer_id' = {square_customers}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: order_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
+      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
+      - { name: reference_id, sql: "payload_json->>'reference_id'", type: string }
+      - { name: source_name, sql: "payload_json#>> ARRAY['source', 'name']", type: string, title: Last-touch source }
+      - { name: state, sql: "payload_json->>'state'", type: string, description: "OPEN, COMPLETED, CANCELED or DRAFT." }
+      - { name: ticket_name, sql: "payload_json->>'ticket_name'", type: string, description: "Human ticket/table label; not a stable identifier." }
+      - { name: currency, sql: "payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']", type: string }
+      - { name: created_at, sql: "payload_json->>'created_at'", type: time, description: "Basket creation time, not the default revenue time." }
+      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: closed_at, sql: "payload_json->>'closed_at'", type: time, title: Closed at (business time) }
+      - { name: has_customer, sql: "({CUBE}.payload_json->>'customer_id' IS NOT NULL)", type: boolean }
+      - { name: is_completed, sql: "({CUBE}.payload_json->>'state' = 'COMPLETED')", type: boolean }
+      - { name: is_open, sql: "({CUBE}.payload_json->>'state' IN ('OPEN', 'DRAFT'))", type: boolean }
+      - { name: is_canceled, sql: "({CUBE}.payload_json->>'state' = 'CANCELED')", type: boolean }
+    measures:
+      - { name: orders, type: count }
+      - name: completed_orders
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: open_orders
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' IN ('OPEN', 'DRAFT')" }]
+      - name: canceled_orders
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CANCELED'" }]
+      - name: purchasing_customers
+        sql: "payload_json->>'customer_id'"
+        type: count_distinct
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: total_order_value
+        sql: >
+          (payload_json#>> ARRAY['total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['total_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: net_order_value
+        sql: >
+          (payload_json#>> ARRAY['net_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: returns_value
+        sql: >
+          (payload_json#>> ARRAY['return_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['return_amounts', 'total_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: tax_collected
+        sql: >
+          (payload_json#>> ARRAY['net_amounts', 'tax_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'tax_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: discounts_given
+        sql: >
+          (payload_json#>> ARRAY['net_amounts', 'discount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'discount_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: tips_collected
+        sql: >
+          (payload_json#>> ARRAY['net_amounts', 'tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'tip_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: service_charges
+        sql: >
+          (payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
+      - name: outstanding_amount
+        sql: >
+          (payload_json#>> ARRAY['net_amount_due_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amount_due_money', 'currency']))
+        type: sum
+        format: currency
+        description: Current outstanding balance; not a period flow.
+      - name: average_completed_order_value
+        sql: "{net_order_value} / NULLIF({completed_orders}, 0)"
+        type: number
+        format: currency
+
+  - name: square_order_lines
+    title: Square order line items
+    public: false
+    description: >
+      One row per line_items element embedded in a Square order. Parent order
+      state, location, customer and timestamps remain on each line. This is the
+      product/category/SKU grain; gift-card load lines are excluded from earned
+      sales measures because they create stored-value liability rather than revenue.
+    meta:
+      ai_context: >
+        Use for product, item, variation, SKU and category questions. completed_at
+        is the parent order close time. total_line_value is the final line total
+        including that line's tax and apportioned adjustments. Itemised return
+        lines live under order.returns; product measures here do not subtract
+        those quantities, so disclose this for return-sensitive questions.
+    sql: >
+      SELECT CONCAT(t.namespaced_source_key, ':line:', COALESCE(line.value->>'uid', line.ordinality::text)) AS row_key,
+             t.tenant_id, t.connection_id, t.payload_json AS order_payload, line.value AS line_payload,
+             line.ordinality AS line_ordinal, variation.payload_json AS variation_payload,
+             item.payload_json AS item_payload, category.payload_json AS category_payload
+      FROM source_square.square_orders t
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.payload_json->'line_items', '[]'::jsonb))
+        WITH ORDINALITY AS line(value, ordinality)
+      LEFT JOIN source_square.square_catalog_objects variation
+        ON variation.tenant_id = t.tenant_id
+       AND variation.connection_id = t.connection_id
+       AND variation.payload_json->>'id' = line.value->>'catalog_object_id'
+       AND NOT variation.tombstone
+      LEFT JOIN source_square.square_catalog_objects item
+        ON item.tenant_id = t.tenant_id
+       AND item.connection_id = t.connection_id
+       AND item.payload_json->>'id' = variation.payload_json#>> ARRAY['item_variation_data', 'item_id']
+       AND NOT item.tombstone
+      LEFT JOIN source_square.square_catalog_objects category
+        ON category.tenant_id = t.tenant_id
+       AND category.connection_id = t.connection_id
+       AND category.payload_json->>'id' = item.payload_json#>> ARRAY['item_data', 'category_id']
+       AND NOT category.tombstone
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.order_payload->>'location_id' = {square_locations}.payload_json->>'id'"
+      - name: square_catalog_objects
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_catalog_objects}.tenant_id AND {CUBE}.connection_id = {square_catalog_objects}.connection_id AND {CUBE}.line_payload->>'catalog_object_id' = {square_catalog_objects}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: order_id, sql: "order_payload->>'id'", type: string, public: false }
+      - { name: line_item_uid, sql: "line_payload->>'uid'", type: string, public: false }
+      - { name: catalog_object_id, sql: "line_payload->>'catalog_object_id'", type: string, public: false }
+      - { name: item_name, sql: "COALESCE(item_payload#>> ARRAY['item_data', 'name'], line_payload->>'name')", type: string, title: Item sold }
+      - { name: variation_name, sql: "COALESCE(variation_payload#>> ARRAY['item_variation_data', 'name'], line_payload->>'variation_name')", type: string }
+      - { name: category_name, sql: "category_payload#>> ARRAY['category_data', 'name']", type: string }
+      - { name: sku, sql: "variation_payload#>> ARRAY['item_variation_data', 'sku']", type: string }
+      - { name: upc, sql: "variation_payload#>> ARRAY['item_variation_data', 'upc']", type: string }
+      - { name: item_type, sql: "line_payload->>'item_type'", type: string, description: "GIFT_CARD lines are stored-value movements, not earned revenue." }
+      - { name: note, sql: "line_payload->>'note'", type: string }
+      - { name: quantity, sql: "(line_payload->>'quantity')::numeric", type: number }
+      - { name: currency, sql: "line_payload#>> ARRAY['total_money', 'currency']", type: string }
+      - { name: location_id, sql: "order_payload->>'location_id'", type: string, public: false }
+      - { name: order_state, sql: "order_payload->>'state'", type: string }
+      - { name: completed_at, sql: "order_payload->>'closed_at'", type: time, title: Completed at (business time) }
+    measures:
+      - name: line_items
+        type: count
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED'" }]
+      - name: units_sold
+        sql: "(line_payload->>'quantity')::numeric"
+        type: sum
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED' AND COALESCE({CUBE}.line_payload->>'item_type', 'ITEM') <> 'GIFT_CARD'" }]
+      - name: gross_line_sales
+        sql: >
+          (line_payload#>> ARRAY['gross_sales_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(line_payload#>> ARRAY['gross_sales_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED' AND COALESCE({CUBE}.line_payload->>'item_type', 'ITEM') <> 'GIFT_CARD'" }]
+      - name: total_line_value
+        sql: >
+          (line_payload#>> ARRAY['total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(line_payload#>> ARRAY['total_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED' AND COALESCE({CUBE}.line_payload->>'item_type', 'ITEM') <> 'GIFT_CARD'" }]
+      - name: line_discounts
+        sql: >
+          (line_payload#>> ARRAY['total_discount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(line_payload#>> ARRAY['total_discount_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED'" }]
+      - name: line_tax
+        sql: >
+          (line_payload#>> ARRAY['total_tax_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(line_payload#>> ARRAY['total_tax_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.order_payload->>'state' = 'COMPLETED'" }]
