@@ -2,6 +2,7 @@ import { Agent, type AgentInputItem, type Runner, assistant, user } from "@opena
 import { z } from "zod";
 import { isXaiModel, type AgentRunPreferences } from "../../../shared/src/index.js";
 import type { AlbertV3AgentConfig } from "../agent-config/loader.js";
+import type { TenantSourceFinding } from "./context.js";
 import {
   laneModelSettings,
   todayLine,
@@ -169,10 +170,20 @@ export function buildConversationInput(
   return items;
 }
 
-function classifierInstructions(config: AlbertV3AgentConfig): string {
+function classifierInstructions(
+  config: AlbertV3AgentConfig,
+  sourceFindings: readonly TenantSourceFinding[],
+): string {
   const views = config.accessibleViews
     .map((view) => `- ${view.name}: ${view.guidance}`)
     .join("\n");
+  const findings = sourceFindings.length > 0
+    ? `\nEstablished source facts for THIS business (verified by earlier investigations;
+they override generic assumptions and must shape resolvedQuestion and
+answerMustCover — for example, if a concept is established to live in one
+source, the useful-answer points must direct the work there):
+${sourceFindings.map((entry) => `- [${entry.concept}] ${entry.finding}`).join("\n")}\n`
+    : "";
   return `You are the intent orchestrator for Albert, an analytics assistant for a small
 business. You never answer the question yourself; you route it.
 
@@ -180,6 +191,7 @@ ${todayLine(config.timezone)}
 
 The data available (through these semantic views over the business's connected tools):
 ${views}
+${findings}
 
 An additional governed live Shopify reporting plane can answer Shopify-native traffic,
 sessions, conversion funnels, storefront/search behaviour, marketing attribution,
@@ -268,11 +280,12 @@ export async function classifyIntent(input: Readonly<{
   cachePartition: string;
   conversation: readonly ConversationMessage[];
   message: string;
+  sourceFindings?: readonly TenantSourceFinding[];
   signal?: AbortSignal;
 }>): Promise<IntentDecision> {
   const agent = new Agent({
     name: "Albert v3 intent orchestrator",
-    instructions: classifierInstructions(input.config),
+    instructions: classifierInstructions(input.config, input.sourceFindings ?? []),
     model: input.preferences.model,
     modelSettings: laneModelSettings(
       isXaiModel(input.preferences.model)

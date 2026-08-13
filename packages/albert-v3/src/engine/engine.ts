@@ -375,6 +375,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       cachePartition: promptCachePartition,
       conversation: options.conversation,
       message: options.message,
+      sourceFindings: options.sourceFindings ?? [],
       signal: options.signal,
     }),
   ]);

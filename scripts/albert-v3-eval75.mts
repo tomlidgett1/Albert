@@ -184,6 +184,16 @@ async function runCase(index: number, testCase: EvalCase): Promise<CaseRecord> {
       message: testCase.question,
       conversation: [],
       preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+      // Mirrors what the production route injects from the control plane; the
+      // standalone runner has no authenticated web session to load it live.
+      sourceFindings: [
+        { concept: "worked hours", finding: "Deputy timesheets are authoritative for worked hours and wage cost. Square timecards run far higher (July 2026: Square 968h vs Deputy 360h - unclosed/auto entries) and must never be used for labour hours or labour cost.", recordedAt: "2026-08-14T00:00:00Z" },
+        { concept: "total income", finding: "For whole-business income use the Xero P&L, never the sum of POS platforms: Square payments are largely the card-tender subset of Lightspeed sales, so adding Lightspeed + Square double-counts.", recordedAt: "2026-08-14T00:00:00Z" },
+        { concept: "sales", finding: "Lightspeed (sales_analytics) is the canonical sales source. Raw Lightspeed rows can contain duplicate sale versions for recent syncs; the semantic layer deduplicates them.", recordedAt: "2026-08-14T00:00:00Z" },
+        { concept: "product categories", finding: "Lightspeed holds the rich product category tree (Wheels and Tyres, Drivetrain, City, Cockpit). Square's catalogue is thin (Services/Uncategorised). Category and product-mix questions belong on Lightspeed views.", recordedAt: "2026-08-14T00:00:00Z" },
+        { concept: "gst collected", finding: "GST collected lives in the POS sales feeds (tax on completed sales). Xero's directly-invoiced GST measure covers only the few invoiced sales and massively understates GST collected.", recordedAt: "2026-08-14T00:00:00Z" },
+        { concept: "supplier balances", finding: "Xero contact-level payable snapshots net supplier credits, so they differ slightly from summing unpaid bills. Both are correct at different grains. Some historical bills carry junk due dates (1954, 1996).", recordedAt: "2026-08-14T00:00:00Z" },
+      ],
       tenantId: TENANT_ID,
       conversationId: CONVERSATION_ID,
       turnId: TURN_ID,
