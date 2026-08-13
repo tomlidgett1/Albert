@@ -197,6 +197,16 @@ export function buildKnowledgeBlock(input: Readonly<{
     "# Business rules (always apply)",
     renderAlwaysRulesForRoute(input.config, input.route),
   ];
+  if (input.route.unavailableRequestedConnectors.length > 0) {
+    sections.push(
+      "# Sources the owner named that are NOT connected",
+      `The owner's question references: ${input.route.unavailableRequestedConnectors.join(", ")}. ` +
+      `None of these are connected to Albert. Open the answer by saying so plainly. You may then ` +
+      `offer the closest figures from a connected source, but only when every substituted figure is ` +
+      `explicitly labelled with its real source. Never present another source's figures as if they ` +
+      `came from the named source, and never treat the missing source as zero.`,
+    );
+  }
   if (input.route.shopifyAdmin) {
     sections.push(
       "# Governed live Shopify Admin lookups",

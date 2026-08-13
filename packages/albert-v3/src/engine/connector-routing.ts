@@ -10,6 +10,8 @@ export type V3ToolRoute = Readonly<{
   activeCubeConnectors: readonly string[];
   /** Explicit/inherited source hints boost search but never erase other active views. */
   preferredCubeConnectors: readonly string[];
+  /** Connectors the owner named that are not connected; the answer must disclose this. */
+  unavailableRequestedConnectors: readonly string[];
   mode: "cube" | "shopifyql" | "shopify_admin" | "mixed" | "explain";
   reasons: readonly string[];
 }>;
@@ -146,6 +148,12 @@ export function resolveV3ToolRoute(input: Readonly<{
   const available = new Set(activeCubeConnectors);
   const combinedQuestion = `${input.question}\n${input.resolvedQuestion}`;
   const explicit = explicitConnectorHints(combinedQuestion, available);
+  // Detect sources the owner explicitly named that are NOT connected. Silently
+  // substituting another source's figures for a named source is a truthfulness
+  // failure; the model is required to disclose the gap instead.
+  const mentionedAnywhere = explicitConnectorHints(combinedQuestion, configured);
+  const unavailableRequestedConnectors = mentionedAnywhere
+    .filter((connector) => !available.has(connector));
   const inferred = explicit.length === 0
     ? inferredCubeConnectorHints(combinedQuestion, available)
     : [];
@@ -202,6 +210,9 @@ export function resolveV3ToolRoute(input: Readonly<{
   if (inheritedCubeConnectors.length > 0 || inheritedQL || inheritedAdmin) reasons.push("prior governed query");
   if (qlIntent) reasons.push("Shopify-native reporting intent");
   if (adminIntent) reasons.push("Shopify Admin object/field intent");
+  if (unavailableRequestedConnectors.length > 0) {
+    reasons.push(`referenced but not connected: ${unavailableRequestedConnectors.join(", ")}`);
+  }
   if (reasons.length === 0) reasons.push("broad connected semantic route");
 
   const mode: V3ToolRoute["mode"] = input.lane === "explain"
@@ -219,6 +230,7 @@ export function resolveV3ToolRoute(input: Readonly<{
     shopifyAdmin,
     activeCubeConnectors: Object.freeze(activeCubeConnectors),
     preferredCubeConnectors: Object.freeze(preferredCubeConnectors),
+    unavailableRequestedConnectors: Object.freeze(unavailableRequestedConnectors),
     mode,
     reasons: Object.freeze(reasons),
   });

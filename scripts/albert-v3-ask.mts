@@ -43,7 +43,10 @@ if (!question) {
   process.exit(1);
 }
 
-const TENANT_ID = process.env.TENANT_ID || "01KZ4ZMVF5QNQ4TX35VF3WDJBM";
+const TENANT_ID = process.env.TENANT_ID || "01KZN20VTX2EWW1TQ2AA3MCPW6";
+const ACTIVE_CONNECTORS = process.env.ACTIVE_CONNECTORS
+  ? process.env.ACTIVE_CONNECTORS.split(",").map((value) => value.trim()).filter(Boolean)
+  : undefined;
 const CONVERSATION_ID = process.env.CONVERSATION_ID || "01SM0KETESTC0NVAAAAAAAAAAA";
 const TURN_ID = process.env.TURN_ID || "01SM0KETESTT0RNAAAAAAAAAAA";
 
@@ -62,6 +65,7 @@ const result = await runAlbertV3Turn({
   conversation: [],
   preferences: DEFAULT_AGENT_PREFERENCES,
   tenantId: TENANT_ID,
+  ...(ACTIVE_CONNECTORS ? { activeConnectors: ACTIVE_CONNECTORS } : {}),
   conversationId: CONVERSATION_ID,
   turnId: TURN_ID,
   cubeApiUrl,

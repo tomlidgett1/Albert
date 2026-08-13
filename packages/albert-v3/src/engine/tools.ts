@@ -1054,6 +1054,7 @@ const ALL_TOOL_ROUTE: V3ToolRoute = Object.freeze({
   shopifyQL: true,
   shopifyAdmin: true,
   activeCubeConnectors: Object.freeze([]),
+  unavailableRequestedConnectors: Object.freeze([]),
   preferredCubeConnectors: Object.freeze([]),
   mode: "mixed",
   reasons: Object.freeze(["unscoped tool contract"]),
