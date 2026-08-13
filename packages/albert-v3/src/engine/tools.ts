@@ -1751,7 +1751,7 @@ export function createV3Tools(
   const updatePlan = tool({
     name: "update_plan",
     description:
-      "Maintain the short visible plan the owner watches while you work. Call it before the first query with 2-6 short owner-readable steps (exactly one active), then call it again with the full updated list each time a step completes so steps tick off live. Free: it never consumes the query budget.",
+      "Maintain the short visible plan the owner watches while you work. Call it before the first query with 2-6 short owner-readable steps (exactly one active), then call it again with the full updated list each time a step completes so steps tick off live. The plan is yours to revise: when evidence changes direction, resend the list with steps added, reworded or replaced - replanning mid-investigation is expected, never a failure. Free: it never consumes the query budget.",
     parameters: z.object({
       steps: z.array(z.object({
         label: z.string().trim().min(3).max(60)

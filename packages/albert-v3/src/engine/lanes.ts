@@ -717,9 +717,11 @@ Method:
    wording. Write one or two natural sentences explaining the checks you will
    make and why; do not use a numbered list or mention queries, tools, Cube,
    schemas, or internal reasoning. As each plan step completes, call update_plan
-   again with the full list (completed steps done, next step active); mark every
-   step done before composing the answer. update_plan is free and never uses the
-   query budget.
+   again with the full list (completed steps done, next step active). When a
+   result changes the direction of the investigation, revise the plan - add or
+   replace the remaining steps to match what you now know. Mark every remaining
+   step done or drop it before composing the answer. update_plan is free and
+   never uses the query budget.
 2. Execute the plan: trends, breakdowns and comparisons each get their own query.
    Use compare_periods for period-over-period questions and top_n_breakdown for
    rankings. Stay within ${budget.maxQueries} queries.
