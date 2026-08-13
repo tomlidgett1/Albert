@@ -282,6 +282,7 @@ async function captureLaneInstructions(
       lane,
       resolvedQuestion: "What invoices do we have due end of August?",
       ownerGoal: "Plan which supplier payments must go out this month.",
+      answerShape: "breakdown",
       answerMustCover: ["Anything already overdue and unpaid"],
       assumptions: [],
       clarificationQuestion: null,
@@ -418,6 +419,64 @@ test("the source-finding ledger reaches prompts, the tool ships, and support rol
   assert.match(lanes, /max turns/iu);
   const engine = read("packages/albert-v3/src/engine/engine.ts");
   assert.match(engine, /composeFromGatheredEvidence\(laneInput\)/u);
+});
+
+test("charts are gated by answer shape and by a perceptual floor on the data", async () => {
+  // Shape gate: fact/list questions never see the chart tool at all.
+  const withCharts = createV3Tools({ route: route(), lane: "quick", purpose: "answer", chartable: true })
+    .map((tool) => tool.name);
+  const withoutCharts = createV3Tools({ route: route(), lane: "quick", purpose: "answer", chartable: false })
+    .map((tool) => tool.name);
+  assert.ok(withCharts.includes("make_chart"));
+  assert.equal(withoutCharts.includes("make_chart"), false);
+  assert.ok(intentSchema.shape.answerShape);
+
+  // Perceptual floor: too few points, or bars of identical height, are
+  // rejected by the runtime regardless of model judgment.
+  const makeChart = createV3Tools({ route: route(), lane: "analytical", purpose: "answer" })
+    .find((tool) => tool.name === "make_chart");
+  assert.ok(makeChart && makeChart.type === "function");
+  const chartContext = stubContext({ loadQuery: async () => { throw new Error("unused"); } });
+  const baseTable = {
+    tableEventId: "evt", caption: "t", columnKeys: ["who", "hours"],
+    numericColumnKeys: ["hours"],
+    columns: [
+      { key: "who", label: "Who", type: "string" as const },
+      { key: "hours", label: "Hours", type: "number" as const },
+    ],
+    provenance: {
+      sources: [], timeRange: { label: "x", start: "unknown", end: "unknown", timezone: "UTC" },
+      definitions: [], semanticBundleHash: "x", identityGraph: { version: 0, hash: "x" },
+    },
+    presentation: "evidence" as const,
+  };
+  chartContext.tableResults.set("res_one_row", {
+    ...baseTable, resultId: "res_one_row", rowCount: 1,
+    rows: [{ who: "Leigh Phillips", hours: 8 }],
+  });
+  chartContext.tableResults.set("res_flat_bars", {
+    ...baseTable, resultId: "res_flat_bars", rowCount: 5,
+    rows: Array.from({ length: 5 }, (_, index) => ({ who: `Staff ${index}`, hours: 8 })),
+  });
+  chartContext.tableResults.set("res_varied", {
+    ...baseTable, resultId: "res_varied", rowCount: 5,
+    rows: Array.from({ length: 5 }, (_, index) => ({ who: `Staff ${index}`, hours: 4 + index })),
+  });
+  const run = async (resultId: string) => {
+    const raw = await (makeChart.invoke as (ctx: unknown, args: string) => Promise<unknown>)(
+      { context: chartContext },
+      JSON.stringify({ resultId, chartType: "bar", caption: "Hours by staff", xKey: "who", yKey: "hours" }),
+    );
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as { ok: boolean; error?: string };
+  };
+  const oneRow = await run("res_one_row");
+  assert.equal(oneRow.ok, false);
+  assert.match(String(oneRow.error), /fewer than 3 points/u);
+  const flat = await run("res_flat_bars");
+  assert.equal(flat.ok, false);
+  assert.match(String(flat.error), /same height/u);
+  const varied = await run("res_varied");
+  assert.equal(varied.ok, true);
 });
 
 test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {

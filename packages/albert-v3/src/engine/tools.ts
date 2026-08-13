@@ -1257,6 +1257,12 @@ export type V3ToolFactoryOptions = Readonly<{
   route?: V3ToolRoute;
   lane?: "quick" | "analytical" | "deep" | "explain";
   purpose?: "answer" | "investigation";
+  /**
+   * Whether the question's answer shape can carry a chart at all. Identity
+   * and schedule questions (fact/list shapes) never chart, so the tool is
+   * simply not exposed rather than merely discouraged.
+   */
+  chartable?: boolean;
 }>;
 
 const ALL_TOOL_ROUTE: V3ToolRoute = Object.freeze({
@@ -1551,6 +1557,25 @@ export function createV3Tools(
       if (!table.numericColumnKeys.includes(input.yKey)) {
         return { ok: false, error: "yKey must be a numeric column." };
       }
+      // Perceptual floor: a chart exists to make magnitude comparison faster
+      // than reading. Below these thresholds it communicates strictly less
+      // than the numbers themselves, so the runtime refuses regardless of
+      // model judgment.
+      if (table.rowCount < 3) {
+        return {
+          ok: false,
+          error: `This result has ${table.rowCount} data point${table.rowCount === 1 ? "" : "s"}. A chart of fewer than 3 points communicates less than the numbers themselves - state the figures in prose or leave the table to speak.`,
+        };
+      }
+      const plottedValues = table.rows
+        .map((row) => Number(row[input.yKey]))
+        .filter((value) => Number.isFinite(value));
+      if (input.chartType === "bar" && plottedValues.length > 0 && new Set(plottedValues).size === 1) {
+        return {
+          ok: false,
+          error: "Every bar would be the same height, so the chart carries no comparison. State the shared value in prose instead.",
+        };
+      }
       if (context.chartedResultIds.has(input.resultId)) {
         return { ok: false, error: "This result already has a chart." };
       }
@@ -1827,7 +1852,9 @@ export function createV3Tools(
       exploreEntities,
     );
   }
-  if (route.cube || route.shopifyQL || route.shopifyAdmin) selected.push(makeChart);
+  if ((route.cube || route.shopifyQL || route.shopifyAdmin) && options.chartable !== false) {
+    selected.push(makeChart);
+  }
   if (purpose === "answer" && (options.lane === undefined || options.lane === "analytical" || options.lane === "deep")) {
     selected.push(reportProgress);
   }

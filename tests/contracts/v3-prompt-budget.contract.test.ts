@@ -162,6 +162,7 @@ function laneInput(input: Readonly<{
       lane: input.lane,
       resolvedQuestion: input.question,
       ownerGoal: null,
+      answerShape: "breakdown",
       answerMustCover: [],
       assumptions: [],
       clarificationQuestion: null,

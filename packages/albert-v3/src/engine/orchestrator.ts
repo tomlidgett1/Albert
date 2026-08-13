@@ -19,6 +19,8 @@ export const intentSchema = z.object({
   resolvedQuestion: z.string().min(1).max(600),
   /** One sentence naming the practical goal behind the question; null when purely informational. */
   ownerGoal: z.string().max(300).nullable(),
+  /** The shape of a useful answer; gates presentation (charts only fit magnitude shapes). */
+  answerShape: z.enum(["fact", "list", "comparison", "trend", "breakdown", "diagnosis"]),
   /** Up to 4 points a genuinely useful answer must cover, from a critical reading of the question. */
   answerMustCover: z.array(z.string().min(3).max(200)).max(4),
   /** Assumptions made instead of asking; must be disclosed in the answer. */
@@ -128,6 +130,7 @@ export function coerceRefinementIntent(
       lane: "explain",
       resolvedQuestion: `Explain, from the previous answer and its recorded queries: ${message.trim()}`.slice(0, 600),
       ownerGoal: decision.ownerGoal,
+      answerShape: "fact",
       answerMustCover: decision.answerMustCover,
       assumptions: decision.assumptions,
       clarificationQuestion: null,
@@ -142,6 +145,7 @@ export function coerceRefinementIntent(
     lane: lastAssistant?.resolvedSubject?.kind === "deep" ? "deep" : "quick",
     resolvedQuestion: resolvedQuestion.slice(0, 600),
     ownerGoal: decision.ownerGoal,
+    answerShape: decision.answerShape,
     answerMustCover: decision.answerMustCover,
     assumptions: decision.assumptions,
     clarificationQuestion: null,
@@ -270,7 +274,19 @@ Beyond routing, read the question critically and infer the goal behind it:
   why the data cannot.
 resolvedQuestion stays faithful to the owner's wording; answerMustCover is where
 the practical reading lives. When covering the points clearly needs several
-queries, route analytical rather than quick.`;
+queries, route analytical rather than quick.
+
+Also set answerShape - the shape of a genuinely useful answer:
+- fact: one figure or yes/no ("how much did we sell yesterday").
+- list: named things with their details - rosters, schedules, documents due,
+  directories ("who's working today" is a list of people and times).
+- comparison: two or more magnitudes weighed against each other.
+- trend: change over time.
+- breakdown: how a total splits or ranks across categories ("top products").
+- diagnosis: open-ended why/how-are-we-doing investigation.
+This gates presentation: facts and lists are answered in prose and tables and
+never charted; only magnitude shapes (comparison, trend, breakdown, diagnosis)
+may carry a chart.`;
 }
 
 export async function classifyIntent(input: Readonly<{
@@ -319,6 +335,7 @@ export async function classifyIntent(input: Readonly<{
       lane: "analytical",
       resolvedQuestion: input.message,
       ownerGoal: null,
+      answerShape: "diagnosis",
       answerMustCover: [],
       assumptions: [],
       clarificationQuestion: null,

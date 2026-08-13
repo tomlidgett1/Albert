@@ -468,6 +468,11 @@ type GroundedLaneSpec = Readonly<{
   toolLane: NonNullable<Parameters<typeof createV3Tools>[0]>["lane"];
 }>;
 
+/** Charts only fit magnitude shapes; identity and schedule answers never chart. */
+function chartableShape(shape: IntentDecision["answerShape"]): boolean {
+  return shape === "comparison" || shape === "trend" || shape === "breakdown" || shape === "diagnosis";
+}
+
 function exposedToolLane(lane: IntentDecision["lane"]): NonNullable<Parameters<typeof createV3Tools>[0]>["lane"] {
   return lane === "analytical" || lane === "deep" || lane === "explain" ? lane : "quick";
 }
@@ -490,6 +495,7 @@ async function runGrokInvestigation(
       route: input.context.toolRoute,
       lane: spec.toolLane,
       purpose: "investigation",
+      chartable: chartableShape(input.intent.answerShape),
     })],
   });
   const conversation = laneConversationInput(input);
@@ -601,6 +607,7 @@ async function runStructuredLane(
       route: input.context.toolRoute,
       lane: spec.toolLane,
       purpose: "answer",
+      chartable: chartableShape(input.intent.answerShape),
     })],
     outputType: finalAnswerSchema,
   });
@@ -721,8 +728,10 @@ Method:
    state the useful finding and the next check. Do this at most twice. Skip routine
    status, query-by-query narration, generic encouragement, and anything already said.
 4. When a query is rejected, fix the member names from the catalogue and retry once.
-5. Chart the one or two results that best support the answer (line for time series,
-   bar for rankings).
+5. Only when the useful answer is itself a comparison, trend or breakdown across
+   several values, chart the one or two results that best support it (line for
+   time series, bar for rankings). A list, schedule, roster or single figure
+   never gets a chart - the names and times are the answer, not the magnitudes.
 6. Compose the answer: headline finding, the movements that explain it, then detail.
 
 If the question refines a previous answer (the conversation shows the governed Cube
