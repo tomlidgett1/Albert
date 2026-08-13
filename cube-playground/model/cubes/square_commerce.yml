@@ -22,7 +22,7 @@ cubes:
       - { name: locality, sql: "payload_json#>> ARRAY['address', 'locality']", type: string, title: Suburb / locality }
       - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string, title: State / region }
       - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
     measures:
       - { name: locations, type: count }
       - name: active_locations
@@ -56,8 +56,8 @@ cubes:
       - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string }
       - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
       - { name: country, sql: "payload_json#>> ARRAY['address', 'country']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: customers, type: count }
       - name: contactable_customers
@@ -108,8 +108,8 @@ cubes:
         format: currency
         title: Variation price
         description: Currency-exponent-aware decimal price; populated only for variations with fixed pricing.
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: catalogue_objects, type: count }
       - name: items
@@ -162,9 +162,9 @@ cubes:
       - { name: state, sql: "payload_json->>'state'", type: string, description: "OPEN, COMPLETED, CANCELED or DRAFT." }
       - { name: ticket_name, sql: "payload_json->>'ticket_name'", type: string, description: "Human ticket/table label; not a stable identifier." }
       - { name: currency, sql: "payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, description: "Basket creation time, not the default revenue time." }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: closed_at, sql: "payload_json->>'closed_at'", type: time, title: Closed at (business time) }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, description: "Basket creation time, not the default revenue time." }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: closed_at, sql: "(payload_json->>'closed_at')::timestamptz", type: time, title: Closed at (business time) }
       - { name: has_customer, sql: "({CUBE}.payload_json->>'customer_id' IS NOT NULL)", type: boolean }
       - { name: is_completed, sql: "({CUBE}.payload_json->>'state' = 'COMPLETED')", type: boolean }
       - { name: is_open, sql: "({CUBE}.payload_json->>'state' IN ('OPEN', 'DRAFT'))", type: boolean }
@@ -301,7 +301,7 @@ cubes:
       - { name: currency, sql: "line_payload#>> ARRAY['total_money', 'currency']", type: string }
       - { name: location_id, sql: "order_payload->>'location_id'", type: string, public: false }
       - { name: order_state, sql: "order_payload->>'state'", type: string }
-      - { name: completed_at, sql: "order_payload->>'closed_at'", type: time, title: Completed at (business time) }
+      - { name: completed_at, sql: "(order_payload->>'closed_at')::timestamptz", type: time, title: Completed at (business time) }
     measures:
       - name: line_items
         type: count

@@ -54,9 +54,9 @@ cubes:
       - { name: receipt_number, sql: "payload_json->>'receipt_number'", type: string }
       - { name: statement_description, sql: "payload_json->>'statement_description_identifier'", type: string }
       - { name: delay_action, sql: "payload_json->>'delay_action'", type: string }
-      - { name: delayed_until, sql: "payload_json->>'delayed_until'", type: time }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Paid / attempted at }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: delayed_until, sql: "(payload_json->>'delayed_until')::timestamptz", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Paid / attempted at }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
       - { name: is_offline_payment, sql: "({CUBE}.payload_json ? 'offline_payment_details')", type: boolean }
       - { name: is_completed, sql: "({CUBE}.payload_json->>'status' = 'COMPLETED')", type: boolean }
     measures:
@@ -124,7 +124,7 @@ cubes:
       - { name: payment_id, sql: "payment_payload->>'id'", type: string, public: false }
       - { name: fee_type, sql: "fee_payload->>'type'", type: string }
       - { name: currency, sql: "fee_payload#>> ARRAY['amount_money', 'currency']", type: string }
-      - { name: effective_at, sql: "fee_payload->>'effective_at'", type: time, title: Fee effective at }
+      - { name: effective_at, sql: "(fee_payload->>'effective_at')::timestamptz", type: time, title: Fee effective at }
     measures:
       - { name: fee_entries, type: count }
       - name: processing_fees
@@ -169,8 +169,8 @@ cubes:
       - { name: reason, sql: "payload_json->>'reason'", type: string }
       - { name: destination_type, sql: "payload_json->>'destination_type'", type: string }
       - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Refund requested at }
-      - { name: completed_at, sql: "payload_json->>'updated_at'", type: time, title: Refund completed / updated at }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Refund requested at }
+      - { name: completed_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time, title: Refund completed / updated at }
       - { name: is_unlinked, sql: "COALESCE((payload_json->>'unlinked')::boolean, false)", type: boolean }
     measures:
       - { name: refund_attempts, type: count }
@@ -213,9 +213,9 @@ cubes:
       - { name: destination_type, sql: "payload_json#>> ARRAY['destination', 'type']", type: string }
       - { name: end_to_end_id, sql: "payload_json->>'end_to_end_id'", type: string, description: "Reference expected on the destination bank statement." }
       - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: arrival_date, sql: "payload_json->>'arrival_date'", type: time, title: Expected / actual arrival date }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: arrival_date, sql: "(payload_json->>'arrival_date')::timestamptz", type: time, title: Expected / actual arrival date }
     measures:
       - { name: payouts, type: count }
       - name: paid_payouts
@@ -258,7 +258,7 @@ cubes:
       - { name: payout_entry_id, sql: "entry_payload->>'id'", type: string, public: false }
       - { name: activity_type, sql: "entry_payload->>'type'", type: string }
       - { name: currency, sql: "entry_payload#>> ARRAY['net_amount_money', 'currency']", type: string }
-      - { name: effective_at, sql: "entry_payload->>'effective_at'", type: time, title: Activity effective at }
+      - { name: effective_at, sql: "(entry_payload->>'effective_at')::timestamptz", type: time, title: Activity effective at }
     measures:
       - { name: payout_entries, type: count }
       - name: entry_gross_amount
@@ -303,10 +303,10 @@ cubes:
       - { name: card_brand, sql: "payload_json->>'card_brand'", type: string }
       - { name: brand_dispute_id, sql: "payload_json->>'brand_dispute_id'", type: string }
       - { name: currency, sql: "payload_json#>> ARRAY['amount_money', 'currency']", type: string }
-      - { name: due_at, sql: "payload_json->>'due_at'", type: time, title: Evidence due at }
-      - { name: reported_at, sql: "COALESCE(payload_json->>'reported_at', payload_json->>'reported_date')", type: time }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: due_at, sql: "(payload_json->>'due_at')::timestamptz", type: time, title: Evidence due at }
+      - { name: reported_at, sql: "(COALESCE(payload_json->>'reported_at', payload_json->>'reported_date'))::timestamptz", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: disputes, type: count }
       - name: dispute_amount
@@ -341,7 +341,7 @@ cubes:
       - { name: gan_source, sql: "payload_json->>'gan_source'", type: string }
       - { name: state, sql: "payload_json->>'state'", type: string }
       - { name: currency, sql: "payload_json#>> ARRAY['balance_money', 'currency']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
     measures:
       - { name: gift_cards, type: count }
       - name: active_gift_cards
@@ -379,7 +379,7 @@ cubes:
       - { name: gift_card_id, sql: "payload_json->>'gift_card_id'", type: string, public: false }
       - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
       - { name: activity_type, sql: "payload_json->>'type'", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Gift-card activity at }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Gift-card activity at }
     measures:
       - { name: gift_card_activities, type: count }
       - name: activations

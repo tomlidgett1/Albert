@@ -34,7 +34,7 @@ cubes:
       - { name: inventory_state, sql: "payload_json->>'state'", type: string }
       - { name: quantity, sql: "(payload_json->>'quantity')::numeric", type: number }
       - { name: is_estimated, sql: "COALESCE((payload_json->>'is_estimated')::boolean, false)", type: boolean }
-      - { name: calculated_at, sql: "payload_json->>'calculated_at'", type: time, title: Inventory calculated at }
+      - { name: calculated_at, sql: "(payload_json->>'calculated_at')::timestamptz", type: time, title: Inventory calculated at }
       - { name: is_in_stock, sql: "({CUBE}.payload_json->>'state' = 'IN_STOCK')", type: boolean }
     measures:
       - { name: inventory_balances, type: count }
@@ -87,7 +87,7 @@ cubes:
       - { name: reference_id, sql: "payload_json#>> ARRAY['adjustment', 'reference_id']", type: string }
       - { name: change_reason, sql: "payload_json#>> ARRAY['adjustment', 'reason']", type: string }
       - { name: quantity, sql: "COALESCE(payload_json#>> ARRAY['adjustment', 'quantity'], payload_json#>> ARRAY['physical_count', 'quantity'])::numeric", type: number }
-      - { name: occurred_at, sql: "COALESCE(payload_json#>> ARRAY['adjustment', 'occurred_at'], payload_json#>> ARRAY['physical_count', 'occurred_at'])", type: time }
+      - { name: occurred_at, sql: "(COALESCE(payload_json#>> ARRAY['adjustment', 'occurred_at'], payload_json#>> ARRAY['physical_count', 'occurred_at']))::timestamptz", type: time }
     measures:
       - { name: inventory_changes, type: count }
       - name: units_affected
@@ -118,8 +118,8 @@ cubes:
       - { name: status, sql: "payload_json->>'status'", type: string }
       - { name: is_owner, sql: "COALESCE((payload_json->>'is_owner')::boolean, false)", type: boolean }
       - { name: location_assignment_type, sql: "payload_json#>> ARRAY['assigned_locations', 'assignment_type']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: team_members, type: count }
       - name: active_team_members
@@ -170,10 +170,10 @@ cubes:
       - { name: job_id, sql: "payload_json#>> ARRAY['wage', 'job_id']", type: string, public: false }
       - { name: job_title, sql: "payload_json#>> ARRAY['wage', 'title']", type: string }
       - { name: wage_currency, sql: "payload_json#>> ARRAY['wage', 'hourly_rate', 'currency']", type: string }
-      - { name: start_at, sql: "payload_json->>'start_at'", type: time, title: Clocked in at }
-      - { name: end_at, sql: "payload_json->>'end_at'", type: time, title: Clocked out at }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: start_at, sql: "(payload_json->>'start_at')::timestamptz", type: time, title: Clocked in at }
+      - { name: end_at, sql: "(payload_json->>'end_at')::timestamptz", type: time, title: Clocked out at }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
       - { name: is_open, sql: "({CUBE}.payload_json->>'end_at' IS NULL)", type: boolean }
     measures:
       - { name: timecards, type: count }
@@ -227,9 +227,9 @@ cubes:
       - { name: device_id, sql: "payload_json#>> ARRAY['device', 'id']", type: string, public: false }
       - { name: device_name, sql: "payload_json#>> ARRAY['device', 'name']", type: string }
       - { name: currency, sql: "payload_json#>> ARRAY['expected_cash_money', 'currency']", type: string }
-      - { name: opened_at, sql: "payload_json->>'opened_at'", type: time }
-      - { name: ended_at, sql: "payload_json->>'ended_at'", type: time }
-      - { name: closed_at, sql: "payload_json->>'closed_at'", type: time, title: Drawer closed at }
+      - { name: opened_at, sql: "(payload_json->>'opened_at')::timestamptz", type: time }
+      - { name: ended_at, sql: "(payload_json->>'ended_at')::timestamptz", type: time }
+      - { name: closed_at, sql: "(payload_json->>'closed_at')::timestamptz", type: time, title: Drawer closed at }
     measures:
       - { name: drawer_shifts, type: count }
       - name: closed_drawer_shifts
@@ -281,7 +281,7 @@ cubes:
       - { name: description, sql: "payload_json->>'description'", type: string }
       - { name: team_member_id, sql: "payload_json->>'team_member_id'", type: string, public: false }
       - { name: currency, sql: "payload_json#>> ARRAY['event_money', 'currency']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Drawer event at }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Drawer event at }
     measures:
       - { name: drawer_events, type: count }
       - name: event_amount
@@ -309,9 +309,9 @@ cubes:
       - { name: customer_id, sql: "payload_json#>> ARRAY['mapping', 'id']", type: string, public: false }
       - { name: point_balance, sql: "(payload_json->>'balance')::numeric", type: number }
       - { name: lifetime_points, sql: "(payload_json->>'lifetime_points')::numeric", type: number }
-      - { name: enrolled_at, sql: "payload_json->>'enrolled_at'", type: time }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
+      - { name: enrolled_at, sql: "(payload_json->>'enrolled_at')::timestamptz", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: loyalty_members, type: count }
       - { name: current_points_outstanding, sql: "(payload_json->>'balance')::numeric", type: sum }
@@ -347,7 +347,7 @@ cubes:
       - { name: source, sql: "payload_json->>'source'", type: string }
       - { name: order_id, sql: "COALESCE(payload_json#>> ARRAY['accumulate_points', 'order_id'], payload_json#>> ARRAY['accumulate_promotion_points', 'order_id'], payload_json#>> ARRAY['redeem_reward', 'order_id'])", type: string, public: false }
       - { name: adjustment_reason, sql: "payload_json#>> ARRAY['adjust_points', 'reason']", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time, title: Loyalty event at }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Loyalty event at }
     measures:
       - { name: loyalty_events, type: count }
       - name: points_net_change

@@ -103,13 +103,13 @@ cubes:
       - { name: lifetime_refunds, sql: lifetime_refunds, type: number, format: currency }
       - { name: is_repeat_customer, sql: "({CUBE}.lifetime_sales > 1)", type: boolean }
       - { name: days_since_last_purchase, sql: "EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_purchase_at)) / 86400.0", type: number }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: email, sql: "payload_json->>'email'", type: string, public: false }
       - { name: mobile, sql: "payload_json->>'mobile'", type: string, public: false }
       - { name: phone, sql: "payload_json->>'phone'", type: string, public: false }
-      - { name: date_of_birth, sql: "payload_json->>'date_of_birth'", type: time, public: false }
+      - { name: date_of_birth, sql: "(payload_json->>'date_of_birth')::timestamptz", type: time, public: false }
       - { name: note, sql: "payload_json->>'note'", type: string, public: false }
     measures:
       - { name: customers, type: count }
@@ -164,8 +164,8 @@ cubes:
       - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
       - { name: lifetime_sold_value, sql: "NULLIF(payload_json->>'total_sold', '')::numeric", type: number, format: currency }
       - { name: lifetime_redeemed_value, sql: "NULLIF(payload_json->>'total_redeemed', '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: expires_at, sql: "payload_json->>'expires_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: expires_at, sql: "(payload_json->>'expires_at')::timestamptz", type: time }
       - { name: source_sale_id, sql: "payload_json->>'sale_id'", type: string, public: false }
       - { name: source_sale_type, sql: "payload_json->>'sale_source'", type: string }
       - { name: card_number, sql: "payload_json->>'number'", type: string, public: false }
@@ -206,7 +206,7 @@ cubes:
       - { name: source_id, sql: "transaction_payload->>'source_id'", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
       - { name: transaction_amount, sql: "NULLIF(transaction_payload->>'amount', '')::numeric", type: number, format: currency }
-      - { name: transacted_at, sql: "transaction_payload->>'created_at'", type: time }
+      - { name: transacted_at, sql: "(transaction_payload->>'created_at')::timestamptz", type: time }
     measures:
       - { name: gift_card_transactions, type: count }
       - name: gift_card_value_loaded
@@ -276,7 +276,7 @@ cubes:
       - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
       - { name: lifetime_credit_issued, sql: "NULLIF(payload_json->>'total_credit_issued', '')::numeric", type: number, format: currency }
       - { name: lifetime_credit_redeemed, sql: "NULLIF(payload_json->>'total_credit_redeemed', '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
     measures:
       - { name: store_credit_accounts, type: count }
       - { name: current_store_credit_liability, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never trend over ingestion observations. }
@@ -323,7 +323,7 @@ cubes:
       - { name: transaction_type, sql: "transaction_payload->>'type'", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
       - { name: transaction_amount, sql: "NULLIF(transaction_payload->>'amount', '')::numeric", type: number, format: currency }
-      - { name: transacted_at, sql: "transaction_payload->>'created_at'", type: time }
+      - { name: transacted_at, sql: "(transaction_payload->>'created_at')::timestamptz", type: time }
       - { name: notes, sql: "transaction_payload->>'notes'", type: string, public: false }
       - { name: client_id, sql: "transaction_payload->>'client_id'", type: string, public: false }
     measures:

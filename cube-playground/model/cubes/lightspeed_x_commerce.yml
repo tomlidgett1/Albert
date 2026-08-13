@@ -89,11 +89,11 @@ cubes:
       - { name: source_type, sql: "jsonb_extract_path_text(payload_json, 'source', 'type')", type: string }
       - { name: source_reference, sql: "jsonb_extract_path_text(payload_json, 'source', 'id')", type: string }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
-      - { name: sold_at, sql: "payload_json->>'date'", type: time, title: Sale time (UTC) }
+      - { name: sold_at, sql: "(payload_json->>'date')::timestamptz", type: time, title: Sale time (UTC) }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: is_closed, sql: "({CUBE}.payload_json->>'state' = 'closed')", type: boolean }
       - { name: is_return, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'return', 'is_return'))::boolean, false)", type: boolean }
       - { name: original_sale_id, sql: "jsonb_extract_path_text(payload_json, 'return', 'original_sale_id')", type: string, public: false }
@@ -267,7 +267,7 @@ cubes:
       - { name: outlet_id, sql: "jsonb_extract_path_text(sale_payload, 'source', 'outlet_id')", type: string, public: false }
       - { name: invoice_number, sql: "sale_payload->>'invoice_number'", type: string }
       - { name: sale_state, sql: "sale_payload->>'state'", type: string }
-      - { name: sold_at, sql: "sale_payload->>'date'", type: time, title: Sale time (UTC) }
+      - { name: sold_at, sql: "(sale_payload->>'date')::timestamptz", type: time, title: Sale time (UTC) }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
       - { name: line_status, sql: "line_payload->>'status'", type: string }
@@ -435,7 +435,7 @@ cubes:
       - { name: payment_type_config_id, sql: "jsonb_extract_path_text(payment_payload, 'type', 'config_id')", type: string, public: false }
       - { name: payment_source_type, sql: "jsonb_extract_path_text(payment_payload, 'source', 'type')", type: string }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
-      - { name: paid_at, sql: "payment_payload->>'date'", type: time, title: Payment time (UTC) }
+      - { name: paid_at, sql: "(payment_payload->>'date')::timestamptz", type: time, title: Payment time (UTC) }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
       - { name: payment_amount, sql: "NULLIF(payment_payload->>'amount', '')::numeric", type: number, format: currency }
       - { name: payment_surcharge, sql: "NULLIF(jsonb_extract_path_text(payment_payload, 'surcharge', 'amount'), '')::numeric", type: number, format: currency }
@@ -530,8 +530,8 @@ cubes:
       - { name: original_invoice_number, sql: "original_sale_payload->>'invoice_number'", type: string }
       - { name: return_state, sql: "payload_json->>'state'", type: string }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
-      - { name: returned_at, sql: "payload_json->>'date'", type: time, title: Return time (UTC) }
-      - { name: original_sold_at, sql: "original_sale_payload->>'date'", type: time }
+      - { name: returned_at, sql: "(payload_json->>'date')::timestamptz", type: time, title: Return time (UTC) }
+      - { name: original_sold_at, sql: "(original_sale_payload->>'date')::timestamptz", type: time }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
       - { name: is_closed_return, sql: "({CUBE}.payload_json->>'state' = 'closed')", type: boolean }
       - { name: days_to_return, sql: "EXTRACT(EPOCH FROM ((payload_json->>'date')::timestamptz - (original_sale_payload->>'date')::timestamptz)) / 86400.0", type: number }
@@ -600,7 +600,7 @@ cubes:
       - { name: product_id, sql: "jsonb_extract_path_text(line_payload, 'product', 'id')", type: string, public: false }
       - { name: promotion_name, sql: "promotion_payload->>'name'", type: string, title: Applied promotion }
       - { name: promo_code, sql: "promotion_payload->>'promo_code'", type: string }
-      - { name: sold_at, sql: "sale_payload->>'date'", type: time }
+      - { name: sold_at, sql: "(sale_payload->>'date')::timestamptz", type: time }
       - { name: sale_state, sql: "sale_payload->>'state'", type: string }
       - { name: promotion_amount, sql: "NULLIF(promotion_payload->>'amount', '')::numeric", type: number, format: currency }
     measures:

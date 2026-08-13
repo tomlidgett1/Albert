@@ -33,8 +33,8 @@ cubes:
       - { name: loyalty_ratio, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'loyalty', 'ratio'), '')::numeric", type: number }
       - { name: store_credit_enabled, sql: "COALESCE((payload_json->>'store_credit')::boolean, false)", type: boolean }
       - { name: automatic_sku_enabled, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'sku_sequence', 'enabled'))::boolean, false)", type: boolean }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: activated_at, sql: "payload_json->>'activated_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: activated_at, sql: "(payload_json->>'activated_at')::timestamptz", type: time }
     measures:
       - { name: retailer_accounts, type: count }
 
@@ -69,7 +69,7 @@ cubes:
       - { name: country_code, sql: "payload_json->>'physical_country_id'", type: string }
       - { name: latitude, sql: "NULLIF(payload_json->>'latitude', '')::numeric", type: number }
       - { name: longitude, sql: "NULLIF(payload_json->>'longitude', '')::numeric", type: number }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: is_active, sql: "({CUBE}.payload_json->>'deleted_at' IS NULL)", type: boolean }
       - { name: email, sql: "payload_json->>'email'", type: string, public: false }
       - { name: phone, sql: "payload_json->>'phone'", type: string, public: false }
@@ -110,9 +110,9 @@ cubes:
       - { name: print_receipt, sql: "COALESCE((payload_json->>'print_receipt')::boolean, false)", type: boolean }
       - { name: email_receipt, sql: "COALESCE((payload_json->>'email_receipt')::boolean, false)", type: boolean }
       - { name: ask_for_user_on_sale, sql: "COALESCE((payload_json->>'ask_for_user_on_sale')::boolean, false)", type: boolean }
-      - { name: opened_at, sql: "payload_json->>'register_open_time'", type: time }
-      - { name: closed_at, sql: "payload_json->>'register_close_time'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: opened_at, sql: "(payload_json->>'register_open_time')::timestamptz", type: time }
+      - { name: closed_at, sql: "(payload_json->>'register_close_time')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: is_active, sql: "({CUBE}.payload_json->>'deleted_at' IS NULL)", type: boolean }
     measures:
       - { name: registers, type: count }
@@ -147,10 +147,10 @@ cubes:
       - { name: daily_sales_target, sql: "NULLIF(payload_json->>'target_daily', '')::numeric", type: number, format: currency }
       - { name: weekly_sales_target, sql: "NULLIF(payload_json->>'target_weekly', '')::numeric", type: number, format: currency }
       - { name: monthly_sales_target, sql: "NULLIF(payload_json->>'target_monthly', '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: last_seen_at, sql: "payload_json->>'seen_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: last_seen_at, sql: "(payload_json->>'seen_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: email, sql: "payload_json->>'email'", type: string, public: false }
       - { name: username, sql: "payload_json->>'username'", type: string, public: false }
     measures:
@@ -202,7 +202,7 @@ cubes:
       - { name: product_type_name, sql: "payload_json->>'name'", type: string, title: Product type }
       - { name: is_leaf_type, sql: "COALESCE((payload_json->>'leaf_category')::boolean, false)", type: boolean }
       - { name: category_path, sql: "CAST(payload_json->'category_path' AS text)", type: string }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: product_types, type: count }
 
@@ -221,7 +221,7 @@ cubes:
       - { name: brand_id, sql: "payload_json->>'id'", type: string, public: false }
       - { name: brand_name, sql: "payload_json->>'name'", type: string, title: Brand }
       - { name: description, sql: "payload_json->>'description'", type: string }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: brands, type: count }
 
@@ -242,7 +242,7 @@ cubes:
       - { name: source, sql: "payload_json->>'source'", type: string }
       - { name: description, sql: "payload_json->>'description'", type: string }
       - { name: default_markup_pct, sql: "NULLIF(payload_json->>'default_markup', '')::numeric", type: number, format: percent }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: contact_json, sql: "CAST(payload_json->'contact' AS text)", type: string, public: false }
     measures:
       - { name: suppliers, type: count }
@@ -315,9 +315,9 @@ cubes:
       - { name: loyalty_amount, sql: "NULLIF(payload_json->>'loyalty_amount', '')::numeric", type: number }
       - { name: weight, sql: "NULLIF(payload_json->>'weight', '')::numeric", type: number }
       - { name: weight_unit, sql: "payload_json->>'weight_unit'", type: string }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: products_and_variants, type: count }
       - name: active_products_and_variants
@@ -346,9 +346,9 @@ cubes:
       - { name: connection_id, sql: connection_id, type: string, public: false }
       - { name: customer_group_id, sql: "payload_json->>'id'", type: string, public: false }
       - { name: customer_group_name, sql: "payload_json->>'name'", type: string, title: Customer group }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: customer_groups, type: count }
 
@@ -370,11 +370,11 @@ cubes:
       - { name: platform_scope, sql: "payload_json->>'restrict_to_platform_label'", type: string }
       - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlets', '[]'::jsonb))", type: number }
       - { name: customer_group_count, sql: "jsonb_array_length(COALESCE(payload_json->'customer_group_ids', '[]'::jsonb))", type: number }
-      - { name: valid_from, sql: "payload_json->>'valid_from'", type: time }
-      - { name: valid_to, sql: "payload_json->>'valid_to'", type: time }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: valid_from, sql: "(payload_json->>'valid_from')::timestamptz", type: time }
+      - { name: valid_to, sql: "(payload_json->>'valid_to')::timestamptz", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
       - name: is_currently_valid
         sql: >
           ({CUBE}.payload_json->>'deleted_at' IS NULL
@@ -429,9 +429,9 @@ cubes:
       - { name: loyalty_value, sql: "NULLIF(payload_json->>'loyalty_value', '')::numeric", type: number }
       - { name: min_units, sql: "NULLIF(payload_json->>'min_units', '')::numeric", type: number }
       - { name: max_units, sql: "NULLIF(payload_json->>'max_units', '')::numeric", type: number }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: updated_at, sql: "payload_json->>'updated_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: price_book_product_rules, type: count }
       - { name: average_price_book_price, sql: "NULLIF(payload_json->>'price', '')::numeric", type: avg, format: currency }
@@ -454,7 +454,7 @@ cubes:
       - { name: tax_name, sql: "COALESCE(payload_json->>'display_name', payload_json->>'name')", type: string, title: Tax }
       - { name: is_default, sql: "COALESCE((payload_json->>'is_default')::boolean, false)", type: boolean }
       - { name: component_rate_count, sql: "jsonb_array_length(COALESCE(payload_json->'rates', '[]'::jsonb))", type: number }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: tax_groups, type: count }
 
@@ -508,8 +508,8 @@ cubes:
       - { name: internal, sql: "COALESCE((payload_json->>'internal')::boolean, false)", type: boolean }
       - { name: editable, sql: "COALESCE((payload_json->>'is_editable')::boolean, false)", type: boolean }
       - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlet_ids', '[]'::jsonb))", type: number }
-      - { name: created_at, sql: "payload_json->>'created_at'", type: time }
-      - { name: deleted_at, sql: "payload_json->>'deleted_at'", type: time }
+      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: payment_types, type: count }
       - name: enabled_payment_types
