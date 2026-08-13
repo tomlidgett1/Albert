@@ -24,6 +24,10 @@ import { OAuthSessionStore } from "./oauth-session-store.js";
 import { PgTransactionalDatabase } from "./postgres.js";
 import { LeaseBoundSyncRawWriter } from "./raw-storage.js";
 import { SyncWorkerService } from "./service.js";
+import { ShopifyQLWorkerHttpHandler } from "./shopifyql-http.js";
+import { ShopifyQLRuntimeStore } from "./shopifyql-store.js";
+import { ShopifyAdminWorkerHttpHandler } from "./shopify-admin-http.js";
+import { ShopifyAdminRuntimeStore } from "./shopify-admin-store.js";
 import {
   OAuthTokenKekRotationService,
   PostgresOAuthTokenKekRotationStore,
@@ -193,6 +197,30 @@ export async function runSyncWorker(): Promise<void> {
     }),
     connectors: connectorFactory,
   });
+  const shopifyQLStore = connectorFactory.isConfigured("shopify")
+    ? new ShopifyQLRuntimeStore(controlDb)
+    : null;
+  const shopifyQL = shopifyQLStore
+    ? new ShopifyQLWorkerHttpHandler({
+        signingSecret: config.shopifyQLSigningSecret,
+        shopifyClientId: config.shopifyClientId,
+        store: shopifyQLStore,
+        connectors: registry,
+        control,
+      })
+    : null;
+  const shopifyAdminStore = connectorFactory.isConfigured("shopify")
+    ? new ShopifyAdminRuntimeStore(controlDb)
+    : null;
+  const shopifyAdmin = shopifyAdminStore
+    ? new ShopifyAdminWorkerHttpHandler({
+        signingSecret: config.shopifyAdminSigningSecret,
+        shopifyClientId: config.shopifyClientId,
+        store: shopifyAdminStore,
+        connectors: registry,
+        control,
+      })
+    : null;
 
   const dependenciesReady = async () => {
     await Promise.all([
@@ -202,6 +230,8 @@ export async function runSyncWorker(): Promise<void> {
       rawObjectStore.ready(),
       controlDb.query("select control_plane.assert_raw_storage_session_authority_ready('sync')"),
       tokenKekRotation.assertReady(),
+      ...(shopifyQLStore ? [shopifyQLStore.ready()] : []),
+      ...(shopifyAdminStore ? [shopifyAdminStore.ready()] : []),
       ...(vendorAttestationRelay ? [vendorAttestationRelay.ready()] : []),
       controlDb.query("select control_plane.assert_analytical_capability_issuer_ready()"),
       analyticalDb.query("select capability_internal.assert_verifier_ready()"),
@@ -265,6 +295,14 @@ export async function runSyncWorker(): Promise<void> {
         await writeFetchResponse(await oauth.handle(await toFetchRequest(request)), response);
         return;
       }
+      if (shopifyQL && pathname.startsWith("/v1/shopifyql/")) {
+        await writeFetchResponse(await shopifyQL.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (shopifyAdmin && pathname.startsWith("/v1/shopify-admin/")) {
+        await writeFetchResponse(await shopifyAdmin.handle(await toFetchRequest(request)), response);
+        return;
+      }
       json(response, 404, { error: "not_found" });
     })().catch((error) => {
       if (!response.headersSent) {
@@ -279,7 +317,9 @@ export async function runSyncWorker(): Promise<void> {
     });
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 15_000;
+  // OAuth and both governed Shopify read planes have explicit application
+  // deadlines; leave transport headroom for their bounded vendor calls.
+  server.requestTimeout = 45_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 1_000;
   server.maxHeadersCount = 100;

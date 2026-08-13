@@ -12,8 +12,6 @@ export type WebDependencyChecks = Readonly<{
   releaseIdentity: boolean;
   supabaseAuth: boolean;
   syncWorker: boolean;
-  semanticQuery: boolean;
-  anthropicAnalytics: boolean;
   operatorDiagnostic: boolean;
 }>;
 
@@ -132,8 +130,6 @@ export async function inspectWebDependencies(
       releaseIdentity,
       supabaseAuth: false,
       syncWorker: false,
-      semanticQuery: false,
-      anthropicAnalytics: false,
       operatorDiagnostic: false,
     });
     return Object.freeze({ ready: false, configuration, checks });
@@ -141,18 +137,12 @@ export async function inspectWebDependencies(
 
   const supabaseUrl = effectiveSource.NEXT_PUBLIC_SUPABASE_URL!;
   const publishableKey = effectiveSource.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
-  const [supabaseAuth, syncWorker, semanticQuery, anthropicAnalytics, operatorDiagnostic] = await Promise.all([
+  const [supabaseAuth, syncWorker, operatorDiagnostic] = await Promise.all([
     successfulProbe(fetcher, endpoint(supabaseUrl, "/auth/v1/health"), {
       apikey: publishableKey,
     }),
     exactServiceReadinessProbe(
       fetcher, endpoint(effectiveSource.SYNC_WORKER_INTERNAL_URL!, "/readyz"), buildSha,
-    ),
-    exactServiceReadinessProbe(
-      fetcher, endpoint(effectiveSource.SEMANTIC_QUERY_SERVICE_URL!, "/readyz"), buildSha,
-    ),
-    exactServiceReadinessProbe(
-      fetcher, endpoint(effectiveSource.ANTHROPIC_ANALYTICS_SERVICE_URL!, "/readyz"), buildSha,
     ),
     exactServiceReadinessProbe(
       fetcher, endpoint(effectiveSource.OPERATOR_DIAGNOSTIC_SERVICE_URL!, "/readyz"), buildSha,
@@ -163,8 +153,6 @@ export async function inspectWebDependencies(
     releaseIdentity: true,
     supabaseAuth,
     syncWorker,
-    semanticQuery,
-    anthropicAnalytics,
     operatorDiagnostic,
   });
   return Object.freeze({

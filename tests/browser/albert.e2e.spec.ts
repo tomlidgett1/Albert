@@ -92,7 +92,7 @@ test.describe("unauthenticated account journey", () => {
   });
 });
 
-test("light, dark, green, and system themes remain accessible", async ({
+test("light, beige, dark, green, and system themes remain accessible", async ({
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "dark" });
@@ -125,6 +125,33 @@ test("light, dark, green, and system themes remain accessible", async ({
     "green",
   );
   await expectNoWcagViolations(page, "green");
+
+  await page.getByRole("button", { name: "Sage theme" }).click();
+  await expect(dash).toHaveAttribute("data-theme", "sage");
+  const sageBackground = await dash.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  expect(sageBackground).toBe("rgb(220, 232, 203)");
+  expect(sageBackground).not.toBe(darkBackground);
+  expect(sageBackground).not.toBe(greenBackground);
+  expect(await page.evaluate(() => localStorage.getItem("albert-theme"))).toBe(
+    "sage",
+  );
+  await expectNoWcagViolations(page, "sage");
+
+  await page.getByRole("button", { name: "Beige theme" }).click();
+  await expect(dash).toHaveAttribute("data-theme", "beige");
+  const beigeBackground = await dash.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  expect(beigeBackground).toBe("rgb(240, 238, 230)");
+  expect(beigeBackground).not.toBe(darkBackground);
+  expect(beigeBackground).not.toBe(greenBackground);
+  expect(beigeBackground).not.toBe(sageBackground);
+  expect(await page.evaluate(() => localStorage.getItem("albert-theme"))).toBe(
+    "beige",
+  );
+  await expectNoWcagViolations(page, "beige");
 
   await page.getByRole("button", { name: "Light theme" }).click();
   await expect(dash).toHaveAttribute("data-theme", "light");
@@ -639,17 +666,17 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
         ),
       ),
   ).toEqual(["max", "xhigh", "high", "medium", "low", "none"]);
-  await expect(page.locator("[data-model-id]")).toHaveCount(3);
+  await expect(page.locator("[data-model-id]")).toHaveCount(4);
   expect(
     await page
       .locator("[data-model-id]")
       .evaluateAll((elements) =>
         elements.map((element) => element.getAttribute("data-model-id")),
       ),
-  ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
-  await page.getByRole("radio", { name: "Terra", exact: true }).click();
+  ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "grok-4.6"]);
+  await page.getByRole("radio", { name: "GPT 5.6 Terra", exact: true }).click();
   await expect(
-    page.getByRole("radio", { name: "Terra", exact: true }),
+    page.getByRole("radio", { name: "GPT 5.6 Terra", exact: true }),
   ).toHaveAttribute("aria-checked", "true");
   const fastMode = page.getByRole("switch", { name: "Fast mode" });
   if ((await fastMode.getAttribute("aria-checked")) !== "true")
@@ -670,7 +697,7 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
     await expect(settingsTrigger).toHaveAttribute("aria-expanded", "false");
     await expect(settingsTrigger).toHaveAttribute(
       "aria-label",
-      new RegExp(`Terra, Fast mode, ${reasoningEffort} reasoning`, "u"),
+      new RegExp(`GPT 5\\.6 Terra, Fast mode, ${reasoningEffort} reasoning`, "u"),
     );
 
     const message =
@@ -729,6 +756,51 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
   ).toBeVisible();
   await expect(page.getByText("golden_fixture_match")).toHaveCount(0);
   await expect(page.getByText("Checked", { exact: true }).last()).toBeVisible();
+});
+
+test("Grok 4.6 selector binds official model id and Grok reasoning levels", async ({
+  page,
+}) => {
+  const capture = await openDashboard(page);
+  const composer = page.getByRole("textbox", { name: "Ask me anything" });
+  const settingsTrigger = page.getByTestId("model-run-controls-trigger");
+  await settingsTrigger.click();
+  await expect(
+    page.getByRole("dialog", { name: "Model and run settings" }),
+  ).toBeVisible();
+  await page.getByRole("radio", { name: "Grok 4.6", exact: true }).click();
+  await expect(
+    page.getByRole("radio", { name: "Grok 4.6", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Fast mode" })).toHaveCount(1);
+  const grokFast = page.getByRole("switch", { name: "Fast mode" });
+  await expect(grokFast).toHaveAttribute("aria-checked", "false");
+  await grokFast.click();
+  await expect(grokFast).toHaveAttribute("aria-checked", "true");
+  expect(
+    await page
+      .locator("[data-reasoning-effort]")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-reasoning-effort")),
+      ),
+  ).toEqual(["xhigh", "high", "medium", "low"]);
+  await page.locator('[data-reasoning-effort="xhigh"]').click();
+  await page.keyboard.press("Escape");
+  await expect(settingsTrigger).toHaveAttribute(
+    "aria-label",
+    /Grok 4\.6, Fast mode, xhigh reasoning/u,
+  );
+  await composer.fill("Which categories performed best last month?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.conversationPayloads.length).toBe(1);
+  expect(capture.conversationPayloads[0]).toMatchObject({
+    message: "Which categories performed best last month?",
+    preferences: {
+      model: "grok-4.6",
+      fastMode: true,
+      reasoningEffort: "xhigh",
+    },
+  });
 });
 
 test("New Method starts and locks a Claude Opus 5 conversation", async ({
@@ -815,6 +887,9 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
 
   await page.keyboard.press("Control+KeyK");
   await expect(page.getByRole("textbox", { name: "Search" })).toBeFocused();
+
+  await page.keyboard.press("Alt+KeyN");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
 
   const accountTrigger = page
     .getByRole("button", { name: /Albert Bike Store/u })

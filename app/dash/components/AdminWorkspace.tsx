@@ -9,11 +9,9 @@ import type {
   OperatorPipelineStage,
   OperatorRowSample,
 } from "@/services/control-plane/src/operator-repository";
-import ArchitectureMap, { type ArchitectureOverview } from "./ArchitectureMap";
-import SemanticAdminWorkspace from "./SemanticAdminWorkspace";
 import styles from "../dash.module.css";
 
-type AdminView = "architecture" | "fleet" | "semantic";
+type AdminView = "fleet";
 
 type DetailRow = Readonly<Record<string, unknown>>;
 type CellKind = "text" | "state" | "time" | "number" | "percent" | "bytes" | "boolean" | "code" | "json" | "connector" | "quality";
@@ -24,8 +22,6 @@ const PIPELINE_STAGES = Object.freeze([
   { key: "streams", label: "Streams", detail: "cursor positions" },
   { key: "raw", label: "Raw", detail: "batch manifests" },
   { key: "staging", label: "Staging", detail: "typed source tables" },
-  { key: "canonical", label: "Canonical", detail: "facts and bridges" },
-  { key: "marts", label: "Marts", detail: "query-ready grains" },
   { key: "quality", label: "Quality", detail: "named checks" },
   { key: "readiness", label: "Readiness", detail: "domain states" },
 ] satisfies readonly Readonly<{ key: OperatorPipelineStage; label: string; detail: string }>[]);
@@ -43,8 +39,6 @@ const STAGE_COPY: Readonly<Record<OperatorPipelineStage, Readonly<{ eyebrow: str
   streams: { eyebrow: "EXTRACTION", title: "Stream cursor ledger", description: "Every cursor, watermark and most recent successful delta, grouped by source." },
   raw: { eyebrow: "IMMUTABLE LINEAGE", title: "Raw batch manifests", description: "The bounded manifest trail from vendor extraction through analytical landing." },
   staging: { eyebrow: "TYPED LANDING", title: "Staging snapshots", description: "Post-sync row-count and freshness snapshots projected from the analytical cell." },
-  canonical: { eyebrow: "BUSINESS TRUTH", title: "Canonical facts, dimensions and bridges", description: "Source-neutral table snapshots and their latest invariant envelope." },
-  marts: { eyebrow: "QUERY SURFACE", title: "Governed marts", description: "Query-ready aggregate grains and the freshness of their last projection." },
   quality: { eyebrow: "QUALITY GATES", title: "Named quality states", description: "The latest projected connector, canonical, bridge and domain check states." },
   readiness: { eyebrow: "ANSWERABILITY", title: "Per-domain readiness", description: "The same readiness state and reason injected into governed answer context." },
   runs: { eyebrow: "SYNC LEDGER", title: "Recent sync runs", description: "Extraction, incremental and reconciliation outcomes, newest first." },
@@ -113,22 +107,6 @@ const DETAIL_COLUMNS: Readonly<Record<string, readonly DetailColumn[]>> = {
     { key: "row_count", label: "Rows", kind: "number" },
     { key: "max_event_at", label: "Max event", kind: "time" },
     { key: "max_ingested_at", label: "Max ingested", kind: "time" },
-    { key: "snapshot_at", label: "Snapshot", kind: "time" },
-    { key: "invariant_status", label: "Checks", kind: "quality" },
-  ],
-  canonical: [
-    { key: "table_name", label: "Fact / dimension / bridge", kind: "code" },
-    { key: "row_count", label: "Rows", kind: "number" },
-    { key: "max_event_at", label: "Max event", kind: "time" },
-    { key: "max_ingested_at", label: "Max ingested", kind: "time" },
-    { key: "snapshot_at", label: "Snapshot", kind: "time" },
-    { key: "invariant_status", label: "Checks", kind: "quality" },
-  ],
-  marts: [
-    { key: "table_name", label: "Mart", kind: "code" },
-    { key: "row_count", label: "Rows", kind: "number" },
-    { key: "max_event_at", label: "Max event", kind: "time" },
-    { key: "max_ingested_at", label: "Refreshed", kind: "time" },
     { key: "snapshot_at", label: "Snapshot", kind: "time" },
     { key: "invariant_status", label: "Checks", kind: "quality" },
   ],
@@ -430,7 +408,7 @@ function DetailGroup({
   tenantId: string;
 }>) {
   const columns = DETAIL_COLUMNS[group.id] ?? [];
-  const revealable = stage === "staging" || stage === "canonical" || stage === "marts";
+  const revealable = stage === "staging";
   const [selectedTarget, setSelectedTarget] = useState<Readonly<{ schemaName: string; tableName: string }> | null>(null);
   const [sample, setSample] = useState<OperatorRowSample | null>(null);
   const [sampleError, setSampleError] = useState("");
@@ -558,58 +536,23 @@ function isRecordArchitecture(value: unknown): value is Record<string, unknown> 
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseArchitecture(value: unknown): ArchitectureOverview | null {
-  if (!isRecordArchitecture(value) || !isRecordArchitecture(value.semantic) || !Array.isArray(value.packs)) return null;
-  if (typeof value.generated_at !== "string") return null;
-  const semantic = value.semantic;
-  if (typeof semantic.version !== "string") return null;
-  if (typeof semantic.metric_count !== "number") return null;
-  if (typeof semantic.topic_count !== "number") return null;
-  if (typeof semantic.fact_count !== "number") return null;
-  if (!Array.isArray(semantic.domains) || !Array.isArray(semantic.topics)) return null;
-  if (!Array.isArray(semantic.metrics) || !Array.isArray(semantic.facts)) return null;
-  if (!Array.isArray(semantic.dimensions)) return null;
-  return value as ArchitectureOverview;
-}
-
 const ADMIN_TABS = Object.freeze([
-  { key: "architecture" as const, label: "Architecture" },
   { key: "fleet" as const, label: "Fleet" },
-  { key: "semantic" as const, label: "Semantic layer" },
 ]);
 
 export default function AdminWorkspace() {
-  const [view, setView] = useState<AdminView>("architecture");
-  const [architecture, setArchitecture] = useState<ArchitectureOverview | null>(null);
+  const [view, setView] = useState<AdminView>("fleet");
   const [fleet, setFleet] = useState<OperatorFleet | null>(null);
   const [pipeline, setPipeline] = useState<OperatorPipeline | null>(null);
   const [detail, setDetail] = useState<OperatorPipelineDetail | null>(null);
   const [activeStage, setActiveStage] = useState<OperatorPipelineStage>("connections");
-  const [loadingScope, setLoadingScope] = useState<"architecture" | "fleet" | "pipeline" | "detail" | null>("architecture");
+  const [loadingScope, setLoadingScope] = useState<"fleet" | "pipeline" | "detail" | null>("fleet");
   const [error, setError] = useState("");
-  const [semanticRefresh, setSemanticRefresh] = useState(0);
   const detailRequest = useRef(0);
   const pipelineRequest = useRef(0);
-  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ architecture: null, fleet: null, semantic: null });
+  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ fleet: null });
   const tabRowRef = useRef<HTMLDivElement | null>(null);
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
-
-  const loadArchitecture = useCallback(async () => {
-    setLoadingScope("architecture");
-    setError("");
-    try {
-      const response = await fetch("/api/admin/architecture", { cache: "no-store" });
-      const payload = await response.json() as { architecture?: unknown; error?: string };
-      if (!response.ok) throw new Error(payload.error || "Architecture overview could not be loaded.");
-      const parsed = parseArchitecture(payload.architecture);
-      if (!parsed) throw new Error("Architecture overview returned an invalid response.");
-      setArchitecture(parsed);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Architecture overview could not be loaded.");
-    } finally {
-      setLoadingScope(null);
-    }
-  }, []);
 
   const loadFleet = useCallback(async () => {
     setLoadingScope("fleet");
@@ -678,11 +621,10 @@ export default function AdminWorkspace() {
 
   useEffect(() => {
     const task = window.setTimeout(() => {
-      void loadArchitecture();
       void loadFleet();
     }, 0);
     return () => window.clearTimeout(task);
-  }, [loadArchitecture, loadFleet]);
+  }, [loadFleet]);
 
   useLayoutEffect(() => {
     if (pipeline) return;
@@ -692,7 +634,7 @@ export default function AdminWorkspace() {
     const rowBox = row.getBoundingClientRect();
     const buttonBox = button.getBoundingClientRect();
     setTabIndicator({ left: buttonBox.left - rowBox.left, width: buttonBox.width });
-  }, [view, pipeline, architecture, fleet]);
+  }, [view, pipeline, fleet]);
 
   const sortedConnections = useMemo(() => [...(fleet?.connections ?? [])].sort((left, right) => {
     const rank = { blocked: 0, degraded: 1, healthy: 2 } as const;
@@ -738,34 +680,15 @@ export default function AdminWorkspace() {
       void loadPipeline(pipeline.tenant.tenant_id, activeStage);
       return;
     }
-    if (view === "architecture") {
-      void loadArchitecture();
-      void loadFleet();
-      return;
-    }
-    if (view === "semantic") {
-      setSemanticRefresh((value) => value + 1);
-      return;
-    }
     void loadFleet();
   };
 
   const currentCopy = STAGE_COPY[activeStage];
   const loading = loadingScope !== null;
-  const title = pipeline
-    ? pipeline.tenant.name
-    : view === "architecture"
-      ? "How Albert works"
-      : view === "semantic"
-        ? "Semantic layer"
-        : "Albert fleet";
+  const title = pipeline ? pipeline.tenant.name : "Albert fleet";
   const subtitle = pipeline
     ? `Trace ${pipeline.tenant.timezone} operational metadata from source edge to query-ready domains.`
-    : view === "architecture"
-      ? "A plain-English map of the backend: tools, sync, business truth, the semantic dictionary, and chat."
-      : view === "semantic"
-        ? "Author, validate, review and publish the governed Lightspeed and Xero analytical model."
-        : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
+    : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
 
   return (
     <section className={styles.opsWorkspace} aria-labelledby="admin-workspace-title">
@@ -779,11 +702,7 @@ export default function AdminWorkspace() {
           <p>{subtitle}</p>
           <small>{pipeline
             ? `Pipeline snapshot ${formatTime(pipeline.latest_pipeline_snapshot_at)} · Console refreshed ${formatTime(pipeline.generated_at)}`
-            : view === "architecture"
-              ? `Architecture refreshed ${formatTime(architecture?.generated_at)}`
-              : view === "semantic"
-                ? "Immutable publications · optimistic draft revisions · no customer runtime change"
-                : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
+            : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
         </div>
         <div className={styles.opsHeaderActions}>
           {pipeline ? <button type="button" onClick={leavePipeline}>Back to fleet</button> : null}
@@ -816,17 +735,6 @@ export default function AdminWorkspace() {
       ) : null}
 
       {error ? <div className={styles.opsError} role="alert"><strong>Operations data unavailable</strong><span>{error}</span></div> : null}
-
-      {!pipeline && view === "architecture" ? (
-        architecture ? (
-          <ArchitectureMap overview={architecture} onOpenFleet={openFleetView} />
-        ) : (
-          <div className={styles.opsDetailLoading} role="status">
-            <span aria-hidden="true" />
-            <p>{loadingScope === "architecture" ? "Drawing the architecture map…" : "Architecture overview is unavailable."}</p>
-          </div>
-        )
-      ) : null}
 
       {!pipeline && view === "fleet" ? (
         <>
@@ -912,13 +820,11 @@ export default function AdminWorkspace() {
         </>
       ) : null}
 
-      {!pipeline && view === "semantic" ? <SemanticAdminWorkspace refreshToken={semanticRefresh} /> : null}
-
       {pipeline ? (
         <>
           <p className={styles.archPipelineLegend}>
-            Follow the data left to right: authorised sources become typed tables, then one shared business model,
-            then query-ready marts. Tap a stage for live counts and ledgers.
+            Follow the data left to right: authorised sources become typed raw tables,
+            then the raw source tables Cube reads. Tap a stage for live counts and ledgers.
           </p>
           <nav className={styles.opsPipeline} aria-label="Tenant pipeline stages">
             {PIPELINE_STAGES.map((stage, index) => {

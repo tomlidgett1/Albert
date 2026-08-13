@@ -20,6 +20,20 @@ August 2026. This document is the complete context for building Albert v1. It is
 > human scoring for one exact V2 release. It never fabricates human ratings and
 > cannot bypass deterministic correctness, tenant isolation, fan-out,
 > grounding, evidence, runtime, latency or safety gates.
+>
+> **Personal live dashboard.** ADR 0083 narrowly amends section 5: Albert may
+> expose one private conversation-derived pinboard per user. It is not a BI or
+> query-authoring surface. Only tables with explicit trusted replay references
+> can be pinned, and every refresh preserves the original governed semantic
+> version/publication and immutable source lineage. Conversation remains the
+> primary analytical surface. Every Cube refresh runs under its own exact,
+> short-lived dashboard claim lease; it never reuses an expired chat turn.
+> Every new owner-visible V3 table is a structured replayable artefact. Final
+> pivots and cross-query tables use a deterministic derived-table transform over
+> immutable governed source events; Markdown-only tables are not produced.
+> Per-tile column labels and value formats may be customized only as bounded
+> owner presentation metadata; governed values, definitions, digests, and
+> replay recipes remain immutable.
 
 **Initial build scope: three connectors (Lightspeed Retail R-Series, Xero, Deputy), the Supabase control plane, and the complete semantic operating system underneath them.** The architecture is designed for 150+ connectors and 20,000 tenants; the initial build implements the final boundaries with the simplest correct implementation behind each.
 
@@ -108,7 +122,7 @@ webhook gateway ─► job queue (pg-boss, control plane) ─► sync workers
 - **Analytical database:** a separate Postgres database from the control plane (a second Supabase project in Sydney is acceptable; any managed Postgres is; the requirement is workload separation plus the role model in section 8). Ingestion and analytical queries must never contend with login and chat.
 - **Raw payloads:** a Supabase Storage bucket (`raw-payloads`), S3-compatible, encrypted, immutable, accessed by workers via service credentials only. Keying: `tenant/{tenant_id}/connection/{connection_id}/stream/{stream}/date/{yyyy-mm-dd}/batch-{ulid}.jsonl.gz`.
 - **Jobs and scheduling: Supabase-native, no workflow engine.** A Postgres-backed job queue (pg-boss or pgmq) on the control-plane database, pg_cron for schedules, and an always-on Node sync worker service. Durability lives in the data model this spec already mandates: per-stream cursors, the sync ledger and idempotent upserts, so a killed or redeployed worker restarts and resumes from its cursors. Vendor rate budgets are enforced by re-enqueueing with a delay when a budget window is exhausted. Two hard constraints: Supabase Edge Functions are never the worker runtime (their execution time caps are wrong for multi-hour backfills, and self-chaining them is a hand-rolled state machine), and all orchestration sits behind a SyncOrchestrator interface exposing the three job types in section 17, so a workflow engine (Temporal) can swap in later at its named trigger: roughly connector five, or the first cross-stream backfill dependency that hurts.
-- **Models:** OpenAI through the official Agents SDK and Responses API behind a provider abstraction. The server-owned allowlist exposes the current Albert-supported `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` profiles, user-selectable reasoning effort, and the independent Fast processing tier. Production uses the approved AU data-residency endpoint, `store: false`, and never exposes private model reasoning; the sequential user-visible narrative is reconstructed only from audited tool, table, chart, validation, and provenance events (APP 8). See ADR 0001.
+- **Models:** OpenAI through the official Agents SDK and Responses API behind a provider abstraction, plus owner-selected Grok 4.6 through the official xAI Responses API (`https://api.x.ai/v1`, model `grok-4.6`). The server-owned allowlist exposes the current Albert-supported `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `grok-4.6` profiles, user-selectable reasoning effort (Grok: `low` / `medium` / `high` / `xhigh`), and the independent Fast processing tier (OpenAI `service_tier: "fast"`; Grok `service_tier: "priority"`). Production GPT traffic uses the approved AU data-residency endpoint, `store: false`, and never exposes private model reasoning; Grok turns use the same `store: false` and trace rules on xAI. The sequential user-visible narrative is reconstructed only from audited tool, table, chart, validation, and provenance events (APP 8). See ADR 0001 and ADR 0094.
 - **Protected capacity promotion:** a candidate cannot attest its own throughput. Production promotion is gated by the independently deployed, immutable-tooling, GitHub-OIDC-bound transform fleet attestor in ADR 0034 and `docs/independent-capacity-attestor.md`; it observes the exact 20,000-tenant Sydney capacity run across Fly, Prometheus, and both databases and supplies the measured Machine floor before any production mutation.
 
 ### 7. Storage conventions

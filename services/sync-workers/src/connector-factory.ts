@@ -2,6 +2,8 @@ import { DeputyConnector } from "../../../connectors/deputy/index.js";
 import { DEPUTY_DEFAULT_SCOPES } from "../../../connectors/deputy/manifest.js";
 import { LightspeedRConnector } from "../../../connectors/lightspeed-r/index.js";
 import { LIGHTSPEED_R_DEFAULT_SCOPES } from "../../../connectors/lightspeed-r/manifest.js";
+import { LightspeedXConnector } from "../../../connectors/lightspeed-x/index.js";
+import { LIGHTSPEED_X_DEFAULT_SCOPES } from "../../../connectors/lightspeed-x/manifest.js";
 import { GoogleAdsConnector } from "../../../connectors/google-ads/index.js";
 import { GOOGLE_ADS_DEFAULT_SCOPES } from "../../../connectors/google-ads/manifest.js";
 import { MetaAdsConnector } from "../../../connectors/meta-ads/index.js";
@@ -31,6 +33,9 @@ export type OAuthConnectorConfig = Pick<
   SyncWorkerConfig,
   | "lightspeedClientId"
   | "lightspeedClientSecret"
+  | "lightspeedXClientId"
+  | "lightspeedXClientSecret"
+  | "lightspeedXRedirectUri"
   | "xeroClientId"
   | "xeroEnableAdvancedJournals"
   | "deputyClientId"
@@ -66,9 +71,29 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
   constructor(private readonly config: OAuthConnectorConfig) {}
 
   isConfigured(provider: Provider): boolean {
+    if (provider === "lightspeed-x") {
+      return Boolean(
+        this.config.lightspeedXClientId && this.config.lightspeedXClientSecret,
+      );
+    }
     if (provider === "deputy") {
       return Boolean(
         this.config.deputyClientId && this.config.deputyClientSecret,
+      );
+    }
+    if (provider === "square") {
+      return Boolean(
+        this.config.squareClientId && this.config.squareClientSecret,
+      );
+    }
+    if (provider === "shopify") {
+      return Boolean(
+        this.config.shopifyClientId && this.config.shopifyClientSecret,
+      );
+    }
+    if (provider === "momence") {
+      return Boolean(
+        this.config.momenceClientId && this.config.momenceClientSecret,
       );
     }
     return true;
@@ -86,6 +111,17 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
         vault,
       });
     }
+    if (provider === "lightspeed-x") {
+      if (!this.isConfigured(provider)) {
+        throw new Error("oauth_provider_not_configured:lightspeed-x");
+      }
+      return new LightspeedXConnector({
+        clientId: this.config.lightspeedXClientId,
+        clientSecret: this.config.lightspeedXClientSecret,
+        redirectUri: this.config.lightspeedXRedirectUri,
+        vault,
+      });
+    }
     if (provider === "xero") {
       return new XeroConnector({
         clientId: this.config.xeroClientId,
@@ -94,7 +130,7 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
       });
     }
     if (provider === "square") {
-      if (!this.config.squareClientId) throw new Error("oauth_provider_not_configured:square");
+      if (!this.isConfigured("square")) throw new Error("oauth_provider_not_configured:square");
       return new SquareConnector({
         clientId: this.config.squareClientId,
         clientSecret: this.config.squareClientSecret,
@@ -103,7 +139,7 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
       });
     }
     if (provider === "shopify") {
-      if (!this.config.shopifyClientId) throw new Error("oauth_provider_not_configured:shopify");
+      if (!this.isConfigured("shopify")) throw new Error("oauth_provider_not_configured:shopify");
       if (!options.vendorAccountHint) {
         // Shopify's authorize and token hosts are the shop itself, so a
         // missing shop is a routing defect, not a recoverable default.
@@ -127,7 +163,7 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
       });
     }
     if (provider === "momence") {
-      if (!this.config.momenceClientId) throw new Error("oauth_provider_not_configured:momence");
+      if (!this.isConfigured("momence")) throw new Error("oauth_provider_not_configured:momence");
       return new MomenceConnector({
         clientId: this.config.momenceClientId,
         clientSecret: this.config.momenceClientSecret,
@@ -166,6 +202,7 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
 
   scopes(provider: Provider): readonly string[] {
     if (provider === "lightspeed-r") return LIGHTSPEED_R_DEFAULT_SCOPES;
+    if (provider === "lightspeed-x") return LIGHTSPEED_X_DEFAULT_SCOPES;
     if (provider === "xero") return xeroRequestedScopes(this.config.xeroEnableAdvancedJournals);
     if (provider === "square") return SQUARE_DEFAULT_SCOPES;
     if (provider === "shopify") return SHOPIFY_DEFAULT_SCOPES;
@@ -179,8 +216,12 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
 
 export class ProductionConnectorRegistry implements ConnectorRegistry {
   private readonly connectors: ReadonlyMap<Provider, OAuthConnectorPack>;
+  private readonly accountBoundConnectors = new Map<string, OAuthConnectorPack>();
 
-  constructor(factory: ProductionConnectorFactory, vault: WorkerCredentialVault) {
+  constructor(
+    private readonly factory: ProductionConnectorFactory,
+    private readonly vault: WorkerCredentialVault,
+  ) {
     const connectors: [Provider, OAuthConnectorPack][] = [
       ["lightspeed-r", factory.create("lightspeed-r", vault)],
       ["xero", factory.create("xero", vault)],
@@ -188,10 +229,37 @@ export class ProductionConnectorRegistry implements ConnectorRegistry {
     if (factory.isConfigured("deputy")) {
       connectors.push(["deputy", factory.create("deputy", vault)]);
     }
+    if (factory.isConfigured("lightspeed-x")) {
+      connectors.push(["lightspeed-x", factory.create("lightspeed-x", vault)]);
+    }
+    if (factory.isConfigured("square")) {
+      connectors.push(["square", factory.create("square", vault)]);
+    }
+    if (factory.isConfigured("momence")) {
+      connectors.push(["momence", factory.create("momence", vault)]);
+    }
     this.connectors = new Map(connectors);
   }
 
-  get(provider: Provider): OAuthConnectorPack {
+  get(
+    provider: Provider,
+    options: Readonly<{ externalAccountReference?: string | null }> = {},
+  ): OAuthConnectorPack {
+    if (provider === "shopify") {
+      if (!this.factory.isConfigured("shopify")) {
+        throw new Error("connector_not_configured:shopify");
+      }
+      const account = options.externalAccountReference?.trim().toLowerCase();
+      if (!account) throw new Error("oauth_shop_domain_required");
+      const key = `shopify:${account}`;
+      const cached = this.accountBoundConnectors.get(key);
+      if (cached) return cached;
+      const connector = this.factory.create("shopify", this.vault, {
+        vendorAccountHint: account,
+      });
+      this.accountBoundConnectors.set(key, connector);
+      return connector;
+    }
     const connector = this.connectors.get(provider);
     if (!connector) throw new Error(`connector_not_configured:${provider}`);
     return connector;

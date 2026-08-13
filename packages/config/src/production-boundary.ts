@@ -114,6 +114,14 @@ export function assertProductionRuntimeBoundary(
   ) {
     throw new Error("ALBERT_LIGHTSPEED_PRODUCT must explicitly confirm r-series.");
   }
+  if (
+    source.LIGHTSPEED_X_CLIENT_ID?.trim() &&
+    required(source, "ALBERT_LIGHTSPEED_X_PRODUCT") !== "x-series"
+  ) {
+    throw new Error(
+      "ALBERT_LIGHTSPEED_X_PRODUCT must explicitly confirm x-series when Lightspeed X-Series OAuth is configured.",
+    );
+  }
 
   const serviceVersion = required(source, "ALBERT_SERVICE_VERSION");
   if (!/^[a-f0-9]{40}$/u.test(serviceVersion)) {

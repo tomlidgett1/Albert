@@ -23,6 +23,7 @@ export const RELEASE_AUTHORITY_SURFACE_PATHS = Object.freeze([
   "Dockerfile.services",
   "connectors",
   "contracts",
+  "cube-playground",
   "deploy/capacity",
   "deploy/fly",
   "deploy/fly-autoscalers",
@@ -138,6 +139,8 @@ export async function createReleasePlan(source, outputPath) {
     "Authority ref is not an immutable release-authority tag.");
   const servicesImage = required(source, "ALBERT_RELEASE_SERVICES_IMAGE");
   assert.match(servicesImage, IMAGE, "Candidate services image must be a GHCR digest reference.");
+  const cubeImage = required(source, "ALBERT_RELEASE_CUBE_IMAGE");
+  assert.match(cubeImage, IMAGE, "Candidate Cube image must be a GHCR digest reference.");
   const releaseRunId = required(source, "GITHUB_RUN_ID");
   const dogfoodRunId = required(source, "ALBERT_DOGFOOD_RUN_ID");
   const dogfoodArtifactId = required(source, "ALBERT_DOGFOOD_ARTIFACT_ID");
@@ -182,7 +185,7 @@ export async function createReleasePlan(source, outputPath) {
     "Candidate privileged release surface byte inventory differs from authority.");
 
   const planWithoutDigest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "albert.production-release-plan",
     repository,
     authority: {
@@ -193,6 +196,7 @@ export async function createReleasePlan(source, outputPath) {
     candidate: {
       sha: candidateSha,
       servicesImage,
+      cubeImage,
       privilegedSurfaceDigest: authoritySurface.digest,
       privilegedFileRecordCount: authoritySurface.fileRecordCount,
       privilegedByteCount: authoritySurface.byteCount,
@@ -222,7 +226,10 @@ export async function createReleasePlan(source, outputPath) {
   const plan = Object.freeze({ ...planWithoutDigest, planDigest });
   await writeFile(outputPath, `${canonicalJson(plan)}\n`, { mode: 0o600 });
   if (source.GITHUB_OUTPUT) {
-    await appendFile(source.GITHUB_OUTPUT, `plan_digest=${planDigest}\nservices_image=${servicesImage}\n`);
+    await appendFile(
+      source.GITHUB_OUTPUT,
+      `plan_digest=${planDigest}\nservices_image=${servicesImage}\ncube_image=${cubeImage}\n`,
+    );
   }
   return plan;
 }

@@ -4,6 +4,33 @@ Read `docs/albert-v1-spec.md` before changing Albert's product architecture,
 data contracts, connectors, agent runtime, or onboarding flows. Architectural
 choices and supersessions belong in `docs/adr/`.
 
+## Production topology (verified 2026-08-13 — read this before touching any database)
+
+Albert runs on exactly **two Supabase projects**, both Sydney:
+
+- **Control plane** — `jjiugnriaypjoxsupjft` ("Albert Production Control"):
+  auth, tenants, connections, conversations/turns, credential vault, raw-batch
+  Storage. The live tenant is `01KZN20VTX2EWW1TQ2AA3MCPW6`.
+- **Analytics** — `ndncknjodgoovbojedaa` ("Albert Production Analytics"):
+  every `source_*` raw schema plus `XER_OFFICIAL`/`source_xero_official`.
+  This is the only database Cube queries.
+
+The **V3 runtime is the source of truth**: dash → `/api/v3-conversation` →
+Cube (`albert-cube` on Fly) → Analytics raw tables. There is no canonical
+`core.*`/`mart` layer any more (retired by migrations 0157/0158) and no
+semantic-query/anthropic/transform services. `cube-playground/` is the
+deployed semantic model — it is tracked in git; treat it as production code.
+
+A third, legacy Tokyo project (`qthltvbbgnhprsflmzfj`) is being decommissioned
+— see `docs/tokyo-decommission-runbook.md`. Do not write to it. `.env.local`
+was repointed to the two production projects on 2026-08-13; entries prefixed
+`DECOMMISSIONED_TOKYO_` are inert history.
+
+Fly hosts what Supabase cannot run: `albert-cube` (Cube.js), the sync/OAuth
+worker, `albert-prod-webhook`, `albert-prod-deletion`,
+`albert-prod-operator-diagnostic`, `albert-prod-vendor-attestor`. Web is Vercel
+(`https://albert-chi.vercel.app`).
+
 - Everything must be built with dark-mode compatibility. All UI, components,
   interactive states, colors, and assets must remain legible and functional in
   light, dark, and system themes.
@@ -178,3 +205,45 @@ Before introducing a new button, tab, menu, search field, pill, popup, or
 tooltip, match the closest pattern above. If a needed pattern is missing from
 this style sheet, extend this file with the chosen dash-derived values instead
 of improvising a one-off style.
+
+
+## ALWAYS ACTIVATE those skills
+they are essential for ANY work in this project
+- `rest-api-pipeline-workflow`
+
+## Migrations
+
+After writing any control-plane or analytical SQL migration, apply it immediately. Do not wait to be asked.
+
+- Run `scripts/migrate.ts` with `--target=control-plane` or `--target=analytical`. Never use Supabase MCP `apply_migration` (it bypasses the checksummed `albert_migrations` ledger).
+- Use the deployer identity, never a runtime URL. Prefer `CONTROL_PLANE_MIGRATION_URL`, or locally `CONTROL_PLANE_ADMIN_DATABASE_URL` when it is `albert_control_deployer`. Map that value to `CONTROL_PLANE_DATABASE_URL` for the runner. Same pattern for analytical with `ANALYTICAL_MIGRATION_URL`.
+- Set `CONTROL_PLANE_MIGRATION_ROLE=albert_control_migration_owner` or `ANALYTICAL_MIGRATION_ROLE=albert_migration_owner`.
+- Do not print connection strings or passwords. Do not use `--bootstrap` unless creating a new database.
+- After new public RPCs, `NOTIFY pgrst, 'reload schema'`.
+
+## Security
+CRITICAL: never ask for credentials in chat. Always let the user edit secrets directly and do not attempt to read them.
+
+## toolkits — match intent → install → open the entry skill (no discovery round-trip needed)
+Workflow toolkits are installed on demand. This index is authoritative for shipped toolkits: match the user's intent, run the install command, confirm from its output (`dlthub ai status` only if unclear), then hand over to the entry skill. No discovery call needed for these.
+<!-- This shipped index can drift from the live catalog on a user's machine until runtime refresh lands; tracked in dlt-hub/dlthub-ai-workbench-internal#71. -->
+
+```
+intent                                                  → toolkit                | install                                                            | entry skill
+ingest from REST / HTTP APIs — production-grade pipeline → rest-api-pipeline     | dlthub --non-interactive ai toolkit install rest-api-pipeline      | find-source
+ingest from SQL databases (Postgres, MySQL, Snowflake…) → sql-database-pipeline  | dlthub --non-interactive ai toolkit install sql-database-pipeline  | find-source
+load files (CSV/Parquet/JSONL) from disk/S3/GCS/Azure/SFTP → filesystem-pipeline | dlthub --non-interactive ai toolkit install filesystem-pipeline    | create-filesystem-pipeline
+explore & profile loaded data, build charts & dashboards → data-exploration      | dlthub --non-interactive ai toolkit install data-exploration       | explore-data
+transform & model loaded data (dimensional / Kimball)   → transformations        | dlthub --non-interactive ai toolkit install transformations        | annotate-sources
+add data quality checks (column expectations, validation rules) → data-quality   | dlthub --non-interactive ai toolkit install data-quality           | setup-data-quality
+deploy / schedule pipelines on the dltHub platform      → dlthub-platform        | dlthub --non-interactive ai toolkit install dlthub-platform        | setup-runtime
+guided end-to-end tour, ingest to dashboard (uses the real toolkits) → quick-start | dlthub --non-interactive ai toolkit install quick-start          | quick-start
+test/try dlthub end-to-end — minimal pipeline + educational test deploy, NOT production → one-shot       | dlthub --non-interactive ai toolkit install one-shot               | deploy-run-sample-pipeline
+build and deploy a minimal custom REST API pipeline after uvx dlthub-init setup → dlthub-init-skills | dlthub --non-interactive ai toolkit install dlthub-init-skills     | deploy-minimal-ingestion-pipeline
+optimize / speed up a slow or memory-heavy pipeline — parallelism, workers, batching → performance | dlthub --non-interactive ai toolkit install performance            | optimize-performance
+```
+* `one-shot` vs `rest-api-pipeline`: one-shot is for **testing / trying dlthub / onboarding / a quick demo** — a minimal single-endpoint, row-limited pipeline on local DuckDB plus an educational test deploy. Educational examples only, NOT production-grade. For a **real or production** REST pipeline (auth, incremental, multiple endpoints, production deploy), use `rest-api-pipeline`. `quick-start` is the guided tour that walks the real toolkits end-to-end.
+* Use the `dlthub-router` skill for needs not covered above — it uses live `list_toolkits` to discover newer toolkits.
+* DO NOT start data engineering work if no workflow toolkit is installed.
+
+- `init-dlthub-workspace`

@@ -20,6 +20,8 @@ const webEnvironment = Object.freeze({
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable",
   ALBERT_OAUTH_STATE_SECRET: "s".repeat(32),
   ALBERT_OAUTH_WORKER_SIGNING_SECRET: "o".repeat(32),
+  ALBERT_SHOPIFYQL_SIGNING_SECRET: "q".repeat(32),
+  ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "h".repeat(32),
   ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(32),
   ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET: "p".repeat(32),
   ALBERT_ANTHROPIC_SIGNING_SECRET: "a".repeat(32),
@@ -30,10 +32,15 @@ const webEnvironment = Object.freeze({
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.example",
   ANTHROPIC_ANALYTICS_SERVICE_URL: "https://anthropic.example",
   OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.example",
+  CUBE_API_URL: "https://cube.example",
+  CUBEJS_API_SECRET: "cube-api-secret-for-runtime-tests",
   OPENAI_API_KEY: "test-only",
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   LIGHTSPEED_CLIENT_ID: "lightspeed",
   XERO_CLIENT_ID: "xero",
+  SQUARE_CLIENT_ID: "square",
+  SHOPIFY_CLIENT_ID: "shopify",
+  SHOPIFY_CLIENT_SECRET: "shopify-client-secret-for-runtime-tests",
   DEPUTY_CLIENT_ID: "deputy",
   ALBERT_ANALYTICAL_RUNTIME: "v1",
   ALBERT_BUILD_SHA: "a".repeat(40),
@@ -106,6 +113,7 @@ test("runtime requirements match each production process boundary", () => {
       "webhook-machine-password-material-000001",
     CONTROL_PLANE_DATABASE_URL: "postgresql://control.invalid/albert",
     XERO_WEBHOOK_SIGNING_KEY: "xero",
+    SHOPIFY_CLIENT_SECRET: "shopify-client-secret-for-runtime-tests",
     WEBHOOK_ATTESTATION_KEY_ID: "webhook-attestation-v1",
     WEBHOOK_ATTESTATION_SECRET: Buffer.alloc(32, 11).toString("base64url"),
     WEBHOOK_INBOX_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64url"),
@@ -126,6 +134,7 @@ test("runtime requirements match each production process boundary", () => {
       "webhook-machine-password-material-000001",
     CONTROL_PLANE_DATABASE_URL: "postgresql://control.invalid/albert",
     XERO_WEBHOOK_SIGNING_KEY: "xero",
+    SHOPIFY_CLIENT_SECRET: "shopify-client-secret-for-runtime-tests",
     WEBHOOK_ATTESTATION_KEY_ID: "webhook-attestation-v1",
     WEBHOOK_ATTESTATION_SECRET: Buffer.alloc(32, 11).toString("base64url"),
     WEBHOOK_INBOX_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64url"),
@@ -154,6 +163,7 @@ test("runtime requirements match each production process boundary", () => {
         "webhook-machine-password-material-000001",
       CONTROL_PLANE_DATABASE_URL: "postgresql://control.invalid/albert",
       XERO_WEBHOOK_SIGNING_KEY: "xero",
+      SHOPIFY_CLIENT_SECRET: "shopify-client-secret-for-runtime-tests",
       WEBHOOK_ATTESTATION_KEY_ID: "webhook-attestation-v1",
       WEBHOOK_ATTESTATION_SECRET: Buffer.alloc(32, 11).toString("base64url"),
       WEBHOOK_INBOX_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString("base64url"),
@@ -294,12 +304,66 @@ test("production runtimes reject local HTTP and credential-bearing service URLs"
     ),
   );
 
+  const missingShopifyAdminSecret = { ...productionWebEnvironment };
+  delete missingShopifyAdminSecret.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET;
+  const absentShopifyAdminSecret = inspectRuntimeEnvironment("web", missingShopifyAdminSecret);
+  assert.equal(absentShopifyAdminSecret.ready, false);
+  assert.ok(absentShopifyAdminSecret.missing.includes("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET"));
+
+  for (const reused of [
+    productionWebEnvironment.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
+    productionWebEnvironment.ALBERT_SHOPIFYQL_SIGNING_SECRET,
+    productionWebEnvironment.ALBERT_SEMANTIC_SIGNING_SECRET,
+  ]) {
+    const inspected = inspectRuntimeEnvironment("web", {
+      ...productionWebEnvironment,
+      ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: reused,
+    });
+    assert.equal(inspected.ready, false);
+    assert.ok(inspected.invalid.includes("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET"));
+  }
+
   const localDevelopment = inspectRuntimeEnvironment("web", {
     ...webEnvironment,
     NODE_ENV: "development",
     ALBERT_PUBLIC_ORIGIN: "http://localhost:3000",
   });
   assert.equal(localDevelopment.ready, true);
+
+  const loopbackBackend = inspectRuntimeEnvironment("web", {
+    ...webEnvironment,
+    NODE_ENV: "development",
+    ALBERT_PUBLIC_ORIGIN: "http://localhost:3000",
+    ANTHROPIC_ANALYTICS_SERVICE_URL: "http://127.0.0.1:8791",
+    CUBE_API_URL: "http://127.0.0.1:4000",
+  });
+  assert.equal(loopbackBackend.ready, false);
+  assert.ok(loopbackBackend.invalid.includes("ANTHROPIC_ANALYTICS_SERVICE_URL"));
+  assert.ok(loopbackBackend.invalid.includes("CUBE_API_URL"));
+});
+
+test("Grok 4.6 is optional at boot and pins the official xAI host when configured", () => {
+  assert.equal(
+    runtimeEnvironmentRequirementNames("web").includes("XAI_API_KEY"),
+    false,
+  );
+  assert.equal(
+    inspectRuntimeEnvironment("web", productionWebEnvironment).ready,
+    true,
+  );
+  assert.equal(
+    inspectRuntimeEnvironment("web", {
+      ...productionWebEnvironment,
+      XAI_BASE_URL: "https://api.x.ai/v1",
+    }).ready,
+    true,
+  );
+  const wrongHost = inspectRuntimeEnvironment("web", {
+    ...productionWebEnvironment,
+    XAI_BASE_URL: "https://api.openai.com/v1",
+  });
+  assert.equal(wrongHost.ready, false);
+  assert.ok(wrongHost.invalid.includes("XAI_BASE_URL"));
 });
 
 test("production web and semantic runtimes bind Sydney, AU data residency, live data, and exact database logins", () => {
@@ -352,6 +416,13 @@ test("production web and semantic runtimes bind Sydney, AU data residency, live 
   });
   assert.equal(overprivilegedWeb.ready, false);
   assert.ok(overprivilegedWeb.invalid.includes("CONTROL_PLANE_DATABASE_URL"));
+
+  const squareSecretInWeb = inspectRuntimeEnvironment("web", {
+    ...productionWebEnvironment,
+    SQUARE_CLIENT_SECRET: "must-remain-worker-only",
+  });
+  assert.equal(squareSecretInWeb.ready, false);
+  assert.ok(squareSecretInWeb.invalid.includes("SQUARE_CLIENT_SECRET"));
 
   const semantic = {
     NODE_ENV: "production",

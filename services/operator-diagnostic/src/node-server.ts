@@ -48,7 +48,7 @@ export async function startOperatorDiagnosticNodeServer(options: Readonly<{
         });
       }
       if (closing) return sendJson(response, 503, { error: { code: "SHUTTING_DOWN", message: "Diagnostic service is stopping." } });
-      const body = await readBody(request, 1_024);
+      const body = await readBody(request, 4_096);
       const origin = `http://${request.headers.host ?? `${host}:${port}`}`;
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
@@ -75,7 +75,7 @@ export async function startOperatorDiagnosticNodeServer(options: Readonly<{
     }
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 10_000;
+  server.requestTimeout = 60_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 100;
   server.maxHeadersCount = 64;

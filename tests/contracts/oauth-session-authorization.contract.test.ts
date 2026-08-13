@@ -202,6 +202,14 @@ test("suppression skips the enqueue entirely rather than queueing paused work", 
     source.slice(0, enqueue),
     /if \(!suppressInitialBackfill\) \{[\s\S]*$/u,
   );
+  assert.match(
+    source,
+    /effectiveInitialStart = input\.context\.provider === "shopify"[\s\S]{0,240}input\.context\.provider === "momence"[\s\S]{0,240}\? "manual"/u,
+  );
+  assert.match(
+    source,
+    /suppressInitialBackfill = input\.context\.provider === "shopify"[\s\S]{0,240}input\.context\.provider === "momence"[\s\S]{0,240}\|\| operationallySuppressed/u,
+  );
   // An unsuppressed completion must keep the exact four-key shape that
   // control_plane.protected_dogfood_m7_journey_evidence compares against.
   assert.match(

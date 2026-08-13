@@ -46,6 +46,7 @@ class ExistingBootstrapDatabase {
       || /CREATE OR REPLACE FUNCTION extensions\.albert_finalize_vendor_attestation_boundary/u.test(sql)
       || /CREATE ROLE albert_anthropic_control/u.test(sql)
       || /CREATE OR REPLACE FUNCTION extensions\.albert_install_authorization_connector_providers/u.test(sql)
+      || /CREATE OR REPLACE FUNCTION extensions\.albert_install_shopify_privacy_queue/u.test(sql)
     ) {
       this.bodyExecutions += 1;
     }
@@ -74,7 +75,7 @@ test("an already-bootstrapped database upgrades without reading or changing its 
   const client = database as unknown as Client;
   await assertControlPlaneAdminIdentity(client);
   await applyControlPlaneAdminUpgrades(client);
-  assert.equal(database.applied.length, 12);
+  assert.equal(database.applied.length, 13);
   assert.deepEqual(database.applied.map((row) => row.upgrade_id), [
     "0001_xero_inbox_retention_cron.sql",
     "0002_supabase_auth_compatibility_boundary.sql",
@@ -88,14 +89,15 @@ test("an already-bootstrapped database upgrades without reading or changing its 
     "0010_vendor_connection_attestor_authority.sql",
     "0011_anthropic_control_runtime_authority.sql",
     "0012_authorization_connector_provider_bridge.sql",
+    "0013_shopify_privacy_queue.sql",
   ]);
   assert.ok(database.applied.every((row) => /^[0-9a-f]{64}$/u.test(row.checksum_sha256)));
-  assert.equal(database.bodyExecutions, 12);
+  assert.equal(database.bodyExecutions, 13);
   assert.ok(database.statements.every((sql) => !/applied_bootstrap(?!_)/u.test(sql)));
 
   await applyControlPlaneAdminUpgrades(client);
-  assert.equal(database.applied.length, 12);
-  assert.equal(database.bodyExecutions, 12, "an applied immutable upgrade must not execute twice");
+  assert.equal(database.applied.length, 13);
+  assert.equal(database.bodyExecutions, 13, "an applied immutable upgrade must not execute twice");
 });
 
 test("protected administrator URLs reject plaintext remote credentials before connection", () => {

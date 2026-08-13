@@ -111,6 +111,9 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   const connectorFactory = new ProductionConnectorFactory({
     lightspeedClientId: required("LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required("LIGHTSPEED_CLIENT_SECRET"),
+    lightspeedXClientId: required("LIGHTSPEED_X_CLIENT_ID"),
+    lightspeedXClientSecret: required("LIGHTSPEED_X_CLIENT_SECRET"),
+    lightspeedXRedirectUri: new URL("/api/oauth/lightspeed-x/callback", origin).toString(),
     xeroClientId: required("XERO_CLIENT_ID"),
     xeroEnableAdvancedJournals: process.env.XERO_ENABLE_ADVANCED_JOURNALS === "true",
     deputyClientId: required("DEPUTY_CLIENT_ID"),
@@ -137,7 +140,7 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   });
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
-    allowedRedirectUris: new Set(["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
+    allowedRedirectUris: new Set(["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
       new URL(`/api/oauth/${provider}/callback`, origin).toString()
     )),
     sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper), {

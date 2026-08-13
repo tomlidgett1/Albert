@@ -8,6 +8,15 @@ import {
 } from "./capacity-attestation-timing.mjs";
 
 const services = Object.freeze({
+  "cube.toml": Object.freeze({
+    runtime: "cube",
+    port: 4000,
+    exposure: "signed-public",
+    source: "cube-playground/cube.js",
+    customImage: true,
+    dockerfile: "../../cube-playground/Dockerfile",
+    artifact: "cube-playground/Dockerfile",
+  }),
   "deletion-worker.toml": Object.freeze({
     runtime: "deletion-worker",
     command: "services/deletion-worker.js",
@@ -58,6 +67,21 @@ const services = Object.freeze({
     source: "services/webhook-gateway/src/main.ts",
   }),
 });
+
+const cubeDockerfile = await readFile(
+  new URL("../cube-playground/Dockerfile", import.meta.url),
+  "utf8",
+);
+assert.match(
+  cubeDockerfile,
+  /^FROM cubejs\/cube:v1\.7\.16@sha256:7a33cdc4469ccde403fae519441b06bdcd80e60032d1d793739eb860a0ea3bcc$/mu,
+  "Cube must use the reviewed Linux/amd64 base-image digest.",
+);
+assert.equal(
+  [...cubeDockerfile.matchAll(/^FROM\s+/gmu)].length,
+  1,
+  "Cube must have exactly one reviewed base-image stage.",
+);
 
 const secretNames = Object.freeze([
   "API_KEY",
@@ -128,6 +152,11 @@ assert.deepEqual(
 
 for (const [file, expected] of Object.entries(services)) {
   const body = await readFile(new URL(file, directory), "utf8");
+  assert.doesNotMatch(
+    body.split(/^\s*\[/mu, 1)[0],
+    /^\s*app\s*=/mu,
+    `${file} must receive its exact production app target from protected release authority.`,
+  );
   const runtime = contract.runtimes[expected.runtime];
   assert.equal(
     runtime.platform,
@@ -141,7 +170,7 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.equal(
     runtime.artifact,
-    `.albert-build/${expected.command}`,
+    expected.artifact ?? `.albert-build/${expected.command}`,
     `${expected.runtime} artifact drifted.`,
   );
   assert.equal(
@@ -183,17 +212,24 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.match(
     body,
-    /^\s*dockerfile\s*=\s*"\.\.\/\.\.\/Dockerfile\.services"$/mu,
-    `${file} must use the hardened service image.`,
-  );
-  assert.match(
-    body,
     new RegExp(
-      `^\\s*app\\s*=\\s*"node --enable-source-maps ${escapeRegularExpression(expected.command)}"$`,
+      `^\\s*dockerfile\\s*=\\s*"${escapeRegularExpression(
+        expected.dockerfile ?? "../../Dockerfile.services",
+      )}"$`,
       "mu",
     ),
-    `${file} has the wrong process command.`,
+    `${file} must use the hardened service image.`,
   );
+  if (!expected.customImage) {
+    assert.match(
+      body,
+      new RegExp(
+        `^\\s*app\\s*=\\s*"node --enable-source-maps ${escapeRegularExpression(expected.command)}"$`,
+        "mu",
+      ),
+      `${file} has the wrong process command.`,
+    );
+  }
   assert.match(
     body,
     /^\s*policy\s*=\s*"always"$/mu,
@@ -238,6 +274,7 @@ for (const [file, expected] of Object.entries(services)) {
       "semantic-query",
       "operator-diagnostic",
       "deletion-worker",
+      "cube",
     ].includes(expected.runtime)
   ) {
     assert.ok(
@@ -347,14 +384,16 @@ for (const [file, expected] of Object.entries(services)) {
     new URL(`../${expected.source}`, import.meta.url),
     "utf8",
   );
-  assert.ok(
-    serviceSource.includes(runtime.healthPath),
-    `${expected.runtime} does not implement ${runtime.healthPath}.`,
-  );
-  assert.ok(
-    serviceSource.includes(runtime.livenessPath),
-    `${expected.runtime} does not implement ${runtime.livenessPath}.`,
-  );
+  if (!expected.customImage) {
+    assert.ok(
+      serviceSource.includes(runtime.healthPath),
+      `${expected.runtime} does not implement ${runtime.healthPath}.`,
+    );
+    assert.ok(
+      serviceSource.includes(runtime.livenessPath),
+      `${expected.runtime} does not implement ${runtime.livenessPath}.`,
+    );
+  }
   if (["sync-worker", "transform-worker"].includes(expected.runtime)) {
     assert.match(
       body,
@@ -563,7 +602,9 @@ assert.match(
   "Service bundles must receive a compile-time code identity.",
 );
 assert.equal(vercelManifest.buildCommand, web.buildCommand);
-for (const { command } of Object.values(services)) {
+for (const { command } of Object.values(services).filter(
+  (service) => typeof service.command === "string",
+)) {
   const artifact = command.replace(/^services\//u, "").replace(/\.js$/u, "");
   assert.match(
     buildServices,
@@ -760,6 +801,7 @@ function validateFlyctlPins(workflow, expectedJobs, name) {
 validateFlyctlPins(
   releaseWorkflow,
   [
+    "activate-and-smoke",
     "attest-transform-fleet-capacity",
     "deploy-autoscalers",
     "deploy-services",

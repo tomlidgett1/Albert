@@ -1020,10 +1020,15 @@ export async function installAppApiRoutes(
     },
   );
 
-  await page.route(/\/api\/conversation$/u, async (route) => {
+  await page.route(/\/api\/(?:v3-)?conversation$/u, async (route) => {
     capture.conversationPayloads.push(route.request().postDataJSON());
+    const isV3 = /v3-conversation/u.test(route.request().url());
     const body = createDeterministicFixtureTrace()
-      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .map((event) =>
+        isV3
+          ? `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`
+          : `data: ${JSON.stringify(event)}\n\n`,
+      )
       .join("");
     await route.fulfill({
       status: 200,
@@ -1031,7 +1036,7 @@ export async function installAppApiRoutes(
       headers: {
         "Cache-Control": "no-store",
         "Content-Type": "text/event-stream; charset=utf-8",
-        "X-Albert-Runtime": "fixture",
+        "X-Albert-Runtime": isV3 ? "v3" : "fixture",
       },
     });
   });

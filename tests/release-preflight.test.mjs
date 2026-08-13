@@ -50,6 +50,7 @@ const validRelease = Object.freeze({
   ALBERT_PUBLIC_ORIGIN: "https://albert.example",
   ANTHROPIC_ANALYTICS_SERVICE_URL: "https://anthropic.albert.example",
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.albert.example",
+  CUBE_API_URL: "https://cube.albert.example",
   OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.albert.example",
   SYNC_WORKER_INTERNAL_URL: "https://sync.albert.example",
   WEBHOOK_GATEWAY_PUBLIC_URL: "https://webhooks.albert.example",
@@ -58,6 +59,7 @@ const validRelease = Object.freeze({
   ANALYTICAL_MIGRATION_URL:
     "postgresql://albert_analytical_deployer:secret@analytics.example/postgres?sslmode=require",
   FLY_SEMANTIC_APP: "albert-semantic-prod",
+  FLY_CUBE_APP: "albert-cube-prod",
   FLY_ANTHROPIC_APP: "albert-anthropic-prod",
   FLY_SYNC_APP: "albert-sync-prod",
   FLY_TRANSFORM_APP: "albert-transform-prod",
@@ -388,5 +390,21 @@ test("Fly secret inventory is exact per runtime and rejects undeclared privilege
       { Name: "UNDECLARED_SECRET" },
     ]),
     /undeclared secret names/,
+  );
+  const cube = contract.runtimes.cube;
+  const cubeInventory = cube.requiredSecretNames.map((Name) => ({
+    Name,
+    Digest: "not-a-secret-value",
+  }));
+  assert.deepEqual(
+    validateRuntimeSecretNames(contract, "cube", cubeInventory),
+    { runtimeName: "cube", count: cubeInventory.length },
+  );
+  assert.throws(
+    () => validateRuntimeSecretNames(contract, "cube", [
+      ...cubeInventory,
+      { Name: "ANALYTICAL_MIGRATION_URL", Digest: "forbidden" },
+    ]),
+    /prohibited secret names/,
   );
 });

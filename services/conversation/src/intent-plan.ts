@@ -1,8 +1,8 @@
 import { Agent, Runner, user, type ModelProvider } from "@openai/agents";
 import { z } from "zod";
 import type { AgentRunPreferences } from "../../../packages/shared/src/index.js";
-import { buildOpenAIAgentRunConfig } from "../../../packages/agent/src/runtime.js";
-import type { AlbertPreferenceOptionId } from "../../../packages/agent/src/semantic-tools.js";
+import { buildLiveAgentModelSettings, buildOpenAIAgentRunConfig } from "../../../packages/agent/src/runtime.js";
+import type { AlbertPreferenceOptionId } from "../../../packages/agent/src/v3-contracts.js";
 import {
   CRITICAL_PROMPT_ROUTE_CONTRACTS,
   promptRouteContractByCaseId,
@@ -190,16 +190,12 @@ export async function resolveIntentPlanWithAgent(
     name: "Albert intent planner",
     instructions: INTENT_PLAN_INSTRUCTIONS,
     model: runConfig.model,
-    modelSettings: {
+    modelSettings: buildLiveAgentModelSettings(runConfig, {
       reasoning: { effort: "low", context: "current_turn" },
-      text: { verbosity: "low" },
-      store: false,
+      verbosity: "low",
       parallelToolCalls: false,
-      providerData: {
-        ...runConfig.modelSettings.providerData,
-        ...(options.safetyIdentifier ? { safety_identifier: options.safetyIdentifier } : {}),
-      },
-    },
+      safetyIdentifier: options.safetyIdentifier,
+    }),
     tools: [],
     outputType: intentPlanSchema,
   });

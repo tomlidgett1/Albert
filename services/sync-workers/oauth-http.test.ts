@@ -225,6 +225,7 @@ test("Deputy OAuth completion finalises the connection without a webhook provisi
     metadata: { endpoint: "demo.au.deputy.com" },
   } as const;
   const selectionConnector = {
+    manifest: { ingestion: { initialStart: "automatic" } } as OAuthConnectorPack["manifest"],
     async discover_accounts() { return [account]; },
     async select_account() { return account; },
   } as unknown as OAuthConnectorPack;
@@ -298,6 +299,87 @@ test("Deputy OAuth completion finalises the connection without a webhook provisi
       connectionId,
       jobRequestId: "01J00000000000000000000005",
     },
+  });
+});
+
+test("Shopify OAuth finalises from its signed shop identity without reading store data", async () => {
+  const secret = "s".repeat(48);
+  const tenantId = "01J00000000000000000000002";
+  const oauthSessionId = "01J00000000000000000000003";
+  const connectionId = "01J00000000000000000000004";
+  const userId = "00000000-0000-4000-8000-000000000001";
+  const shopDomain = "world-class-store.myshopify.com";
+  let finalizedDiscovery: unknown;
+  const connector = {
+    manifest: { ingestion: { initialStart: "manual" } } as OAuthConnectorPack["manifest"],
+    async discover_accounts() {
+      throw new Error("shopify_oauth_must_not_read_store_data");
+    },
+    async select_account() {
+      throw new Error("shopify_oauth_must_not_read_store_data");
+    },
+  } as unknown as OAuthConnectorPack;
+  const sessions = {
+    async loadCallbackReplay() { return null; },
+    async loadForCallback() {
+      return {
+        tenantId,
+        oauthSessionId,
+        initiatedBy: userId,
+        provider: "shopify",
+        redirectUri: "https://albert.example/api/oauth/shopify/callback",
+        requestedScopes: ["read_orders"],
+        status: "pending",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        codeVerifier: undefined,
+        choices: [],
+        selectedAccountReference: null,
+        vendorAccountHint: shopDomain,
+      } as const;
+    },
+    credentialVault() { return {} as WorkerCredentialVault; },
+    async provisionalCredentialReference() { return "provisional-credential"; },
+    async finalizeConnection(input: { discovery: unknown }) {
+      finalizedDiscovery = input.discovery;
+      return { connectionId, jobRequestId: null, credentialRef: "live-credential" };
+    },
+  } as unknown as OAuthSessionStore;
+  const handler = new OAuthWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set(),
+    sessions,
+    connectors: {
+      scopes() { return ["read_orders"]; },
+      create() { return connector; },
+    },
+  });
+  const body = JSON.stringify({
+    tenantId,
+    oauthSessionId,
+    userId,
+    provider: "shopify",
+    stateNonceHash: "a".repeat(64),
+    code: "already-exchanged",
+  });
+  const signed = await signInternalRequest({
+    method: "POST",
+    path: "/v1/oauth/callback",
+    body,
+    secret,
+  });
+  const response = await handler.handle(new Request("https://worker.internal/v1/oauth/callback", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(finalizedDiscovery, {
+    externalAccountId: shopDomain,
+    displayName: shopDomain,
+    metadata: { shopDomain },
+  });
+  assert.deepEqual(await response.json(), {
+    result: { oauthSessionId, status: "connected", connectionId, jobRequestId: null },
   });
 });
 

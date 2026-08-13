@@ -8,7 +8,7 @@ import {
 } from "../../../packages/connector-sdk/src/index.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 
-type Provider = "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+type Provider = "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
 
 export interface OAuthConnectorFactory {
   create(
@@ -66,7 +66,7 @@ function vendorAccountHint(
 
 function provider(input: Record<string, unknown>): Provider {
   const value = requiredString(input, "provider", 40);
-  if (!(["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const).includes(value as Provider)) {
+  if (!(["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const).includes(value as Provider)) {
     throw new Error("invalid_provider");
   }
   return value as Provider;
@@ -259,6 +259,12 @@ export class OAuthWorkerHttpHandler {
         code: requiredString(input, "code", 4000),
         redirectUri: context.redirectUri,
         codeVerifier: context.codeVerifier,
+        ...(input.domainPrefix !== undefined
+          ? { domainPrefix: requiredString(input, "domainPrefix", 63) }
+          : {}),
+        ...(input.returnedScope !== undefined
+          ? { returnedScope: requiredString(input, "returnedScope", 4_000) }
+          : {}),
         abortSignal: signal,
       });
       credentialRef = exchange.credentialRef;
@@ -269,18 +275,42 @@ export class OAuthWorkerHttpHandler {
       credentialRef,
       abortSignal: signal,
     } as const;
-    const discoveries = await connector.discover_accounts(connectorContext);
+    // Shopify's authorization endpoint and token exchange are already bound to
+    // the normalized myshopify.com identity captured in the signed OAuth
+    // session. Do not turn a successful grant into an implicit shop-profile
+    // read: the merchant has connected credentials, but has not yet pressed
+    // Start ingestion. Other providers still need their vendor account picker.
+    const shopifyAuthorizationIdentity = context.provider === "shopify"
+      ? context.vendorAccountHint
+      : null;
+    if (
+      context.provider === "shopify" &&
+      (!shopifyAuthorizationIdentity ||
+        !/^[a-z0-9][a-z0-9-]{0,58}[a-z0-9]\.myshopify\.com$/u.test(shopifyAuthorizationIdentity))
+    ) {
+      throw new Error("oauth_shop_domain_invalid");
+    }
+    const discoveries = context.provider === "shopify"
+      ? [{
+          externalAccountId: shopifyAuthorizationIdentity!,
+          displayName: shopifyAuthorizationIdentity!,
+          metadata: { shopDomain: shopifyAuthorizationIdentity! },
+        }]
+      : await connector.discover_accounts(connectorContext);
     if (discoveries.length === 0) throw new Error("oauth_no_accounts_available");
     if (discoveries.length > 1) {
       const choices = await this.dependencies.sessions.setAccountChoices(context, discoveries);
       return response({ oauthSessionId: context.oauthSessionId, status: "selection_required", choices }, 202);
     }
     const selected = discoveries[0]!;
-    const discovery = await connector.select_account(connectorContext, selected.externalAccountId);
+    const discovery = context.provider === "shopify"
+      ? selected
+      : await connector.select_account(connectorContext, selected.externalAccountId);
     const finalized = await this.dependencies.sessions.finalizeConnection({
       context: { ...context, status: "exchanging", selectedAccountReference: selected.externalAccountId },
       discovery,
       provisionalCredentialRef: credentialRef,
+      ingestionInitialStart: connector.manifest.ingestion.initialStart,
     });
     const result = {
       connectionId: finalized.connectionId,
@@ -327,6 +357,7 @@ export class OAuthWorkerHttpHandler {
       context: { ...context, status: "exchanging", selectedAccountReference: accountId },
       discovery,
       provisionalCredentialRef: credentialRef,
+      ingestionInitialStart: connector.manifest.ingestion.initialStart,
     });
     const result = {
       connectionId: finalized.connectionId,

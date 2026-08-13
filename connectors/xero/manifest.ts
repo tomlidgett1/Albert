@@ -76,6 +76,7 @@ export const xeroManifest: ConnectorManifest = {
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-nz.yaml`,
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-identity.yaml`,
   ],
+  ingestion: { initialStart: "automatic" },
   oauth: {
     scopes: XERO_DEFAULT_SCOPES,
     leastPrivilegeNotes: [

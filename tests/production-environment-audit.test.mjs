@@ -186,6 +186,11 @@ test("production audit derives every protected workflow inventory and passes com
   assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_VERCEL_READ_TOKEN"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_VERCEL_PROJECT_ID"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_CONTROL_PLANE_PROJECT_REF"));
+  assert.ok(fixture.requirements.environments.production.variables.includes("FLY_CUBE_APP"));
+  assert.ok(fixture.requirements.environments.production.variables.includes("CUBE_API_URL"));
+  assert.ok(fixture.requirements.environments.production.secrets.includes("FLY_CUBE_API_TOKEN"));
+  assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_RELEASE_CUBE_SMOKE_CONTROL_DATABASE_URL"));
+  assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_RELEASE_CUBE_SMOKE_TENANT_ID"));
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
   assert.ok(fixture.vercelInventory.runtimeNames.includes("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"));
   assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_CAPACITY_ED25519_PUBLIC_KEY_BASE64"));
@@ -480,9 +485,12 @@ test("production release runs only from immutable authority and keeps candidate 
   const release = loadYaml(await readFile(path.join(rootDirectory, ".github/workflows/release-authority.yml"), "utf8"));
   const verify = release.jobs["verify-candidate"];
   const build = release.jobs["build-candidate"];
+  const cubeBuild = release.jobs["build-cube-candidate"];
   assert.equal(verify.environment, undefined);
   assert.equal(build.environment, undefined);
+  assert.equal(cubeBuild.environment, undefined);
   assert.equal(build.permissions["id-token"], undefined);
+  assert.equal(cubeBuild.permissions["id-token"], undefined);
   assert.equal(verify.permissions.packages, undefined);
   assert.ok(verify.steps.some(({ name }) => name === "Require the immutable signed release-authority tag"));
   const ciProof = verify.steps.find(({ name }) => (
@@ -492,6 +500,27 @@ test("production release runs only from immutable authority and keeps candidate 
   assert.match(ciProof.run, /test "\$ci_run_attempt" = 1/u);
   assert.ok(verify.steps.some(({ name }) => name === "Prove the candidate privileged surface before executing candidate code"));
   assert.equal(JSON.stringify(build).includes("npm run check"), false);
+  assert.equal(JSON.stringify(cubeBuild).includes("npm run check"), false);
+  assert.match(JSON.stringify(cubeBuild), /cube-playground\/Dockerfile/u);
+  const cubeDeploy = release.jobs["deploy-services"].strategy.matrix.include.find(
+    ({ service }) => service === "cube",
+  );
+  assert.deepEqual(cubeDeploy, {
+    service: "cube",
+    config: "deploy/fly/cube.toml",
+    app_variable: "FLY_CUBE_APP",
+    token_secret: "FLY_CUBE_API_TOKEN",
+    exposure: "public",
+  });
+  const deployStep = release.jobs["deploy-services"].steps.find(
+    ({ name }) => name === "Validate trusted config and deploy only the approved digest",
+  );
+  assert.match(deployStep.env.TARGET_FLOOR, /matrix\.service == 'cube' && 1/u);
+  assert.match(deployStep.run, /matrix\.service \}\}" = cube[\s\S]*flyctl scale count 1/u);
+  const cubeSmoke = release.jobs["activate-and-smoke"].steps.find(
+    ({ name }) => name === "Prove Cube is live at the exact approved image and deployment",
+  );
+  assert.match(cubeSmoke.run, /select\(\.state == "started"\)\] \| length\) == 1/u);
   for (const [jobName, job] of Object.entries(release.jobs)) {
     assert.equal(job.if, "github.run_attempt == 1", `${jobName} must reject workflow reruns`);
     if (!job.environment) continue;

@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { ulid } from "ulid";
 import { LightspeedRConnector } from "../../../connectors/lightspeed-r/index.js";
+import { SquareConnector } from "../../../connectors/square/index.js";
 import { XeroConnector } from "../../../connectors/xero/index.js";
 import {
   ConnectorError,
@@ -209,7 +210,15 @@ const remotePriorStatuses = new Set([
   "failed",
   "not_applicable",
 ]);
-const remoteProviders = new Set(["lightspeed-r", "xero", "deputy"]);
+const remoteProviders = new Set([
+  "lightspeed-r",
+  "lightspeed-x",
+  "xero",
+  "deputy",
+  "square",
+  "momence",
+  "shopify",
+]);
 const remoteTargetStatuses = new Set(["succeeded", "unsupported", "failed"]);
 const remoteFailureClasses = new Map<string, string>([
   ...[...connectorFailureCodes].map((code) => [
@@ -529,7 +538,12 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
     private readonly vaultForClaim: (claim: DeletionClaim) => WorkerCredentialVault,
     private readonly config: Pick<
       DeletionWorkerConfig,
-      "lightspeedClientId" | "lightspeedClientSecret" | "xeroClientId"
+      | "lightspeedClientId"
+      | "lightspeedClientSecret"
+      | "squareClientId"
+      | "squareClientSecret"
+      | "squareRedirectUri"
+      | "xeroClientId"
     >,
   ) {}
 
@@ -540,9 +554,16 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
       credentialRef: target.credentialRef,
       abortSignal: AbortSignal.timeout(30_000),
     } as const;
-    if (target.connectorId === "deputy") {
-      // Deputy publishes no remote OAuth revocation endpoint. Cryptographic
-      // destruction is the documented local enforcement mechanism.
+    // Shopify exposes appUninstall, but that irreversible whole-install
+    // mutation is not a per-grant revoke and ordinary Albert disconnect does
+    // not invoke it. These targets therefore use cryptographic local
+    // destruction and truthfully record vendor revocation as unsupported.
+    if (
+      target.connectorId === "deputy"
+      || target.connectorId === "lightspeed-x"
+      || target.connectorId === "momence"
+      || target.connectorId === "shopify"
+    ) {
       await vault.destroy(target.credentialRef);
       return;
     }
@@ -550,6 +571,15 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
       await new LightspeedRConnector({
         clientId: this.config.lightspeedClientId,
         clientSecret: this.config.lightspeedClientSecret,
+        vault,
+      }).revoke_credentials(context);
+      return;
+    }
+    if (target.connectorId === "square") {
+      await new SquareConnector({
+        clientId: this.config.squareClientId,
+        clientSecret: this.config.squareClientSecret,
+        redirectUri: this.config.squareRedirectUri,
         vault,
       }).revoke_credentials(context);
       return;
@@ -594,7 +624,12 @@ export class ProductionCredentialRevoker implements CredentialRevoker {
     const targets: Array<Readonly<Record<string, unknown>>> = [];
     for (const target of context.targets) {
       let status: "succeeded" | "unsupported" | "failed" =
-        target.connectorId === "deputy" ? "unsupported" : "succeeded";
+        target.connectorId === "deputy"
+          || target.connectorId === "lightspeed-x"
+          || target.connectorId === "momence"
+          || target.connectorId === "shopify"
+          ? "unsupported"
+          : "succeeded";
       let errorCode: string | undefined;
       let errorClass: string | undefined;
       let correlationId: string | undefined;

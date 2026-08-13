@@ -9,7 +9,7 @@ export type StagingColumnContract = Readonly<{
 }>;
 
 export type StagingTableContract = Readonly<{
-  schema: "source_lightspeed" | "source_xero";
+  schema: "source_lightspeed" | "source_lightspeed_x" | "source_xero";
   table: string;
   columns: ReadonlyMap<string, StagingColumnContract>;
 }>;
@@ -336,7 +336,7 @@ export function parseStagingContractsFromMigrations(
   const mutable = new Map<
     string,
     {
-      schema: "source_lightspeed" | "source_xero";
+      schema: "source_lightspeed" | "source_lightspeed_x" | "source_xero";
       table: string;
       columns: Map<string, StagingColumnContract>;
     }
@@ -345,16 +345,19 @@ export function parseStagingContractsFromMigrations(
     .filter((name) => name.endsWith(".sql"))
     .sort();
   const tablePattern =
-    /"?(source_lightspeed|source_xero)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?/u;
+    /"?(source_lightspeed|source_lightspeed_x|source_xero)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?/u;
 
   for (const file of files) {
     const sql = readFileSync(join(directory, file), "utf8");
     const create =
-      /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+("?(?:source_lightspeed|source_xero)"?\."?[A-Za-z_][A-Za-z0-9_]*"?)\s*\(([\s\S]*?)\n\);/giu;
+      /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+("?(?:source_lightspeed|source_lightspeed_x|source_xero)"?\."?[A-Za-z_][A-Za-z0-9_]*"?)\s*\(([\s\S]*?)\n\);/giu;
     for (const match of sql.matchAll(create)) {
       const tableMatch = match[1]!.match(tablePattern);
       if (!tableMatch) continue;
-      const schema = tableMatch[1]! as "source_lightspeed" | "source_xero";
+      const schema = tableMatch[1]! as
+        | "source_lightspeed"
+        | "source_lightspeed_x"
+        | "source_xero";
       const table = tableMatch[2]!;
       const key = `${schema}.${table}`;
       const contract = mutable.get(key) ?? {
@@ -373,11 +376,14 @@ export function parseStagingContractsFromMigrations(
     }
 
     const alter =
-      /ALTER\s+TABLE\s+("?(?:source_lightspeed|source_xero)"?\."?[A-Za-z_][A-Za-z0-9_]*"?)\s+([\s\S]*?);/giu;
+      /ALTER\s+TABLE\s+("?(?:source_lightspeed|source_lightspeed_x|source_xero)"?\."?[A-Za-z_][A-Za-z0-9_]*"?)\s+([\s\S]*?);/giu;
     for (const match of sql.matchAll(alter)) {
       const tableMatch = match[1]!.match(tablePattern);
       if (!tableMatch) continue;
-      const schema = tableMatch[1]! as "source_lightspeed" | "source_xero";
+      const schema = tableMatch[1]! as
+        | "source_lightspeed"
+        | "source_lightspeed_x"
+        | "source_xero";
       const table = tableMatch[2]!;
       const key = `${schema}.${table}`;
       const contract = mutable.get(key) ?? {
@@ -400,14 +406,14 @@ export function parseStagingContractsFromMigrations(
 }
 
 export function resolvePhysicalStagingColumn(args: Readonly<{
-  connector: "lightspeed" | "xero";
+  connector: "lightspeed" | "lightspeed_x" | "xero";
   table: string;
   semanticName: string;
   columns: ReadonlyMap<string, StagingColumnContract>;
 }>): StagingColumnContract | null {
   const exact = args.columns.get(postgresPhysicalIdentifier(args.semanticName));
   if (exact) return exact;
-  if (args.connector === "xero") return null;
+  if (args.connector !== "lightspeed") return null;
   for (const candidate of lightspeedPhysicalCandidates(
     args.table,
     args.semanticName,

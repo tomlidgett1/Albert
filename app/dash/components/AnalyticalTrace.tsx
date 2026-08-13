@@ -11,6 +11,7 @@ import type {
   TraceTableEvent,
 } from "@/packages/shared/src";
 import { responseVisibleResultIds } from "../lib/answer-presentation";
+import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import styles from "../dash.module.css";
 import {
   parseSafeAnswerLineage,
@@ -18,11 +19,18 @@ import {
   type TurnLineageReference,
 } from "./answer-lineage";
 import {
+  formatChartDateLabel,
   formatCompactTraceCell,
   formatTraceCell,
   isExplainableTraceCell,
   traceCellNumber,
 } from "./analytical-values";
+import ChartDebugSettings, { useNivoChartDebugConfig } from "./ChartDebugSettings";
+import {
+  createBarChartDebugConfig,
+  createLineChartDebugConfig,
+} from "./chart-debug-config";
+import { computeLineChartLayout } from "./line-chart-layout";
 
 type AnalyticalTraceProps = {
   events: readonly TraceEvent[];
@@ -306,9 +314,13 @@ function ProvenancePanel({
         <ul>
           {provenance.sources.map((source) => (
             <li key={`${source.connector}-${source.label}`}>
-              <span className={styles.traceSourceMark} data-source={source.connector} aria-hidden="true" />
+              <span className={styles.traceSourceLogo} aria-hidden="true">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={CONNECTOR_LOGOS[source.connector]} alt="" width={12} height={12} />
+              </span>
               <div>
-                <strong>{source.label}</strong>
+                <strong>{CONNECTOR_NAMES[source.connector]}</strong>
+                <small>{source.label}</small>
                 <small>Data through {formatTime(source.dataThrough)}</small>
               </div>
             </li>
@@ -455,9 +467,21 @@ const nivoChartTheme = {
 } as const;
 
 type PreparedChartRow = Readonly<{
+  /** Axis / index key. Pre-formatted so Nivo never truncates raw ISO ticks. */
   x: string;
   source: TraceTableEvent["rows"][number];
 }>;
+
+function chartAxisLabel(
+  raw: TraceTableEvent["rows"][number][string],
+  xKey: string,
+  xColumn: TraceTableEvent["columns"][number] | undefined,
+): string {
+  const dateLabel = formatChartDateLabel(raw, xKey);
+  if (dateLabel) return dateLabel;
+  if (xColumn) return formatTraceCell(raw, xColumn);
+  return String(raw ?? "");
+}
 
 export function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
   const reducedMotion = useReducedMotion();
@@ -476,40 +500,100 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
   }, [event.series, event.yKey, primaryColumn?.label, table]);
   const rows = useMemo<PreparedChartRow[]>(() => {
     if (!table || !series.length) return [];
+    const usedLabels = new Map<string, number>();
     return table.rows.flatMap((row) => {
       const rawX = row[event.xKey];
       if (rawX === null || rawX === undefined) return [];
       const hasValue = series.some(({ key }) => traceCellNumber(row[key]) !== null);
-      return hasValue ? [{ x: String(rawX), source: row }] : [];
+      if (!hasValue) return [];
+      // Format before the chart sees the value. Nivo's truncateTickAt cuts the
+      // raw tick string *before* axis format runs, which turned ISO dates into
+      // "2026-06-01T00:00:0..." and bypassed date formatting.
+      let label = chartAxisLabel(rawX, event.xKey, xColumn);
+      const seen = usedLabels.get(label) ?? 0;
+      usedLabels.set(label, seen + 1);
+      if (seen > 0) label = `${label} (${seen + 1})`;
+      return [{ x: label, source: row }];
     });
-  }, [event.xKey, series, table]);
+  }, [event.xKey, series, table, xColumn]);
 
   const rawRows = useMemo(() => new Map(rows.map((row) => [row.x, row.source])), [rows]);
   const seriesByKey = useMemo(() => new Map(series.map((item) => [item.key, item])), [series]);
   const seriesKeyByLabel = useMemo(() => new Map(series.map((item) => [item.label, item.key])), [series]);
   const formatX = (value: string | number) => {
-    const raw = rawRows.get(String(value))?.[event.xKey] ?? String(value);
-    return xColumn ? formatTraceCell(raw, xColumn) : String(raw);
+    const key = String(value);
+    // Rows already carry display labels; still re-format if a raw ISO leaks in.
+    const raw = rawRows.get(key)?.[event.xKey];
+    if (raw !== undefined && raw !== null) {
+      return chartAxisLabel(raw, event.xKey, xColumn);
+    }
+    return formatChartDateLabel(key, event.xKey) ?? key;
   };
   const formatY = (value: number) => primaryColumn
     ? formatCompactTraceCell(value, primaryColumn)
     : new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  const xAxisLegend = xColumn?.label ?? event.xKey.replaceAll("_", " ");
+  const yAxisLegend = primaryColumn?.label ?? event.yKey.replaceAll("_", " ");
   const longestXLabel = rows.reduce((longest, row) => Math.max(longest, formatX(row.x).length), 0);
+  const yTickLabels = rows.flatMap((row) => series.flatMap((item) => {
+    const value = traceCellNumber(row.source[item.key]);
+    return value === null ? [] : [formatY(value)];
+  }));
+  // Nivo positions axis titles and legends inside their respective margins.
+  // Size those margins from the real display strings so currency prefixes and
+  // business metric names never collide with ticks or the SVG boundary.
+  const lineLayout = computeLineChartLayout({
+    yTickLabels,
+    seriesLabels: series.map((item) => item.label),
+  });
   const horizontalBars = event.chartType === "bar" && (rows.length >= 8 || longestXLabel > 14);
   const hasLegend = series.length > 1;
-  const baseChartMinimumWidth = event.chartType === "line"
-    ? 620
-    : horizontalBars ? 520 : Math.max(520, rows.length * 72);
-  const chartMinimumWidth = hasLegend
-    ? Math.max(760, baseChartMinimumWidth)
-    : baseChartMinimumWidth;
-  const chartHeight = horizontalBars
-    ? Math.max(280, Math.min(620, rows.length * 34 + (hasLegend ? 108 : 72)))
-    : hasLegend ? 340 : 300;
+  const defaultChartHeight = event.chartType === "line"
+    ? 340
+    : horizontalBars
+      ? Math.max(280, Math.min(620, rows.length * 34 + (hasLegend ? 108 : 72)))
+      : hasLegend ? 340 : 300;
+  const lineDebugDefaults = useMemo(() => createLineChartDebugConfig({
+    height: defaultChartHeight,
+    margin: {
+      top: 50,
+      right: lineLayout.rightMargin,
+      bottom: lineLayout.bottomMargin,
+      left: lineLayout.leftMargin,
+    },
+    yAxisLegendOffset: lineLayout.yAxisLegendOffset,
+    legendTranslateX: lineLayout.legendTranslateX,
+    legendTranslateY: lineLayout.legendTranslateY,
+    legendItemWidth: lineLayout.legendItemWidth,
+  }), [
+    defaultChartHeight,
+    lineLayout.bottomMargin,
+    lineLayout.legendItemWidth,
+    lineLayout.legendTranslateX,
+    lineLayout.legendTranslateY,
+    lineLayout.leftMargin,
+    lineLayout.rightMargin,
+    lineLayout.yAxisLegendOffset,
+  ]);
+  const barDebugDefaults = useMemo(() => createBarChartDebugConfig({
+    height: defaultChartHeight,
+    horizontal: horizontalBars,
+    hasLegend,
+    longestXLabel,
+    rowCount: rows.length,
+  }), [defaultChartHeight, hasLegend, horizontalBars, longestXLabel, rows.length]);
+  const chartDebugDefaults = useMemo(() => event.chartType === "line"
+    ? lineDebugDefaults
+    : barDebugDefaults, [barDebugDefaults, event.chartType, lineDebugDefaults]);
+  const chartDebug = useNivoChartDebugConfig(chartDebugDefaults);
+  const lineConfig = chartDebug.config.chartType === "line" ? chartDebug.config : lineDebugDefaults;
+  const barConfig = chartDebug.config.chartType === "bar" ? chartDebug.config : barDebugDefaults;
+  const barIsHorizontal = barConfig.layout === "horizontal";
+  const chartHeight = event.chartType === "line" ? lineConfig.height : barConfig.height;
   const rawValue = (x: string | number, key: string) => rawRows.get(String(x))?.[key] ?? null;
   const lineTickValues = useMemo(() => {
-    if (rows.length <= 12) return rows.map(({ x }) => x);
-    const interval = Math.ceil(rows.length / 12);
+    if (rows.length <= lineConfig.maxXTicks) return rows.map(({ x }) => x);
+    const interval = Math.ceil(rows.length / lineConfig.maxXTicks);
     const sampled = rows.flatMap(({ x }, index) => index % interval === 0
       ? [{ x, index }]
       : []);
@@ -524,7 +608,7 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
       }
     }
     return sampled.map(({ x }) => x);
-  }, [rows]);
+  }, [lineConfig.maxXTicks, rows]);
 
   const BarTooltip = ({ id, indexValue, color }: BarTooltipProps<BarDatum>) => {
     const key = String(id);
@@ -566,14 +650,27 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
     })),
   })), [rows, series]);
 
-  const legends = hasLegend ? [{
-    anchor: "bottom-left" as const,
-    direction: "row" as const,
-    translateY: 62,
-    itemWidth: 128,
-    itemHeight: 18,
-    itemsSpacing: 8,
-    symbolSize: 9,
+  const legends = barConfig.legend.enabled ? [{
+    anchor: barConfig.legend.anchor,
+    direction: barConfig.legend.direction,
+    translateX: barConfig.legend.translateX,
+    translateY: barConfig.legend.translateY,
+    itemWidth: barConfig.legend.itemWidth,
+    itemHeight: barConfig.legend.itemHeight,
+    itemsSpacing: barConfig.legend.itemsSpacing,
+    symbolSize: barConfig.legend.symbolSize,
+    symbolShape: "circle" as const,
+    itemTextColor: "var(--dash-text-muted)",
+  }] : [];
+  const lineLegends = lineConfig.legend.enabled ? [{
+    anchor: lineConfig.legend.anchor,
+    direction: lineConfig.legend.direction,
+    translateX: lineConfig.legend.translateX,
+    translateY: lineConfig.legend.translateY,
+    itemWidth: lineConfig.legend.itemWidth,
+    itemHeight: lineConfig.legend.itemHeight,
+    itemsSpacing: lineConfig.legend.itemsSpacing,
+    symbolSize: lineConfig.legend.symbolSize,
     symbolShape: "circle" as const,
     itemTextColor: "var(--dash-text-muted)",
   }] : [];
@@ -589,7 +686,7 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
         <figcaption>
           <strong>{event.caption}</strong>
         </figcaption>
-        {exploratory || dateRangeLabel ? (
+        {exploratory || dateRangeLabel || chartDebug.enabled ? (
           <div className={styles.traceChartMeta}>
             {exploratory ? (
               <span className={styles.traceChartPill}>Exploratory</span>
@@ -599,14 +696,21 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
                 {dateRangeLabel}
               </span>
             ) : null}
+            {chartDebug.enabled ? (
+              <ChartDebugSettings
+                config={chartDebug.config}
+                onChange={chartDebug.update}
+                onReset={chartDebug.reset}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
       {hasChart ? (
-        <div className={styles.traceChartScroll} tabIndex={0} aria-label="Scrollable chart area">
+        <div className={styles.traceChartScroll} aria-label="Responsive chart area">
           <div
             className={styles.traceChartCanvas}
-            style={{ height: chartHeight, minWidth: chartMinimumWidth }}
+            style={{ height: chartHeight }}
           >
             <p className="sr-only" id={descriptionId}>
               {event.caption}. {rows.length} points across {series.length} {series.length === 1 ? "series" : "series"}. Exact values are available in the governed source table.
@@ -616,33 +720,47 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
                 data={barData}
                 keys={series.map(({ key }) => key)}
                 indexBy="__albert_x"
-                layout={horizontalBars ? "horizontal" : "vertical"}
-                groupMode="grouped"
-                margin={horizontalBars
-                  ? { top: 22, right: 24, bottom: hasLegend ? 88 : 58, left: Math.min(180, Math.max(92, longestXLabel * 7)) }
-                  : { top: 22, right: 20, bottom: hasLegend ? 102 : 70, left: 74 }}
-                padding={0.28}
-                innerPadding={3}
+                layout={barConfig.layout}
+                groupMode={barConfig.groupMode}
+                margin={barConfig.margin}
+                padding={barConfig.padding}
+                innerPadding={barConfig.innerPadding}
                 valueScale={{ type: "linear" }}
                 indexScale={{ type: "band", round: true }}
                 colors={NIVO_CHART_COLOURS}
                 colorBy="id"
-                borderRadius={5}
-                borderWidth={1}
+                borderRadius={barConfig.borderRadius}
+                borderWidth={barConfig.borderWidth}
                 borderColor={{ from: "color", modifiers: [["darker", 0.35]] }}
-                enableGridX={horizontalBars}
-                enableGridY={!horizontalBars}
-                enableLabel={!horizontalBars && !hasLegend && rows.length <= 8}
+                enableGridX={barConfig.enableGridX}
+                enableGridY={barConfig.enableGridY}
+                enableLabel={barConfig.enableLabel}
                 label={(datum) => formatY(datum.value ?? 0)}
-                labelSkipWidth={42}
-                labelSkipHeight={20}
+                labelSkipWidth={barConfig.labelSkipWidth}
+                labelSkipHeight={barConfig.labelSkipHeight}
                 labelTextColor="var(--dash-chart-label-on-fill)"
-                axisBottom={horizontalBars
-                  ? { tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }
-                  : { tickSize: 4, tickPadding: 8, tickRotation: longestXLabel > 9 ? -28 : 0, truncateTickAt: 18, format: formatX }}
-                axisLeft={horizontalBars
-                  ? { tickSize: 4, tickPadding: 7, truncateTickAt: 24, format: formatX }
-                  : { tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }}
+                axisBottom={{
+                  tickSize: barConfig.axisBottom.tickSize,
+                  tickPadding: barConfig.axisBottom.tickPadding,
+                  tickRotation: barConfig.axisBottom.tickRotation,
+                  truncateTickAt: barConfig.axisBottom.truncateTickAt || undefined,
+                  format: barIsHorizontal ? (value) => formatY(Number(value)) : formatX,
+                  legend: barConfig.axisBottom.showLegend
+                    ? barIsHorizontal ? yAxisLegend : xAxisLegend
+                    : undefined,
+                  legendOffset: barConfig.axisBottom.legendOffset,
+                }}
+                axisLeft={{
+                  tickSize: barConfig.axisLeft.tickSize,
+                  tickPadding: barConfig.axisLeft.tickPadding,
+                  tickRotation: barConfig.axisLeft.tickRotation,
+                  truncateTickAt: barConfig.axisLeft.truncateTickAt || undefined,
+                  format: barIsHorizontal ? formatX : (value) => formatY(Number(value)),
+                  legend: barConfig.axisLeft.showLegend
+                    ? barIsHorizontal ? xAxisLegend : yAxisLegend
+                    : undefined,
+                  legendOffset: barConfig.axisLeft.legendOffset,
+                }}
                 legends={legends.map((legend) => ({ ...legend, dataFrom: "keys" as const }))}
                 legendLabel={(datum) => seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}
                 tooltip={BarTooltip}
@@ -657,33 +775,48 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
                 motionConfig={{ mass: 1, tension: 210, friction: 28, clamp: true }}
               />
             ) : (
+              // Albert's response-wide line treatment follows the owner-approved
+              // Nivo style while retaining governed, data-derived axis labels.
               <ResponsiveLine
                 data={lineData}
-                margin={{ top: 24, right: 24, bottom: hasLegend ? 102 : 70, left: 74 }}
+                margin={lineConfig.margin}
                 xScale={{ type: "point" }}
-                yScale={{ type: "linear", min: "auto", max: "auto", stacked: false, reverse: false }}
-                curve="monotoneX"
+                yScale={{ type: "linear", ...lineConfig.yScale }}
+                curve={lineConfig.curve}
                 colors={NIVO_CHART_COLOURS}
-                lineWidth={3}
-                enableArea={series.length === 1}
-                areaOpacity={0.07}
-                enableGridX={false}
-                enablePoints={rows.length <= 36}
-                pointSize={7}
-                pointColor="var(--dash-surface)"
-                pointBorderWidth={2}
-                pointBorderColor={{ from: "serieColor" }}
+                lineWidth={lineConfig.lineWidth}
+                enableArea={lineConfig.enableArea}
+                enableGridX={lineConfig.enableGridX}
+                enableGridY={lineConfig.enableGridY}
+                enablePoints={lineConfig.enablePoints}
+                pointSize={lineConfig.pointSize}
+                pointColor={{ theme: "background" }}
+                pointBorderWidth={lineConfig.pointBorderWidth}
+                pointBorderColor={{ from: "seriesColor" }}
+                pointLabelYOffset={-12}
+                areaOpacity={lineConfig.areaOpacity}
+                enableTouchCrosshair={lineConfig.enableTouchCrosshair}
                 axisBottom={{
-                  tickSize: 4,
-                  tickPadding: 8,
-                  tickRotation: longestXLabel > 9 ? -28 : 0,
                   tickValues: lineTickValues,
-                  truncateTickAt: 18,
+                  tickSize: lineConfig.axisBottom.tickSize,
+                  tickPadding: lineConfig.axisBottom.tickPadding,
+                  tickRotation: lineConfig.axisBottom.tickRotation,
+                  truncateTickAt: lineConfig.axisBottom.truncateTickAt || undefined,
                   format: formatX,
+                  legend: lineConfig.axisBottom.showLegend ? xAxisLegend : undefined,
+                  legendOffset: lineConfig.axisBottom.legendOffset,
                 }}
-                axisLeft={{ tickSize: 4, tickPadding: 7, format: (value) => formatY(Number(value)) }}
-                legends={legends}
-                useMesh
+                axisLeft={{
+                  tickSize: lineConfig.axisLeft.tickSize,
+                  tickPadding: lineConfig.axisLeft.tickPadding,
+                  tickRotation: lineConfig.axisLeft.tickRotation,
+                  truncateTickAt: lineConfig.axisLeft.truncateTickAt || undefined,
+                  format: (value) => formatY(Number(value)),
+                  legend: lineConfig.axisLeft.showLegend ? yAxisLegend : undefined,
+                  legendOffset: lineConfig.axisLeft.legendOffset,
+                }}
+                legends={lineLegends}
+                useMesh={lineConfig.useMesh}
                 tooltip={LineTooltip}
                 theme={nivoChartTheme}
                 role="img"
@@ -963,7 +1096,7 @@ export default function AnalyticalTrace({
 
               {event.type === "error" ? (
                 <div className={styles.traceError} role="alert">
-                  <strong>{event.recoverable ? "Albert can retry this step" : "Analysis stopped"}</strong>
+                  <strong>Chat failed</strong>
                   <p>{event.message}</p>
                 </div>
               ) : null}

@@ -4,6 +4,7 @@ import type {
 } from "../packages/connector-sdk/src/index.js";
 import { deputyManifest } from "./deputy/manifest.js";
 import { lightspeedRManifest } from "./lightspeed-r/manifest.js";
+import { lightspeedXManifest } from "./lightspeed-x/manifest.js";
 import { googleAdsManifest } from "./google-ads/manifest.js";
 import { metaAdsManifest } from "./meta-ads/manifest.js";
 import { momenceManifest } from "./momence/manifest.js";
@@ -18,6 +19,7 @@ import { xeroManifest } from "./xero/manifest.js";
  */
 export const connectorManifests = Object.freeze([
   lightspeedRManifest,
+  lightspeedXManifest,
   xeroManifest,
   deputyManifest,
   squareManifest,

@@ -11,7 +11,7 @@ import {
 } from "@/services/control-plane/src/request-security";
 
 const requestSchema = z
-  .object({ connectionId: z.string().trim().min(1).max(100) })
+  .object({ connectionId: z.string().trim().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u) })
   .strict();
 
 /**
@@ -20,6 +20,7 @@ const requestSchema = z
  * and the database never emits user-facing text.
  */
 const DECLINE_COPY: Readonly<Record<string, { status: number; message: string }>> = {
+  invalid_connection_id: { status: 400, message: "That connection is invalid." },
   no_active_organisation: { status: 409, message: "Select an organisation before syncing." },
   insufficient_role: { status: 403, message: "Owner or manager access is required to sync." },
   connection_not_found: { status: 404, message: "That connection is no longer available." },
@@ -27,9 +28,17 @@ const DECLINE_COPY: Readonly<Record<string, { status: number; message: string }>
     status: 409,
     message: "Reconnect this integration before syncing.",
   },
+  reauthorisation_required: {
+    status: 409,
+    message: "Reconnect this integration before starting ingestion.",
+  },
   account_not_selected: {
     status: 409,
     message: "Choose which account to sync before starting.",
+  },
+  ingestion_blocked: {
+    status: 409,
+    message: "Ingestion is temporarily unavailable for this connection.",
   },
   sync_already_running: {
     status: 200,
@@ -56,7 +65,7 @@ export async function POST(request: Request) {
 
     const body = requestSchema.safeParse(await readBoundedJsonBody(request));
     if (!body.success) {
-      return Response.json({ error: "A connection id is required." }, { status: 400 });
+      return Response.json({ error: "A valid connection id is required." }, { status: 400 });
     }
 
     // Tenant scope is enforced inside the definer against the session, never

@@ -203,12 +203,71 @@ jobs:
         if: always()
         run: docker buildx rm "albert-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" || true
 
+  build-cube-candidate:
+    name: Build and publish the reviewed credential-free Cube image
+    if: github.run_attempt == 1
+    needs: verify-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      cube_image: ${{ steps.image.outputs.cube_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Verify the reviewed Cube candidate checkout without executing its scripts
+        run: test "$(git -C candidate rev-parse HEAD)" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+      - name: Build and publish the exact Cube model without build secrets
+        id: image
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/albert-cube"
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx create --name "albert-cube-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --driver docker-container --use
+          docker buildx build candidate \
+            --file candidate/cube-playground/Dockerfile \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --provenance=mode=max \
+            --sbom=true \
+            --tag "$image:$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --metadata-file "$RUNNER_TEMP/cube-build-metadata.json" \
+            --push
+          digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/cube-build-metadata.json")"
+          case "$digest" in sha256:[0-9a-f][0-9a-f]*) ;; *) exit 1 ;; esac
+          test "${#digest}" -eq 71
+          cube_image="$image@$digest"
+          docker pull --platform linux/amd64 "$cube_image"
+          test "$(docker inspect "$cube_image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$ALBERT_RELEASE_CANDIDATE_SHA"
+          echo "cube_image=$cube_image" >> "$GITHUB_OUTPUT"
+      - name: Prove the immutable Cube image is publicly pullable by Fly without registry credentials
+        env:
+          CUBE_IMAGE: ${{ steps.image.outputs.cube_image }}
+        run: |
+          docker logout ghcr.io
+          for attempt in $(seq 1 12); do
+            if docker manifest inspect "$CUBE_IMAGE" > /dev/null; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+      - name: Remove the isolated Cube builder
+        if: always()
+        run: docker buildx rm "albert-cube-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" || true
+
   plan:
     name: Create candidate-bound human-review plan
     if: github.run_attempt == 1
     needs:
       - verify-candidate
       - build-candidate
+      - build-cube-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -217,6 +276,7 @@ jobs:
     outputs:
       plan_digest: ${{ steps.plan.outputs.plan_digest }}
       services_image: ${{ steps.plan.outputs.services_image }}
+      cube_image: ${{ steps.plan.outputs.cube_image }}
       plan_artifact_id: ${{ steps.plan_artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -273,6 +333,7 @@ jobs:
           ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ github.sha }}
           ALBERT_RELEASE_AUTHORITY_REF: ${{ github.ref }}
           ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_RELEASE_CUBE_IMAGE: ${{ needs.build-cube-candidate.outputs.cube_image }}
           ALBERT_DOGFOOD_ARTIFACT_DIGEST: ${{ steps.dogfood.outputs.dogfood_artifact_digest }}
           ALBERT_RELEASE_CI_WORKFLOW_ID: ${{ needs.verify-candidate.outputs.ci_workflow_id }}
           ALBERT_RELEASE_CI_RUN_ID: ${{ needs.verify-candidate.outputs.ci_run_id }}
@@ -282,6 +343,7 @@ jobs:
         env:
           PLAN_DIGEST: ${{ steps.plan.outputs.plan_digest }}
           SERVICES_IMAGE: ${{ steps.plan.outputs.services_image }}
+          CUBE_IMAGE: ${{ steps.plan.outputs.cube_image }}
           DOGFOOD_ARTIFACT_DIGEST: ${{ steps.dogfood.outputs.dogfood_artifact_digest }}
           CI_RUN_ID: ${{ needs.verify-candidate.outputs.ci_run_id }}
           CI_RUN_ATTEMPT: ${{ needs.verify-candidate.outputs.ci_run_attempt }}
@@ -292,6 +354,7 @@ jobs:
             echo "- Authority: \`$GITHUB_REF\` at \`$GITHUB_SHA\`"
             echo "- Candidate: \`$ALBERT_RELEASE_CANDIDATE_SHA\`"
             echo "- Services image: \`$SERVICES_IMAGE\`"
+            echo "- Cube image: \`$CUBE_IMAGE\`"
             echo "- Plan digest: \`$PLAN_DIGEST\`"
             echo "- CI run/attempt: \`$CI_RUN_ID/$CI_RUN_ATTEMPT\`"
             echo "- Dogfood run/artifact: \`$ALBERT_DOGFOOD_RUN_ID/$ALBERT_DOGFOOD_ARTIFACT_ID\` at \`$DOGFOOD_ARTIFACT_DIGEST\`"
@@ -615,6 +678,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           SEMANTIC_QUERY_SERVICE_URL: ${{ vars.SEMANTIC_QUERY_SERVICE_URL }}
+          CUBE_API_URL: ${{ vars.CUBE_API_URL }}
           ANTHROPIC_ANALYTICS_SERVICE_URL: ${{ vars.ANTHROPIC_ANALYTICS_SERVICE_URL }}
           OPERATOR_DIAGNOSTIC_SERVICE_URL: ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
           SYNC_WORKER_INTERNAL_URL: ${{ vars.SYNC_WORKER_INTERNAL_URL }}
@@ -623,6 +687,7 @@ jobs:
           ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}
           SUPABASE_MANAGEMENT_TOKEN: ${{ secrets.SUPABASE_MANAGEMENT_TOKEN }}
           FLY_SEMANTIC_APP: ${{ vars.FLY_SEMANTIC_APP }}
+          FLY_CUBE_APP: ${{ vars.FLY_CUBE_APP }}
           FLY_ANTHROPIC_APP: ${{ vars.FLY_ANTHROPIC_APP }}
           FLY_SYNC_APP: ${{ vars.FLY_SYNC_APP }}
           FLY_TRANSFORM_APP: ${{ vars.FLY_TRANSFORM_APP }}
@@ -698,6 +763,7 @@ jobs:
     if: github.run_attempt == 1
     needs:
       - build-candidate
+      - build-cube-candidate
       - plan
       - authorize
     environment: production
@@ -730,6 +796,7 @@ jobs:
           ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ vars.ALBERT_RELEASE_AUTHORITY_TOOLING_SHA }}
           ALBERT_RELEASE_AUTHORITY_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_REF }}
           ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_RELEASE_CUBE_IMAGE: ${{ needs.build-cube-candidate.outputs.cube_image }}
           ALBERT_RELEASE_PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
           ALBERT_RELEASE_REVIEWER_ID: ${{ needs.authorize.outputs.reviewer_id }}
           ALBERT_RELEASE_REVIEWER_LOGIN: ${{ needs.authorize.outputs.reviewer_login }}
@@ -946,6 +1013,7 @@ jobs:
     if: github.run_attempt == 1
     needs:
       - build-candidate
+      - build-cube-candidate
       - plan
       - authorize
       - publish-registry
@@ -958,10 +1026,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { service: anthropic-analytics, config: deploy/fly/anthropic-analytics.toml, app_variable: FLY_ANTHROPIC_APP, token_secret: FLY_ANTHROPIC_API_TOKEN, exposure: public }
-          - { service: semantic-query, config: deploy/fly/semantic-query.toml, app_variable: FLY_SEMANTIC_APP, token_secret: FLY_SEMANTIC_API_TOKEN, exposure: public }
+          - { service: cube, config: deploy/fly/cube.toml, app_variable: FLY_CUBE_APP, token_secret: FLY_CUBE_API_TOKEN, exposure: public }
           - { service: sync-worker, config: deploy/fly/sync-worker.toml, app_variable: FLY_SYNC_APP, token_secret: FLY_SYNC_API_TOKEN, exposure: public }
-          - { service: transform-worker, config: deploy/fly/transform-worker.toml, app_variable: FLY_TRANSFORM_APP, token_secret: FLY_TRANSFORM_API_TOKEN, exposure: private }
           - { service: webhook-gateway, config: deploy/fly/webhook-gateway.toml, app_variable: FLY_WEBHOOK_APP, token_secret: FLY_WEBHOOK_API_TOKEN, exposure: public }
           - { service: deletion-worker, config: deploy/fly/deletion-worker.toml, app_variable: FLY_DELETION_APP, token_secret: FLY_DELETION_API_TOKEN, exposure: private }
           - { service: operator-diagnostic, config: deploy/fly/operator-diagnostic.toml, app_variable: FLY_OPERATOR_DIAGNOSTIC_APP, token_secret: FLY_OPERATOR_DIAGNOSTIC_API_TOKEN, exposure: public }
@@ -977,26 +1043,36 @@ jobs:
         env:
           APP_NAME: ${{ vars[matrix.app_variable] }}
           FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
-          SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
-          TARGET_FLOOR: ${{ matrix.service == 'transform-worker' && needs.authorize.outputs.transform_machine_floor || 2 }}
+          CANDIDATE_IMAGE: ${{ matrix.service == 'cube' && needs.build-cube-candidate.outputs.cube_image || needs.build-candidate.outputs.services_image }}
+          TARGET_FLOOR: ${{ matrix.service == 'cube' && 1 || 2 }}
         run: |
-          test "$TARGET_FLOOR" -ge 2
+          if [ "${{ matrix.service }}" = cube ]; then
+            test "$TARGET_FLOOR" -eq 1
+          else
+            test "$TARGET_FLOOR" -ge 2
+          fi
           test "$TARGET_FLOOR" -le 40
           flyctl config validate --strict --app "$APP_NAME" --config "${{ matrix.config }}"
           flyctl secrets list --app "$APP_NAME" --json > "$RUNNER_TEMP/fly-secrets.json"
           node scripts/validate-runtime-secrets.mjs "${{ matrix.service }}" "$RUNNER_TEMP/fly-secrets.json"
           flyctl deploy . --app "$APP_NAME" --config "${{ matrix.config }}" \
-            --image "$SERVICES_IMAGE" --strategy rolling --wait-timeout 10m \
+            --image "$CANDIDATE_IMAGE" --strategy rolling --wait-timeout 10m \
             --env "ALBERT_SERVICE_VERSION=$ALBERT_RELEASE_CANDIDATE_SHA" \
             --env "ALBERT_DEPLOYMENT_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           running_count="$(flyctl machines list --app "$APP_NAME" --json | jq '[.[] | select(.state == "started")] | length')"
-          if [ "$running_count" -lt "$TARGET_FLOOR" ]; then
+          if [ "${{ matrix.service }}" = cube ]; then
+            flyctl scale count 1 --app "$APP_NAME" --yes
+          elif [ "$running_count" -lt "$TARGET_FLOOR" ]; then
             flyctl scale count "$TARGET_FLOOR" --app "$APP_NAME" --yes
           fi
           flyctl machines list --app "$APP_NAME" --json | jq -e \
+            --arg service "${{ matrix.service }}" \
             --argjson floor "$TARGET_FLOOR" --arg sha "$ALBERT_RELEASE_CANDIDATE_SHA" \
-            --arg digest "${SERVICES_IMAGE##*@}" \
-            '([.[] | select(.state == "started")] | length) >= $floor and
+            --arg digest "${CANDIDATE_IMAGE##*@}" \
+            '((if $service == "cube"
+               then ([.[] | select(.state == "started")] | length) == $floor
+               else ([.[] | select(.state == "started")] | length) >= $floor
+               end) and
              ([.[] | select(.state == "started") | .config.env.ALBERT_SERVICE_VERSION] | all(. == $sha)) and
              ([.[] | select(.state == "started") | (.config.image // .image_ref.digest // "")] | all(contains($digest)))'
           if [ "${{ matrix.exposure }}" = private ]; then
@@ -1019,7 +1095,6 @@ jobs:
       matrix:
         include:
           - { kind: sync, target_variable: FLY_SYNC_APP, autoscaler_variable: FLY_SYNC_AUTOSCALER_APP, config: deploy/fly-autoscalers/sync-worker.toml, deploy_token_secret: FLY_SYNC_AUTOSCALER_API_TOKEN, scaling_token_secret: FLY_SYNC_SCALING_TOKEN }
-          - { kind: transform, target_variable: FLY_TRANSFORM_APP, autoscaler_variable: FLY_TRANSFORM_AUTOSCALER_APP, config: deploy/fly-autoscalers/transform-worker.toml, deploy_token_secret: FLY_TRANSFORM_AUTOSCALER_API_TOKEN, scaling_token_secret: FLY_TRANSFORM_SCALING_TOKEN }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1060,11 +1135,17 @@ jobs:
     if: github.run_attempt == 1
     needs:
       - authorize
+      - build-candidate
+      - build-cube-candidate
+      - plan
       - deploy-services
       - deploy-autoscalers
     environment: production
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1075,6 +1156,35 @@ jobs:
           node-version: 22.23.1
           cache: npm
       - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          artifact-ids: ${{ needs.authorize.outputs.authorization_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/authorization
+      - name: Verify signed release authorisation for the live proof
+        env:
+          ALBERT_RELEASE_AUTHORIZATION_ED25519_PUBLIC_KEY_BASE64URL: ${{ vars.ALBERT_RELEASE_AUTHORIZATION_ED25519_PUBLIC_KEY_BASE64URL }}
+          ALBERT_RELEASE_AUTHORITY_TOOLING_SHA: ${{ vars.ALBERT_RELEASE_AUTHORITY_TOOLING_SHA }}
+          ALBERT_RELEASE_AUTHORITY_REF: ${{ vars.ALBERT_RELEASE_AUTHORITY_REF }}
+          ALBERT_RELEASE_SERVICES_IMAGE: ${{ needs.build-candidate.outputs.services_image }}
+          ALBERT_RELEASE_CUBE_IMAGE: ${{ needs.build-cube-candidate.outputs.cube_image }}
+          ALBERT_RELEASE_PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
+          ALBERT_RELEASE_REVIEWER_ID: ${{ needs.authorize.outputs.reviewer_id }}
+          ALBERT_RELEASE_REVIEWER_LOGIN: ${{ needs.authorize.outputs.reviewer_login }}
+          ALBERT_RELEASE_APPROVAL_RECORD_DIGEST: ${{ needs.authorize.outputs.approval_record_digest }}
+          ALBERT_RELEASE_GITHUB_AUTHORITY_AUDIT_DIGEST: ${{ needs.authorize.outputs.github_authority_audit_digest }}
+        run: |
+          test -z "$(find "$RUNNER_TEMP/authorization" -mindepth 1 ! -type f -print -quit)"
+          test "$(find "$RUNNER_TEMP/authorization" -mindepth 1 | wc -l)" -eq 1
+          test -s "$RUNNER_TEMP/authorization/release-authorization.json"
+          test "$(sha256sum "$RUNNER_TEMP/authorization/release-authorization.json" | cut -d' ' -f1)" = "${{ needs.authorize.outputs.authorization_digest }}"
+          node scripts/release-authorization-receipt.mjs verify "$RUNNER_TEMP/authorization/release-authorization.json"
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.61
       - name: Wait for every public runtime at the exact candidate and deployment
         env:
           ALBERT_RELEASE_READINESS_ATTEMPTS: "24"
@@ -1091,6 +1201,56 @@ jobs:
               "$service_url" /readyz "$ALBERT_RELEASE_CANDIDATE_SHA" \
               "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           done
+      - name: Prove Cube is live at the exact approved image and deployment
+        env:
+          APP_NAME: ${{ vars.FLY_CUBE_APP }}
+          FLY_API_TOKEN: ${{ secrets.FLY_CUBE_API_TOKEN }}
+          CUBE_API_URL: ${{ vars.CUBE_API_URL }}
+          CUBE_IMAGE: ${{ needs.build-cube-candidate.outputs.cube_image }}
+          ALBERT_RELEASE_AUTHORIZATION_DIGEST: ${{ needs.authorize.outputs.authorization_digest }}
+          ALBERT_RELEASE_CONTROL_PLANE_PROJECT_REF: ${{ vars.ALBERT_CONTROL_PLANE_PROJECT_REF }}
+          ALBERT_RELEASE_CUBE_SMOKE_CONTROL_DATABASE_URL: ${{ secrets.ALBERT_RELEASE_CUBE_SMOKE_CONTROL_DATABASE_URL }}
+          ALBERT_RELEASE_CUBE_SMOKE_TENANT_ID: ${{ secrets.ALBERT_RELEASE_CUBE_SMOKE_TENANT_ID }}
+        run: |
+          flyctl machines list --app "$APP_NAME" --json > "$RUNNER_TEMP/cube-machines.json"
+          jq -e \
+            --arg sha "$ALBERT_RELEASE_CANDIDATE_SHA" \
+            --arg deployment "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --arg digest "${CUBE_IMAGE##*@}" \
+            '([.[] | select(.state == "started")] | length) == 1 and
+             ([.[] | select(.state == "started") | .config.env.ALBERT_SERVICE_VERSION] | all(. == $sha)) and
+             ([.[] | select(.state == "started") | .config.env.ALBERT_DEPLOYMENT_ID] | all(. == $deployment)) and
+             ([.[] | select(.state == "started") | (.config.image // .image_ref.digest // "")] | all(contains($digest)))' \
+            "$RUNNER_TEMP/cube-machines.json"
+          case "$CUBE_API_URL" in https://*) ;; *) exit 1 ;; esac
+          cube_ready_url="${CUBE_API_URL%/}/readyz"
+          for attempt in $(seq 1 24); do
+            if curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+              --connect-timeout 5 --max-time 8 --max-filesize 16384 \
+              "$cube_ready_url" > "$RUNNER_TEMP/cube-ready"; then
+              test "$(wc -c < "$RUNNER_TEMP/cube-ready")" -le 16384
+              if jq -e 'type == "object" and keys == ["health"] and .health == "HEALTH"' \
+                "$RUNNER_TEMP/cube-ready" > /dev/null; then
+                break
+              fi
+            fi
+            if [ "$attempt" -eq 24 ]; then exit 1; fi
+            sleep 5
+          done
+          cube_machine_id="$(jq -er '[.[] | select(.state == "started")][0].id' "$RUNNER_TEMP/cube-machines.json")"
+          ALBERT_RELEASE_DEPLOYMENT_ID="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+          ALBERT_RELEASE_CUBE_APP="$APP_NAME" \
+          ALBERT_RELEASE_CUBE_MACHINE_ID="$cube_machine_id" \
+          ALBERT_RELEASE_CUBE_IMAGE="$CUBE_IMAGE" \
+            node scripts/run-production-cube-release-smoke.mjs \
+              "$RUNNER_TEMP/cube-release-smoke-proof.json"
+      - name: Preserve the data-free authenticated Cube proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-cube-release-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cube-release-smoke-proof.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Verify and atomically activate complete Lightspeed pack 1.1
         env:
           ANALYTICAL_MIGRATION_URL: ${{ secrets.ANALYTICAL_MIGRATION_URL }}

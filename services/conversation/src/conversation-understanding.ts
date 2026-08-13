@@ -1,6 +1,6 @@
 import { Agent } from "@openai/agents";
 import { z } from "zod";
-import { buildOpenAIAgentRunConfig } from "../../../packages/agent/src/runtime.js";
+import { buildLiveAgentModelSettings, buildOpenAIAgentRunConfig } from "../../../packages/agent/src/runtime.js";
 import type {
   AgentRunPreferences,
   ResolvedConversationSubject,
@@ -100,16 +100,12 @@ Otherwise return null. A policy route may replace the analytical run only when i
 
 Return concise structured output only.`,
     model: runConfig.model,
-    modelSettings: {
+    modelSettings: buildLiveAgentModelSettings(runConfig, {
       reasoning: { effort: "medium" },
-      text: { verbosity: "low" },
+      verbosity: "low",
       parallelToolCalls: false,
-      store: false,
-      providerData: {
-        ...runConfig.modelSettings.providerData,
-        ...(safetyIdentifier ? { safety_identifier: safetyIdentifier } : {}),
-      },
-    },
+      safetyIdentifier,
+    }),
     tools: [],
     outputType: contextualTurnInterpretationSchema,
   });

@@ -21,6 +21,8 @@ import { GOOGLE_ADS_DEFAULT_SCOPES } from "../../connectors/google-ads/manifest"
 import { buildMetaAdsAuthorizationUrl } from "../../connectors/meta-ads/oauth-public";
 import { META_ADS_DEFAULT_SCOPES } from "../../connectors/meta-ads/manifest";
 import { buildMomenceAuthorizationUrl } from "../../connectors/momence/oauth-public";
+import { MomenceConnector } from "../../connectors/momence/index";
+import { momenceManifest } from "../../connectors/momence/manifest";
 import { verifyShopifyCallbackHmac } from "../../connectors/shopify/index";
 import { SHOPIFY_DEFAULT_SCOPES, normalizeShopifyShopDomain } from "../../connectors/shopify/manifest";
 import { buildShopifyAuthorizationUrl } from "../../connectors/shopify/oauth-public";
@@ -1821,7 +1823,7 @@ test("Xero treats 304 Not Modified as a successful empty incremental page", asyn
   );
 });
 
-test("Square authorizes read-only over the confidential code flow and stays authorization-only", async () => {
+test("Square authorizes read-only and exposes its production seller streams", async () => {
   const square = new URL(buildSquareAuthorizationUrl({
     clientId: "public-square-id",
     state: "state-square",
@@ -1829,6 +1831,14 @@ test("Square authorizes read-only over the confidential code flow and stays auth
   }));
   assert.equal(square.hostname, "connect.squareup.com");
   assert.equal(square.pathname, "/oauth2/authorize");
+  const sandbox = new URL(buildSquareAuthorizationUrl({
+    clientId: "sandbox-sq0idb-public-square-id",
+    state: "state-square",
+    redirectUri: "https://albert.example/api/oauth/square/callback",
+  }));
+  assert.equal(sandbox.hostname, "connect.squareupsandbox.com");
+  assert.equal(sandbox.searchParams.get("client_id"), "sandbox-sq0idb-public-square-id");
+  assert.equal(sandbox.searchParams.get("session"), null);
   assert.equal(square.searchParams.get("client_id"), "public-square-id");
   assert.equal(square.searchParams.get("state"), "state-square");
   assert.equal(
@@ -1862,10 +1872,14 @@ test("Square authorizes read-only over the confidential code flow and stays auth
     scopes: ["ORDERS_WRITE"],
   }), /Invalid Square authorization parameters/u);
 
-  // Authorization-only: no stream, no capability, and no claimed authority.
-  assert.deepEqual([...squareManifest.streams], []);
-  assert.deepEqual(squareManifest.capabilities, {});
-  assert.deepEqual([...squareManifest.sourceAuthority.defaults], []);
+  assert.equal(squareManifest.streams.length, 64);
+  assert.equal(squareManifest.fieldCoverage.length > 3_000, true);
+  assert.equal(
+    new Set(squareManifest.fieldCoverage.map((field) => `${field.stream}:${field.field}`)).size,
+    squareManifest.fieldCoverage.length,
+  );
+  assert.equal(Object.keys(squareManifest.capabilities).length > 10, true);
+  assert.equal(squareManifest.sourceAuthority.defaults.length > 0, true);
 
   const connector = new SquareConnector({
     clientId: "square-client",
@@ -1881,24 +1895,22 @@ test("Square authorizes read-only over the confidential code flow and stays auth
     }),
   });
   const context = { tenantId: "t", connectionId: "c", credentialRef: "ref" };
-  assert.deepEqual(await connector.list_streams(context), []);
-  assert.deepEqual(await connector.describe_capabilities(context), []);
-  // A sync routed to Square is a defect, so it must fail closed rather than
-  // return an empty page that would read as "synced, nothing found".
-  await assert.rejects(
-    () => connector.initial_sync(
-      context,
-      { id: "orders" } as never,
-      { from: "2026-01-01T00:00:00.000Z", to: "2026-02-01T00:00:00.000Z" },
-    ),
-    /declares no stream/u,
-  );
-  const webhook = await connector.handle_webhook(context, { body: "{}" } as never);
+  const streams = await connector.list_streams(context);
+  assert.equal(streams.some((stream) => stream.id === "square_orders"), true);
+  assert.equal(streams.some((stream) => stream.id === "square_inventory_counts"), true);
+  assert.equal(streams.some((stream) => stream.id === "square_channels"), false);
+  assert.equal((await connector.describe_capabilities(context)).length > 10, true);
+  const webhook = await connector.handle_webhook(context, {
+    id: "event-unmapped",
+    receivedAt: "2026-08-12T00:00:00.000Z",
+    headers: {},
+    body: new TextEncoder().encode("{}"),
+  });
   assert.equal(webhook.accepted, false);
 });
 
 test("authorization-only packs declare no stream, capability or source authority", () => {
-  const authorizationOnly = ["square", "shopify", "stripe", "momence", "meta-ads", "google-ads"];
+  const authorizationOnly = ["stripe", "meta-ads", "google-ads"];
   for (const id of authorizationOnly) {
     const manifest = connectorManifests.find((candidate) => candidate.id === id);
     assert.ok(manifest, `${id} is not registered`);
@@ -1907,6 +1919,44 @@ test("authorization-only packs declare no stream, capability or source authority
     assert.deepEqual([...manifest.sourceAuthority.defaults], [], `${id} claims source authority`);
     assert.deepEqual([...manifest.fieldCoverage], [], `${id} declares field coverage`);
   }
+});
+
+test("Momence is a manual-start, exhaustive, read-only production connector", async () => {
+  assert.equal(momenceManifest.ingestion.initialStart, "manual");
+  assert.equal(momenceManifest.streams.length, 17);
+  assert.equal(momenceManifest.fieldCoverage.length > 750, true);
+  assert.equal(momenceManifest.sourceAuthority.defaults.length, 1);
+  assert.equal(momenceManifest.rateLimit.concurrency, 1);
+  assert.equal(momenceManifest.rateLimit.reservations[0]?.key, "momence.api");
+  assert.equal(momenceManifest.streams.some((stream) => stream.id === "momence_members"), true);
+  assert.equal(momenceManifest.streams.some((stream) => stream.id === "momence_session_bookings"), true);
+  assert.equal(momenceManifest.streams.some((stream) => stream.id === "momence_sales" && stream.availability === "optional"), true);
+  assert.equal(
+    momenceManifest.fieldCoverage.some((field) =>
+      field.stream === "momence_members" && field.field === "$.customerFields[].value" && field.queryable === true),
+    true,
+  );
+  assertConnectorManifestReconciliationPolicy(momenceManifest);
+
+  const connector = new MomenceConnector({
+    clientId: "momence-client",
+    clientSecret: "momence-secret",
+    redirectUri: "https://albert.example/api/oauth/momence/callback",
+    vault: new MemoryVault({
+      provider: "momence",
+      accessToken: "unused",
+      refreshToken: "refresh",
+      tokenType: "Bearer",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      scopes: ["public-api-v2"],
+      metadata: {},
+    }),
+  });
+  const context = { tenantId: "t", connectionId: "c", credentialRef: "ref" };
+  const streams = await connector.list_streams(context);
+  assert.equal(streams.length, 17);
+  assert.equal(streams.find((stream) => stream.id === "momence_members")?.cursorKind, "page");
+  assert.equal((await connector.handle_webhook(context, {} as never)).accepted, false);
 });
 
 test("Shopify binds authorization to a validated shop and verifies the callback HMAC", () => {
@@ -1930,6 +1980,7 @@ test("Shopify binds authorization to a validated shop and verifies the callback 
   const scopes = (url.searchParams.get("scope") ?? "").split(",");
   assert.deepEqual(scopes, [...SHOPIFY_DEFAULT_SCOPES]);
   for (const scope of scopes) assert.equal(scope.startsWith("read_"), true, `${scope} is not read-only`);
+  assert.equal(url.searchParams.has("grant_options[]"), false, "offline access is the documented default");
   assert.equal(url.toString().includes("secret"), false);
 
   const secret = "shopify-app-secret";

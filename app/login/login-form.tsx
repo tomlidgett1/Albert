@@ -8,6 +8,7 @@ import {
   getThemePreference,
   subscribeToThemePreference,
 } from "@/app/theme-preference";
+import { LoginFrame } from "./login-chrome";
 import styles from "./login.module.css";
 import { safeDashboardRedirect } from "./safe-redirect";
 
@@ -35,6 +36,16 @@ export default function LoginForm({ authError = false }: Readonly<{ authError?: 
   );
   const [confirmationEmail, setConfirmationEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    if (hash.get("error_code") === "otp_expired" || hash.get("error") === "access_denied") {
+      setErrorMessage(
+        "That email link was already used or has expired. Request a new reset link, then use Continue in the browser.",
+      );
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+  }, []);
 
   useEffect(() => {
     const {
@@ -130,14 +141,10 @@ export default function LoginForm({ authError = false }: Readonly<{ authError?: 
       : "Sign in to continue to your workspace.";
 
   return (
-    <main className={styles.loginPage} data-theme={theme}>
+    <LoginFrame theme={theme} home>
       <section className={styles.loginCard} aria-labelledby="login-title">
-        <div className={styles.brand} aria-label="Albert">
-          <span>Albert</span>
-        </div>
-
         <div className={styles.intro}>
-          <h1 id="login-title">{title}</h1>
+          <h2 id="login-title">{title}</h2>
           <p>{description}</p>
         </div>
 
@@ -260,6 +267,6 @@ export default function LoginForm({ authError = false }: Readonly<{ authError?: 
           </div>
         ) : null}
       </section>
-    </main>
+    </LoginFrame>
   );
 }

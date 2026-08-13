@@ -50,7 +50,7 @@ export function parseReleasePlan(input) {
     "schemaVersion", "kind", "repository", "authority", "candidate", "evidence",
     "verification", "release", "planDigest",
   ], "Release plan");
-  assert.equal(plan.schemaVersion, 2, "Release plan schema is invalid.");
+  assert.equal(plan.schemaVersion, 3, "Release plan schema is invalid.");
   assert.equal(plan.kind, "albert.production-release-plan", "Release plan kind is invalid.");
   assert.match(plan.planDigest, SHA256, "Release plan digest is invalid.");
   const withoutDigest = { ...plan };
@@ -66,10 +66,12 @@ export function parseReleasePlan(input) {
     "Release plan authority workflow is invalid.",
   );
   exactKeys(plan.candidate, [
-    "sha", "servicesImage", "privilegedSurfaceDigest", "privilegedFileRecordCount", "privilegedByteCount",
+    "sha", "servicesImage", "cubeImage", "privilegedSurfaceDigest", "privilegedFileRecordCount",
+    "privilegedByteCount",
   ], "Release plan candidate");
   assert.match(plan.candidate?.sha ?? "", COMMIT_SHA, "Release plan candidate SHA is invalid.");
   assert.match(plan.candidate?.servicesImage ?? "", IMAGE, "Release plan services image is invalid.");
+  assert.match(plan.candidate?.cubeImage ?? "", IMAGE, "Release plan Cube image is invalid.");
   assert.match(plan.candidate?.privilegedSurfaceDigest ?? "", SHA256, "Release plan surface digest is invalid.");
   assert.ok(Number.isSafeInteger(plan.candidate.privilegedFileRecordCount) &&
     plan.candidate.privilegedFileRecordCount > 0, "Release plan file count is invalid.");
@@ -194,11 +196,12 @@ export function sealReleaseAuthorization({
   assert.equal(privateKey.asymmetricKeyType, "ed25519", "Release authorisation private key must be Ed25519.");
   const issuedAt = new Date(now).toISOString();
   const receipt = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "albert.production-release-authorization",
     authority: plan.authority,
     candidateSha: plan.candidate.sha,
     servicesImage: plan.candidate.servicesImage,
+    cubeImage: plan.candidate.cubeImage,
     planDigest: plan.planDigest,
     workflowRunId: plan.release.workflowRunId,
     workflowRunAttempt: plan.release.workflowRunAttempt,
@@ -230,12 +233,12 @@ export function verifyReleaseAuthorization(envelopeInput, expected, now = Date.n
   exactKeys(envelope, ["receipt", "signature"], "Release authorisation envelope");
   const receipt = envelope.receipt;
   exactKeys(receipt, [
-    "schemaVersion", "kind", "authority", "candidateSha", "servicesImage", "planDigest",
+    "schemaVersion", "kind", "authority", "candidateSha", "servicesImage", "cubeImage", "planDigest",
     "workflowRunId", "workflowRunAttempt", "workflowActor", "reviewer", "approvalRecordDigest",
     "githubAuthorityAuditDigest", "dogfoodEnvelopeDigest", "capacityEnvelopeDigest", "issuedAt",
     "expiresAt", "nonce",
   ], "Release authorisation receipt");
-  assert.equal(receipt.schemaVersion, 2, "Release authorisation schema is invalid.");
+  assert.equal(receipt.schemaVersion, 3, "Release authorisation schema is invalid.");
   assert.equal(receipt.kind, "albert.production-release-authorization", "Release authorisation kind is invalid.");
   exactKeys(receipt.authority, ["ref", "sha", "workflowRef"], "Release authorisation authority");
   assert.equal(receipt.authority.sha, expected.authoritySha, "Release authorisation authority SHA differs.");
@@ -246,6 +249,8 @@ export function verifyReleaseAuthorization(envelopeInput, expected, now = Date.n
   assert.equal(receipt.candidateSha, expected.candidateSha, "Release authorisation candidate SHA differs.");
   assert.match(receipt.servicesImage, IMAGE, "Release authorisation image is invalid.");
   assert.equal(receipt.servicesImage, expected.servicesImage, "Release authorisation image differs.");
+  assert.match(receipt.cubeImage, IMAGE, "Release authorisation Cube image is invalid.");
+  assert.equal(receipt.cubeImage, expected.cubeImage, "Release authorisation Cube image differs.");
   assert.match(receipt.planDigest, SHA256, "Release authorisation plan digest is invalid.");
   assert.equal(receipt.planDigest, expected.planDigest, "Release authorisation plan differs.");
   assert.match(receipt.workflowRunId, DIGITS, "Release authorisation run ID is invalid.");
@@ -334,6 +339,7 @@ async function main() {
       authorityWorkflowRef: required(process.env, "GITHUB_WORKFLOW_REF"),
       candidateSha: required(process.env, "ALBERT_RELEASE_CANDIDATE_SHA"),
       servicesImage: required(process.env, "ALBERT_RELEASE_SERVICES_IMAGE"),
+      cubeImage: required(process.env, "ALBERT_RELEASE_CUBE_IMAGE"),
       planDigest: required(process.env, "ALBERT_RELEASE_PLAN_DIGEST"),
       workflowRunId: required(process.env, "GITHUB_RUN_ID"),
       workflowRunAttempt: Number(required(process.env, "GITHUB_RUN_ATTEMPT")),

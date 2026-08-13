@@ -45,13 +45,13 @@ const metadataBase = new URL(
 );
 
 const description =
-  "Ask questions in plain English and get governed answers grounded in your business data.";
+  "Governed, natural-language analytics for small business.";
 
 export const metadata: Metadata = {
   metadataBase,
   applicationName: "Albert",
   title: {
-    default: "Albert — Natural-language analytics",
+    default: "Albert — Governed natural-language analytics",
     template: "%s · Albert",
   },
   description,
@@ -62,7 +62,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Albert",
-    title: "Albert — Natural-language analytics",
+    title: "Albert — Governed natural-language analytics",
     description,
     images: [
       {
@@ -75,7 +75,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Albert — Natural-language analytics",
+    title: "Albert — Governed natural-language analytics",
     description,
     images: ["/og.png"],
   },

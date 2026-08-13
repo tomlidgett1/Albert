@@ -9,11 +9,8 @@ import { withWebReleaseIdentity } from "./vercel-runtime.js";
 export type RuntimeMode =
   | "web"
   | "worker"
-  | "transform-worker"
   | "deletion-worker"
   | "webhook-gateway"
-  | "semantic-query"
-  | "anthropic-analytics"
   | "operator-diagnostic"
   | "migration";
 
@@ -30,20 +27,22 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
     "ALBERT_OAUTH_STATE_SECRET",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET",
-    "ALBERT_ANTHROPIC_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_USER_HASH_SECRET",
     "ALBERT_PUBLIC_ORIGIN",
     "SYNC_WORKER_INTERNAL_URL",
-    "SEMANTIC_QUERY_SERVICE_URL",
-    "ANTHROPIC_ANALYTICS_SERVICE_URL",
     "OPERATOR_DIAGNOSTIC_SERVICE_URL",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+    "CUBE_API_URL",
+    "CUBEJS_API_SECRET",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "LIGHTSPEED_CLIENT_ID",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SHOPIFY_CLIENT_ID",
+    "SHOPIFY_CLIENT_SECRET",
     "DEPUTY_CLIENT_ID",
     "ALBERT_ANALYTICAL_RUNTIME",
   ],
@@ -58,19 +57,20 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "TOKEN_ENCRYPTION_KEY",
     "TOKEN_ENCRYPTION_KEY_ID",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_PUBLIC_ORIGIN",
     "LIGHTSPEED_CLIENT_ID",
     "LIGHTSPEED_CLIENT_SECRET",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SQUARE_CLIENT_SECRET",
+    "SHOPIFY_CLIENT_ID",
+    "SHOPIFY_CLIENT_SECRET",
     "XERO_DAILY_REQUEST_LIMIT",
     "DEPUTY_CLIENT_ID",
     "DEPUTY_CLIENT_SECRET",
     "ALBERT_WORKER_ID",
-  ],
-  "transform-worker": [
-    "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-    "TRANSFORM_DATABASE_URL",
-    "ALBERT_TRANSFORM_WORKER_ID",
   ],
   "deletion-worker": [
     "SUPABASE_STORAGE_S3_ENDPOINT",
@@ -85,6 +85,8 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "LIGHTSPEED_CLIENT_ID",
     "LIGHTSPEED_CLIENT_SECRET",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SQUARE_CLIENT_SECRET",
     "DELETION_PROOF_HMAC_KEY",
     "ALBERT_DELETION_WORKER_ID",
   ],
@@ -96,6 +98,7 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
     "CONTROL_PLANE_DATABASE_URL",
     "XERO_WEBHOOK_SIGNING_KEY",
+    "SHOPIFY_CLIENT_SECRET",
     "WEBHOOK_ATTESTATION_KEY_ID",
     "WEBHOOK_ATTESTATION_SECRET",
     "WEBHOOK_INBOX_ENCRYPTION_KEY",
@@ -103,21 +106,6 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "ALBERT_WEBHOOK_WORKER_ID",
     "DEPUTY_WEBHOOK_ENCRYPTION_KEY",
     "DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID",
-  ],
-  "semantic-query": [
-    "CONTROL_PLANE_DATABASE_URL",
-    "ANALYTICAL_DATABASE_URL",
-    "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
-    "ALBERT_ANALYTICAL_RUNTIME",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-  ],
-  "anthropic-analytics": [
-    "ANTHROPIC_CONTROL_PLANE_DATABASE_URL",
-    "ALBERT_ANTHROPIC_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
-    "SEMANTIC_QUERY_SERVICE_URL",
   ],
   "operator-diagnostic": [
     "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
@@ -149,13 +137,6 @@ const productionRequirements: Readonly<Record<RuntimeMode, readonly string[]>> =
       "ALBERT_SERVICE_VERSION",
       "ALBERT_DEPLOYMENT_ID",
     ],
-    "transform-worker": [
-      "ALBERT_CONTROL_PLANE_PROJECT_REF",
-      "ALBERT_CONTROL_PLANE_REGION",
-      "ALBERT_ANALYTICAL_REGION",
-      "ALBERT_SERVICE_VERSION",
-      "ALBERT_DEPLOYMENT_ID",
-    ],
     "deletion-worker": [
       "ALBERT_CONTROL_PLANE_PROJECT_REF",
       "ALBERT_CONTROL_PLANE_REGION",
@@ -166,32 +147,6 @@ const productionRequirements: Readonly<Record<RuntimeMode, readonly string[]>> =
     "webhook-gateway": [
       "ALBERT_CONTROL_PLANE_PROJECT_REF",
       "ALBERT_CONTROL_PLANE_REGION",
-      "ALBERT_SERVICE_VERSION",
-      "ALBERT_DEPLOYMENT_ID",
-    ],
-    "semantic-query": [
-      "ALBERT_CONTROL_PLANE_PROJECT_REF",
-      "ALBERT_CONTROL_PLANE_REGION",
-      "ALBERT_ANALYTICAL_REGION",
-      "ALBERT_MODEL_DATA_RESIDENCY_REGION",
-      "ALBERT_MODEL_DATA_CONTROL_APPROVED",
-      "ALBERT_SERVICE_VERSION",
-      "ALBERT_DEPLOYMENT_ID",
-    ],
-    "anthropic-analytics": [
-      "ALBERT_CONTROL_PLANE_PROJECT_REF",
-      "ALBERT_CONTROL_PLANE_REGION",
-      "ALBERT_MODEL_DATA_RESIDENCY_REGION",
-      "ALBERT_MODEL_DATA_CONTROL_APPROVED",
-      "ALBERT_ANTHROPIC_APP8_APPROVED",
-      "ALBERT_ANTHROPIC_ZDR_APPROVED",
-      "ALBERT_ANTHROPIC_LOAD_TEST_APPROVED",
-      "ALBERT_ANTHROPIC_PROVIDER",
-      "ALBERT_ANTHROPIC_BEDROCK_MODEL",
-      "ALBERT_ANTHROPIC_BEDROCK_FALLBACK_MODEL",
-      "AWS_REGION",
-      "AWS_ACCESS_KEY_ID",
-      "AWS_SECRET_ACCESS_KEY",
       "ALBERT_SERVICE_VERSION",
       "ALBERT_DEPLOYMENT_ID",
     ],
@@ -217,24 +172,12 @@ const databaseLoginByMode: Readonly<
     CONTROL_PLANE_DATABASE_URL: "albert_sync_control_runtime",
     ANALYTICAL_DATABASE_URL: "albert_ingest_runtime",
   }),
-  "transform-worker": Object.freeze({
-    TRANSFORM_CONTROL_PLANE_DATABASE_URL: "albert_transform_control_runtime",
-    TRANSFORM_DATABASE_URL: "albert_transform_analytical_runtime",
-  }),
   "deletion-worker": Object.freeze({
     CONTROL_PLANE_DATABASE_URL: "albert_deletion_control_runtime",
     DELETION_ANALYTICAL_DATABASE_URL: "albert_deletion_analytical_runtime",
   }),
   "webhook-gateway": Object.freeze({
     CONTROL_PLANE_DATABASE_URL: "albert_webhook_control_runtime",
-  }),
-  "semantic-query": Object.freeze({
-    CONTROL_PLANE_DATABASE_URL: "albert_semantic_control_runtime",
-    ANALYTICAL_DATABASE_URL: "albert_semantic_read_runtime",
-    ALBERT_SEMANTIC_METADATA_DATABASE_URL: "albert_semantic_metadata_runtime",
-  }),
-  "anthropic-analytics": Object.freeze({
-    ANTHROPIC_CONTROL_PLANE_DATABASE_URL: "albert_anthropic_control_runtime",
   }),
   "operator-diagnostic": Object.freeze({
     OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL:
@@ -250,17 +193,14 @@ const databaseLoginByMode: Readonly<
 
 const SYDNEY_REGION = "ap-southeast-2";
 const AU_OPENAI_BASE_URL = "https://au.api.openai.com/v1";
+const XAI_API_BASE_URL = "https://api.x.ai/v1";
 
 const webForbiddenProductionValues = Object.freeze([
   "CONTROL_PLANE_DATABASE_URL",
   "ANALYTICAL_DATABASE_URL",
-  "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-  "TRANSFORM_DATABASE_URL",
   "DELETION_ANALYTICAL_DATABASE_URL",
-  "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
-  "ANTHROPIC_CONTROL_PLANE_DATABASE_URL",
   "ANTHROPIC_API_KEY",
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
@@ -278,6 +218,7 @@ const webForbiddenProductionValues = Object.freeze([
   "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
   "LIGHTSPEED_CLIENT_SECRET",
   "DEPUTY_CLIENT_SECRET",
+  "SQUARE_CLIENT_SECRET",
   "XERO_WEBHOOK_SIGNING_KEY",
   "WEBHOOK_ATTESTATION_KEY_ID",
   "WEBHOOK_ATTESTATION_SECRET",
@@ -300,19 +241,70 @@ export function runtimeEnvironmentRequirementNames(
   ]);
 }
 
-function isAllowedServiceUrl(value: string, allowLocalHttp: boolean): boolean {
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** Outbound backends the localhost web app must call remotely (Fly / Supabase). */
+export const WEB_REMOTE_SERVICE_URL_NAMES = Object.freeze([
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "SYNC_WORKER_INTERNAL_URL",
+  "OPERATOR_DIAGNOSTIC_SERVICE_URL",
+  "CUBE_API_URL",
+  "CUBECORE_BRIDGE_URL",
+  "OPENAI_BASE_URL",
+  "XAI_BASE_URL",
+  "WEBHOOK_GATEWAY_PUBLIC_URL",
+  "SUPABASE_STORAGE_S3_ENDPOINT",
+] as const);
+
+function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname);
+}
+
+function isAllowedServiceUrl(
+  value: string,
+  options: Readonly<{ allowLocalHttp: boolean; allowLoopback: boolean }>,
+): boolean {
   try {
     const url = new URL(value);
     if (url.username || url.password) return false;
+    if (isLoopbackHostname(url.hostname) && !options.allowLoopback) return false;
     return (
       url.protocol === "https:" ||
-      (allowLocalHttp &&
+      (options.allowLocalHttp &&
         url.protocol === "http:" &&
-        ["localhost", "127.0.0.1"].includes(url.hostname))
+        isLoopbackHostname(url.hostname))
     );
   } catch {
     return false;
   }
+}
+
+export function loopbackWebBackendUrls(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): readonly string[] {
+  return WEB_REMOTE_SERVICE_URL_NAMES.filter((name) => {
+    const value = source[name]?.trim();
+    if (!value) return false;
+    try {
+      return isLoopbackHostname(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function describeLoopbackWebBackends(names: readonly string[]): string {
+  return (
+    `Localhost web iteration must use the deployed backends (${names.join(", ")}). ` +
+    "Point those URLs at Fly or Supabase HTTPS origins. Do not start Docker, Cubecore, or local workers."
+  );
+}
+
+export function webBackendLoopbackMessage(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+  const names = loopbackWebBackendUrls(source);
+  return names.length > 0 ? describeLoopbackWebBackends(names) : undefined;
 }
 
 function isCleanOrigin(value: string): boolean {
@@ -483,14 +475,7 @@ export function inspectRuntimeEnvironment(
   const missing = requiredNames.filter((name) => !source[name]?.trim());
   const invalid: string[] = [];
   const allowLocalHttp = !production;
-
-  if (
-    mode === "anthropic-analytics" &&
-    !production &&
-    !source.ANTHROPIC_API_KEY?.trim()
-  ) {
-    missing.push("ANTHROPIC_API_KEY");
-  }
+  const webRemoteBackends = mode === "web";
 
   if (
     source.XERO_ENABLE_ADVANCED_JOURNALS !== undefined &&
@@ -516,15 +501,6 @@ export function inspectRuntimeEnvironment(
   ) {
     invalid.push("ALBERT_ANALYTICAL_RUNTIME");
   }
-  if (
-    mode === "semantic-query" &&
-    source.ALBERT_ANALYTICAL_RUNTIME?.trim() === "v2" &&
-    !/^[a-f0-9]{64}$/u.test(
-      source.ALBERT_SEMANTIC_V2_PUBLICATION_HASH?.trim() ?? "",
-    )
-  ) {
-    invalid.push("ALBERT_SEMANTIC_V2_PUBLICATION_HASH");
-  }
   if (source.ALBERT_TURN_TIMEOUT_MS !== undefined) {
     const timeout = Number(source.ALBERT_TURN_TIMEOUT_MS);
     if (!Number.isInteger(timeout) || timeout < 30_000 || timeout > 300_000)
@@ -532,19 +508,24 @@ export function inspectRuntimeEnvironment(
   }
 
   for (const name of [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "SYNC_WORKER_INTERNAL_URL",
-    "SEMANTIC_QUERY_SERVICE_URL",
-    "ANTHROPIC_ANALYTICS_SERVICE_URL",
-    "OPERATOR_DIAGNOSTIC_SERVICE_URL",
-    "OPENAI_BASE_URL",
+    ...WEB_REMOTE_SERVICE_URL_NAMES,
     "ALBERT_PUBLIC_ORIGIN",
-    "WEBHOOK_GATEWAY_PUBLIC_URL",
-    "SUPABASE_STORAGE_S3_ENDPOINT",
   ]) {
     const value = source[name]?.trim();
-    if (value && !isAllowedServiceUrl(value, allowLocalHttp))
+    if (!value) continue;
+    const allowLoopback = name === "ALBERT_PUBLIC_ORIGIN"
+      ? allowLocalHttp
+      : !webRemoteBackends && allowLocalHttp;
+    if (!isAllowedServiceUrl(value, { allowLocalHttp: allowLoopback, allowLoopback })) {
       invalid.push(name);
+    }
+  }
+
+  if (
+    source.XAI_BASE_URL?.trim() &&
+    source.XAI_BASE_URL.trim().replace(/\/+$/u, "") !== XAI_API_BASE_URL
+  ) {
+    invalid.push("XAI_BASE_URL");
   }
 
   if (production) {
@@ -590,6 +571,13 @@ export function inspectRuntimeEnvironment(
     ) {
       invalid.push("ALBERT_LIGHTSPEED_PRODUCT");
     }
+    if (
+      (mode === "web" || mode === "worker") &&
+      source.LIGHTSPEED_X_CLIENT_ID?.trim() &&
+      source.ALBERT_LIGHTSPEED_X_PRODUCT?.trim() !== "x-series"
+    ) {
+      invalid.push("ALBERT_LIGHTSPEED_X_PRODUCT");
+    }
     if (mode === "web") {
       if (source.ALBERT_CONVERSATION_RUNTIME?.trim() !== "live") {
         invalid.push("ALBERT_CONVERSATION_RUNTIME");
@@ -605,41 +593,13 @@ export function inspectRuntimeEnvironment(
       }
     }
     if (
-      ["web", "semantic-query"].includes(mode) &&
+      mode === "web" &&
       productionRequirements[mode].includes(
         "ALBERT_MODEL_DATA_RESIDENCY_REGION",
       ) &&
       source.OPENAI_BASE_URL?.trim().replace(/\/+$/u, "") !== AU_OPENAI_BASE_URL
     ) {
       invalid.push("OPENAI_BASE_URL");
-    }
-    if (mode === "anthropic-analytics") {
-      for (const name of [
-        "ALBERT_ANTHROPIC_APP8_APPROVED",
-        "ALBERT_ANTHROPIC_ZDR_APPROVED",
-        "ALBERT_ANTHROPIC_LOAD_TEST_APPROVED",
-      ]) {
-        if (source[name]?.trim() !== "true") invalid.push(name);
-      }
-      if (source.ALBERT_ANTHROPIC_PROVIDER?.trim() !== "bedrock")
-        invalid.push("ALBERT_ANTHROPIC_PROVIDER");
-      if (source.AWS_REGION?.trim() !== SYDNEY_REGION)
-        invalid.push("AWS_REGION");
-      const primaryProfile =
-        source.ALBERT_ANTHROPIC_BEDROCK_MODEL?.trim() ?? "";
-      const fallbackProfile =
-        source.ALBERT_ANTHROPIC_BEDROCK_FALLBACK_MODEL?.trim() ?? "";
-      const auProfile = (value: string, family: "opus" | "sonnet") =>
-        (value.startsWith("au.") ||
-          /^arn:aws:bedrock:ap-southeast-(?:2|4):[0-9]{12}:inference-profile\/au\./u.test(
-            value,
-          )) &&
-        new RegExp(`anthropic\\.claude-${family}-5`, "iu").test(value);
-      if (!auProfile(primaryProfile, "opus"))
-        invalid.push("ALBERT_ANTHROPIC_BEDROCK_MODEL");
-      if (!auProfile(fallbackProfile, "sonnet"))
-        invalid.push("ALBERT_ANTHROPIC_BEDROCK_FALLBACK_MODEL");
-      if (source.ANTHROPIC_API_KEY?.trim()) invalid.push("ANTHROPIC_API_KEY");
     }
     if (
       productionRequirements[mode].includes("ALBERT_SERVICE_VERSION") &&
@@ -730,9 +690,7 @@ export function inspectRuntimeEnvironment(
       controlTarget === analyticalTarget
     ) {
       invalid.push(
-        mode === "transform-worker"
-          ? "TRANSFORM_DATABASE_URL"
-          : mode === "deletion-worker"
+        mode === "deletion-worker"
             ? "DELETION_ANALYTICAL_DATABASE_URL"
             : mode === "operator-diagnostic"
               ? "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL"
@@ -840,9 +798,8 @@ export function inspectRuntimeEnvironment(
   for (const name of [
     "ALBERT_OAUTH_STATE_SECRET",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET",
-    "ALBERT_ANTHROPIC_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
     "ALBERT_USER_HASH_SECRET",
     "DELETION_PROOF_HMAC_KEY",
@@ -863,6 +820,35 @@ export function inspectRuntimeEnvironment(
     ].some((candidate) => candidate === operatorDiagnosticSecret)
   ) {
     invalid.push("ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET");
+  }
+  const shopifyQLSigningSecret = source.ALBERT_SHOPIFYQL_SIGNING_SECRET?.trim();
+  if (
+    shopifyQLSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === shopifyQLSigningSecret)
+  ) {
+    invalid.push("ALBERT_SHOPIFYQL_SIGNING_SECRET");
+  }
+  const shopifyAdminSigningSecret = source.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET?.trim();
+  if (
+    shopifyAdminSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SHOPIFYQL_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === shopifyAdminSigningSecret)
+  ) {
+    invalid.push("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET");
   }
   const anthropicSigningSecret = source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim();
   if (
@@ -1018,10 +1004,7 @@ export function inspectRuntimeEnvironment(
   for (const name of [
     "CONTROL_PLANE_DATABASE_URL",
     "ANALYTICAL_DATABASE_URL",
-    "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-    "TRANSFORM_DATABASE_URL",
     "DELETION_ANALYTICAL_DATABASE_URL",
-    "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
   ]) {
     const value = source[name]?.trim();
     if (!value) continue;

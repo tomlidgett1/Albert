@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import type {
   ConnectionDiscovery,
+  ConnectorManifest,
   CredentialRefreshLeaseContext,
   CredentialRefreshLeaseProof,
   OAuthCredentialSecret,
@@ -50,7 +51,7 @@ type SessionEnvelopeRow = Readonly<{
   tenant_id: string;
   oauth_session_id: string;
   initiated_by: string;
-  provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+  provider: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   state_nonce_hash: string;
   redirect_uri: string;
   vendor_account_hint: string | null;
@@ -128,7 +129,7 @@ export type OAuthSessionContext = Readonly<{
   tenantId: string;
   oauthSessionId: string;
   initiatedBy: string;
-  provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+  provider: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   redirectUri: string;
   requestedScopes: readonly string[];
   status: ActiveSessionStatus;
@@ -191,10 +192,9 @@ function completionIdentifiers(
 
 export type OAuthSessionStoreOptions = Readonly<{
   /**
-   * Connector packs whose OAuth finalisation must not enqueue the initial
-   * backfill. Credentials are still stored and the connection still becomes
-   * active; ingestion is simply never started. Used to onboard a connector
-   * before its backfill is cleared for production.
+   * Additional operator kill-switches whose OAuth finalisation must not
+   * enqueue the initial backfill. This is independent from the manifest's
+   * connector-owned initial-start policy and leaves ingestion blocked.
    */
   suppressInitialBackfillFor?: ReadonlySet<OAuthSessionContext["provider"]>;
 }>;
@@ -213,7 +213,7 @@ export class OAuthSessionStore {
   async create(input: Readonly<{
     tenantId: string;
     initiatedBy: string;
-    provider: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+    provider: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
     redirectUri: string;
     requestedScopes: readonly string[];
     stateNonceHash: string;
@@ -528,6 +528,7 @@ export class OAuthSessionStore {
     context: OAuthSessionContext;
     discovery: ConnectionDiscovery;
     provisionalCredentialRef: string;
+    ingestionInitialStart: ConnectorManifest["ingestion"]["initialStart"];
   }>): Promise<Readonly<{
     connectionId: string;
     jobRequestId: string | null;
@@ -665,6 +666,28 @@ export class OAuthSessionStore {
           envelope.aadDigest,
         ],
       );
+      const operationallySuppressed = this.suppressInitialBackfillFor.has(input.context.provider);
+      // Authorization is intentionally not consent to read these vendors'
+      // data. Keep this code-owned default in addition to connector manifests
+      // so a stale or misconfigured production manifest cannot auto-start it.
+      const effectiveInitialStart = input.context.provider === "shopify"
+        || input.context.provider === "momence"
+        || input.context.provider === "lightspeed-x"
+        ? "manual"
+        : input.ingestionInitialStart;
+      await client.query(
+        `select control_plane.configure_connection_ingestion_policy(
+           $1::text,$2::text,$3::bigint,$4::text,$5::text,$6::boolean
+         )`,
+        [
+          input.context.tenantId,
+          input.context.oauthSessionId,
+          connectionGeneration,
+          input.context.provider,
+          effectiveInitialStart,
+          operationallySuppressed,
+        ],
+      );
       const jobPayload = {
         schemaVersion: 1,
         type: "InitialBackfill",
@@ -684,10 +707,14 @@ export class OAuthSessionStore {
         replayVersion: 1,
         planMode: "progressive",
       };
-      // A suppressed connector authorises and stores credentials but never
-      // starts ingestion. The enqueue is skipped entirely rather than queued
-      // and paused, so nothing can drain it before backfill is cleared.
-      const suppressInitialBackfill = this.suppressInitialBackfillFor.has(input.context.provider);
+      // OAuth stores credentials independently from data movement. Shopify and
+      // all manual-start connectors wait for the authenticated Start ingestion
+      // capability; operationally suppressed connectors remain blocked as well.
+      const suppressInitialBackfill = input.context.provider === "shopify"
+        || input.context.provider === "momence"
+        || input.context.provider === "lightspeed-x"
+        || operationallySuppressed
+        || effectiveInitialStart === "manual";
       let jobRequestId: string | null = null;
       if (!suppressInitialBackfill) {
         const enqueued = await client.query<{ job_request_id: string }>(

@@ -11,6 +11,23 @@ import {
 } from "react";
 import Image from "next/image";
 import styles from "../dash.module.css";
+import {
+  activeSyncStates,
+  clampProgress,
+  connectionCardStatus,
+  connectionShowsSyncProgress,
+  connectionSyncSummary,
+  readinessStateLabels,
+} from "./connection-sync";
+
+export {
+  connectionCardStatus,
+  connectionIngestionIsPending,
+  connectionShowsSyncProgress,
+  connectionSyncSummary,
+  readinessStateLabels,
+  workspaceSyncIsActive,
+} from "./connection-sync";
 
 export const CONNECTION_VIEWS = ["apps"] as const;
 export type ConnectionViewId = (typeof CONNECTION_VIEWS)[number];
@@ -38,6 +55,7 @@ export type AuthHealthState = (typeof AUTH_HEALTH_STATES)[number];
 
 export type ConnectionProviderId =
   | "lightspeed"
+  | "lightspeed-x"
   | "xero"
   | "deputy"
   | "shopify"
@@ -58,7 +76,7 @@ export type ConnectionProviderId =
   | "servicem8";
 export type MatchDecision = "proposed" | "accepted" | "rejected";
 export type ConnectableProviderId =
-  | "lightspeed" | "xero" | "deputy" | "square"
+  | "lightspeed" | "lightspeed-x" | "xero" | "deputy" | "square"
   | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
 
 export interface ConnectionAuthHealth {
@@ -83,6 +101,8 @@ export interface DomainReadiness {
 
 export interface ConnectionAccountData {
   connectionId: string;
+  ingestionState?: "inactive" | "awaiting_manual_start" | "queued" | "running" | "active";
+  manualIngestionStartRequired?: boolean;
   auth: ConnectionAuthHealth;
   domains: readonly DomainReadiness[];
 }
@@ -181,30 +201,17 @@ export interface ConnectionsWorkspaceProps {
   onManage?: (connectionId: string) => void;
   onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
   onDisconnect?: (connectionId: string) => void;
+  onIngestionStarted?: () => void;
   onRetry?: () => void;
 }
 
-export const readinessStateLabels: Record<ReadinessState, string> = {
-  not_started: "Not started",
-  syncing: "Syncing",
-  transforming: "Transforming",
-  validating: "Validating",
-  ready_partial: "Ready partial",
-  ready_complete: "Ready complete",
-  degraded: "Degraded",
-  blocked: "Blocked",
-};
+type ManualSyncState =
+  | { status: "idle" }
+  | { status: "requesting" }
+  | { status: "accepted"; syncRunId: string }
+  | { status: "declined"; message: string };
 
 export const COMING_SOON_PROVIDERS: readonly ConnectionProviderData[] = Object.freeze([
-  Object.freeze({
-    id: "shopify" as const,
-    name: "Shopify",
-    description: "Online storefronts, orders, and ecommerce activity.",
-    logo: "/logos/shopify.svg",
-    connectDetail: "Shopify support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
   Object.freeze({
     id: "employment_hero" as const,
     name: "Employment Hero",
@@ -224,47 +231,11 @@ export const COMING_SOON_PROVIDERS: readonly ConnectionProviderData[] = Object.f
     connections: Object.freeze([]),
   }),
   Object.freeze({
-    id: "square" as const,
-    name: "Square",
-    description: "In-person payments, orders, and catalogue activity.",
-    logo: "/logos/square.svg",
-    connectDetail: "Square support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
     id: "myob" as const,
     name: "MYOB",
     description: "Accounting, invoices, and Australian business books.",
     logo: "/logos/myob.svg",
     connectDetail: "MYOB support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "momence" as const,
-    name: "Momence",
-    description: "Yoga studio bookings, memberships, and class schedules.",
-    logo: "/logos/momence.svg",
-    connectDetail: "Momence support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "google_ads" as const,
-    name: "Google Ads",
-    description: "Search and shopping campaign spend, clicks, and conversions.",
-    logo: "/logos/google-ads.svg",
-    connectDetail: "Google Ads support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "meta_ads" as const,
-    name: "Meta Ads",
-    description: "Facebook and Instagram campaign spend and performance.",
-    logo: "/logos/meta.svg",
-    connectDetail: "Meta Ads support is coming soon.",
     comingSoon: true,
     connections: Object.freeze([]),
   }),
@@ -375,6 +346,30 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
       connectDetail: "Connect a Deputy installation.",
       connections: Object.freeze([]),
     }),
+    Object.freeze({
+      id: "square" as const,
+      name: "Square",
+      description: "Sales, payments, catalogue, customers, inventory, and team activity.",
+      logo: "/logos/square.svg",
+      connectDetail: "Connect a Square merchant account, then choose when ingestion starts.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "shopify" as const,
+      name: "Shopify",
+      description: "Orders, products, customers, inventory, fulfilment, and payments.",
+      logo: "/logos/shopify.svg",
+      connectDetail: "Connect a myshopify.com store, then choose when ingestion starts.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "momence" as const,
+      name: "Momence",
+      description: "Classes, bookings, memberships, customers, instructors, locations, and payments.",
+      logo: "/logos/momence.svg",
+      connectDetail: "Connect a Momence studio, then choose when ingestion starts.",
+      connections: Object.freeze([]),
+    }),
     ...COMING_SOON_PROVIDERS,
   ]),
   dossier: Object.freeze([]),
@@ -382,48 +377,6 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
   identityMatches: Object.freeze([]),
   oauthSelections: Object.freeze([]),
 });
-
-const activeSyncStates = new Set<ReadinessState>([
-  "syncing",
-  "transforming",
-  "validating",
-]);
-
-export function connectionSyncSummary(domains: readonly DomainReadiness[]) {
-  if (domains.length === 0) {
-    return { progress: undefined as number | undefined, state: "syncing" as ReadinessState };
-  }
-
-  const progressValues = domains.map((domain) => {
-    if (typeof domain.progress === "number") return clampProgress(domain.progress);
-    if (domain.state === "ready_complete") return 100;
-    if (domain.state === "not_started") return 0;
-    return undefined;
-  });
-  const known = progressValues.filter((value): value is number => typeof value === "number");
-  const progress = known.length
-    ? Math.round(known.reduce((total, value) => total + value, 0) / known.length)
-    : undefined;
-
-  const priority: readonly ReadinessState[] = [
-    "blocked",
-    "degraded",
-    "syncing",
-    "transforming",
-    "validating",
-    "ready_partial",
-    "not_started",
-    "ready_complete",
-  ];
-  const state = priority.find((candidate) => domains.some((domain) => domain.state === candidate))
-    ?? "syncing";
-
-  return { progress, state };
-}
-
-function clampProgress(value: number) {
-  return Math.min(100, Math.max(0, Math.round(value)));
-}
 
 function ProgressBar({
   value,
@@ -441,7 +394,7 @@ function ProgressBar({
   const progressStyle = determinate
     ? ({ "--connections-progress": `${safeValue}%` } as CSSProperties)
     : undefined;
-  const animating = !determinate || activeSyncStates.has(state) || (safeValue ?? 100) < 100;
+  const animating = activeSyncStates.has(state) || state === "ready_partial";
 
   return (
     <div
@@ -468,22 +421,18 @@ function ProgressBar({
 export function ConnectionSyncProgress({
   accountLabel,
   domains,
+  ingestionState,
   popupPlacement = "below",
   layout = "card",
 }: {
   accountLabel: string;
   domains: readonly DomainReadiness[];
+  ingestionState?: ConnectionAccountData["ingestionState"];
   popupPlacement?: "above" | "below";
   layout?: "card" | "sidebar";
 }) {
   const summary = connectionSyncSummary(domains);
-  const fullyComplete =
-    domains.length > 0
-    && !workspaceSyncIsActive(domains)
-    && summary.state === "ready_complete"
-    && (typeof summary.progress !== "number" || summary.progress >= 100);
-
-  if (fullyComplete) return null;
+  if (!connectionShowsSyncProgress(domains, ingestionState)) return null;
 
   return (
     <div
@@ -568,16 +517,6 @@ export function collectWorkspaceSyncDomains(
         label: `${accountLabel} · ${domain.label}`,
       }));
     }),
-  );
-}
-
-export function workspaceSyncIsActive(domains: readonly DomainReadiness[]): boolean {
-  return domains.some(
-    (domain) =>
-      activeSyncStates.has(domain.state) ||
-      domain.state === "ready_partial" ||
-      domain.state === "not_started" ||
-      (typeof domain.progress === "number" && domain.progress < 100),
   );
 }
 
@@ -666,7 +605,7 @@ export default function ConnectionsWorkspace(props: ConnectionsWorkspaceProps) {
   const stateKey = [
     ...data.providers.flatMap((provider) =>
       provider.connections.map((connection) =>
-        `c:${connection.connectionId}:${connection.auth.state}`
+        `c:${connection.connectionId}:${connection.auth.state}:${connection.ingestionState ?? "active"}`
       )
     ),
     ...data.blockingQuestions.map((question) =>
@@ -688,6 +627,7 @@ function ConnectionsWorkspaceStateful({
   onManage,
   onSelectOAuthAccount,
   onDisconnect,
+  onIngestionStarted,
   onRetry,
 }: ConnectionsWorkspaceProps) {
   const componentId = useId().replaceAll(":", "");
@@ -701,12 +641,7 @@ function ConnectionsWorkspaceStateful({
    * accepted: a decline (already running, reconnect needed) is surfaced as such
    * rather than shown as a success the backend never enqueued.
    */
-  const [syncState, setSyncState] = useState<
-    | { status: "idle" }
-    | { status: "requesting" }
-    | { status: "accepted"; syncRunId: string }
-    | { status: "declined"; message: string }
-  >({ status: "idle" });
+  const [syncStates, setSyncStates] = useState<Readonly<Record<string, ManualSyncState>>>({});
   const manageDialogRef = useRef<HTMLElement>(null);
   const managePreviousFocusRef = useRef<HTMLElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement>(null);
@@ -718,15 +653,30 @@ function ConnectionsWorkspaceStateful({
     }
     return undefined;
   }, [data.providers, managedConnectionId]);
+  const managedSyncState = managedConnectionId
+    ? syncStates[managedConnectionId] ?? { status: "idle" as const }
+    : { status: "idle" as const };
 
-  const requestManualSync = useCallback(async (connectionId: string) => {
-    setSyncState({ status: "requesting" });
+  const requestManualSync = useCallback(async (
+    connectionId: string,
+    initialStart = false,
+    providerId?: ConnectionProviderId,
+  ) => {
+    setSyncStates((current) => ({
+      ...current,
+      [connectionId]: { status: "requesting" },
+    }));
     try {
-      const response = await fetch("/api/connections/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connectionId }),
-      });
+      const response = await fetch(
+        initialStart && providerId !== "shopify"
+          ? "/api/connections/start-ingestion"
+          : "/api/connections/sync",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId }),
+        },
+      );
       const payload = (await response.json().catch(() => ({}))) as {
         accepted?: boolean;
         syncRunId?: string;
@@ -734,20 +684,29 @@ function ConnectionsWorkspaceStateful({
         error?: string;
       };
       if (response.ok && payload.accepted && payload.syncRunId) {
-        setSyncState({ status: "accepted", syncRunId: payload.syncRunId });
+        setSyncStates((current) => ({
+          ...current,
+          [connectionId]: { status: "accepted", syncRunId: payload.syncRunId! },
+        }));
+        onIngestionStarted?.();
         return;
       }
-      setSyncState({
-        status: "declined",
-        message: payload.message ?? payload.error ?? "Could not start the sync.",
-      });
+      setSyncStates((current) => ({
+        ...current,
+        [connectionId]: {
+          status: "declined",
+          message: payload.message ?? payload.error ?? (
+            initialStart ? "Could not start ingestion." : "Could not start the sync."
+          ),
+        },
+      }));
     } catch {
-      setSyncState({ status: "declined", message: "Could not reach the server." });
+      setSyncStates((current) => ({
+        ...current,
+        [connectionId]: { status: "declined", message: "Could not reach the server." },
+      }));
     }
-  }, []);
-
-  // A newly opened connection must not inherit the previous one's sync result.
-  useEffect(() => { setSyncState({ status: "idle" }); }, [managedConnectionId]);
+  }, [onIngestionStarted]);
 
   const mutationsEnabled = canManage && status.kind === "ready";
   const disabledActionTitle = !canManage
@@ -900,13 +859,21 @@ function ConnectionsWorkspaceStateful({
             provider.connections.map((connection) => {
               const authorizing = connection.auth.state === "authorizing";
               const accountLabel = connection.auth.accountName || provider.name;
+              const connectionSyncState = syncStates[connection.connectionId] ?? { status: "idle" as const };
+              const showManualStart = connection.manualIngestionStartRequired === true;
+              const showSyncProgress = connectionShowsSyncProgress(
+                connection.domains,
+                connection.ingestionState,
+              );
+              const cardStatus = connectionCardStatus(connection);
               return (
                 <article
                   className={styles.connectionsProviderRow}
                   key={connection.connectionId}
                   role="listitem"
                   data-connection-id={connection.connectionId}
-                  data-has-sync={connection.domains.length > 0 || authorizing || undefined}
+                  data-ingestion-state={connection.ingestionState}
+                  data-has-sync={showSyncProgress || undefined}
                 >
                   <div className={styles.connectionsProviderMain}>
                     <div className={styles.connectionsProviderIdentity}>
@@ -916,19 +883,58 @@ function ConnectionsWorkspaceStateful({
                           <h3>{provider.name}</h3>
                           <span
                             className={styles.connectionsAuthStatus}
-                            data-auth-state={connection.auth.state}
+                            data-auth-state={cardStatus.authState}
                           >
                             <i aria-hidden="true" />
-                            {connection.auth.label}
+                            {cardStatus.label}
                           </span>
                         </div>
+                        {cardStatus.detail ? <small>{cardStatus.detail}</small> : null}
                       </div>
                     </div>
-                    <ConnectionSyncProgress
-                      accountLabel={accountLabel}
-                      domains={connection.domains}
-                    />
+                    {connection.ingestionState === "awaiting_manual_start" ? (
+                      <p className={styles.connectionsIngestionReady} role="status">
+                        Connected. No data has been imported yet.
+                      </p>
+                    ) : (
+                      <ConnectionSyncProgress
+                        accountLabel={accountLabel}
+                        domains={connection.domains}
+                        ingestionState={connection.ingestionState}
+                      />
+                    )}
                     <div className={styles.connectionsProviderActions}>
+                      {showManualStart ? (
+                        <>
+                          <button
+                            className={`${styles.connectionsProviderActionPrimary} ${styles.connectionsStartIngestionAction}`}
+                            type="button"
+                            disabled={
+                              !mutationsEnabled
+                              || connectionSyncState.status === "requesting"
+                              || connectionSyncState.status === "accepted"
+                            }
+                            aria-busy={connectionSyncState.status === "requesting"}
+                            title={disabledActionTitle ?? `Start ingestion for ${accountLabel}.`}
+                            onClick={() => void requestManualSync(
+                              connection.connectionId,
+                              true,
+                              provider.id,
+                            )}
+                          >
+                            {connectionSyncState.status === "requesting"
+                              ? "Starting…"
+                              : connectionSyncState.status === "accepted"
+                                ? "Ingestion queued"
+                                : "Start ingestion"}
+                          </button>
+                          {connectionSyncState.status === "declined" ? (
+                            <small className={styles.connectionsProviderActionFeedback} role="alert">
+                              {connectionSyncState.message}
+                            </small>
+                          ) : null}
+                        </>
+                      ) : null}
                       <button
                         className={styles.connectionsProviderActionSecondary}
                         type="button"
@@ -1140,26 +1146,46 @@ function ConnectionsWorkspaceStateful({
                     A sync is enqueued server-side; the button reports only what the
                     request ledger accepted, never an optimistic success. */}
                 <button
-                  className={styles.connectionsProviderActionPrimary}
+                  className={`${styles.connectionsProviderActionPrimary} ${
+                    managedConnection.connection.manualIngestionStartRequired
+                      ? styles.connectionsStartIngestionAction
+                      : ""
+                  }`}
                   type="button"
-                  disabled={!mutationsEnabled || syncState.status === "requesting"}
-                  aria-busy={syncState.status === "requesting"}
-                  title={
-                    syncState.status === "requesting"
-                      ? "Starting the sync."
-                      : "Fetch the latest data from this integration."
+                  disabled={
+                    !mutationsEnabled
+                    || managedSyncState.status === "requesting"
+                    || managedSyncState.status === "accepted"
                   }
-                  onClick={() => void requestManualSync(managedConnection.connection.connectionId)}
+                  aria-busy={managedSyncState.status === "requesting"}
+                  title={
+                    managedSyncState.status === "requesting"
+                      ? "Starting the sync."
+                      : managedConnection.connection.manualIngestionStartRequired
+                        ? `Start ingestion for ${managedConnection.connection.auth.accountName || managedConnection.provider.name}.`
+                        : "Fetch the latest data from this integration."
+                  }
+                  onClick={() => void requestManualSync(
+                    managedConnection.connection.connectionId,
+                    managedConnection.connection.manualIngestionStartRequired === true,
+                    managedConnection.provider.id,
+                  )}
                 >
-                  {syncState.status === "requesting" ? "Starting…" : "Sync now"}
+                  {managedSyncState.status === "requesting"
+                    ? "Starting…"
+                    : managedSyncState.status === "accepted"
+                      ? "Ingestion queued"
+                      : managedConnection.connection.manualIngestionStartRequired
+                        ? "Start ingestion"
+                        : "Sync now"}
                 </button>
-                {syncState.status === "accepted" ? (
+                {managedSyncState.status === "accepted" ? (
                   <small role="status">
                     Sync queued. Data appears as each domain becomes ready.
                   </small>
                 ) : null}
-                {syncState.status === "declined" ? (
-                  <small role="alert">{syncState.message}</small>
+                {managedSyncState.status === "declined" ? (
+                  <small role="alert">{managedSyncState.message}</small>
                 ) : null}
                 <button
                   className={styles.connectionsProviderActionSecondary}

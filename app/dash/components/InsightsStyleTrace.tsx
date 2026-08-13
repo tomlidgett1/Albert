@@ -13,6 +13,7 @@ import type {
   TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
+import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import { formatTraceCell } from "./analytical-values";
 import {
   parseSafeAnswerLineage,
@@ -20,7 +21,10 @@ import {
   type TurnLineageReference,
 } from "./answer-lineage";
 import { responseVisibleResultIds } from "../lib/answer-presentation";
-import { renderAssistantMarkdown } from "../lib/render-assistant-markdown";
+import {
+  renderAssistantMarkdown,
+  splitAssistantMarkdownLead,
+} from "../lib/render-assistant-markdown";
 import styles from "./insights-trace.module.css";
 
 const ResultChart = lazy(() => import("./AnalyticalTrace").then((module) => ({
@@ -29,26 +33,31 @@ const ResultChart = lazy(() => import("./AnalyticalTrace").then((module) => ({
 
 type TrailSource = TraceProvenance["sources"][number];
 
-const CONNECTOR_LOGOS: Record<TrailSource["connector"], string> = {
-  lightspeed: "/logos/lightspeed.png",
-  xero: "/logos/xero.svg",
-  deputy: "/logos/deputy.png",
-  square: "/logos/square.svg",
-  shopify: "/logos/shopify.svg",
-  stripe: "/logos/stripe.svg",
-  momence: "/logos/momence.svg",
-  "meta-ads": "/logos/meta.svg",
-  "google-ads": "/logos/google-ads.svg",
-};
+/** Small logo + name chip identifying the tool a query drew its data from. */
+function ToolChip({ connector }: { connector: TrailSource["connector"] }) {
+  return (
+    <span className={styles.toolChip} title={`Data from ${CONNECTOR_NAMES[connector]}`}>
+      <Image
+        src={CONNECTOR_LOGOS[connector]}
+        alt=""
+        width={12}
+        height={12}
+        unoptimized
+      />
+      <span>{CONNECTOR_NAMES[connector]}</span>
+    </span>
+  );
+}
 
 type InsightsStyleTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   detailedMode?: boolean;
-  runtime?: "fixture" | "openai" | "anthropic";
+  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onAddToChat?: (text: string) => void;
+  onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
   onClarification?: (label: string, optionId: string) => void;
 };
 
@@ -82,12 +91,24 @@ type TrailStep = Readonly<{
     dimensions: readonly string[];
     lens: string;
     timeRangeLabel: string;
+    /** Albert v3 Cube transparency: the exact governed query and its target. */
+    view?: string;
+    cubes?: readonly string[];
+    queryYaml?: string;
+    executionMs?: number;
+    /** Which tool the queried view draws its data from. */
+    connector?: TrailSource["connector"];
   }>;
 }>;
 
 type TraceEntry =
   | Readonly<{ id: string; type: "commentary"; content: string }>
   | Readonly<{ id: string; type: "step"; stepId: string }>;
+
+type TrailCommentaryUpdate = Readonly<{
+  id: string;
+  text: string;
+}>;
 
 type TrailModel = Readonly<{
   steps: readonly TrailStep[];
@@ -108,18 +129,28 @@ type TrailModel = Readonly<{
   startedAtMs: number | null;
   /** Unique connectors used in this turn (from table/answer provenance). */
   sources: readonly TrailSource[];
+  /** Cubecore YAML models + governance flag from answer provenance (test mode). */
+  cubecoreMeta?: Readonly<{
+    yamlFiles: readonly string[];
+    governed: boolean;
+    governedNote: string;
+  }>;
   stats: Readonly<{
     stepCount: number;
     tableCount: number;
     durationMs: number;
     runtimeLabel: string;
   }>;
+  /** Sparse, owner-facing plan and finding updates shown only while work runs. */
+  commentaryUpdates: readonly TrailCommentaryUpdate[];
   trace: readonly TraceEntry[];
   governedQueries: readonly NonNullable<TrailStep["governed"]>[];
   charts: readonly Readonly<{
     event: TraceChartEvent;
     table?: TraceTableEvent;
   }>[];
+  /** Structured, replayable tables intentionally composed for the final answer. */
+  answerTables: readonly TraceTableEvent[];
 }>;
 
 function isStopMessage(message: string): boolean {
@@ -238,17 +269,20 @@ export function highLevelProgressTheme(input: {
 export function buildTrailModel(
   events: readonly TraceEvent[],
   streaming: boolean,
-  runtime: "fixture" | "openai" | "anthropic",
+  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3",
 ): TrailModel {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
   const visibleResultIds = responseVisibleResultIds(ordered);
   const steps: TrailStep[] = [];
   const commentary: string[] = [];
+  const commentaryUpdates: TrailCommentaryUpdate[] = [];
   const trace: TraceEntry[] = [];
+  const answerTables: TraceTableEvent[] = [];
   const warningsByStep = new Map<string, string[]>();
   let answer: TrailModel["answer"];
   let clarification: TrailModel["clarification"];
   let error: TrailModel["error"];
+  let cubecoreMeta: TrailModel["cubecoreMeta"];
   let stopped = false;
   let status = streaming ? "Thinking" : "How this was worked out";
   let statusDetail = "";
@@ -327,7 +361,11 @@ export function buildTrailModel(
     }
 
     if (event.type === "narrative") {
-      commentary.push(event.text);
+      const cleaned = cleanReasoningSummary(event.text);
+      if (cleaned) {
+        commentary.push(cleaned);
+        commentaryUpdates.push({ id: event.id, text: cleaned });
+      }
       const summary = conciseReasoningSummary(event.text);
       if (summary) {
         status = summary;
@@ -348,13 +386,32 @@ export function buildTrailModel(
         dimensions: event.dimensions,
         lens: event.lens,
         timeRangeLabel: event.timeRange.label,
+        ...(event.view ? { view: event.view } : {}),
+        ...(event.cubesUsed?.length ? { cubes: event.cubesUsed } : {}),
+        ...(event.queryYaml ? { queryYaml: event.queryYaml } : {}),
+        ...(typeof event.executionMs === "number" ? { executionMs: event.executionMs } : {}),
+        ...(event.connector ? { connector: event.connector } : {}),
       };
       const queryStatus: TrailStepStatus = streaming && event.status !== "complete" ? "running" : "done";
       const fallbackDetail = [event.lens, event.timeRange.label].filter(Boolean).join(" · ");
       // The step that announced this query already carries its metrics,
       // dimensions, and period; upgrade it in place rather than duplicating it.
-      const openIndex = lastStepIndex((step) =>
-        (step.stage === "query" || step.stage === "source_query") && !step.governed);
+      // Parallel queries can complete out of announcement order, so match on
+      // shared member names first and only fall back to the most recent open step.
+      const members = [...event.metrics, ...event.dimensions].map((name) => name.toLowerCase());
+      let openIndex = -1;
+      let bestOverlap = 0;
+      for (let index = steps.length - 1; index >= 0; index -= 1) {
+        const step = steps[index];
+        if (!step || (step.stage !== "query" && step.stage !== "source_query") || step.governed) continue;
+        if (openIndex === -1) openIndex = index;
+        const detail = (step.detail ?? "").toLowerCase();
+        const overlap = members.filter((member) => detail.includes(member)).length;
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          openIndex = index;
+        }
+      }
       const open = openIndex >= 0 ? steps[openIndex] : undefined;
       status = `Analysing ${humanize(event.topic)}`;
       statusDetail = open?.detail ?? fallbackDetail;
@@ -387,8 +444,15 @@ export function buildTrailModel(
       statusStage = statusStage ?? "query";
       rememberSources(event.provenance);
       const exposeTable = !visibleResultIds || visibleResultIds.has(event.resultId);
-      const previous = [...steps].reverse().find((step) =>
+      if (event.presentation === "answer") {
+        if (exposeTable) answerTables.push(event);
+        continue;
+      }
+      // Parallel queries can interleave events, so pair the table with the sql
+      // step for the same topic before falling back to the most recent one.
+      const unsettled = [...steps].reverse().filter((step) =>
         step.kind === "sql" && typeof step.rowCount !== "number");
+      const previous = unsettled.find((step) => step.governed?.topic === event.caption) ?? unsettled[0];
       if (previous) {
         const index = steps.findIndex((step) => step.id === previous.id);
         steps[index] = {
@@ -454,6 +518,26 @@ export function buildTrailModel(
         followUps: event.followUps,
       };
       rememberSources(event.provenance);
+      const yamlFiles = event.provenance.definitions
+        .filter((definition) => definition.metric.startsWith("cube.yaml:"))
+        .map((definition) => definition.label || definition.metric.replace(/^cube\.yaml:/u, "").split("/").pop() || definition.metric);
+      const governance = event.provenance.definitions.find((definition) =>
+        definition.metric === "cubecore.governance"
+        || /^Governed|Ungoverned/iu.test(definition.label));
+      if (yamlFiles.length > 0 || governance) {
+        const governed = Boolean(
+          governance
+            ? !/ungoverned/iu.test(`${governance.label} ${governance.definition}`)
+            : false,
+        );
+        cubecoreMeta = {
+          yamlFiles,
+          governed,
+          governedNote: governance?.definition
+            || event.provenance.definitions.find((definition) => definition.metric.startsWith("cube.yaml:"))?.definition
+            || "Cubecore test model.",
+        };
+      }
       status = "Answer ready";
       statusDetail = "";
       statusStage = undefined;
@@ -481,7 +565,7 @@ export function buildTrailModel(
         continue;
       }
       error = { message: event.message, recoverable: event.recoverable };
-      status = event.recoverable ? "Albert can retry this step" : "Analysis stopped";
+      status = "Chat failed";
       statusDetail = event.message;
       const target = steps.at(-1);
       if (target && target.status === "running") {
@@ -524,6 +608,7 @@ export function buildTrailModel(
     stopped,
     startedAtMs: startedAt ?? null,
     sources: [...sourcesByConnector.values()],
+    cubecoreMeta,
     stats: {
       stepCount: normalised.length,
       tableCount: normalised.filter((step) => step.table).length,
@@ -532,17 +617,23 @@ export function buildTrailModel(
         ? "Fixture"
         : runtime === "anthropic"
           ? "Claude Opus 5"
-          : "OpenAI",
+          : runtime === "cubecore"
+            ? "Cubecore"
+            : runtime === "v3"
+              ? "Albert v3"
+              : "OpenAI",
     },
+    commentaryUpdates,
     trace,
     governedQueries: normalised
       .map((step) => step.governed)
       .filter((query): query is NonNullable<TrailStep["governed"]> => Boolean(query)),
     charts: normalised.flatMap((step) => step.chart ? [step.chart] : []),
+    answerTables,
   };
 }
 
-/** Cursor-style elapsed label: "for 12s" / "for 1m 24s". */
+/** Compact elapsed label used by the Codex-style working trail. */
 function formatForDuration(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   if (totalSec < 60) return `for ${totalSec}s`;
@@ -596,42 +687,293 @@ function SparklesIcon({ size = 12 }: { size?: number }) {
   );
 }
 
+function CompactQueries({
+  tables,
+  collapsedByDefault,
+  reduceMotion,
+  onAddToDashboard,
+}: {
+  tables: readonly TrailStep[];
+  collapsedByDefault: boolean;
+  reduceMotion: boolean;
+  onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(!collapsedByDefault);
+
+  useEffect(() => {
+    if (collapsedByDefault) setOpen(false);
+  }, [collapsedByDefault]);
+
+  if (tables.length === 0) return null;
+
+  const label = tables.length === 1 ? "Query" : "Queries";
+
+  return (
+    <div className={styles.compactQueries}>
+      <button
+        type="button"
+        className={styles.compactQueriesHeader}
+        aria-expanded={open}
+        aria-label={`${label}, ${tables.length}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className={styles.compactQueriesLabel}>{label}</span>
+        <span className={styles.compactQueriesCount}>{tables.length}</span>
+        <span className={styles.compactQueriesChevron}>
+          <Chevron open={open} />
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            className={styles.compactQueriesBody}
+            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.4,
+              ease: [0.04, 0.62, 0.23, 0.98],
+            }}
+          >
+            <div className={styles.compactQueriesInner}>
+              {tables.map((step) => (
+                <div className={styles.compactResultTable} key={`compact-${step.table!.id}`}>
+                  <ResultTable
+                    table={step.table!}
+                    query={step.governed}
+                    maxHeight={280}
+                    onAddToDashboard={onAddToDashboard}
+                  />
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function ResultTable({
   table,
+  query,
   maxHeight = 240,
+  onAddToDashboard,
 }: {
   table: TraceTableEvent;
+  query?: TrailStep["governed"];
   maxHeight?: number;
+  onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
 }) {
+  const reduceMotion = Boolean(useReducedMotion());
+  const [open, setOpen] = useState(true);
+  const [pinState, setPinState] = useState<"idle" | "adding" | "added" | "error">("idle");
+  const [yamlOpen, setYamlOpen] = useState(false);
+  const eligible = Boolean(table.dashboardReplay && onAddToDashboard);
+  const queryYaml = query?.queryYaml?.trim() || "";
+  const bodyId = `result-table-body-${table.id}`;
+  const sourceConnectors = table.provenance.sources.length > 0
+    ? table.provenance.sources.map((source) => source.connector)
+    : query?.connector
+      ? [query.connector]
+      : [];
+  const timeRange = table.provenance.timeRange.label?.trim() || query?.timeRangeLabel?.trim() || "";
+  const metaParts = [
+    timeRange && !/^(requested period|unknown)$/iu.test(timeRange) ? timeRange : "",
+    `${table.rows.length.toLocaleString("en-AU")} row${table.rows.length === 1 ? "" : "s"}`,
+    typeof query?.executionMs === "number" ? `${Math.round(query.executionMs)} ms` : "",
+  ].filter(Boolean);
+
+  const add = async () => {
+    if (!eligible || pinState === "adding" || pinState === "added") return;
+    setPinState("adding");
+    try {
+      await onAddToDashboard?.(table);
+      setPinState("added");
+    } catch {
+      setPinState("error");
+    }
+  };
+
+  const toggleOpen = () => {
+    setOpen((current) => {
+      if (current) setYamlOpen(false);
+      return !current;
+    });
+  };
+
   // Keep every row available. Cap height and scroll instead of truncating the
   // result (weekly/monthly series often exceed a short preview).
   return (
-    <div className={styles.resultTableShell}>
-      <div className={styles.resultTableWrap} style={{ maxHeight }}>
-        <table className={styles.resultTable}>
-          <thead>
-            <tr>
-              {table.columns.map((column) => (
-                <th key={column.key}>{column.label}</th>
+    <div className={styles.resultTableShell} data-collapsed={open ? undefined : "true"}>
+      <div className={styles.resultQueryHeader} data-collapsed={open ? undefined : "true"}>
+        <button
+          type="button"
+          className={styles.resultQueryToggle}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={toggleOpen}
+        >
+          <span className={styles.resultQueryChevron}>
+            <Chevron open={open} />
+          </span>
+          <span className={styles.resultQueryEyebrow}>
+            {table.presentation === "answer" ? "Table" : "Query"}
+          </span>
+          <span className={styles.resultQueryTitle}>{table.caption}</span>
+          {metaParts.length > 0 ? (
+            <span className={styles.resultQueryMeta}>
+              <span className={styles.resultQueryMetaText}>{metaParts.join(" · ")}</span>
+            </span>
+          ) : null}
+        </button>
+        <div className={styles.resultQueryActions}>
+          {queryYaml ? (
+            <span className={styles.tablePinTooltipWrap}>
+              <button
+                className={styles.tablePinButton}
+                type="button"
+                aria-expanded={yamlOpen}
+                aria-controls={`result-yaml-${table.id}`}
+                aria-describedby={`result-yaml-tip-${table.id}`}
+                aria-label={yamlOpen ? "Hide query details" : "Show query details"}
+                onClick={() => {
+                  if (!open) setOpen(true);
+                  setYamlOpen((current) => !current);
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+              </button>
+              <span className={styles.tablePinTooltip} id={`result-yaml-tip-${table.id}`} role="tooltip">
+                {yamlOpen ? "Hide query YAML" : "Show query YAML"}
+              </span>
+            </span>
+          ) : null}
+          {eligible ? (
+            <span className={styles.tablePinTooltipWrap}>
+              <button
+                className={styles.tablePinButton}
+                type="button"
+                aria-describedby={`dashboard-pin-${table.id}`}
+                aria-label={pinState === "added" ? "Added to dashboard" : "Add table to dashboard"}
+                disabled={pinState === "adding" || pinState === "added"}
+                onClick={() => void add()}
+              >
+                {pinState === "added" ? (
+                  <>
+                    <CheckIcon size={12} />
+                    <span>Added</span>
+                  </>
+                ) : pinState === "adding" ? (
+                  <span>Adding</span>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                )}
+              </button>
+              <span className={styles.tablePinTooltip} id={`dashboard-pin-${table.id}`} role="tooltip">
+                {pinState === "error" ? "Could not add. Try again." : pinState === "added" ? "Added to Dashboard" : "Add to Dashboard"}
+              </span>
+            </span>
+          ) : null}
+          {sourceConnectors.length > 0 ? (
+            <span className={styles.resultQuerySources} aria-label="Data sources">
+              {sourceConnectors.map((connector) => (
+                <span
+                  className={styles.resultQuerySource}
+                  key={connector}
+                  title={`Data from ${CONNECTOR_NAMES[connector]}`}
+                >
+                  <Image
+                    src={CONNECTOR_LOGOS[connector]}
+                    alt={CONNECTOR_NAMES[connector]}
+                    width={14}
+                    height={14}
+                    unoptimized
+                  />
+                </span>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((row, rowIndex) => (
-              <tr key={`${table.resultId}_${rowIndex}`}>
-                {table.columns.map((column: TraceTableColumn) => (
-                  <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </span>
+          ) : null}
+        </div>
       </div>
-      {table.rows.length > 8 ? (
-        <p className={styles.resultTableFooter}>
-          {table.rows.length.toLocaleString()} row{table.rows.length === 1 ? "" : "s"} · scroll for all
-        </p>
-      ) : null}
+
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            id={bodyId}
+            className={styles.resultTableBody}
+            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.4,
+              ease: [0.04, 0.62, 0.23, 0.98],
+            }}
+          >
+            {yamlOpen && queryYaml ? (
+              <div id={`result-yaml-${table.id}`} className={styles.resultQueryYaml}>
+                <pre className={styles.resultQueryYamlCode}>{queryYaml}</pre>
+              </div>
+            ) : null}
+
+            <div className={styles.resultTableWrap} style={{ maxHeight }}>
+              <table className={styles.resultTable}>
+                <thead>
+                  <tr>
+                    {table.columns.map((column) => (
+                      <th key={column.key}>{column.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.length === 0 ? (
+                    <tr><td className={styles.resultTableEmpty} colSpan={Math.max(1, table.columns.length)}>No data for this governed result.</td></tr>
+                  ) : table.rows.map((row, rowIndex) => (
+                    <tr key={`${table.resultId}_${rowIndex}`}>
+                      {table.columns.map((column: TraceTableColumn) => (
+                        <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {table.rows.length > 8 ? (
+              <p className={styles.resultTableFooter}>
+                {table.rows.length.toLocaleString("en-AU")} row{table.rows.length === 1 ? "" : "s"} · scroll for all
+              </p>
+            ) : null}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function CubeQueryYamlPanel({ queryYaml }: { queryYaml: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={styles.cubeYamlBlock}>
+      <button
+        type="button"
+        className={styles.cubeYamlToggle}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Chevron open={open} />
+        Cube query (YAML)
+      </button>
+      <div
+        className={styles.cubeYamlPanel}
+        style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
+      >
+        <div className={styles.cubeYamlInner}>
+          <pre className={styles.cubeYamlCode}>{queryYaml}</pre>
+        </div>
+      </div>
     </div>
   );
 }
@@ -641,17 +983,59 @@ function GovernedQuerySummary({
 }: {
   query: NonNullable<TrailStep["governed"]>;
 }) {
+  const yamlModels = query.metrics
+    .filter((metric) => metric.startsWith("cube.yaml:"))
+    .map((metric) => metric.replace(/^cube\.yaml:/u, "").split("/").pop() || metric);
+  const intentMetrics = query.metrics.filter((metric) => !metric.startsWith("cube.yaml:"));
+  const isCubeV3 = Boolean(query.queryYaml || query.view);
+  const isCubecore = /cubecore/iu.test(query.lens || "") || yamlModels.length > 0;
+  const ungoverned = /ungoverned/iu.test(query.lens || "");
   return (
     <div className={styles.governedQuery}>
-      <p className={styles.governedQueryEyebrow}>Governed plan</p>
+      <div className={styles.governedQueryHeader}>
+        <p className={styles.governedQueryEyebrow}>
+          {isCubeV3
+            ? "Cube semantic query"
+            : isCubecore
+              ? (ungoverned ? "Cubecore plan · ungoverned" : "Cubecore plan")
+              : "Governed plan"}
+        </p>
+        {query.connector ? <ToolChip connector={query.connector} /> : null}
+      </div>
       <h4 className={styles.governedQueryTopic}>{humanize(query.topic)}</h4>
-      {query.lens ? <p className={styles.governedQueryLens}>{humanize(query.lens)}</p> : null}
+      {query.lens && !isCubeV3 ? <p className={styles.governedQueryLens}>{humanize(query.lens)}</p> : null}
       <dl className={styles.governedQueryFields}>
-        {query.metrics.length > 0 ? (
+        {query.view ? (
+          <div>
+            <dt>View</dt>
+            <dd><span>{query.view}</span></dd>
+          </div>
+        ) : null}
+        {query.cubes && query.cubes.length > 0 ? (
+          <div>
+            <dt>Cubes</dt>
+            <dd>
+              {query.cubes.map((cube) => (
+                <span key={cube}>{cube}</span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+        {yamlModels.length > 0 ? (
+          <div>
+            <dt>YAML models</dt>
+            <dd>
+              {yamlModels.map((file) => (
+                <span key={file}>{file}</span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+        {intentMetrics.length > 0 ? (
           <div>
             <dt>Metrics</dt>
             <dd>
-              {query.metrics.map((metric) => (
+              {intentMetrics.map((metric) => (
                 <span key={metric}>{humanize(metric)}</span>
               ))}
             </dd>
@@ -673,13 +1057,20 @@ function GovernedQuerySummary({
             <dd><span>{query.timeRangeLabel}</span></dd>
           </div>
         ) : null}
+        {typeof query.executionMs === "number" ? (
+          <div>
+            <dt>Run time</dt>
+            <dd><span>{query.executionMs < 1000 ? `${query.executionMs}ms` : `${(query.executionMs / 1000).toFixed(1)}s`}</span></dd>
+          </div>
+        ) : null}
       </dl>
+      {query.queryYaml ? <CubeQueryYamlPanel queryYaml={query.queryYaml} /> : null}
     </div>
   );
 }
 
 /**
- * Cursor-style agent progress:
+ * Codex-style agent progress:
  * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
  * - Done: static "Worked" + "for Xs"
  * - Task list always collapsed by default; expand to inspect steps
@@ -834,6 +1225,20 @@ function ThinkingTrail({
                     )}
                     <span className={styles.agentTrailStepBody}>
                       <span className={styles.agentTrailStepTitle}>
+                        {step.governed?.connector ? (
+                          <span
+                            className={styles.stepToolLogo}
+                            title={`Data from ${CONNECTOR_NAMES[step.governed.connector]}`}
+                          >
+                            <Image
+                              src={CONNECTOR_LOGOS[step.governed.connector]}
+                              alt={CONNECTOR_NAMES[step.governed.connector]}
+                              width={11}
+                              height={11}
+                              unoptimized
+                            />
+                          </span>
+                        ) : null}
                         {laymanProgressStatus(step.title, step.detail ?? "")}
                       </span>
                       {typeof step.rowCount === "number" ? (
@@ -861,6 +1266,52 @@ function ThinkingTrail({
         </div>
       </div>
     </motion.div>
+  );
+}
+
+/**
+ * Sparse commentary stays visible while a longer turn runs, then folds into
+ * the completed "Worked" trail. Routine query/tool events never enter here.
+ */
+function LiveCommentary({
+  updates,
+  reduceMotion,
+}: {
+  updates: readonly TrailCommentaryUpdate[];
+  reduceMotion: boolean;
+}) {
+  if (updates.length === 0) return null;
+
+  return (
+    <motion.ol
+      className={styles.liveCommentary}
+      aria-label="Albert progress updates"
+      aria-live="polite"
+      aria-relevant="additions text"
+      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <AnimatePresence initial={false}>
+        {updates.map((update, index) => {
+          const latest = index === updates.length - 1;
+          return (
+            <motion.li
+              key={update.id}
+              className={styles.liveCommentaryItem}
+              data-latest={latest ? "true" : "false"}
+              initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <span className={styles.liveCommentaryDot} aria-hidden="true" />
+              <p>{update.text}</p>
+            </motion.li>
+          );
+        })}
+      </AnimatePresence>
+    </motion.ol>
   );
 }
 
@@ -901,10 +1352,12 @@ function DetailedQueryResult({
   step,
   resultNumber,
   reduceMotion,
+  onAddToDashboard,
 }: {
   step: TrailStep;
   resultNumber: number;
   reduceMotion: boolean;
+  onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
 }) {
   return (
     <motion.div layout={!reduceMotion} className={styles.detailedQueryCard}>
@@ -932,10 +1385,13 @@ function DetailedQueryResult({
             ? "Used to support the answer; detailed rows were not included in the response."
             : "The query completed with no rows."}
         </p>
-      ) : step.table.rows.length === 0 ? (
-        <p className={styles.detailedQueryEmpty}>The query completed with no rows.</p>
       ) : (
-        <ResultTable table={step.table} maxHeight={360} />
+        <ResultTable
+          table={step.table}
+          query={step.governed}
+          maxHeight={360}
+          onAddToDashboard={onAddToDashboard}
+        />
       )}
     </motion.div>
   );
@@ -976,10 +1432,12 @@ function DetailedTrail({
   model,
   streaming,
   reduceMotion,
+  onAddToDashboard,
 }: {
   model: TrailModel;
   streaming: boolean;
   reduceMotion: boolean;
+  onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
 }) {
   const [showDetailedCommentary, setShowDetailedCommentary] = useState(false);
   const stepsById = useMemo(
@@ -1045,6 +1503,7 @@ function DetailedTrail({
                       step={step}
                       resultNumber={queryNumbers.get(step.id) ?? 1}
                       reduceMotion={reduceMotion}
+                      onAddToDashboard={onAddToDashboard}
                     />
                   </div>
                 ) : step ? (
@@ -1232,16 +1691,42 @@ function AnswerSelectionToolbar({
   );
 }
 
+function answerTableSourceBadgesHtml(sources: readonly TrailSource[]): string {
+  if (sources.length === 0) return "";
+  const icons = sources.map((source) => {
+    const name = escapeHtml(CONNECTOR_NAMES[source.connector]);
+    const src = escapeHtml(CONNECTOR_LOGOS[source.connector]);
+    return `<img class="answerTableSourceIcon" src="${src}" alt="" title="Data from ${name}" width="14" height="14" />`;
+  }).join("");
+  const label = escapeHtml(sources.map((source) => CONNECTOR_NAMES[source.connector]).join(", "));
+  return `<span class="answerTableSources" aria-label="Data from ${label}">${icons}</span>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function AssistantMarkdown({
   content,
+  sources = [],
   onAddToChat,
   reduceMotion,
 }: {
   content: string;
+  sources?: readonly TrailSource[];
   onAddToChat?: (text: string) => void;
   reduceMotion: boolean;
 }) {
-  const html = useMemo(() => renderAssistantMarkdown(content), [content]);
+  const sourceBadgesHtml = useMemo(() => answerTableSourceBadgesHtml(sources), [sources]);
+  const html = useMemo(
+    () => renderAssistantMarkdown(content, { tableSourceBadgesHtml: sourceBadgesHtml }),
+    [content, sourceBadgesHtml],
+  );
   const proseRef = useRef<HTMLDivElement>(null);
   return (
     <>
@@ -1352,6 +1837,7 @@ export default function InsightsStyleTrace({
   lineageReference,
   onFollowUp,
   onAddToChat,
+  onAddToDashboard,
   onClarification,
 }: InsightsStyleTraceProps) {
   const reduceMotion = Boolean(useReducedMotion());
@@ -1364,14 +1850,40 @@ export default function InsightsStyleTrace({
   const [participatedInStream, setParticipatedInStream] = useState(streaming);
   if (streaming && !participatedInStream) setParticipatedInStream(true);
   const animateAnswerReveal = (participatedInStream || streaming) && !reduceMotion;
+  const answerSections = useMemo(
+    () => model.answer && model.answerTables.length > 0
+      ? splitAssistantMarkdownLead(model.answer.text)
+      : null,
+    [model.answer, model.answerTables.length],
+  );
 
   return (
     <div className={styles.root}>
       {detailedMode ? (
-        <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
+        <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} onAddToDashboard={onAddToDashboard} />
       ) : (
-        <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
+        <>
+          <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
+          <AnimatePresence initial={false}>
+            {streaming && runtime === "v3" && model.commentaryUpdates.length > 0 ? (
+              <LiveCommentary
+                key="live-commentary"
+                updates={model.commentaryUpdates}
+                reduceMotion={reduceMotion}
+              />
+            ) : null}
+          </AnimatePresence>
+        </>
       )}
+
+      {!detailedMode ? (
+        <CompactQueries
+          tables={model.steps.filter((step) => step.table?.dashboardReplay)}
+          collapsedByDefault={Boolean(!streaming && model.answer)}
+          reduceMotion={reduceMotion}
+          onAddToDashboard={onAddToDashboard}
+        />
+      ) : null}
 
       {!detailedMode && model.charts.length > 0 ? (
         <div className={styles.responseCharts} aria-label="Charts">
@@ -1409,13 +1921,32 @@ export default function InsightsStyleTrace({
             </div>
           ) : null}
           <AssistantMarkdown
-            content={model.answer.text}
+            content={answerSections?.lead || model.answer.text}
+            sources={model.sources}
             onAddToChat={onAddToChat}
             reduceMotion={reduceMotion}
           />
-          {lineageReference && runtime !== "fixture" ? (
-            <AnswerAuditReceipt reference={lineageReference} />
+          {model.answerTables.length > 0 ? (
+            <div className={styles.answerTables} aria-label="Answer tables">
+              {model.answerTables.map((table) => (
+                <ResultTable
+                  key={table.id}
+                  table={table}
+                  maxHeight={420}
+                  onAddToDashboard={onAddToDashboard}
+                />
+              ))}
+            </div>
           ) : null}
+          {answerSections?.detail ? (
+            <AssistantMarkdown
+              content={answerSections.detail}
+              sources={model.sources}
+              onAddToChat={onAddToChat}
+              reduceMotion={reduceMotion}
+            />
+          ) : null}
+          {/* AnswerAuditReceipt ("Immutable answer record") is temporarily hidden. */}
           {model.answer.followUps.length ? (
             <div className={styles.followUps} aria-label="Suggested follow-up questions">
               {model.answer.followUps.map((followUp) => (
@@ -1462,11 +1993,10 @@ export default function InsightsStyleTrace({
       ) : null}
 
       {!streaming && model.error ? (
-        <p className={styles.messageError} role="alert">
-          <strong>{model.error.recoverable ? "Albert can retry this step" : "Analysis stopped"}</strong>
-          {" "}
-          {model.error.message}
-        </p>
+        <div className={styles.messageError} role="alert">
+          <strong>Chat failed</strong>
+          <p>{model.error.message}</p>
+        </div>
       ) : null}
 
       {!streaming && model.stopped && model.steps.length === 0 && !model.reasoning.trim() ? (

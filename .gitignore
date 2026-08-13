@@ -36,6 +36,20 @@ yarn-error.log*
 !.env.example
 /.dlt/secrets.toml
 /.dlt/*.secrets.toml
+/.dlt/state/
+/.dlt/data/
+/.dlt/dashboard_runtime/
+/.dlt/.toolkits
+/.dlt/.workspace
+**/.dlt/secrets.toml
+**/*.secrets.toml
+**/__pycache__/
+*.pyc
+
+# local agent / editor runtime
+/.claude/
+/.codex/
+/.albert-agent-qa-cases-*.json
 
 # vercel
 .vercel

@@ -4,7 +4,7 @@ import {
   evidenceClaimInputSchema,
   type EvidenceClaimInput,
   type GovernedResult,
-} from "../../../packages/agent/src/semantic-tools.js";
+} from "../../../packages/agent/src/v3-contracts.js";
 import type { TraceCell } from "../../../packages/shared/src/index.js";
 import {
   findUngroundedNumbersForCells,

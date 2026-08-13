@@ -13,6 +13,9 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ALBERT_MODELS,
+  modelSupportsFastMode,
+  normalizeAgentPreferences,
+  reasoningEffortsForModel,
   type AgentRunPreferences,
   type AlbertModelId,
   type ReasoningEffort,
@@ -39,8 +42,13 @@ const EFFORT_OPTIONS = [
   { id: "none", label: "None" },
 ] as const satisfies ReadonlyArray<{ id: ReasoningEffort; label: string }>;
 
-/** Left-to-right model tabs: efficient → balanced → frontier. */
-const MODEL_TAB_ORDER = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] as const satisfies ReadonlyArray<AlbertModelId>;
+/** Left-to-right model tabs: efficient → balanced → frontier, then Grok. */
+const MODEL_TAB_ORDER = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "grok-4.6",
+] as const satisfies ReadonlyArray<AlbertModelId>;
 
 const EFFORT_LABELS: Record<ReasoningEffort, string> = Object.fromEntries(
   EFFORT_OPTIONS.map(({ id, label }) => [id, label]),
@@ -63,7 +71,7 @@ function FastModeIcon({ className }: { className?: string }) {
 }
 
 const PILL_EASE = [0.22, 1, 0.36, 1] as const;
-const POPOVER_WIDTH = 196;
+const POPOVER_WIDTH = 252;
 
 type PopoverCoords = {
   left: number;
@@ -129,6 +137,15 @@ export function ModelRunControls({
     () => Math.max(0, modelTabs.findIndex((model) => model.id === value.model)),
     [modelTabs, value.model],
   );
+
+  const effortOptions = useMemo(
+    () => {
+      const allowed = new Set(reasoningEffortsForModel(value.model));
+      return EFFORT_OPTIONS.filter((effort) => allowed.has(effort.id));
+    },
+    [value.model],
+  );
+  const showFastMode = modelSupportsFastMode(value.model);
 
   const effortLabel = EFFORT_LABELS[value.reasoningEffort] ?? value.reasoningEffort;
 
@@ -246,11 +263,11 @@ export function ModelRunControls({
   }, [closePopover, open]);
 
   const updateModel = (model: AlbertModelId) => {
-    onChange({ ...value, model });
+    onChange(normalizeAgentPreferences({ ...value, model }));
   };
 
   const updateReasoning = (reasoningEffort: ReasoningEffort) => {
-    onChange({ ...value, reasoningEffort });
+    onChange(normalizeAgentPreferences({ ...value, reasoningEffort }));
   };
 
   const moveModelFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
@@ -298,8 +315,7 @@ export function ModelRunControls({
         }}
       >
         <span className={styles.modelControlsSummaryMeasure} ref={summaryMeasureRef} aria-hidden="true">
-          <strong className={styles.modelControlsModelName}>{selectedModel.label}</strong>
-          <span className={styles.modelControlsSummarySep}>·</span>
+          <span className={styles.modelControlsModelName}>{selectedModel.label}</span>
           <span className={styles.modelControlsSummaryMeta}>{effortLabel}</span>
           {value.fastMode ? (
             <span className={styles.modelControlsFastSlot}>
@@ -308,8 +324,7 @@ export function ModelRunControls({
           ) : null}
         </span>
         <span className={styles.modelControlsSummary}>
-          <strong className={styles.modelControlsModelName}>{selectedModel.label}</strong>
-          <span className={styles.modelControlsSummarySep} aria-hidden="true">·</span>
+          <span className={styles.modelControlsModelName}>{selectedModel.label}</span>
           <span className={styles.modelControlsSummaryMeta}>{effortLabel}</span>
           <AnimatePresence initial={false}>
             {value.fastMode ? (
@@ -359,7 +374,7 @@ export function ModelRunControls({
             Effort
           </p>
           <div className={styles.modelControlsMenuList} role="group" aria-label="Reasoning effort">
-            {EFFORT_OPTIONS.map((effort) => {
+            {effortOptions.map((effort) => {
               const selected = effort.id === value.reasoningEffort;
               return (
                 <button
@@ -386,6 +401,7 @@ export function ModelRunControls({
           </div>
         </section>
 
+        {showFastMode ? (
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-options`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-options`}>
             Options
@@ -399,7 +415,7 @@ export function ModelRunControls({
               aria-label="Fast mode"
               title="Fast mode"
               data-processing-speed={value.fastMode ? "fast" : "standard"}
-              onClick={() => onChange({ ...value, fastMode: !value.fastMode })}
+              onClick={() => onChange(normalizeAgentPreferences({ ...value, fastMode: !value.fastMode }))}
             >
               <span>Fast</span>
               <span
@@ -411,6 +427,7 @@ export function ModelRunControls({
             </button>
           </div>
         </section>
+        ) : null}
 
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-model`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-model`}>
@@ -422,6 +439,7 @@ export function ModelRunControls({
               className={styles.modelControlsModelTabs}
               role="radiogroup"
               aria-label="Model"
+              style={{ gridTemplateColumns: `repeat(${modelTabs.length}, minmax(0, 1fr))` }}
             >
               <span
                 className={styles.modelControlsModelTabIndicator}
@@ -441,11 +459,13 @@ export function ModelRunControls({
                     role="radio"
                     tabIndex={selected ? 0 : -1}
                     aria-checked={selected}
+                    aria-label={model.label}
                     data-model-id={model.id}
+                    data-model-provider={model.provider}
                     onClick={() => updateModel(model.id)}
                     onKeyDown={(event) => moveModelFocus(event, index)}
                   >
-                    {model.label}
+                    {model.shortLabel}
                   </button>
                 );
               })}

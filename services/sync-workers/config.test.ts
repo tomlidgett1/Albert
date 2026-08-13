@@ -25,6 +25,8 @@ const valid: NodeJS.ProcessEnv = {
   TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
   TOKEN_ENCRYPTION_KEY_ID: "v1",
   ALBERT_OAUTH_WORKER_SIGNING_SECRET: "s".repeat(48),
+  ALBERT_SHOPIFYQL_SIGNING_SECRET: "q".repeat(48),
+  ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "a".repeat(48),
   ALBERT_PUBLIC_ORIGIN: "https://albert.example",
   LIGHTSPEED_CLIENT_ID: "lightspeed-client",
   LIGHTSPEED_CLIENT_SECRET: "lightspeed-secret",
@@ -55,6 +57,42 @@ test("sync worker config fails closed when the OAuth-specific HMAC secret is abs
   const source = { ...valid };
   delete (source as Partial<typeof valid>).ALBERT_OAUTH_WORKER_SIGNING_SECRET;
   assert.throws(() => loadSyncWorkerConfig(source), /ALBERT_OAUTH_WORKER_SIGNING_SECRET/);
+});
+
+test("sync worker requires a dedicated ShopifyQL HMAC boundary", () => {
+  const missing = { ...valid };
+  delete missing.ALBERT_SHOPIFYQL_SIGNING_SECRET;
+  assert.throws(() => loadSyncWorkerConfig(missing), /ALBERT_SHOPIFYQL_SIGNING_SECRET/u);
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_SHOPIFYQL_SIGNING_SECRET: valid.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
+    }),
+    /must be distinct/u,
+  );
+});
+
+test("sync worker requires an independently keyed Shopify Admin read boundary", () => {
+  const missing = { ...valid };
+  delete missing.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET;
+  assert.throws(() => loadSyncWorkerConfig(missing), /ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET/u);
+  for (const reused of [
+    valid.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
+    valid.ALBERT_SHOPIFYQL_SIGNING_SECRET,
+  ]) {
+    assert.throws(
+      () => loadSyncWorkerConfig({ ...valid, ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: reused }),
+      /must be distinct/u,
+    );
+  }
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(48),
+      ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "m".repeat(48),
+    }),
+    /must be distinct/u,
+  );
 });
 
 test("sync worker neither requires nor loads the Xero webhook signing key", () => {
@@ -98,6 +136,108 @@ test("Deputy OAuth is optional as one atomic provider while Lightspeed and Xero 
   assert.throws(
     () => registry.get("deputy"),
     /connector_not_configured:deputy/u,
+  );
+});
+
+test("Square credentials are required in production, atomic in development, and available to sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const configured = loadSyncWorkerConfig(valid);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("square"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("square").id,
+    "square",
+  );
+
+  const withoutSquare = { ...valid };
+  delete withoutSquare.SQUARE_CLIENT_ID;
+  delete withoutSquare.SQUARE_CLIENT_SECRET;
+  assert.throws(
+    () => loadSyncWorkerConfig(withoutSquare),
+    /SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET are required in production/u,
+  );
+
+  const developmentWithoutSquare = { ...withoutSquare, NODE_ENV: "development" as const };
+  const optionalFactory = new ProductionConnectorFactory(
+    loadSyncWorkerConfig(developmentWithoutSquare),
+  );
+  assert.equal(optionalFactory.isConfigured("square"), false);
+  assert.throws(
+    () => optionalFactory.create("square", vault),
+    /oauth_provider_not_configured:square/u,
+  );
+  assert.throws(
+    () => new ProductionConnectorRegistry(optionalFactory, vault).get("square"),
+    /connector_not_configured:square/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...developmentWithoutSquare,
+      SQUARE_CLIENT_ID: "partial",
+    }),
+    /SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET must be configured together/u,
+  );
+});
+
+test("Lightspeed X credentials are atomic, product-gated, and available to production sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const withLightspeedX = {
+    ...valid,
+    ALBERT_LIGHTSPEED_X_PRODUCT: "x-series",
+    LIGHTSPEED_X_CLIENT_ID: "lightspeed-x-client",
+    LIGHTSPEED_X_CLIENT_SECRET: "lightspeed-x-secret",
+  };
+  const configured = loadSyncWorkerConfig(withLightspeedX);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("lightspeed-x"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("lightspeed-x").id,
+    "lightspeed-x",
+  );
+
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_LIGHTSPEED_X_PRODUCT: "x-series",
+      LIGHTSPEED_X_CLIENT_ID: "partial",
+    }),
+    /LIGHTSPEED_X_CLIENT_ID and LIGHTSPEED_X_CLIENT_SECRET must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...withLightspeedX,
+      ALBERT_LIGHTSPEED_X_PRODUCT: "r-series",
+    }),
+    /ALBERT_LIGHTSPEED_X_PRODUCT must explicitly confirm x-series/u,
+  );
+});
+
+test("Momence credentials are atomic and configured Momence is available to production sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const configured = loadSyncWorkerConfig(valid);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("momence"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("momence").id,
+    "momence",
+  );
+
+  const withoutMomence = { ...valid };
+  delete withoutMomence.MOMENCE_CLIENT_ID;
+  delete withoutMomence.MOMENCE_CLIENT_SECRET;
+  const optionalFactory = new ProductionConnectorFactory(loadSyncWorkerConfig(withoutMomence));
+  assert.equal(optionalFactory.isConfigured("momence"), false);
+  assert.throws(
+    () => optionalFactory.create("momence", vault),
+    /oauth_provider_not_configured:momence/u,
+  );
+  assert.throws(
+    () => new ProductionConnectorRegistry(optionalFactory, vault).get("momence"),
+    /connector_not_configured:momence/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutMomence, MOMENCE_CLIENT_ID: "partial" }),
+    /MOMENCE_CLIENT_ID and MOMENCE_CLIENT_SECRET must be configured together/u,
   );
 });
 

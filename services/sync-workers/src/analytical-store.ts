@@ -53,7 +53,7 @@ export type ReconciliationTombstoneCandidate = Readonly<{
   verificationSnapshotBatchId: string;
 }>;
 
-type CanonicalStagingBatchRecordInput = Readonly<{
+type StagedRecordEvidence = Readonly<{
   tenantId:string;
   batchId:string;
   mappingVersion:string;
@@ -78,6 +78,41 @@ export class AnalyticalLandingStore {
 
   get version(): string {
     return this.mappingVersion;
+  }
+
+  /**
+   * Makes every Cube surface for one Shopify connection fail closed before
+   * the control-plane lifecycle block is published. The fence deliberately
+   * has no connection-generation predicate: reauthorisation alone cannot
+   * republish rows whose destroy-event continuity is unknown. Only the
+   * proof-producing connection-deletion purge removes it.
+   */
+  async blockShopifyConnectionQueryability(input: Readonly<{
+    job: SyncJob;
+    reason:
+      | "shopify_deletion_continuity_unproven"
+      | "shopify_deletion_watermark_missing"
+      | "shopify_deletion_retention_gap"
+      | "shopify_deletion_feed_unavailable";
+  }>, capability?: string): Promise<void> {
+    if (input.job.connectorId !== "shopify") {
+      throw new Error("shopify_queryability_block_connector_invalid");
+    }
+    await this.db.transaction(async (client) => {
+      await establishIngestScope(client,input.job.tenantId,capability);
+      await client.query(
+        `insert into quality.shopify_connection_queryability_blocks (
+           tenant_id,connection_id,connection_generation,sync_run_id,reason,blocked_at
+         ) values ($1,$2,$3::bigint,$4,$5,clock_timestamp())
+         on conflict (tenant_id,connection_id) do update
+           set connection_generation=excluded.connection_generation,
+               sync_run_id=excluded.sync_run_id,
+               reason=excluded.reason,
+               blocked_at=excluded.blocked_at`,
+        [input.job.tenantId,input.job.connectionId,input.job.connectionGeneration,
+          input.job.syncRunId,input.reason],
+      );
+    });
   }
 
   async registerConnectorStreams(input: Readonly<{
@@ -463,7 +498,7 @@ export class AnalyticalLandingStore {
       let stagedRecordCount = 0;
       const quarantined: QuarantinedProjection[] = [];
       const resolvedByIdentity = new Map<string,ResolvedQuarantineProjection>();
-      const canonicalStagingRecords:CanonicalStagingBatchRecordInput[]=[];
+      const stagedRecordEvidence:StagedRecordEvidence[]=[];
       const preparedRecords = records.map((record) => {
         const prepared = record.normalized
           ? prepareTypedStaging(job.connectorId, manifest.stream, record.normalized)
@@ -641,11 +676,12 @@ export class AnalyticalLandingStore {
           syncRunId: job.syncRunId,
           tombstone: record.normalized.tombstone ?? false,
           preserveExistingFields: record.deletionSignal?.kind === "verified_webhook_tombstone" ||
+            record.deletionSignal?.kind === "verified_vendor_delete_feed" ||
             record.deletionSignal?.kind === "reconciliation_tombstone",
           mappingVersion: this.mappingVersion,
           values: prepared.values,
         });
-        canonicalStagingRecords.push(Object.freeze({
+        stagedRecordEvidence.push(Object.freeze({
           tenantId:job.tenantId,
           batchId:job.batchId,
           mappingVersion:this.mappingVersion,
@@ -697,7 +733,12 @@ export class AnalyticalLandingStore {
         stagedRecordCount += 1;
       }
 
-      await persistCanonicalStagingBatchRecords(client,canonicalStagingRecords);
+      await retireShopifyRemovedOrderChildren(
+        client,
+        job,
+        manifest.stream,
+        stagedRecordEvidence,
+      );
 
       await client.query(
         `insert into ingestion.landing_commits (
@@ -719,50 +760,148 @@ export class AnalyticalLandingStore {
   }
 }
 
-async function persistCanonicalStagingBatchRecords(
+const SHOPIFY_ORDER_CHILD_COLLECTIONS: Readonly<Record<string,Readonly<{
+  table:string;
+  collectionSourceObjectType:string;
+  childSourceObjectType:string;
+}>>> = Object.freeze({
+  shopify_order_lines: {
+    table:"source_shopify.shopify_order_lines",
+    collectionSourceObjectType:"OrderLineCollection",
+    childSourceObjectType:"LineItem",
+  },
+  shopify_transactions: {
+    table:"source_shopify.shopify_transactions",
+    collectionSourceObjectType:"OrderTransactionCollection",
+    childSourceObjectType:"OrderTransaction",
+  },
+  shopify_refund_lines: {
+    table:"source_shopify.shopify_refund_lines",
+    collectionSourceObjectType:"RefundLineCollection",
+    childSourceObjectType:"RefundLineItem",
+  },
+  shopify_fulfillments: {
+    table:"source_shopify.shopify_fulfillments",
+    collectionSourceObjectType:"FulfillmentCollection",
+    childSourceObjectType:"Fulfillment",
+  },
+  shopify_returns: {
+    table:"source_shopify.shopify_returns",
+    collectionSourceObjectType:"ReturnCollection",
+    childSourceObjectType:"Return",
+  },
+});
+
+async function retireShopifyRemovedOrderChildren(
   client:PostgresQueryClient,
-  records:readonly CanonicalStagingBatchRecordInput[],
+  job:SyncJob,
+  stream:string,
+  records:readonly StagedRecordEvidence[],
 ):Promise<void>{
-  if(!records.length)return;
-  const payload=records.map((record)=>({
-    tenant_id:record.tenantId,
-    batch_id:record.batchId,
-    mapping_version:record.mappingVersion,
-    namespaced_source_key:record.namespacedSourceKey,
-    connection_id:record.connectionId,
-    sync_run_id:record.syncRunId,
-    connector_id:record.connectorId,
-    stream:record.stream,
-    source_object_type:record.sourceObjectType,
-    source_record_id:record.sourceRecordId,
-    payload_hash:record.payloadHash,
-    staging_row:record.stagingRow,
-  }));
-  await client.query(
-    `insert into ingestion.canonical_staging_batch_records (
-       tenant_id,batch_id,mapping_version,namespaced_source_key,
-       connection_id,sync_run_id,connector_id,stream,source_object_type,
-       source_record_id,payload_hash,staging_row
-     )
-     select input.tenant_id,input.batch_id,input.mapping_version,
-            input.namespaced_source_key,input.connection_id,input.sync_run_id,
-            input.connector_id,input.stream,input.source_object_type,
-            input.source_record_id,input.payload_hash,
-            input.staging_row||jsonb_build_object(
-              'first_ingested_at',now(),'ingested_at',now()
-            )
-       from jsonb_to_recordset($1::jsonb) as input(
-         tenant_id text,batch_id text,mapping_version text,
-         namespaced_source_key text,connection_id text,sync_run_id text,
-         connector_id text,stream text,source_object_type text,
-         source_record_id text,payload_hash text,staging_row jsonb
-       )
-     on conflict (
-       tenant_id,batch_id,mapping_version,namespaced_source_key
-     ) do nothing`,
-    [JSON.stringify(payload)],
+  const definition=SHOPIFY_ORDER_CHILD_COLLECTIONS[stream];
+  if(job.connectorId!=="shopify"||!definition)return;
+  const collections=records.filter((record)=>
+    record.sourceObjectType===definition.collectionSourceObjectType,
   );
+  const identities=new Set<string>();
+  for(const collection of collections){
+    const orderId=collection.stagingRow.order_id;
+    const scanId=collection.stagingRow.collection_scan_id;
+    const complete=collection.stagingRow.collection_complete;
+    const retiredAt=collection.stagingRow.source_updated_at;
+    if(typeof orderId!=="string"||!orderId.trim()||
+       typeof scanId!=="string"||!/^[0-9a-f]{64}$/u.test(scanId)||
+       complete!==true||typeof retiredAt!=="string"||
+       !Number.isFinite(Date.parse(retiredAt))){
+      throw new Error("shopify_order_child_collection_evidence_invalid");
+    }
+    const identity=`${orderId}\u001f${scanId}`;
+    if(identities.has(identity)){
+      throw new Error("shopify_order_child_collection_evidence_duplicate");
+    }
+    identities.add(identity);
+    const outcome=await client.query<{
+      current_count:number|string;
+      candidate_count:number|string;
+      retired_count:number|string;
+      source_count:number|string;
+      audit_count:number|string;
+    }>(
+      `with current_collection as materialized (
+         select collection.order_id,collection.collection_scan_id,
+                collection.source_updated_at as retired_at
+           from ${definition.table} as collection
+          where collection.tenant_id=$1 and collection.connection_id=$2
+            and collection.source_record_id=$3
+            and collection.payload_batch_id=$4
+            and collection.collection_complete=true
+            and collection.order_id=$5 and collection.collection_scan_id=$6
+            and collection.source_updated_at=$7::timestamptz
+       ), candidates as materialized (
+         select line.namespaced_source_key,line.source_record_id,
+                current_collection.order_id,current_collection.collection_scan_id,
+                current_collection.retired_at
+           from current_collection
+           join ${definition.table} as line
+             on line.tenant_id=$1 and line.connection_id=$2
+            and line.order_id=current_collection.order_id
+            and coalesce(line.collection_complete,false)=false
+            and line.collection_scan_id is distinct from current_collection.collection_scan_id
+            and not line.tombstone
+            and line.source_updated_at<=current_collection.retired_at
+       ), retired as (
+         update ${definition.table} as line
+            set tombstone=true,ingested_at=now()
+           from candidates
+          where line.tenant_id=$1
+            and line.namespaced_source_key=candidates.namespaced_source_key
+         returning line.namespaced_source_key,line.source_record_id
+       ), source_retired as (
+         update ingestion.source_records as source
+            set tombstone=true,
+                normalized_payload=jsonb_set(
+                  source.normalized_payload,'{tombstone}','true'::jsonb,true
+                ),
+                ingested_at=now()
+           from retired
+          where source.tenant_id=$1
+            and source.namespaced_source_key=retired.namespaced_source_key
+         returning source.namespaced_source_key
+       ), audited as (
+         insert into quality.shopify_order_child_collection_replacements (
+           tenant_id,connection_id,connection_generation,replacement_batch_id,
+           sync_run_id,collection_scan_id,stream,source_object_type,
+           order_id,source_record_id,retired_at
+         )
+         select $1,$2,$8::bigint,$4,$9,candidates.collection_scan_id,
+                $10,$11,candidates.order_id,candidates.source_record_id,
+                candidates.retired_at
+           from candidates
+           join retired using (source_record_id)
+         on conflict (tenant_id,replacement_batch_id,source_record_id) do nothing
+         returning source_record_id
+       )
+       select (select count(*) from current_collection) as current_count,
+              (select count(*) from candidates) as candidate_count,
+              (select count(*) from retired) as retired_count,
+              (select count(*) from source_retired) as source_count,
+              (select count(*) from audited) as audit_count`,
+      [job.tenantId,job.connectionId,collection.sourceRecordId,job.batchId,
+        orderId,scanId,retiredAt,job.connectionGeneration,job.syncRunId,
+        stream,definition.childSourceObjectType],
+    );
+    const audit=outcome.rows[0];
+    if(!audit)throw new Error("shopify_order_child_collection_replacement_missing");
+    const current=Number(audit.current_count);
+    const candidates=Number(audit.candidate_count);
+    if(current===0)continue; // A newer collection won the source-version fence.
+    if(current!==1||Number(audit.retired_count)!==candidates||
+       Number(audit.source_count)!==candidates||Number(audit.audit_count)!==candidates){
+      throw new Error("shopify_order_child_collection_replacement_incomplete");
+    }
+  }
 }
+
 
 async function establishIngestScope(
   client:PostgresQueryClient,

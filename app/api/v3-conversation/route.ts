@@ -1,0 +1,383 @@
+import { ulid } from "ulid";
+import { z } from "zod";
+import { describeChatFailure, isXaiModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
+import { meterOpenAIUsage, toModelUsageRpcPayload } from "@/packages/usage-metering/src";
+import { webBackendLoopbackMessage } from "@/packages/config/src/env";
+import {
+  ALBERT_V3_RUNTIME,
+  runAlbertV3Turn,
+  type ConversationMessage,
+} from "@/packages/albert-v3/src";
+import {
+  correlationIdFromHeader,
+  createServiceLogger,
+  safeErrorEvidence,
+} from "@/packages/observability/src";
+import {
+  createLiveTraceSseResponse,
+  createTraceEmitter,
+  generateConversationTitle,
+} from "@/services/conversation/src";
+import {
+  appendConversationEvent,
+  assignConversationTitle,
+  beginConversationTurn,
+  conversationNeedsTitle,
+  loadConversationModelContext,
+  renewConversationTurnLease,
+  failConversationTurn,
+} from "@/services/conversation/src/artifact-store";
+import {
+  ControlPlaneError,
+  consumeAlbertRateLimit,
+  currentTenantContext,
+  loadActiveConnectorKeys,
+  requireUser,
+} from "@/services/control-plane/src/web-repository";
+import {
+  assertSameOriginMutation,
+  readBoundedJsonBody,
+  rateLimitExceededResponse,
+} from "@/services/control-plane/src/request-security";
+
+/** Deep-lane turns are long-running by design (Fluid compute ceiling). */
+export const maxDuration = 800;
+
+const LEASE_RENEWAL_INTERVAL_MS = 120_000;
+
+const requestSchema = z.object({
+  message: z.string().trim().min(1).max(8_000),
+  preferences: z.unknown().optional(),
+  conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  replaceTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  confirmedOption: z.object({
+    offeredTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+    optionId: z.string().min(1).max(80),
+  }).strict().optional(),
+});
+
+const logger = createServiceLogger("albert-v3-web");
+
+function jsonError(message: string, status: number, correlationId: string) {
+  return Response.json(
+    { error: message },
+    { status, headers: { "x-request-id": correlationId, "Cache-Control": "no-store" } },
+  );
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const correlationId = correlationIdFromHeader(request.headers.get("x-request-id"));
+  try {
+    assertSameOriginMutation(request);
+  } catch (error) {
+    const status = error instanceof ControlPlaneError ? error.status : 403;
+    return jsonError(error instanceof Error ? error.message : "Request rejected.", status, correlationId);
+  }
+
+  let auth: Awaited<ReturnType<typeof requireUser>>;
+  let tenant: Awaited<ReturnType<typeof currentTenantContext>>;
+  try {
+    auth = await requireUser();
+    tenant = await currentTenantContext();
+    if (!tenant) return jsonError("Create your organisation before starting a conversation.", 409, correlationId);
+    const rateLimit = await consumeAlbertRateLimit("conversation.turn");
+    if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
+  } catch (error) {
+    if (error instanceof ControlPlaneError) return jsonError(error.message, error.status, correlationId);
+    return jsonError("Supabase is not connected. Authentication could not be completed.", 503, correlationId);
+  }
+
+  let parsed: z.infer<typeof requestSchema>;
+  try {
+    parsed = requestSchema.parse(await readBoundedJsonBody(request));
+  } catch (error) {
+    const status = error instanceof ControlPlaneError ? error.status : 400;
+    return jsonError(
+      error instanceof ControlPlaneError ? error.message : "A valid message is required.",
+      status,
+      correlationId,
+    );
+  }
+
+  const preferences = normalizeAgentPreferences(parsed.preferences);
+  const loopbackBackends = webBackendLoopbackMessage();
+  if (loopbackBackends) {
+    logger.error("v3.loopback_backends", { message: loopbackBackends }, correlationId);
+    return jsonError(loopbackBackends, 503, correlationId);
+  }
+  const grokSelected = isXaiModel(preferences.model);
+  const configuration = {
+    cubeApiUrl: process.env.CUBE_API_URL,
+    cubeApiSecret: process.env.CUBEJS_API_SECRET,
+    shopifyQLServiceUrl: process.env.SYNC_WORKER_INTERNAL_URL,
+    shopifyQLSigningSecret: process.env.ALBERT_SHOPIFYQL_SIGNING_SECRET,
+    shopifyAdminServiceUrl: process.env.SYNC_WORKER_INTERNAL_URL,
+    shopifyAdminSigningSecret: process.env.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET,
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    ...(grokSelected ? { xaiApiKey: process.env.XAI_API_KEY } : {}),
+  };
+  const missing = Object.entries(configuration)
+    .filter(([, value]) => !value?.trim())
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    logger.error("v3.configuration_missing", { missing }, correlationId);
+    if (grokSelected && missing.includes("xaiApiKey")) {
+      return jsonError("Grok is not configured (XAI_API_KEY is missing).", 503, correlationId);
+    }
+    return jsonError(
+      describeChatFailure(undefined, { missingConfig: missing, phase: "config" }),
+      503,
+      correlationId,
+    );
+  }
+
+  const turnId = ulid();
+  const runtimeProfile = {
+    provider: providerForModel(preferences.model),
+    runtime: ALBERT_V3_RUNTIME,
+    model: preferences.model,
+    reasoningEffort: preferences.reasoningEffort,
+    fastMode: preferences.fastMode,
+    analyticalRuntime: "cube-v3",
+  } as const;
+
+  let begun;
+  try {
+    begun = await beginConversationTurn({
+      conversationId: parsed.conversationId,
+      turnId,
+      message: parsed.message,
+      runtimeProfile,
+      confirmedOption: parsed.confirmedOption,
+      replaceTurnId: parsed.replaceTurnId,
+      staleLeaseFailureCode: "albert_v3_stale_lease_released",
+      supabase: auth.supabase,
+    });
+  } catch (error) {
+    const status = error instanceof ControlPlaneError ? error.status : 503;
+    logger.error("v3.turn_begin_failed", { status, ...safeErrorEvidence(error) }, correlationId);
+    return jsonError(
+      describeChatFailure(
+        error instanceof Error ? error.message : "The Albert v3 conversation could not be started.",
+        { runtime: "v3", phase: "start" },
+      ),
+      status,
+      correlationId,
+    );
+  }
+  const conversationId = begun.conversationId;
+
+  let conversation: readonly ConversationMessage[];
+  let activeConnectors: readonly string[] | undefined;
+  try {
+    const [priorMessages, routedConnectors] = await Promise.all([
+      loadConversationModelContext(conversationId, auth.supabase),
+      loadActiveConnectorKeys(auth.supabase).catch((error) => {
+        // Routing metadata is a cost optimisation, not an authorisation
+        // boundary. Fail open so a transient control-plane read cannot hide a
+        // valid query tool or degrade answer quality.
+        logger.warn("v3.connector_routing_unavailable", {
+          conversationId,
+          turnId,
+          ...safeErrorEvidence(error),
+        }, correlationId);
+        return undefined;
+      }),
+    ]);
+    activeConnectors = routedConnectors;
+    conversation = [
+      ...priorMessages.map(({ role, text, governedQueries, resolvedSubject }) => ({
+        role,
+        text,
+        ...(governedQueries?.length ? { governedQueries } : {}),
+        ...(resolvedSubject ? { resolvedSubject } : {}),
+      })),
+      { role: "user" as const, text: parsed.message },
+    ];
+  } catch (error) {
+    await failConversationTurn({
+      conversationId,
+      turnId,
+      failureCode: "context_unavailable",
+      supabase: auth.supabase,
+    }).catch(() => undefined);
+    const status = error instanceof ControlPlaneError ? error.status : 503;
+    return jsonError(
+      error instanceof Error ? error.message : "The conversation context is unavailable.",
+      status,
+      correlationId,
+    );
+  }
+
+  logger.info("v3.turn_started", {
+    tenantId: tenant.tenant_id,
+    conversationId,
+    turnId,
+    model: preferences.model,
+  }, correlationId);
+
+  const response = createLiveTraceSseResponse({
+    conversationId,
+    turnId,
+    signal: request.signal,
+    run: async (stream, streamSignal) => {
+      const leaseRenewal = setInterval(() => {
+        void renewConversationTurnLease({ supabase: auth.supabase, turnId }).catch(() => undefined);
+      }, LEASE_RENEWAL_INTERVAL_MS);
+
+      // Title generation stays off the analytical critical path.
+      void (async () => {
+        try {
+          if (!await conversationNeedsTitle(conversationId, auth.supabase)) return;
+          const title = await generateConversationTitle({
+            question: parsed.message,
+            apiKey: configuration.openaiApiKey!,
+            baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+            signal: streamSignal,
+          });
+          if (!title || streamSignal.aborted) return;
+          const assignment = await assignConversationTitle({
+            conversationId,
+            title,
+            supabase: auth.supabase,
+          });
+          if (assignment.assigned) stream.emitConversationTitle(assignment.title);
+        } catch (error) {
+          logger.warn("v3.title_generation_failed", safeErrorEvidence(error), correlationId);
+        }
+      })();
+
+      const emit = createTraceEmitter({
+        persist: (event) => appendConversationEvent({
+          conversationId,
+          turnId,
+          event,
+          supabase: auth.supabase,
+        }),
+        onPersistError: (error, event) => {
+          logger.warn("v3.trace_event_persist_failed", {
+            conversationId,
+            turnId,
+            eventType: event.type,
+            eventSequence: event.sequence,
+            ...safeErrorEvidence(error),
+          }, correlationId);
+        },
+        deliver: stream.emit,
+      });
+
+      try {
+        const result = await runAlbertV3Turn({
+          message: parsed.message,
+          conversation,
+          preferences,
+          tenantId: tenant.tenant_id,
+          actorId: auth.user.id,
+          role: tenant.role,
+          activeConnectors,
+          conversationId,
+          turnId,
+          cubeApiUrl: configuration.cubeApiUrl!,
+          cubeApiSecret: configuration.cubeApiSecret!,
+          shopifyQLServiceUrl: configuration.shopifyQLServiceUrl!,
+          shopifyQLSigningSecret: configuration.shopifyQLSigningSecret!,
+          shopifyAdminServiceUrl: configuration.shopifyAdminServiceUrl!,
+          shopifyAdminSigningSecret: configuration.shopifyAdminSigningSecret!,
+          openaiApiKey: configuration.openaiApiKey!,
+          openaiBaseUrl: process.env.OPENAI_BASE_URL || undefined,
+          xaiApiKey: process.env.XAI_API_KEY || undefined,
+          xaiBaseUrl: process.env.XAI_BASE_URL || undefined,
+          openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
+          signal: streamSignal,
+          emit,
+          onProviderUsage: async (providerUsage, providerResponseId) => {
+            try {
+              const metering = meterOpenAIUsage({
+                model: preferences.model,
+                fastMode: preferences.fastMode,
+                usage: providerUsage,
+              });
+              const { error } = await auth.supabase.rpc("albert_record_turn_usage", {
+                p_conversation_id: conversationId,
+                p_turn_id: turnId,
+                p_metering: toModelUsageRpcPayload(metering),
+              });
+              if (error) throw new Error(error.message);
+              logger.info("v3.usage_recorded", {
+                tenantId: tenant.tenant_id,
+                conversationId,
+                turnId,
+                model: preferences.model,
+                inputTokens: metering.inputTokens,
+                cachedInputTokens: metering.cachedInputTokens,
+                cacheWriteInputTokens: metering.cacheWriteInputTokens,
+                outputTokens: metering.outputTokens,
+                estimatedCostUsdMicros: metering.estimatedCostUsdMicros,
+                providerResponseId,
+              }, correlationId);
+            } catch (error) {
+              logger.warn("v3.usage_record_failed", {
+                conversationId,
+                turnId,
+                ...safeErrorEvidence(error),
+              }, correlationId);
+            }
+          },
+        });
+        await emit.drain?.();
+        // Authenticated web clients cannot call complete_albert_turn (revoked
+        // in M8 artefact lineage); release the lease the same way Cubecore
+        // does so follow-up turns can begin.
+        await failConversationTurn({
+          conversationId,
+          turnId,
+          failureCode: result.answerState === "Unavailable"
+            ? "albert_v3_unavailable"
+            : "albert_v3_answered",
+          supabase: auth.supabase,
+        });
+        logger.info("v3.turn_completed", {
+          tenantId: tenant.tenant_id,
+          conversationId,
+          turnId,
+          answerState: result.answerState,
+          queriesExecuted: result.queriesExecuted,
+        }, correlationId);
+      } catch (error) {
+        const disconnected = streamSignal.aborted;
+        logger.error(disconnected ? "v3.turn_disconnected" : "v3.turn_failed", {
+          tenantId: tenant.tenant_id,
+          conversationId,
+          turnId,
+          ...safeErrorEvidence(error),
+          errorMessage: error instanceof Error ? error.message.slice(0, 500) : "unknown",
+        }, correlationId);
+        try {
+          if (!disconnected) {
+            await emit({
+              type: "error",
+              status: "error",
+              message: describeChatFailure(error, { runtime: "v3" }),
+              recoverable: true,
+            });
+          }
+          await emit.drain?.();
+          await failConversationTurn({
+            conversationId,
+            turnId,
+            failureCode: disconnected ? "client_disconnected" : "runtime_failure",
+            supabase: auth.supabase,
+          });
+        } catch (finalizeError) {
+          logger.error("v3.turn_finalize_failed", safeErrorEvidence(finalizeError), correlationId);
+        }
+      } finally {
+        clearInterval(leaseRenewal);
+      }
+    },
+  });
+  response.headers.set("X-Albert-Runtime", "v3");
+  response.headers.set("X-Albert-Model", preferences.model);
+  response.headers.set("X-Request-Id", correlationId);
+  return response;
+}

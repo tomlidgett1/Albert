@@ -241,6 +241,7 @@ export class ControlPlaneStore implements RawManifestRepository {
       connection_id: string;
       connector_key: ConnectionRuntimeRecord["connectorKey"];
       external_account_reference: string | null;
+      account_metadata: unknown;
       secret_reference: string | null;
       connection_generation: string | number;
     }>(
@@ -248,6 +249,7 @@ export class ControlPlaneStore implements RawManifestRepository {
               connection.connection_id,
               connection.connector_key,
               connection.external_account_reference,
+              connection.account_metadata,
               connection.connection_generation,
               token.secret_reference
          from control_plane.connections as connection
@@ -271,11 +273,17 @@ export class ControlPlaneStore implements RawManifestRepository {
     if (!Number.isSafeInteger(connectionGeneration) || connectionGeneration !== job.connectionGeneration) {
       throw new Error("connection_generation_stale");
     }
+    const accountMetadata = row.account_metadata &&
+      typeof row.account_metadata === "object" &&
+      !Array.isArray(row.account_metadata)
+      ? row.account_metadata as Readonly<Record<string, unknown>>
+      : Object.freeze({});
     return {
       tenantId: row.tenant_id,
       connectionId: row.connection_id,
       connectorKey: row.connector_key,
       externalAccountReference: row.external_account_reference,
+      accountMetadata,
       credentialRef: row.secret_reference,
       connectionGeneration,
     };
@@ -307,6 +315,31 @@ export class ControlPlaneStore implements RawManifestRepository {
       ],
     );
     if (!result.rows[0]) throw new Error("connection_auth_health_target_missing");
+  }
+
+  async blockShopifyDeletionContinuity(
+    claim: ClaimedSyncJob,
+    reason:
+      | "shopify_deletion_continuity_unproven"
+      | "shopify_deletion_watermark_missing"
+      | "shopify_deletion_retention_gap"
+      | "shopify_deletion_feed_unavailable",
+  ): Promise<void> {
+    const { job } = claim;
+    const result = await this.db.query<{ connection_id: string }>(
+      `select control_plane.block_shopify_deletion_continuity(
+         $1::text,$2::text,$3::bigint,$4::text,$5::text,$6::text,$7::text,
+         $8::text,$9::text,$10::bigint,$11::text,$12::integer
+       ) as connection_id`,
+      [
+        job.tenantId,job.connectionId,job.connectionGeneration,job.connectorId,
+        job.externalAccountReference,job.syncRunId,reason,job.jobRequestId,
+        claim.queueName,Number(claim.messageId),claim.workerId,claim.readCount,
+      ],
+    );
+    if (result.rows[0]?.connection_id !== job.connectionId) {
+      throw new Error("shopify_deletion_continuity_block_target_missing");
+    }
   }
 
   async beginRun(job: SyncJob, attemptNumber: number): Promise<"run" | "already_succeeded"> {

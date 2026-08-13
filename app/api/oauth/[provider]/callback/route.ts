@@ -57,6 +57,11 @@ export async function GET(
   const state = callback.searchParams.get("state");
   const code = callback.searchParams.get("code");
   if (!state || !code) return resultRedirect(request, provider, "invalid_callback");
+  const domainPrefix = callback.searchParams.get("domain_prefix") ?? undefined;
+  const returnedScope = callback.searchParams.get("scope") ?? undefined;
+  if (provider === "lightspeed-x" && (!domainPrefix || !returnedScope)) {
+    return resultRedirect(request, provider, "invalid_callback");
+  }
   // Shopify is the only vendor that signs its redirect, and it is the only one
   // whose authorize host is merchant-supplied. The HMAC is what proves this
   // callback came from Shopify rather than from whoever chose that host.
@@ -78,6 +83,8 @@ export async function GET(
       code,
       tenantId: tenant.tenant_id,
       userId: user.id,
+      domainPrefix,
+      returnedScope,
     });
     // A connected result with no enqueued job means the connector's initial
     // backfill is suppressed; report that rather than promising a sync.

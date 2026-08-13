@@ -1,0 +1,20 @@
+# Copy these entries into the app-specific `shopify.app.toml` managed in the
+# Shopify Dev Dashboard/CLI project. Deploying that app configuration is an
+# operator release step; this repository never registers operational data
+# webhooks during OAuth.
+#
+# Official sources:
+# https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+# https://shopify.dev/docs/apps/build/webhooks/subscribe
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "https://REPLACE_WITH_WEBHOOK_GATEWAY/v1/webhooks/shopify/compliance"
+
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "https://REPLACE_WITH_WEBHOOK_GATEWAY/v1/webhooks/shopify/compliance"
+

@@ -46,7 +46,10 @@ The trust boundaries, release ordering, and rationale are recorded in [ADR 0006]
 
 ## Local verification
 
-Node.js 22.23.1 or later and PostgreSQL 17 are required. Copy `.env.example` into your local secret manager or an ignored `.env.local`; never commit populated values.
+Node.js 22.23.1 or later is required. Copy `.env.example` into an ignored
+`.env.local` and point every backend URL at the deployed Fly and Supabase
+origins. `npm run dev` only starts the local web UI. Do not start Docker,
+Cubecore, the Cube playground, or local semantic/Anthropic/sync workers.
 
 ```bash
 npm ci

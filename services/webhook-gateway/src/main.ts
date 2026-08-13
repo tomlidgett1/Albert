@@ -12,6 +12,10 @@ import { attestWebhookDocument, createWebhookAttestor } from "./attestation.js";
 import { XeroWebhookInboxStore, XeroWebhookIngress } from "./xero-inbox.js";
 import { XeroWebhookProcessor } from "./xero-processor.js";
 import { LeaseBoundWebhookRawWriter } from "./raw-storage.js";
+import {
+  ShopifyComplianceWebhookIngress,
+  ShopifyComplianceWebhookStore,
+} from "./shopify-compliance.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -157,6 +161,10 @@ export async function runWebhookGateway(): Promise<void> {
   const handler = new WebhookGatewayHandler({
     store: routeStore,
     xero: xeroIngress,
+    shopify: new ShopifyComplianceWebhookIngress({
+      clientSecret: config.shopifyClientSecret,
+      store: new ShopifyComplianceWebhookStore(ingressDatabase, attestor),
+    }),
     deputy: {
       resolver: new DeputyWebhookResolver(processorDatabase, attestor),
       verifier: new DeputyWebhookVerifier({
@@ -192,6 +200,9 @@ export async function runWebhookGateway(): Promise<void> {
       rawObjectStore.ready(),
       processorDatabase.query(
         "select control_plane.assert_raw_storage_session_authority_ready('webhook')",
+      ),
+      ingressDatabase.query(
+        "select control_plane.assert_shopify_compliance_webhook_ready()",
       ),
       xeroProcessor.assertReady(),
     ]);

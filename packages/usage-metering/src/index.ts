@@ -29,6 +29,34 @@ export const OPENAI_GPT_5_6_RATE_CARD = Object.freeze({
   regionalProcessingDenominator: 10n,
 } as const);
 
+/**
+ * Official xAI Grok 4.6 rate card. Cached input is $0.50 / 1M below 200k
+ * prompt tokens and $1.00 / 1M at or above that threshold. There is no
+ * Australian residency uplift. Fast maps to xAI Priority Processing at 2x.
+ */
+export const XAI_GROK_4_6_RATE_CARD = Object.freeze({
+  id: "xai-grok-4.6-2026-08-13",
+  effectiveAt: "2026-08-13T00:00:00.000Z",
+  source: "https://docs.x.ai/developers/pricing",
+  dataResidencyRegion: "US",
+  // Official xAI long-context is ≥ 200k prompt tokens. The shared meter uses
+  // a strict greater-than check, so 199_999 makes 200_000 the first 2x request.
+  longContextThresholdInputTokens: 199_999,
+  models: Object.freeze({
+    "grok-4.6": Object.freeze({ input: 2_000n, cachedInput: 500n, output: 6_000n }),
+  }),
+  cacheWriteInputNumerator: 1n,
+  cacheWriteInputDenominator: 1n,
+  fastModeNumerator: 2n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 2n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 2n,
+  longContextOutputDenominator: 1n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
 export type ProviderRequestUsage = Readonly<{
   inputTokens: number;
   outputTokens: number;
@@ -113,6 +141,19 @@ function multiplyRatio(value: bigint, numerator: bigint, denominator: bigint): b
   return (value * numerator + denominator - 1n) / denominator;
 }
 
+function rateCardFor(model: AlbertModelId) {
+  if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD;
+  return OPENAI_GPT_5_6_RATE_CARD;
+}
+
+function tokenRatesFor(model: AlbertModelId) {
+  if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD.models["grok-4.6"];
+  if (model === "gpt-5.6-sol" || model === "gpt-5.6-terra" || model === "gpt-5.6-luna") {
+    return OPENAI_GPT_5_6_RATE_CARD.models[model];
+  }
+  throw new Error(`No Albert rate card for ${model}.`);
+}
+
 function priceRequest(
   model: AlbertModelId,
   fastMode: boolean,
@@ -131,13 +172,14 @@ function priceRequest(
   }
 
   const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteInputTokens;
-  const rates = OPENAI_GPT_5_6_RATE_CARD.models[model];
-  const longContext = inputTokens > OPENAI_GPT_5_6_RATE_CARD.longContextThresholdInputTokens;
+  const card = rateCardFor(model);
+  const rates = tokenRatesFor(model);
+  const longContext = inputTokens > card.longContextThresholdInputTokens;
   const inputMultiplier: readonly [bigint, bigint] = longContext
-    ? [OPENAI_GPT_5_6_RATE_CARD.longContextInputNumerator, OPENAI_GPT_5_6_RATE_CARD.longContextInputDenominator] as const
+    ? [card.longContextInputNumerator, card.longContextInputDenominator] as const
     : [1n, 1n] as const;
   const outputMultiplier: readonly [bigint, bigint] = longContext
-    ? [OPENAI_GPT_5_6_RATE_CARD.longContextOutputNumerator, OPENAI_GPT_5_6_RATE_CARD.longContextOutputDenominator] as const
+    ? [card.longContextOutputNumerator, card.longContextOutputDenominator] as const
     : [1n, 1n] as const;
 
   let nanos = 0n;
@@ -145,26 +187,22 @@ function priceRequest(
   nanos += multiplyRatio(BigInt(cachedInputTokens) * rates.cachedInput, inputMultiplier[0], inputMultiplier[1]);
   const cacheWriteRate = multiplyRatio(
     rates.input,
-    OPENAI_GPT_5_6_RATE_CARD.cacheWriteInputNumerator,
-    OPENAI_GPT_5_6_RATE_CARD.cacheWriteInputDenominator,
+    card.cacheWriteInputNumerator,
+    card.cacheWriteInputDenominator,
   );
   nanos += multiplyRatio(BigInt(cacheWriteInputTokens) * cacheWriteRate, inputMultiplier[0], inputMultiplier[1]);
   nanos += multiplyRatio(BigInt(outputTokens) * rates.output, outputMultiplier[0], outputMultiplier[1]);
   if (fastMode) {
     nanos = multiplyRatio(
       nanos,
-      OPENAI_GPT_5_6_RATE_CARD.fastModeNumerator,
-      OPENAI_GPT_5_6_RATE_CARD.fastModeDenominator,
+      card.fastModeNumerator,
+      card.fastModeDenominator,
     );
   }
-  // Albert production is pinned to the Australian data-residency endpoint.
-  // OpenAI applies a 10% residency uplift to eligible models released after
-  // 5 March 2026. Australia currently provides regional storage, not regional
-  // inference; this price adjustment must not be described as inference-local.
   nanos = multiplyRatio(
     nanos,
-    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingNumerator,
-    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingDenominator,
+    card.regionalProcessingNumerator,
+    card.regionalProcessingDenominator,
   );
   return { nanos, cachedInputTokens, cacheWriteInputTokens };
 }
@@ -236,7 +274,7 @@ export function meterOpenAIUsage(input: Readonly<{
     throw new Error("Metered cost exceeds the supported safe integer range.");
   }
   return Object.freeze({
-    rateCardId: OPENAI_GPT_5_6_RATE_CARD.id,
+    rateCardId: rateCardFor(input.model).id,
     model: input.model,
     fastMode: input.fastMode,
     requests,

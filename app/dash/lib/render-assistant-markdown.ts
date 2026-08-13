@@ -3,7 +3,14 @@ type LinkMode = "anchor" | "text";
 interface RenderAssistantMarkdownOptions {
   compact?: boolean;
   linkMode?: LinkMode;
+  /** Optional HTML (icons) appended inside the last header cell of each data table. */
+  tableSourceBadgesHtml?: string;
 }
+
+export type AssistantMarkdownSections = Readonly<{
+  lead: string;
+  detail: string;
+}>;
 
 function escapeHtml(value: string): string {
   return value
@@ -116,7 +123,13 @@ function renderList(items: string[], ordered: boolean, options: Required<RenderA
 }
 
 function renderTable(headers: string[], rows: string[][], options: Required<RenderAssistantMarkdownOptions>): string {
-  const head = headers.map((cell) => `<th>${renderInlineMarkdown(cell, options.linkMode)}</th>`).join("");
+  const badges = options.tableSourceBadgesHtml.trim();
+  const head = headers.map((cell, index) => {
+    const label = renderInlineMarkdown(cell, options.linkMode);
+    const isLast = index === headers.length - 1;
+    if (!isLast || !badges) return `<th>${label}</th>`;
+    return `<th><span class="answerTableHeaderRow"><span class="answerTableHeaderLabel">${label}</span>${badges}</span></th>`;
+  }).join("");
   const body = rows.map((row) => {
     // A ragged row must not shift its neighbours' figures into the wrong
     // column: pad short rows and drop cells past the last header.
@@ -136,6 +149,52 @@ const headingPattern = /^\s*(#{1,6})\s+(.+)$/;
 const unorderedItemPattern = /^\s*[-*]\s+(.+)$/;
 const orderedItemPattern = /^\s*\d+[.)]\s+(.+)$/;
 
+/**
+ * Older saved answers sometimes contain human-looking section labels without
+ * Markdown markers ("What is sound", "Issues to fix"). Promote only familiar
+ * report cues that occupy their own paragraph; arbitrary product names and
+ * one-line answers must remain prose.
+ */
+const implicitSectionCuePattern = /^(?:summary|overview|headline|the\s+bottom\s+line|key\s+(?:findings|takeaways|issues|risks|opportunities)|what\s+(?:is\s+sound|looks\s+(?:sound|good)|stands\s+out|needs\s+attention|to\s+(?:fix|confirm|fix\s+or\s+confirm)|is\s+not\s+covered|was\s+not\s+covered|is\s+missing)|issues?(?:\s+to\s+fix\s+or\s+confirm)?|problems?|risks?|opportunities?|recommendations?|actions?|priorities?|priority\s+actions?|prioritised\s+actions?|next\s+steps?|limitations?|caveats?|data\s+gaps?|gaps?|not\s+covered|highest-impact\s+actions?)$/iu;
+
+function isImplicitSectionHeading(lines: readonly string[], index: number): boolean {
+  const line = (lines[index] ?? "").trim();
+  if (!line || line.length > 64 || !/^[A-Z]/u.test(line)) return false;
+  if (/[.!?;:]$/u.test(line) || /[|`<>]/u.test(line)) return false;
+  if (line.split(/\s+/u).length > 9 || !implicitSectionCuePattern.test(line)) return false;
+
+  // It must be a standalone paragraph followed by real answer content. The
+  // exact cue allowlist keeps an isolated business entity as normal prose; a
+  // leading cue is allowed because table placement may render report detail as
+  // a separate Markdown fragment.
+  if (index >= lines.length - 1) return false;
+  if ((index > 0 && (lines[index - 1] ?? "").trim()) || (lines[index + 1] ?? "").trim()) return false;
+  const hasContentAfter = lines.slice(index + 1).some((candidate) => candidate.trim());
+  return hasContentAfter;
+}
+
+/**
+ * Separates the opening takeaway from a longer report at its first semantic
+ * section. Structured answer tables can then sit directly after the takeaway,
+ * matching the reading order promised by the answer contract.
+ */
+export function splitAssistantMarkdownLead(markdown: string): AssistantMarkdownSections {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headingPattern.test(lines[index] ?? "") || isImplicitSectionHeading(lines, index)) {
+      const lead = lines.slice(0, index).join("\n").trim();
+      // The table belongs after an opening takeaway, never between two sections
+      // when the model started the answer with a heading.
+      if (!lead) return { lead: markdown.trim(), detail: "" };
+      return {
+        lead,
+        detail: lines.slice(index).join("\n").trim(),
+      };
+    }
+  }
+  return { lead: markdown.trim(), detail: "" };
+}
+
 /** Bike Insights New / Genie markdown renderer, adapted for Albert answers. */
 export function renderAssistantMarkdown(
   markdown: string,
@@ -144,6 +203,7 @@ export function renderAssistantMarkdown(
   const resolved: Required<RenderAssistantMarkdownOptions> = {
     compact: options.compact ?? false,
     linkMode: options.linkMode ?? "anchor",
+    tableSourceBadgesHtml: options.tableSourceBadgesHtml ?? "",
   };
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const blocks: string[] = [];
@@ -159,6 +219,12 @@ export function renderAssistantMarkdown(
     const heading = headingPattern.exec(line);
     if (heading) {
       blocks.push(renderHeading(heading[1]!.length, heading[2]!, resolved));
+      index += 1;
+      continue;
+    }
+
+    if (!resolved.compact && isImplicitSectionHeading(lines, index)) {
+      blocks.push(renderHeading(2, line.trim(), resolved));
       index += 1;
       continue;
     }
@@ -202,6 +268,7 @@ export function renderAssistantMarkdown(
       // happens to contain a pipe is prose, not the start of a table.
       if (
         headingPattern.test(next)
+        || (!resolved.compact && isImplicitSectionHeading(lines, index))
         || startsTable(lines, index)
         || unorderedItemPattern.test(next)
         || orderedItemPattern.test(next)

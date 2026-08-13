@@ -7,9 +7,12 @@ import { useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
 import {
   DEFAULT_AGENT_PREFERENCES,
+  describeChatFailure,
+  isXaiModel,
   normalizeAgentPreferences,
   type AgentRunPreferences,
   type TraceEvent,
+  type TraceTableEvent,
 } from "@/packages/shared/src";
 import { createClient } from "@/utils/supabase/client";
 import InsightsStyleTrace from "./components/InsightsStyleTrace";
@@ -18,6 +21,7 @@ import ConnectionsWorkspace, {
   buildSidebarSyncCommentary,
   collectWorkspaceSyncDomains,
   COMING_SOON_PROVIDERS,
+  connectionIngestionIsPending,
   connectionSyncSummary,
   ConnectionSyncProgress,
   emptyConnectionsWorkspace,
@@ -27,6 +31,8 @@ import ConnectionsWorkspace, {
   type ConnectionProviderId,
   type ConnectionsWorkspaceData,
 } from "./components/ConnectionsWorkspace";
+import DictationWaveform from "./components/DictationWaveform";
+import KeyInsightsPanel from "./components/KeyInsightsPanel";
 import { ModelRunControls } from "./components/ModelRunControls";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
 import RawDebugger from "./components/RawDebugger";
@@ -35,10 +41,13 @@ import {
   mergeRawDebugTurn,
   type RawDebugTurn,
 } from "./lib/raw-debug";
+import { useChatDictation } from "./lib/use-chat-dictation";
 import TenantDeletionWorkspace, {
   parseTenantDeletionReceipt,
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
+import DashboardWorkspace from "./components/DashboardWorkspace";
+import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import styles from "./dash.module.css";
 import traceStyles from "./components/insights-trace.module.css";
 
@@ -61,19 +70,24 @@ type IconName =
   | "sort"
   | "sidebarRight"
   | "microphone"
+  | "terminal"
   | "pin"
   | "archive"
   | "settings"
   | "stop"
   | "calendar"
   | "chevronDown"
-  | "leaf";
+  | "leaf"
+  | "sparkles"
+  | "dashboard";
 
-type Theme = "system" | "light" | "dark" | "green";
+type Theme = "system" | "light" | "beige" | "sage" | "dark" | "green";
 
 const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
   { value: "system", label: "System theme", icon: "monitor" },
   { value: "light", label: "Light theme", icon: "sun" },
+  { value: "beige", label: "Beige theme", icon: "sparkles" },
+  { value: "sage", label: "Sage theme", icon: "leaf" },
   { value: "dark", label: "Dark theme", icon: "moon" },
   { value: "green", label: "Green theme", icon: "leaf" },
 ];
@@ -84,7 +98,12 @@ const themeListeners = new Set<() => void>();
 let themeSnapshot: Theme = "system";
 
 function isTheme(value: string | null): value is Theme {
-  return value === "system" || value === "light" || value === "dark" || value === "green";
+  return value === "system"
+    || value === "light"
+    || value === "beige"
+    || value === "sage"
+    || value === "dark"
+    || value === "green";
 }
 
 function getThemeSnapshot(): Theme {
@@ -152,8 +171,12 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M19.7 14.5A7.8 7.8 0 0 1 9.5 4.3a8 8 0 1 0 10.2 10.2Z" /></svg>;
     case "leaf":
       return <svg {...shared}><path d="M5 19c8 0 12-6 14-14-8 2-14 6-14 14Z" /><path d="M8 16c3-3 6-6 11-9" /></svg>;
+    case "sparkles":
+      return <svg {...shared}><path d="M12 3.5c.7 3.4 2.6 5.3 6 6-3.4.7-5.3 2.6-6 6-.7-3.4-2.6-5.3-6-6 3.4-.7 5.3-2.6 6-6Z" /><path d="M18.5 15.5c.3 1.5 1.2 2.4 2.7 2.7-1.5.3-2.4 1.2-2.7 2.7-.3-1.5-1.2-2.4-2.7-2.7 1.5-.3 2.4-1.2 2.7-2.7Z" /></svg>;
     case "chat":
       return <svg {...shared}><path d="M20.2 11.2c0 4.5-3.7 8.1-8.3 8.1a8.8 8.8 0 0 1-3.2-.6l-4.7 1.2 1.2-4.3a7.8 7.8 0 0 1-1.5-4.4c0-4.5 3.7-8.1 8.2-8.1s8.3 3.6 8.3 8.1Z" /></svg>;
+    case "dashboard":
+      return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M10 10v10" /></svg>;
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
@@ -176,6 +199,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M5 7h10M5 12h7M5 17h4" /></svg>;
     case "sidebarRight":
       return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M14.5 4v16" /></svg>;
+    case "terminal":
+      return <svg {...shared}><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="m7.5 10 2.5 2-2.5 2M12.5 14h4" /></svg>;
     case "microphone":
       return <svg {...shared}><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5M9 20.5h6" /></svg>;
     case "pin":
@@ -205,15 +230,29 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3";
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
-  return profile.runtime === "anthropic-agent-sdk"
+  if (profile.runtime === "albert-v3" || profile.analyticalRuntime === "cube-v3") {
+    return "v3";
+  }
+  if (profile.runtime === "cubecore-v1" || profile.analyticalRuntime === "cubecore") {
+    return "cubecore";
+  }
+  if (
+    profile.runtime === "anthropic-agent-sdk"
     || (typeof profile.model === "string" && profile.model.startsWith("claude-"))
-    ? "anthropic"
-    : "openai";
+  ) {
+    return "anthropic";
+  }
+  // History used to omit runtime. Grok is served by Albert v3; sending it to
+  // the v1 OpenAI route trips the immutable runtime lock (HTTP 503).
+  if (typeof profile.model === "string" && profile.model === "grok-4.6") {
+    return "v3";
+  }
+  return "openai";
 }
 
 type ChatMessage = {
@@ -315,6 +354,7 @@ type OAuthNotice = Readonly<{
 
 const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Object.freeze({
   lightspeed: "Lightspeed",
+  "lightspeed-x": "Lightspeed X-Series",
   xero: "Xero",
   deputy: "Deputy",
   square: "Square",
@@ -327,7 +367,7 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
 
 function isConnectableProviderId(value: string | null | undefined): value is ConnectableProviderId {
   return typeof value === "string" &&
-    ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
+    ["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
       .includes(value);
 }
 
@@ -356,7 +396,10 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
     case "connected":
       return { kind: "success", message: `${provider} is connected. The recent-first sync has started.` };
     case "connected_without_sync":
-      return { kind: "success", message: `${provider} is connected. No data has been synced yet.` };
+      return {
+        kind: "success",
+        message: `${provider} is connected. Data will not be ingested until you choose Start ingestion.`,
+      };
     case "selection_required":
       return { kind: "info", message: `Choose the ${provider} account below to finish connecting it.` };
     case "cancelled":
@@ -581,6 +624,7 @@ export default function DashPage() {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [accountError, setAccountError] = useState("");
   const [activeItem, setActiveItem] = useState("Chat");
+  const dashboardRevisionRef = useRef<number | null>(null);
   const theme = useSyncExternalStore(
     subscribeToTheme,
     getThemeSnapshot,
@@ -598,7 +642,7 @@ export default function DashPage() {
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
-  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("openai");
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("v3");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
@@ -681,6 +725,7 @@ export default function DashPage() {
   );
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerMultiline, setComposerMultiline] = useState(false);
+  const dictation = useChatDictation();
   const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
   const [mobileConnectClosing, setMobileConnectClosing] = useState(false);
   const [mobileNumber, setMobileNumber] = useState("");
@@ -692,12 +737,15 @@ export default function DashPage() {
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const accountPreviousFocusRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const chatWorkspaceRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatSpacerRef = useRef<HTMLDivElement>(null);
   const chatComposerRef = useRef<HTMLFormElement>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editComposerRef = useRef<HTMLDivElement>(null);
+  const editResendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmEditedMessageResendRef = useRef<() => Promise<void>>(async () => {});
   const lastPinnedUserMessageIdRef = useRef<number | null>(null);
   const composerOriginTopRef = useRef<number | null>(null);
   const shouldAnimatePinRef = useRef(false);
@@ -709,9 +757,10 @@ export default function DashPage() {
     controller: AbortController;
     assistantId: number;
     preferences: AgentRunPreferences;
+    turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
-  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("openai");
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("v3");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
   agentPreferencesRef.current = agentPreferences;
@@ -748,6 +797,16 @@ export default function DashPage() {
     && chatMessages.length === 0
     && !openingConversationId
     && !conversationSkelActive;
+  const keyInsightTurns = chatMessages
+    .filter((message) => message.role === "assistant")
+    .map((message) => ({
+      id: message.id,
+      events: message.events ?? [],
+      streaming: Boolean(message.isStreaming),
+    }));
+  const keyInsights = deriveKeyInsights(keyInsightTurns);
+  const keyInsightsStreaming = keyInsightTurns.some((turn) => turn.streaming);
+  const keyInsightActivity = latestInsightActivity(keyInsightTurns);
   // Empty "New Analysis" keeps the Ask-me-anything title, but uses the same
   // compact input height as an active conversation. Tall hero sizing only runs
   // briefly after the first send while the docked transition finishes.
@@ -765,12 +824,26 @@ export default function DashPage() {
     const contentHeight = textarea.scrollHeight;
     const nextHeight = Math.min(Math.max(contentHeight, singleLineHeight), maxHeight);
     textarea.style.height = `${nextHeight}px`;
-    setComposerMultiline(contentHeight > singleLineHeight + 2);
+    // Prefer real wrapping / newlines over scrollHeight noise so the empty
+    // single-line field does not pick up multiline layout metrics.
+    const hasNewline = textarea.value.includes("\n");
+    setComposerMultiline(hasNewline || contentHeight > singleLineHeight + 4);
   }, []);
 
   useLayoutEffect(() => {
     resizeComposerTextarea();
   }, [chatDraft, showHeroComposer, composerMultiline, resizeComposerTextarea]);
+
+  const previousDictationStatusRef = useRef(dictation.status);
+  useEffect(() => {
+    const previous = previousDictationStatusRef.current;
+    previousDictationStatusRef.current = dictation.status;
+    if (dictation.status !== "idle" || previous === "idle") return;
+    window.requestAnimationFrame(() => {
+      resizeComposerTextarea();
+      chatTextareaRef.current?.focus();
+    });
+  }, [dictation.status, resizeComposerTextarea]);
 
   const closeMobileConnect = useCallback(() => {
     if (!mobileConnectOpen || mobileConnectClosing) return;
@@ -1068,8 +1141,12 @@ export default function DashPage() {
     [sidebarSyncDomains],
   );
   const sidebarSyncActive = useMemo(
-    () => workspaceSyncIsActive(sidebarSyncDomains),
-    [sidebarSyncDomains],
+    () => workspaceSyncIsActive(sidebarSyncDomains) || connectionsData.providers.some((provider) =>
+      provider.connections.some((connection) =>
+        connectionIngestionIsPending(connection.ingestionState, connection.domains)
+      )
+    ),
+    [connectionsData.providers, sidebarSyncDomains],
   );
   const sidebarSyncFullyComplete = useMemo(() => {
     if (sidebarSyncDomains.length === 0) return false;
@@ -1127,7 +1204,7 @@ export default function DashPage() {
   };
 
   const selectOAuthAccount = async (oauthSessionId: string, externalAccountId: string) => {
-    setConnectionsStatus({ kind: "loading", message: "Finishing the connection and starting the first sync." });
+    setConnectionsStatus({ kind: "loading", message: "Finishing the connection." });
     const response = await fetch("/api/oauth/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1535,6 +1612,60 @@ export default function DashPage() {
     if (composerExpandTimerRef.current !== undefined) window.clearTimeout(composerExpandTimerRef.current);
   }, []);
 
+  // Wheel over the top bar / composer (and other non-scroller chrome) should still
+  // drive the messages scroller so the chat page feels like one scroll surface.
+  useEffect(() => {
+    if (activeItem !== "Chat") return;
+    const workspace = chatWorkspaceRef.current;
+    if (!workspace) return;
+
+    const findScrollableAncestor = (
+      start: EventTarget | null,
+      boundary: HTMLElement,
+    ): HTMLElement | null => {
+      let el = start instanceof Element ? start : null;
+      while (el && el !== boundary) {
+        if (el instanceof HTMLElement) {
+          const overflowY = getComputedStyle(el).overflowY;
+          if (
+            (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+            el.scrollHeight > el.clientHeight + 1
+          ) {
+            return el;
+          }
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.defaultPrevented) return;
+      const scroller = chatMessagesRef.current;
+      if (!scroller) return;
+
+      const nested = findScrollableAncestor(event.target, workspace);
+      if (nested) {
+        if (nested === scroller) return;
+        const atTop = nested.scrollTop <= 0;
+        const atBottom = nested.scrollTop + nested.clientHeight >= nested.scrollHeight - 1;
+        if ((event.deltaY < 0 && !atTop) || (event.deltaY > 0 && !atBottom)) {
+          return;
+        }
+      }
+
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+      if (maxScroll <= 0) return;
+      const next = Math.min(maxScroll, Math.max(0, scroller.scrollTop + event.deltaY));
+      if (next === scroller.scrollTop) return;
+      scroller.scrollTop = next;
+      event.preventDefault();
+    };
+
+    workspace.addEventListener("wheel", onWheel, { passive: false });
+    return () => workspace.removeEventListener("wheel", onWheel);
+  }, [activeItem, chatMessages.length, conversationSkelActive]);
+
   useLayoutEffect(() => {
     const container = chatMessagesRef.current;
     const spacer = chatSpacerRef.current;
@@ -1892,8 +2023,25 @@ export default function DashPage() {
       ? requestConversationId
       : `draft:${Date.now().toString(36)}`;
 
-    // Only replace an in-flight turn on the same conversation; others keep running.
+    const priorMessages = options?.priorMessageCount !== undefined
+      ? chatMessages.slice(0, options.priorMessageCount)
+      : chatMessages;
     const existing = liveTurnsRef.current.get(turnKey);
+    const replaceTurnId = existing?.turnId
+      ?? [...priorMessages]
+        .reverse()
+        .find((message) => (
+          message.role === "assistant"
+          && typeof message.turnId === "string"
+          && ulidPattern.test(message.turnId)
+        ))
+        ?.turnId;
+    const lastConversationRuntime = [...priorMessages]
+      .reverse()
+      .find((message) => message.runtime && message.runtime !== "fixture")
+      ?.runtime as Exclude<ChatRuntime, "fixture"> | undefined;
+
+    // Only replace an in-flight turn on the same conversation; others keep running.
     if (existing && !existing.controller.signal.aborted) {
       existing.controller.abort();
       liveTurnsRef.current.delete(turnKey);
@@ -1910,7 +2058,11 @@ export default function DashPage() {
       ? markConversationComputing(trackedConversationId)
       : null;
     const runPreferences = agentPreferencesRef.current;
-    const runRuntime = activeChatRuntimeRef.current;
+    const runRuntime = isXaiModel(runPreferences.model)
+      ? "v3"
+      : (requestConversationId && lastConversationRuntime)
+        ? lastConversationRuntime
+        : activeChatRuntimeRef.current;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -1920,9 +2072,7 @@ export default function DashPage() {
     viewingKeyRef.current = turnKey;
 
     const initialMessages = (() => {
-      const base = options?.priorMessageCount !== undefined
-        ? chatMessages.slice(0, options.priorMessageCount)
-        : chatMessages;
+      const base = priorMessages;
       const finalized = finalizeStreamingMessages(base, "Stopped.");
       return [
         ...finalized,
@@ -2049,13 +2199,18 @@ export default function DashPage() {
     try {
       const requestBody = {
         message: text,
-        ...(runRuntime === "openai" ? { preferences: runPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" ? { preferences: runPreferences } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
+        ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
         confirmedOption,
       };
       const endpoint = runRuntime === "anthropic"
         ? "/api/anthropic-conversation"
-        : "/api/conversation";
+        : runRuntime === "cubecore"
+          ? "/api/cube-conversation"
+          : runRuntime === "v3"
+            ? "/api/v3-conversation"
+            : "/api/conversation";
       debug.request(endpoint, requestBody);
       const response = await fetch(endpoint, {
         method: "POST",
@@ -2070,7 +2225,11 @@ export default function DashPage() {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
         debug.response(response, { runtime: "n/a", conversationId: null, turnId: null });
         debug.note("Request rejected before streaming", payload);
-        throw new Error(payload?.error || "Albert could not start this analysis.");
+        throw new Error(describeChatFailure(payload?.error || `HTTP ${response.status}`, {
+          runtime: runRuntime,
+          httpStatus: response.status,
+          phase: "start",
+        }));
       }
 
       const runtimeHeader = response.headers.get("X-Albert-Runtime");
@@ -2078,7 +2237,11 @@ export default function DashPage() {
         ? "fixture"
         : runtimeHeader === "anthropic"
           ? "anthropic"
-          : "openai";
+          : runtimeHeader === "cubecore"
+            ? "cubecore"
+            : runtimeHeader === "v3"
+              ? "v3"
+              : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
       debug.response(response, {
@@ -2108,7 +2271,10 @@ export default function DashPage() {
         const live = liveTurnsRef.current.get(previousKey);
         if (live) {
           liveTurnsRef.current.delete(previousKey);
-          liveTurnsRef.current.set(turnKey, live);
+          liveTurnsRef.current.set(turnKey, {
+            ...live,
+            ...(responseTurnId && ulidPattern.test(responseTurnId) ? { turnId: responseTurnId } : {}),
+          });
         }
         const draftCache = conversationCacheRef.current.get(previousKey);
         if (draftCache) {
@@ -2150,12 +2316,21 @@ export default function DashPage() {
           turnId: responseTurnId,
         } : {}),
       });
+      if (responseTurnId && ulidPattern.test(responseTurnId)) {
+        const live = liveTurnsRef.current.get(turnKey);
+        if (live) liveTurnsRef.current.set(turnKey, { ...live, turnId: responseTurnId });
+      }
       if (runtime !== "fixture" && isViewingThisTurn()) {
         setActiveChatRuntime(runtime);
         activeChatRuntimeRef.current = runtime;
       }
 
-      if (!response.body) throw new Error("The conversation stream was unavailable.");
+      if (!response.body) {
+        throw new Error(describeChatFailure(new Error("The conversation stream was unavailable."), {
+          runtime,
+          phase: "stream",
+        }));
+      }
       const reader = response.body.getReader();
       const cancelReader = () => {
         void reader.cancel("client_stop").catch(() => undefined);
@@ -2265,7 +2440,12 @@ export default function DashPage() {
       }
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
       if (buffer.trim()) acceptBlock(buffer);
-      if (receivedEvents.length === 0) throw new Error("Albert returned an empty analysis trace.");
+      if (receivedEvents.length === 0) {
+        throw new Error(describeChatFailure(new Error("empty analysis trace"), {
+          runtime,
+          phase: "empty_trace",
+        }));
+      }
       debug.finish("complete");
 
       const cacheKey = trackedConversationId && ulidPattern.test(trackedConversationId)
@@ -2305,7 +2485,7 @@ export default function DashPage() {
         )));
         return;
       }
-      const message = error instanceof Error ? error.message : "Albert could not complete this analysis.";
+      const message = describeChatFailure(error, { runtime: runRuntime, phase: "start" });
       const errorEvent: TraceEvent = {
         id: `trace_error_${assistantId}`,
         sequence: receivedEvents.length + 1,
@@ -2384,18 +2564,6 @@ export default function DashPage() {
       )));
     }
   }, [activeConversationId]);
-
-  useEffect(() => {
-    if (!isChatResponding) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (event.defaultPrevented) return;
-      event.preventDefault();
-      stopChatResponse();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isChatResponding, stopChatResponse]);
 
   const answerClarification = (answer: string, offeredTurnId?: string, optionId?: string) => {
     const text = answer.trim();
@@ -2553,6 +2721,7 @@ export default function DashPage() {
       setEditResendBusy(false);
     }
   };
+  confirmEditedMessageResendRef.current = confirmEditedMessageResend;
 
   const resizeEditTextarea = useCallback(() => {
     const textarea = editTextareaRef.current;
@@ -2569,14 +2738,30 @@ export default function DashPage() {
 
   useEffect(() => {
     if (!editResendConfirm || editResendConfirmClosing) return;
+    const frame = window.requestAnimationFrame(() => {
+      editResendConfirmButtonRef.current?.focus();
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         closeEditResendConfirm();
+        return;
       }
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLButtonElement && target !== editResendConfirmButtonRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void confirmEditedMessageResendRef.current();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [closeEditResendConfirm, editResendConfirm, editResendConfirmClosing]);
 
   // Same open pattern as ThinkingTrail: panel starts at 0fr, then opens to 1fr.
@@ -2657,8 +2842,22 @@ export default function DashPage() {
     setEditDraft("");
   };
 
-  const startNewChat = () => resetChat("openai");
-  const startNewMethod = () => resetChat("anthropic");
+  // Albert v3 (Cube semantic layer) is the only engine offered in the UI.
+  // Older runtimes remain readable when viewing historical conversations.
+  const startNewChat = () => resetChat("v3");
+  const startNewChatRef = useRef(startNewChat);
+  startNewChatRef.current = startNewChat;
+
+  useEffect(() => {
+    const openNewChat = (event: KeyboardEvent) => {
+      if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+      if (event.code !== "KeyN" && event.key.toLowerCase() !== "n") return;
+      event.preventDefault();
+      startNewChatRef.current();
+    };
+    document.addEventListener("keydown", openNewChat);
+    return () => document.removeEventListener("keydown", openNewChat);
+  }, []);
 
   const updateConversationSidebarPrefs = (
     updater: (current: ConversationSidebarPrefs) => ConversationSidebarPrefs,
@@ -2720,6 +2919,55 @@ export default function DashPage() {
     router.refresh();
   };
 
+  const pinTableToDashboard = async (
+    conversationId: string,
+    turnId: string,
+    table: TraceTableEvent,
+  ): Promise<void> => {
+    const loadRevision = async () => {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as {
+        dashboard?: { revision?: number };
+        error?: string;
+      } | null;
+      if (!response.ok || typeof payload?.dashboard?.revision !== "number") {
+        throw new Error(payload?.error ?? "Dashboard is unavailable.");
+      }
+      dashboardRevisionRef.current = payload.dashboard.revision;
+      return payload.dashboard.revision;
+    };
+    const submit = async (expectedRevision: number) => {
+      const response = await fetch("/api/dashboard/tiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          turnId,
+          tableEventId: table.id,
+          resultId: table.resultId,
+          expectedRevision,
+        }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        dashboard?: { revision?: number };
+        error?: string;
+      } | null;
+      if (typeof payload?.dashboard?.revision === "number") {
+        dashboardRevisionRef.current = payload.dashboard.revision;
+      }
+      return { response, payload };
+    };
+
+    const revision = dashboardRevisionRef.current ?? await loadRevision();
+    let result = await submit(revision);
+    if (result.response.status === 409 && typeof result.payload?.dashboard?.revision === "number") {
+      result = await submit(result.payload.dashboard.revision);
+    }
+    if (!result.response.ok || typeof result.payload?.dashboard?.revision !== "number") {
+      throw new Error(result.payload?.error ?? "The table could not be added to Dashboard.");
+    }
+  };
+
   const renderChatTurns = () => {
     const turns: Array<{ user: ChatMessage | null; replies: ChatMessage[] }> = [];
     for (const message of chatMessages) {
@@ -2748,7 +2996,7 @@ export default function DashPage() {
             // Same single open flag as ThinkingTrail: drives radius + panel together.
             const editOpen = isEditing && editPanelOpen;
             const turnComputing = turn.replies.some((reply) => Boolean(reply.isStreaming));
-            const orbTheme = theme === "light"
+            const orbTheme = theme === "light" || theme === "beige" || theme === "sage"
               ? "light" as const
               : theme === "dark" || theme === "green"
                 ? "dark" as const
@@ -2831,6 +3079,8 @@ export default function DashPage() {
                         <div className={styles.chatMessageEditTrailing}>
                           {activeChatRuntime === "anthropic" ? (
                             <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                          ) : activeChatRuntime === "cubecore" ? (
+                            <span className={styles.chatRuntimeIndicator}>Cubecore</span>
                           ) : (
                             <ModelRunControls
                               value={agentPreferences}
@@ -2899,6 +3149,9 @@ export default function DashPage() {
                           resizeComposerTextarea();
                         });
                       }}
+                      onAddToDashboard={message.conversationId && message.turnId
+                        ? (table) => pinTableToDashboard(message.conversationId!, message.turnId!, table)
+                        : undefined}
                       onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
                     />
                   )
@@ -2927,6 +3180,7 @@ export default function DashPage() {
               alt=""
               width={20}
               height={20}
+              unoptimized
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>
@@ -2991,6 +3245,7 @@ export default function DashPage() {
                     alt=""
                     width={20}
                     height={20}
+                    unoptimized
                   />
                 </span>
                 <span className={styles.collapseIconSwapFace} data-icon="b">
@@ -3008,10 +3263,21 @@ export default function DashPage() {
             className={styles.sidebarAction}
             type="button"
             aria-label="New Analysis"
+            aria-keyshortcuts="Alt+N"
             onClick={startNewChat}
           >
             <Icon name="plus" />
             <span className={styles.sidebarActionLabel}>New Analysis</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Dashboard"
+            aria-current={activeItem === "Dashboard" ? "page" : undefined}
+            onClick={() => setActiveItem("Dashboard")}
+          >
+            <Icon name="dashboard" />
+            <span className={styles.sidebarActionLabel}>Dashboard</span>
           </button>
           <label className={`${styles.sidebarAction} ${styles.sidebarSearchAction} ${sidebarSearchOpen || query ? styles.sidebarSearchActionOpen : ""}`}>
             <Icon name="search" />
@@ -3167,7 +3433,7 @@ export default function DashPage() {
                                   speed={1.5}
                                   paused={Boolean(reduceMotion)}
                                   theme={
-                                    theme === "light"
+                                    theme === "light" || theme === "beige" || theme === "sage"
                                       ? "light"
                                       : theme === "dark" || theme === "green"
                                         ? "dark"
@@ -3250,7 +3516,8 @@ export default function DashPage() {
         </nav>
 
         <div className={styles.accountArea} ref={accountAreaRef}>
-          {sidebarSyncDomains.length > 0 && !sidebarSyncFullyComplete ? (
+          {/* Sidebar sync status card hidden for now. */}
+          {false && sidebarSyncDomains.length > 0 && !sidebarSyncFullyComplete ? (
             <div className={styles.sidebarSync}>
               <div className={styles.sidebarSyncTop}>
                 <span>
@@ -3406,7 +3673,7 @@ export default function DashPage() {
           <TenantDeletionWorkspace initialReceipt={tenantDeletionReceipt} />
         ) : activeItem === "Chat" ? (
           <div className={`${styles.chatShell} ${takeawaysOpen ? styles.chatShellTakeawaysOpen : ""}`}>
-          <div className={styles.chatWorkspace}>
+          <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
               <AnimatePresence mode="wait" initial={false}>
                 <motion.h1
@@ -3425,18 +3692,6 @@ export default function DashPage() {
                 </motion.h1>
               </AnimatePresence>
               <div className={styles.chatTopActions}>
-                {activeChatRuntime === "anthropic" ? (
-                  <span className={styles.chatRuntimeIndicator} aria-label="Anthropic runtime: Claude Opus 5">
-                    Claude Opus 5
-                  </span>
-                ) : null}
-                <button
-                  className={styles.chatNewMethod}
-                  type="button"
-                  onClick={startNewMethod}
-                >
-                  New Method
-                </button>
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatDetailedMode} ${chatDetailedMode ? styles.chatDetailedModeActive : ""}`}
@@ -3449,20 +3704,21 @@ export default function DashPage() {
                 ) : null}
                 {rawDebugAvailable ? (
                   <button
-                    className={`${styles.chatDetailedMode} ${rawDebugOpen ? styles.chatDetailedModeActive : ""}`}
+                    className={`${styles.chatTakeawaysToggle} ${rawDebugOpen ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
+                    aria-label="Raw debugger"
                     aria-pressed={rawDebugOpen}
                     title="Development inspector: request, response headers, SSE frames, and trace events"
                     onClick={() => setRawDebugOpen((current) => !current)}
                   >
-                    Raw debugger
+                    <Icon name="terminal" />
                   </button>
                 ) : null}
                 {!takeawaysOpen ? (
                   <button
                     className={styles.chatTakeawaysToggle}
                     type="button"
-                    aria-label="Expand key insights"
+                    aria-label={`Expand key insights${keyInsights.length > 0 ? `, ${keyInsights.length} available` : ""}`}
                     aria-pressed={false}
                     aria-controls="analysis-takeaways"
                     onClick={() => setTakeawaysOpen(true)}
@@ -3662,6 +3918,13 @@ export default function DashPage() {
               }}
               onSubmit={(event) => {
                 event.preventDefault();
+                if (dictation.status === "recording") {
+                  void dictation.stopAndSend(chatDraft, setChatDraft, (text) => {
+                    void sendChatMessage(text);
+                  });
+                  return;
+                }
+                if (dictation.status === "transcribing") return;
                 void sendChatMessage();
               }}
             >
@@ -3674,46 +3937,108 @@ export default function DashPage() {
                 <Icon name="plus" />
               </button>
               <div className={styles.chatComposerInputRow}>
-                <textarea
-                  ref={chatTextareaRef}
-                  aria-label="Ask me anything"
-                  placeholder={chatMessages.length > 0 ? "Send follow-up" : (chatComposerHero ? "Type a message…" : "Search or ask anything")}
-                  rows={1}
-                  value={chatDraft}
-                  onFocus={() => {
-                    if (chatMessages.length === 0) {
-                      setComposerExpanded(true);
-                    }
-                  }}
-                  onChange={(event) => {
-                    setChatDraft(event.target.value);
-                    window.requestAnimationFrame(() => resizeComposerTextarea());
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendChatMessage();
-                    }
-                  }}
-                />
-              </div>
-              <div className={styles.chatComposerTrailing}>
-                {activeChatRuntime === "anthropic" ? (
-                  <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                {dictation.status === "recording" || dictation.status === "transcribing" ? (
+                  <DictationWaveform
+                    volume={dictation.volume}
+                    processing={dictation.status === "transcribing"}
+                    label={dictation.status === "transcribing" ? "Finishing dictation" : "Listening"}
+                  />
                 ) : (
-                  <ModelRunControls
-                    value={agentPreferences}
-                    onChange={setAgentPreferences}
+                  <textarea
+                    ref={chatTextareaRef}
+                    aria-label="Ask me anything"
+                    placeholder={chatMessages.length > 0 ? "Send follow-up" : "Ask anything about your business…"}
+                    rows={1}
+                    value={chatDraft}
+                    onFocus={() => {
+                      if (chatMessages.length === 0) {
+                        setComposerExpanded(true);
+                      }
+                    }}
+                    onChange={(event) => {
+                      if (dictation.error) dictation.clearError();
+                      setChatDraft(event.target.value);
+                      window.requestAnimationFrame(() => resizeComposerTextarea());
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void sendChatMessage();
+                      }
+                    }}
                   />
                 )}
-                <button
-                  className={styles.composerIconButton}
-                  type="button"
-                  aria-label="Dictate"
-                >
-                  <Icon name="microphone" />
-                </button>
-                {isChatResponding ? (
+              </div>
+              <div className={styles.chatComposerTrailing}>
+                {dictation.status === "idle" && (
+                  activeChatRuntime === "anthropic" ? (
+                    <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                  ) : activeChatRuntime === "cubecore" ? (
+                    <span className={styles.chatRuntimeIndicator}>Cubecore</span>
+                  ) : (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                    />
+                  )
+                )}
+                {dictation.status === "idle" ? (
+                  <button
+                    className={styles.composerIconButton}
+                    type="button"
+                    aria-label="Dictate"
+                    onClick={() => {
+                      if (chatMessages.length === 0) setComposerExpanded(true);
+                      void dictation.start();
+                    }}
+                  >
+                    <Icon name="microphone" />
+                  </button>
+                ) : (
+                  <button
+                    className={`${styles.composerIconButton} ${styles.composerIconButtonActive}`}
+                    type="button"
+                    aria-label="Stop dictation"
+                    disabled={dictation.status === "transcribing"}
+                    onClick={() => {
+                      void dictation.stop(chatDraft, (next) => {
+                        setChatDraft(next);
+                        window.requestAnimationFrame(() => resizeComposerTextarea());
+                      });
+                    }}
+                  >
+                    <Icon name="stop" />
+                  </button>
+                )}
+                {dictation.status === "recording" || dictation.status === "transcribing" ? (
+                  <motion.button
+                    className={styles.chatSendButton}
+                    type="button"
+                    layout={!reduceMotion ? "position" : false}
+                    transition={{
+                      layout: {
+                        duration: reduceMotion ? 0 : 0.42,
+                        ease: [0.22, 1, 0.36, 1],
+                      },
+                    }}
+                    aria-label="Stop and send"
+                    disabled={dictation.status === "transcribing"}
+                    onClick={() => {
+                      void dictation.stopAndSend(
+                        chatDraft,
+                        (next) => {
+                          setChatDraft(next);
+                          window.requestAnimationFrame(() => resizeComposerTextarea());
+                        },
+                        (text) => {
+                          void sendChatMessage(text);
+                        },
+                      );
+                    }}
+                  >
+                    <Icon name="arrowUp" />
+                  </motion.button>
+                ) : isChatResponding ? (
                   <motion.button
                     className={`${styles.chatSendButton} ${styles.chatStopButton}`}
                     type="button"
@@ -3748,6 +4073,11 @@ export default function DashPage() {
                 )}
               </div>
             </motion.form>
+            {dictation.error ? (
+              <p className={styles.dictationError} role="alert">
+                {dictation.error}
+              </p>
+            ) : null}
             </motion.div>
 
             <motion.div
@@ -3783,11 +4113,19 @@ export default function DashPage() {
                   <Icon name="chevron" />
                 </button>
               </div>
-              <div className={styles.takeawaysBody} />
+              <div className={styles.takeawaysBody}>
+                <KeyInsightsPanel
+                  insights={keyInsights}
+                  streaming={keyInsightsStreaming}
+                  activity={keyInsightActivity}
+                />
+              </div>
             </div>
           </aside>
 
           </div>
+        ) : activeItem === "Dashboard" ? (
+          <DashboardWorkspace onOpenSource={(conversationId) => void openSavedConversation(conversationId)} />
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}
@@ -3797,6 +4135,7 @@ export default function DashPage() {
             onConnect={connectProvider}
             onSelectOAuthAccount={selectOAuthAccount}
             onDisconnect={disconnectConnection}
+            onIngestionStarted={() => void loadConnections({ silent: true })}
             onRetry={() => void loadConnections()}
           />
         ) : activeItem === "Admin" && isInternalOperator ? (
@@ -3933,6 +4272,7 @@ export default function DashPage() {
                 Cancel
               </button>
               <button
+                ref={editResendConfirmButtonRef}
                 className={styles.popupPrimaryAction}
                 type="button"
                 onClick={() => void confirmEditedMessageResend()}

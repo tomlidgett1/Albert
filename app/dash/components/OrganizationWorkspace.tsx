@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import styles from "../dash.module.css";
+import UsageWorkspace from "./UsageWorkspace";
 
 type OrganisationRole = "owner" | "manager" | "bookkeeper";
 type Organisation = Readonly<{
@@ -37,6 +38,11 @@ type Settings = Readonly<{
 type WorkspacePayload = Readonly<{ organisations: readonly Organisation[]; settings: Settings }>;
 
 const roles: readonly OrganisationRole[] = ["owner", "manager", "bookkeeper"];
+const SETTINGS_TABS = [
+  { key: "organisation", label: "Organisation" },
+  { key: "usage", label: "Usage" },
+] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 
 function formatRole(role: OrganisationRole) {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -88,6 +94,14 @@ export default function OrganizationWorkspace({
   const [memberRole, setMemberRole] = useState<OrganisationRole>("manager");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [eraseConfirmation, setEraseConfirmation] = useState("");
+  const [tab, setTab] = useState<SettingsTab>("organisation");
+  const [usageRefreshToken, setUsageRefreshToken] = useState(0);
+  const tabRowRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Record<SettingsTab, HTMLButtonElement | null>>({
+    organisation: null,
+    usage: null,
+  });
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +121,15 @@ export default function OrganizationWorkspace({
     const task = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(task);
   }, [load]);
+
+  useLayoutEffect(() => {
+    const button = tabRefs.current[tab];
+    const row = tabRowRef.current;
+    if (!button || !row) return;
+    const rowBox = row.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    setTabIndicator({ left: buttonBox.left - rowBox.left, width: buttonBox.width });
+  }, [tab, loading]);
 
   const mutate = useCallback(async (key: string, action: () => Promise<void>, success?: string) => {
     setBusy(key);
@@ -263,17 +286,48 @@ export default function OrganizationWorkspace({
   return (
     <section className={styles.organizationWorkspace} aria-labelledby="organization-title" aria-busy={loading}>
       <header className={styles.organizationSettingsHero}>
-        <h2 id="organization-title">Organisation</h2>
+        <h2 id="organization-title">{tab === "usage" ? "Usage" : "Organisation"}</h2>
         <button
           type="button"
           className={styles.organizationSettingsButton}
-          onClick={() => void load()}
-          disabled={loading || Boolean(busy)}
+          onClick={() => {
+            if (tab === "usage") setUsageRefreshToken((value) => value + 1);
+            else void load();
+          }}
+          disabled={tab === "organisation" && (loading || Boolean(busy))}
         >
-          {loading ? "Refreshing…" : "Refresh"}
+          {tab === "organisation" && loading ? "Refreshing…" : "Refresh"}
         </button>
       </header>
 
+      <nav className={`${styles.opsViewTabs} ${styles.organizationSettingsTabs}`} aria-label="Settings">
+        <div className={styles.opsViewTabRow} ref={tabRowRef}>
+          {SETTINGS_TABS.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              ref={(node) => {
+                tabRefs.current[item.key] = node;
+              }}
+              className={tab === item.key ? styles.opsViewTabActive : undefined}
+              aria-current={tab === item.key ? "page" : undefined}
+              onClick={() => setTab(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+          <span
+            className={styles.opsViewTabIndicator}
+            style={{ left: tabIndicator.left, width: tabIndicator.width }}
+            aria-hidden="true"
+          />
+        </div>
+      </nav>
+
+      {tab === "usage" ? (
+        <UsageWorkspace refreshToken={usageRefreshToken} />
+      ) : (
+        <>
       {error ? (
         <div className={styles.organizationSettingsAlert} data-kind="error" role="alert">
           <strong>Change not saved</strong>
@@ -575,6 +629,8 @@ export default function OrganizationWorkspace({
           </section>
         ) : null}
       </div>
+        </>
+      )}
     </section>
   );
 }

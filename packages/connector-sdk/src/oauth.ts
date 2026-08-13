@@ -68,6 +68,15 @@ export type AuthorizationCodeExchange = Readonly<{
   code: string;
   redirectUri: string;
   codeVerifier?: string;
+  /**
+   * Lightspeed X-Series returns the retailer's host prefix only on the OAuth
+   * callback. This is an identity component, never an arbitrary URL: the
+   * connector validates it and constructs the fixed retail.lightspeed.app
+   * host before exchanging the code.
+   */
+  domainPrefix?: string;
+  /** Vendor-reported callback scope; the token response remains authoritative. */
+  returnedScope?: string;
   abortSignal?: AbortSignal;
 }>;
 

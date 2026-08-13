@@ -191,6 +191,7 @@ export function validateReleaseEnvironment(source, project, authConfig = null) {
     publicOrigin,
     cleanHttpsOrigin(required(source, "ANTHROPIC_ANALYTICS_SERVICE_URL"), "ANTHROPIC_ANALYTICS_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "SEMANTIC_QUERY_SERVICE_URL"), "SEMANTIC_QUERY_SERVICE_URL"),
+    cleanHttpsOrigin(required(source, "CUBE_API_URL"), "CUBE_API_URL"),
     cleanHttpsOrigin(required(source, "OPERATOR_DIAGNOSTIC_SERVICE_URL"), "OPERATOR_DIAGNOSTIC_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "SYNC_WORKER_INTERNAL_URL"), "SYNC_WORKER_INTERNAL_URL"),
     cleanHttpsOrigin(required(source, "WEBHOOK_GATEWAY_PUBLIC_URL"), "WEBHOOK_GATEWAY_PUBLIC_URL"),
@@ -218,6 +219,7 @@ export function validateReleaseEnvironment(source, project, authConfig = null) {
   const flyApps = [
     "FLY_ANTHROPIC_APP",
     "FLY_SEMANTIC_APP",
+    "FLY_CUBE_APP",
     "FLY_SYNC_APP",
     "FLY_TRANSFORM_APP",
     "FLY_WEBHOOK_APP",

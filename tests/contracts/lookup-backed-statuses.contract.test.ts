@@ -17,6 +17,12 @@ type StatusContract = Readonly<{
   statuses: readonly string[];
 }>;
 
+type CreatedStatusContract = Readonly<{
+  table: string;
+  lookup: string;
+  statuses: readonly string[];
+}>;
+
 function escaped(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -45,6 +51,41 @@ function assertLookupBackedStatus(sql: string, contract: StatusContract): void {
   assert.ok(addAt >= 0, `${contract.table} must add its lookup foreign key without a blocking validation scan`);
   assert.ok(validateAt > addAt, `${contract.table} must validate its lookup foreign key`);
   assert.ok(dropAt > validateAt, `${contract.table} must retain its literal check until the foreign key validates`);
+  for (const status of contract.statuses) {
+    assert.match(sql, new RegExp(`\\('${escaped(status)}'\\s*,`, "u"));
+  }
+}
+
+function assertCreatedLookupBackedStatus(
+  sql: string,
+  contract: CreatedStatusContract,
+): void {
+  const table = escaped(contract.table);
+  const lookup = escaped(contract.lookup);
+
+  assert.match(
+    sql,
+    new RegExp(
+      `CREATE TABLE ${lookup}\\s*\\(\\s*` +
+        "status text PRIMARY KEY,\\s*description text NOT NULL",
+      "iu",
+    ),
+    `${contract.lookup} must be a described, reviewed vocabulary`,
+  );
+  assert.match(
+    sql,
+    new RegExp(
+      `CREATE TABLE ${table}\\s*\\([\\s\\S]*?` +
+        `status text NOT NULL\\s+REFERENCES ${lookup}\\(status\\)`,
+      "iu",
+    ),
+    `${contract.table}.status must reference its dedicated lookup`,
+  );
+  assert.match(
+    sql,
+    new RegExp(`REVOKE ALL ON TABLE[\\s\\S]*?${lookup}`, "iu"),
+    `${contract.lookup} must not be exposed to application roles`,
+  );
   for (const status of contract.statuses) {
     assert.match(sql, new RegExp(`\\('${escaped(status)}'\\s*,`, "u"));
   }
@@ -142,6 +183,90 @@ test("control-plane lifecycle statuses are lookup-backed without changing existi
     /CREATE TABLE IF NOT EXISTS control_plane\.deletion_request_status_lookup/iu,
     "the receipt must reuse the deletion request lifecycle rather than duplicate it",
   );
+});
+
+test("Shopify control lifecycles are independently lookup-backed at creation", async () => {
+  const [ingress, privacy, shopifyql, admin] = await Promise.all([
+    readFile(new URL(
+      "infra/migrations/control-plane/0130_m7_shopify_compliance_webhook_ingress.sql",
+      root,
+    ), "utf8"),
+    readFile(new URL(
+      "infra/migrations/control-plane/0132_m8_shopify_customer_privacy_consumer.sql",
+      root,
+    ), "utf8"),
+    readFile(new URL(
+      "infra/migrations/control-plane/0133_m6_governed_shopifyql_query_plane.sql",
+      root,
+    ), "utf8"),
+    readFile(new URL(
+      "infra/migrations/control-plane/0134_m6_governed_shopify_admin_read_plane.sql",
+      root,
+    ), "utf8"),
+  ]);
+
+  const contracts: readonly Readonly<{
+    sql: string;
+    contract: CreatedStatusContract;
+  }>[] = [
+    {
+      sql: ingress,
+      contract: {
+        table: "control_plane.shopify_compliance_inbox",
+        lookup: "control_plane.shopify_compliance_inbox_status_lookup",
+        statuses: ["dispatched", "unresolved"],
+      },
+    },
+    {
+      sql: privacy,
+      contract: {
+        table: "control_plane.shopify_privacy_cases",
+        lookup: "control_plane.shopify_privacy_case_status_lookup",
+        statuses: [
+          "queued",
+          "redaction_dispatched",
+          "awaiting_operator_export",
+          "export_in_progress",
+          "awaiting_delivery",
+          "attention_required",
+          "completed",
+        ],
+      },
+    },
+    {
+      sql: privacy,
+      contract: {
+        table: "control_plane.shopify_privacy_exports",
+        lookup: "control_plane.shopify_privacy_export_status_lookup",
+        statuses: ["requested", "claimed", "completed", "failed", "expired"],
+      },
+    },
+    {
+      sql: shopifyql,
+      contract: {
+        table: "control_plane.shopifyql_query_executions",
+        lookup: "control_plane.shopifyql_query_execution_status_lookup",
+        statuses: ["reserved", "succeeded", "parse_error", "failed", "response_rejected"],
+      },
+    },
+    {
+      sql: admin,
+      contract: {
+        table: "control_plane.shopify_admin_query_executions",
+        lookup: "control_plane.shopify_admin_query_execution_status_lookup",
+        statuses: ["reserved", "succeeded", "failed", "response_rejected"],
+      },
+    },
+  ];
+
+  assert.equal(
+    new Set(contracts.map(({ contract }) => contract.lookup)).size,
+    contracts.length,
+    "independent Shopify state machines must not share a broadened vocabulary",
+  );
+  for (const { sql, contract } of contracts) {
+    assertCreatedLookupBackedStatus(sql, contract);
+  }
 });
 
 test("analytical reconciliation snapshot status is a dedicated lookup lifecycle", async () => {

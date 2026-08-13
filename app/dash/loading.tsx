@@ -13,6 +13,7 @@ export default function DashLoading() {
               alt=""
               width={20}
               height={20}
+              unoptimized
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>

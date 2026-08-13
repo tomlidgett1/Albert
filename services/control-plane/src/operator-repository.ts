@@ -1,7 +1,12 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import { signInternalRequest } from "../../../packages/security/src/index.js";
-import { operatorDiagnosticSampleSchema } from "../../operator-diagnostic/src/contracts.js";
+import {
+  operatorDiagnosticSampleSchema,
+  shopifyPrivacyArtifactSchema,
+  type ShopifyPrivacyArtifact,
+} from "../../operator-diagnostic/src/contracts.js";
 import { ControlPlaneError, requireUser } from "./web-repository.js";
 
 const ulidSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
@@ -124,8 +129,6 @@ export const OPERATOR_PIPELINE_STAGES = Object.freeze([
   "streams",
   "raw",
   "staging",
-  "canonical",
-  "marts",
   "quality",
   "readiness",
   "runs",
@@ -235,7 +238,7 @@ const rowRevealGrantSchema = z.object({
   expires_at: z.string().min(1),
 }).strict();
 
-function operatorDiagnosticServiceUrl(): URL {
+function operatorDiagnosticServiceUrl(path = "/v1/row-samples"): URL {
   const value = process.env.OPERATOR_DIAGNOSTIC_SERVICE_URL?.trim();
   if (!value) throw new ControlPlaneError("The operator diagnostic service is not configured.", 503);
   try {
@@ -245,10 +248,132 @@ function operatorDiagnosticServiceUrl(): URL {
     if ((!local && url.protocol !== "https:") || url.username || url.password || url.search || url.hash) {
       throw new Error("unsafe operator diagnostic URL");
     }
-    url.pathname = `${url.pathname.replace(/\/+$/u, "")}/v1/row-samples`;
+    url.pathname = `${url.pathname.replace(/\/+$/u, "")}${path}`;
     return url;
   } catch {
     throw new ControlPlaneError("The operator diagnostic service URL is invalid.", 503);
+  }
+}
+
+const shopifyPrivacyCaseSchema = z.object({
+  case_id: ulidSchema,
+  topic: z.enum(["customers/data_request", "customers/redact"]),
+  status: z.enum([
+    "queued","redaction_dispatched","awaiting_operator_export",
+    "export_in_progress","awaiting_delivery","attention_required","completed",
+  ]),
+  target_tenant_id: ulidSchema,
+  target_connection_id: ulidSchema,
+  customer_reference: z.string().regex(/^(0|[1-9][0-9]{0,29})$/u).nullable(),
+  order_references: z.array(z.string().regex(/^(0|[1-9][0-9]{0,29})$/u)).max(5_000),
+  data_request_reference: z.string().regex(/^(0|[1-9][0-9]{0,29})$/u).nullable(),
+  complete_by: z.string().min(1),
+  overdue: z.boolean(),
+  last_error_code: z.string().nullable(),
+}).strict();
+
+export type OperatorShopifyPrivacyCase = z.infer<typeof shopifyPrivacyCaseSchema>;
+
+export async function loadShopifyPrivacyCases(): Promise<readonly OperatorShopifyPrivacyCase[]> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_shopify_privacy_cases");
+  if (error) throw operatorError(error, "Shopify privacy cases could not be loaded.");
+  const parsed = z.array(shopifyPrivacyCaseSchema).safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("Shopify privacy cases returned invalid metadata.", 503);
+  }
+  return Object.freeze(parsed.data);
+}
+
+const shopifyPrivacyExportGrantSchema = z.object({
+  case_id: ulidSchema,
+  export_id: ulidSchema,
+  expires_at: z.string().min(1),
+}).strict();
+
+export async function createShopifyPrivacyExport(
+  caseId: string,
+): Promise<Readonly<{ artifact: ShopifyPrivacyArtifact; artifactSha256: string }>> {
+  const { supabase } = await requireUser();
+  const exportId = ulid();
+  const { data, error } = await supabase.rpc("begin_albert_shopify_privacy_export", {
+    p_case_id: caseId,
+    p_export_id: exportId,
+  });
+  if (error) {
+    if (error.code === "P0001") {
+      throw new ControlPlaneError("Too many privacy exports. Wait and retry.", 429);
+    }
+    throw operatorError(error, "The Shopify privacy export could not be authorised.");
+  }
+  const grant = shopifyPrivacyExportGrantSchema.safeParse(data);
+  if (!grant.success || grant.data.case_id !== caseId || grant.data.export_id !== exportId) {
+    throw new ControlPlaneError("The Shopify privacy export grant returned invalid metadata.", 503);
+  }
+  const body = JSON.stringify({ exportId });
+  const url = operatorDiagnosticServiceUrl("/v1/shopify-privacy-exports");
+  const headers = await signInternalRequest({
+    method: "POST",
+    path: "/v1/shopify-privacy-exports",
+    body,
+    secret: operatorDiagnosticSecret(),
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 55_000);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body,
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+  } catch {
+    throw new ControlPlaneError("The Shopify privacy export service is unavailable.", 503);
+  } finally {
+    clearTimeout(timeout);
+  }
+  const payload = await response.json().catch(() => null) as Readonly<{
+    artifact?: unknown;
+    artifactSha256?: unknown;
+  }> | null;
+  if (!response.ok) {
+    throw new ControlPlaneError("The Shopify privacy export could not be produced.", 503);
+  }
+  const artifact = shopifyPrivacyArtifactSchema.safeParse(payload?.artifact);
+  if (!artifact.success || artifact.data.caseId !== caseId || artifact.data.exportId !== exportId ||
+      typeof payload?.artifactSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(payload.artifactSha256)) {
+    throw new ControlPlaneError("The Shopify privacy export returned invalid content.", 503);
+  }
+  const receivedDigest = createHash("sha256")
+    .update(JSON.stringify(artifact.data), "utf8")
+    .digest("hex");
+  if (receivedDigest !== payload.artifactSha256) {
+    throw new ControlPlaneError("The Shopify privacy export digest does not match its content.", 503);
+  }
+  return Object.freeze({ artifact: artifact.data, artifactSha256: payload.artifactSha256 });
+}
+
+export async function recordShopifyPrivacyDelivery(input: Readonly<{
+  caseId: string;
+  exportId: string;
+  deliveryChannel: "direct_to_shop_owner" | "approved_secure_portal";
+  deliveredAt: string;
+}>): Promise<void> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("complete_albert_shopify_privacy_delivery", {
+    p_case_id: input.caseId,
+    p_export_id: input.exportId,
+    p_delivery_channel: input.deliveryChannel,
+    p_delivered_at: input.deliveredAt,
+  });
+  if (error) throw operatorError(error, "Shopify privacy delivery evidence could not be recorded.");
+  const parsed = z.object({ case_id: ulidSchema, status: z.literal("completed") }).strict().safeParse(data);
+  if (!parsed.success || parsed.data.case_id !== input.caseId) {
+    throw new ControlPlaneError("Shopify privacy delivery returned invalid metadata.", 503);
   }
 }
 
@@ -262,8 +387,8 @@ function operatorDiagnosticSecret(): string {
 
 export async function revealOperatorRowSample(input: Readonly<{
   tenantId: string;
-  stage: "staging" | "canonical" | "marts";
-  schemaName: "source_lightspeed" | "source_xero" | "source_deputy" | "core" | "mart";
+  stage: "staging";
+  schemaName: "source_lightspeed" | "source_xero" | "source_deputy";
   tableName: string;
 }>): Promise<OperatorRowSample> {
   const { supabase } = await requireUser();

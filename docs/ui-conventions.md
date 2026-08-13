@@ -8,7 +8,7 @@ This document records the conventions already present in `/dash`. It is a map of
 ## Principles
 
 - Build every product surface inside the existing dash shell.
-- Support `light`, `dark`, and `system` themes. New colours belong in the `.dash` token block and use `light-dark()` unless a brand colour has sufficient contrast in both themes.
+- Support `light`, `dark`, `system`, and the selectable `beige` and `green` palettes. New colours belong in the `.dash` token block and use `light-dark()` unless a brand colour has sufficient contrast in both themes.
 - Keep interaction state legible without relying on colour alone.
 - Use real data states and explicit copy. Animation may explain a transition, but must never imply progress that did not occur.
 - Honour `prefers-reduced-motion: reduce` and Framer Motion's `useReducedMotion()` for every non-essential transition.
@@ -19,6 +19,7 @@ This document records the conventions already present in `/dash`. It is a map of
 - Sidebar: `260px`, collapsing to the established compact width.
 - Standard control height: `36px` via `--dash-control-height`.
 - Canvas, surface, text, border, focus, success, contrast, and accent colours come from the `.dash` custom properties.
+- The beige palette uses a warm cream canvas, layered stone surfaces, charcoal text, and a restrained burnt-orange accent; component geometry and hierarchy remain identical to every other theme.
 - Focus-visible treatment: `2px solid var(--dash-focus)` with a `2px` or `3px` offset.
 
 ## Shape and spacing
@@ -63,7 +64,13 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 
 - The chat is the primary analytical surface.
 - Stream an ordered execution trace, not private chain-of-thought. Allowed events are concise plan summaries, capability/data-health checks, semantic-query calls, returned tables, chart specs over those tables, named validations, and the governed answer.
+- During analytical and deep turns, show sparse owner-facing commentary while work is active: one short plan, then only material evidence findings plus the next meaningful check. Do not narrate routine queries or tool activity. Keep quick lookups quiet, cap commentary per turn, and fold completed commentary into the expandable work trail once the answer arrives.
 - Preserve event order exactly as emitted by the backend.
+- Render final answers as restrained Markdown: a direct lead, semantic `##`
+  section headings for longer reviews, short paragraphs, bullets for distinct
+  findings, and numbered priority actions. Keep simple answers unsectioned.
+  Historical bare report labels may be promoted only when they are standalone,
+  familiar section cues; ordinary business names remain prose.
 - Render governed bar and line events with Nivo's responsive SVG components.
   Bars compare or rank distinct categories; lines require an ordered time or
   numeric axis. Keep the referenced exact-value table before its chart in the
@@ -71,6 +78,35 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 - Reuse the existing trace rail, dashboard table, chart, drawer, and status patterns.
 - A completed answer displays one of: Verified, Qualified, Exploratory, Clarification, or Unavailable.
 - Numerical artefacts display source, time range, definition, freshness, result identifier, and validation outcome. “Explain this number” opens lineage and semantic metadata; it never exposes hidden reasoning or creates an agent-facing SQL surface.
+
+## Personal dashboard
+
+- Dashboard is a dense conversation-derived pinboard, never a query builder.
+- Every newly produced owner-visible table is a structured replayable artefact
+  and uses one compact `+` action in its top-right corner with the standard
+  tooltip timing and surface. This includes final pivots composed across
+  multiple governed results. A successful pin becomes a checkmarked “Added”
+  state; do not render new Markdown-only tables without this action.
+- Desktop uses 12 columns, tablet uses 8, and mobile uses one column. Grid rows
+  are `28px`, gaps are `10px`, and a new tile is `4×7` with a `3×5` minimum and
+  `12×16` maximum. Tiles do not overlap and vertical gaps compact.
+- Persist desktop/tablet layouts only after a move or resize stops. Disable
+  touch dragging on mobile; retain table scrolling and provide move up/down
+  controls. The drag handle also supports keyboard move and resize commands and
+  announces the resulting position through `aria-live`.
+- A tile uses the dash surface, border, `10px` field radius, `8px` action radius,
+  standard focus treatment, and existing tooltip pattern. It contains a title,
+  freshness/status, governed table, source-analysis link, refresh/retry, and
+  remove action without decorative card chrome.
+- Double-clicking a column header (or pressing Enter/F2 while it is focused)
+  opens an anchored compact editor for its display label, allowlisted format,
+  and zero to six decimal places. Save on Done or focus exit; Escape cancels.
+  The editor changes presentation metadata only and must not imply that source
+  fields or governed values were edited.
+- Render the saved snapshot immediately. Stale, refreshing, error, current
+  empty, and current data states must be distinguishable without colour alone.
+- Dashboard motion uses the existing slider easing and is removed under
+  `prefers-reduced-motion: reduce`.
 
 ## Responsive behaviour
 

@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 import { isConnectorPackVersion } from "../packages/connector-sdk/src/contract.js";
 
-type ConnectorId = "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+type ConnectorId = "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
 
 export type ConnectorPackActivationInput = Readonly<{
   databaseUrl: string;
@@ -60,8 +60,8 @@ export function loadConnectorPackActivationInput(
     values.set(name,match[2]!);
   }
   const connector=requiredOption(values,"connector");
-  if(connector!=="lightspeed-r"&&connector!=="xero"&&connector!=="deputy"&&connector!=="square"&&connector!=="shopify"&&connector!=="stripe"&&connector!=="momence"&&connector!=="meta-ads"&&connector!=="google-ads"){
-    throw new Error("--connector must be one of: lightspeed-r, xero, deputy, square, shopify, stripe, momence, meta-ads, google-ads.");
+  if(connector!=="lightspeed-r"&&connector!=="lightspeed-x"&&connector!=="xero"&&connector!=="deputy"&&connector!=="square"&&connector!=="shopify"&&connector!=="stripe"&&connector!=="momence"&&connector!=="meta-ads"&&connector!=="google-ads"){
+    throw new Error("--connector must be one of: lightspeed-r, lightspeed-x, xero, deputy, square, shopify, stripe, momence, meta-ads, google-ads.");
   }
   const candidatePackVersion=requiredOption(values,"candidate");
   const expectedActivePackVersion=requiredOption(values,"expected-active");

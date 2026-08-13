@@ -66,7 +66,7 @@ after(async () => {
 test("server model policy normalizes untrusted preferences to the allowlist", () => {
   assert.deepEqual(
     shared.ALBERT_MODELS.map(({ id }) => id),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "grok-4.6"],
   );
   assert.deepEqual(shared.REASONING_EFFORTS, [
     "none",
@@ -85,10 +85,11 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
     "No data",
     "Unavailable",
   ]);
+  // ADR 0077 fixes the qualifying default at Luna + Max on the standard tier.
   assert.deepEqual(shared.DEFAULT_AGENT_PREFERENCES, {
-    model: "gpt-5.6-sol",
+    model: "gpt-5.6-luna",
     reasoningEffort: "max",
-    fastMode: true,
+    fastMode: false,
   });
 
   const normalized = shared.normalizeAgentPreferences({
@@ -100,6 +101,42 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
 
   assert.deepEqual(normalized, shared.DEFAULT_AGENT_PREFERENCES);
   assert.equal(Object.isFrozen(normalized), true);
+
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "grok-4.6",
+      reasoningEffort: "max",
+      fastMode: true,
+    }),
+    { model: "grok-4.6", reasoningEffort: "xhigh", fastMode: true },
+  );
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "grok-4.6",
+      reasoningEffort: "none",
+      fastMode: false,
+    }),
+    { model: "grok-4.6", reasoningEffort: "low", fastMode: false },
+  );
+  assert.deepEqual(shared.GROK_REASONING_EFFORTS, ["low", "medium", "high", "xhigh"]);
+  assert.equal(shared.providerForModel("grok-4.6"), "xai");
+  assert.equal(shared.providerForModel("gpt-5.6-sol"), "openai");
+  assert.deepEqual(
+    shared.resolveAlbertModelTransport({
+      model: "grok-4.6",
+      xaiApiKey: "xai-test",
+    }),
+    {
+      provider: "xai",
+      model: "grok-4.6",
+      apiKey: "xai-test",
+      baseUrl: "https://api.x.ai/v1",
+    },
+  );
+  assert.throws(
+    () => shared.resolveAlbertModelTransport({ model: "grok-4.6" }),
+    /Grok 4\.6 is not configured/i,
+  );
 });
 
 test("Fast mode is independent from model and reasoning effort", () => {
@@ -122,6 +159,42 @@ test("Fast mode is independent from model and reasoning effort", () => {
     service_tier: "default",
   });
   assert.deepEqual(fast.modelSettings.providerData, { service_tier: "fast" });
+  assert.equal(standard.modelSettings.store, false);
+
+  const grok = agent.buildOpenAIAgentRunConfig({
+    model: "grok-4.6",
+    reasoningEffort: "xhigh",
+    fastMode: true,
+  });
+  assert.equal(grok.model, "grok-4.6");
+  assert.deepEqual(grok.modelSettings, {
+    store: false,
+    reasoning: { effort: "xhigh" },
+    providerData: {
+      include: ["reasoning.encrypted_content"],
+      service_tier: "priority",
+    },
+  });
+  const grokLive = agent.buildLiveAgentModelSettings(grok, {
+    reasoning: { effort: "low", context: "current_turn" },
+    verbosity: "medium",
+    parallelToolCalls: true,
+    safetyIdentifier: "must-not-be-sent",
+  });
+  assert.deepEqual(grokLive.reasoning, { effort: "low" });
+  assert.equal(grokLive.text, undefined);
+  assert.equal(grokLive.parallelToolCalls, true);
+  assert.deepEqual(grokLive.providerData, {
+    include: ["reasoning.encrypted_content"],
+    service_tier: "priority",
+  });
+  assert.equal("safety_identifier" in grokLive.providerData, false);
+  const grokStandard = agent.buildOpenAIAgentRunConfig({
+    model: "grok-4.6",
+    reasoningEffort: "high",
+    fastMode: false,
+  });
+  assert.equal(grokStandard.modelSettings.providerData.service_tier, "default");
 });
 
 test("optional Agents SDK factory rejects every non-semantic tool", async () => {

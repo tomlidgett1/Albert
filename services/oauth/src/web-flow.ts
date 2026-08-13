@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { buildDeputyAuthorizationUrl } from "../../../connectors/deputy/oauth-public.js";
 import { LIGHTSPEED_R_DEFAULT_SCOPES } from "../../../connectors/lightspeed-r/manifest.js";
 import { buildLightspeedRAuthorizationUrl } from "../../../connectors/lightspeed-r/oauth-public.js";
+import { buildLightspeedXAuthorizationUrl } from "../../../connectors/lightspeed-x/oauth-public.js";
 import { buildGoogleAdsAuthorizationUrl } from "../../../connectors/google-ads/oauth-public.js";
 import { buildMetaAdsAuthorizationUrl } from "../../../connectors/meta-ads/oauth-public.js";
 import { buildMomenceAuthorizationUrl } from "../../../connectors/momence/oauth-public.js";
@@ -19,7 +20,7 @@ import {
 } from "../../../packages/security/src/index.js";
 
 export const oauthProviders = [
-  "lightspeed", "xero", "deputy", "square",
+  "lightspeed", "lightspeed-x", "xero", "deputy", "square",
   "shopify", "stripe", "momence", "meta-ads", "google-ads",
 ] as const;
 export type OAuthWebProvider = (typeof oauthProviders)[number];
@@ -44,6 +45,7 @@ type OAuthCookie = Readonly<{
 
 const providerToConnector = {
   lightspeed: "lightspeed-r",
+  "lightspeed-x": "lightspeed-x",
   xero: "xero",
   deputy: "deputy",
   square: "square",
@@ -224,6 +226,14 @@ export async function beginOAuthFlow(input: Readonly<{
       scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
     });
   }
+  if (input.provider === "lightspeed-x") {
+    return buildLightspeedXAuthorizationUrl({
+      clientId: requiredEnvironment("LIGHTSPEED_X_CLIENT_ID"),
+      state,
+      redirectUri,
+      scopes: result.scopes,
+    });
+  }
   if (input.provider === "xero") {
     return buildXeroAuthorizationUrl({
       clientId: requiredEnvironment("XERO_CLIENT_ID"),
@@ -315,6 +325,10 @@ export async function finishOAuthFlow(input: Readonly<{
   code: string;
   tenantId: string;
   userId: string;
+  /** X-Series callback retailer identity; absent for central-host vendors. */
+  domainPrefix?: string;
+  /** X-Series callback scope echo; token-exchange scope remains authoritative. */
+  returnedScope?: string;
 }>): Promise<OAuthCallbackResult> {
   const cookieStore = await cookies();
   const cookieToken = cookieStore.get(cookieName(input.provider))?.value;
@@ -354,6 +368,8 @@ export async function finishOAuthFlow(input: Readonly<{
       redirectUri: state.redirectUri,
       stateNonceHash: await sha256(state.nonce),
       code: input.code,
+      ...(input.domainPrefix ? { domainPrefix: input.domainPrefix } : {}),
+      ...(input.returnedScope ? { returnedScope: input.returnedScope } : {}),
     });
     // Consume the cookie only after the durable worker completed. A transport
     // failure or 5xx can then retry the same bounded callback safely.

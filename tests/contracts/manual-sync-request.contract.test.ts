@@ -5,10 +5,10 @@ import test from "node:test";
 const root = new URL("../../", import.meta.url);
 
 async function migrationSql(): Promise<string> {
-  // 0092 supersedes 0087's definer with the queue-contract-complete payload;
-  // the structural assertions read the executable version.
+  // 0123 supersedes 0092 with generation-bound Shopify activation while
+  // retaining the queue-contract-complete coordinator payload.
   return readFile(
-    new URL("infra/migrations/control-plane/0092_m2_manual_sync_coordinator_payload.sql", root),
+    new URL("infra/migrations/control-plane/0123_m2_shopify_generation_activation.sql", root),
     "utf8",
   );
 }
@@ -45,13 +45,56 @@ test("manual sync enqueues an InitialBackfill coordinator, never a stream-less I
   assert.match(payload, /'connectionGeneration',\s*v_connection\.connection_generation/u);
 });
 
-test("manual sync requests are idempotent within a minute bucket", async () => {
+test("manual sync requests are connection-locked and return an existing current-generation run", async () => {
   const sql = await migrationSql();
+  assert.match(sql, /WHERE connection\.tenant_id = v_tenant_id[\s\S]*FOR UPDATE/u);
+  assert.match(sql, /request\.payload ->> 'connectionGeneration' = v_connection\.connection_generation::text/u);
+  assert.match(sql, /NOT v_activating OR request\.job_type = 'InitialBackfill'/u);
+  assert.match(sql, /run\.connection_generation = v_connection\.connection_generation/u);
+  assert.match(sql, /RETURN QUERY SELECT true, v_existing_run_id, NULL::text/u);
   assert.match(sql, /floor\(extract\(epoch FROM now\(\)\) \/ 60\)/u);
   assert.match(sql, /'manual:' \|\| v_connection\.connection_id \|\| ':' \|\| v_bucket::text/u);
-  // An in-flight run is reported, not doubled.
-  assert.match(sql, /run\.status IN \('queued', 'running', 'retry_wait'\)/u);
-  assert.match(sql, /'sync_already_running'/u);
+  assert.match(sql, /'manual-activation:' \|\| v_connection\.connection_id \|\| ':g'/u);
+  assert.match(sql, /SELECT \* INTO v_receipt FROM control_plane\.enqueue_sync_job/u);
+  assert.match(sql, /IF NOT coalesce\(v_receipt\.created, false\)/u);
+  assert.match(sql, /IF NOT coalesce\(control_plane\.is_ulid\(v_run_id\), false\)/u);
+});
+
+test("Shopify activation and queue publication are atomic and generation bound", async () => {
+  const sql = await migrationSql();
+
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS ingestion_activated_generation bigint/u);
+  assert.match(
+    sql,
+    /ingestion_activated_generation BETWEEN 1 AND connection_generation/u,
+  );
+  assert.match(
+    sql,
+    /v_connection\.ingestion_start_mode = 'manual' AND NOT v_was_activated[\s\S]*SET ingestion_activated_generation = connection\.connection_generation[\s\S]*control_plane\.enqueue_sync_job/u,
+  );
+  const activationAt = sql.indexOf("IF v_activating THEN");
+  const ledgerAt = sql.indexOf("FROM control_plane.sync_job_requests AS request", activationAt);
+  const enqueueAt = sql.indexOf("SELECT * INTO v_receipt FROM control_plane.enqueue_sync_job", ledgerAt);
+  assert.ok(
+    activationAt > -1 && ledgerAt > activationAt && enqueueAt > ledgerAt,
+    "activation must precede receipt reuse and queue publication in the locked transaction",
+  );
+  assert.match(sql, /'connection\.ingestion_activated'/u);
+  assert.match(sql, /'connectionGeneration', v_connection\.connection_generation/u);
+});
+
+test("every trusted publication path fails closed or skips unactivated Shopify", async () => {
+  const sql = await migrationSql();
+
+  assert.match(
+    sql,
+    /activated_generation IS DISTINCT FROM current_generation[\s\S]*ingestion has not been activated for this connection generation/u,
+  );
+  assert.equal(
+    sql.match(/AND connection\.ingestion_activated_generation = connection\.connection_generation/gu)?.length,
+    4,
+    "incremental, auth recovery, reconciliation, and phase recovery must all require current-generation activation",
+  );
 });
 
 test("manual sync rate limit is seeded in the migration for the FK-referenced policy table", async () => {
@@ -70,12 +113,14 @@ test("manual sync declines with codes the boundary owns copy for, and audits acc
   const route = await routeSource();
 
   const declineCodes = [
+    "invalid_connection_id",
     "no_active_organisation",
     "insufficient_role",
     "connection_not_found",
     "connection_not_connected",
+    "reauthorisation_required",
     "account_not_selected",
-    "sync_already_running",
+    "ingestion_blocked",
   ];
   for (const code of declineCodes) {
     assert.match(sql, new RegExp(`'${code}'`, "u"), `definer must return ${code}`);

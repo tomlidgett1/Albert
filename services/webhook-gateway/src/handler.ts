@@ -15,6 +15,10 @@ import {
   type WebhookConnection,
 } from "./store.js";
 import type { XeroWebhookIngress } from "./xero-inbox.js";
+import {
+  ShopifyWebhookValidationError,
+  type ShopifyComplianceWebhookIngress,
+} from "./shopify-compliance.js";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const DEPUTY_PATH = /^\/v1\/webhooks\/deputy\/([0-9A-HJKMNP-TV-Z]{26})\/([0-9A-HJKMNP-TV-Z]{26})$/;
@@ -61,6 +65,13 @@ async function webhookBody(request: Request): Promise<Uint8Array> {
 }
 
 function errorResponse(error: unknown): Response {
+  if (error instanceof ShopifyWebhookValidationError) {
+    if (error.code === "signature_invalid") {
+      return result(401, { error: "invalid_signature" });
+    }
+    if (error.code === "topic_unsupported") return result(404, { error: "not_found" });
+    return result(400, { error: "invalid_payload" });
+  }
   if (error instanceof XeroWebhookValidationError) {
     if (error.code === "signature_invalid") return result(401, { error: "invalid_signature" });
     if (error.code === "payload_too_large") return result(413, { error: "payload_too_large" });
@@ -84,6 +95,7 @@ export class WebhookGatewayHandler {
   constructor(private readonly dependencies: Readonly<{
     store: Pick<WebhookStore, "reserve" | "attachRaw" | "finalize" | "markFailed">;
     xero: Pick<XeroWebhookIngress, "accept">;
+    shopify: Pick<ShopifyComplianceWebhookIngress, "accept">;
     deputy: Readonly<{
       resolver: Pick<DeputyWebhookResolver, "resolve">;
       verifier: Pick<DeputyWebhookVerifier, "verify">;
@@ -119,6 +131,22 @@ export class WebhookGatewayHandler {
           queued: accepted.status !== "processed",
           duplicate: !accepted.created,
           intentToReceive: accepted.intentToReceive,
+        });
+      }
+
+      if (pathname === "/v1/webhooks/shopify/compliance") {
+        // Compliance is always on, including before Start ingestion and after
+        // uninstall. Authentication uses only the app secret and exact bytes;
+        // the accepted envelope never enters raw source storage.
+        const accepted = await this.dependencies.shopify.accept(
+          body,
+          request.headers,
+          receivedAt,
+        );
+        return result(200, {
+          accepted: true,
+          duplicate: accepted.duplicate,
+          status: accepted.status,
         });
       }
 

@@ -18,6 +18,9 @@ const runtimeProfileSchema = z.object({
   model: z.string().nullish(),
   reasoningEffort: z.string().nullish(),
   fastMode: z.boolean().nullish(),
+  runtime: z.string().nullish(),
+  analyticalRuntime: z.string().nullish(),
+  provider: z.string().nullish(),
 });
 
 const conversationSummarySchema = z.object({
@@ -87,6 +90,13 @@ const connectionDisconnectSchema = z.object({
   status: z.enum(["queued", "running", "retry_wait", "verifying", "failed"]),
 }).strict();
 
+const connectorRoutingWorkspaceSchema = z.object({
+  connections: z.array(z.object({
+    connector_key: z.string().trim().min(1).max(80),
+    status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
+  }).passthrough()).default([]),
+}).passthrough();
+
 const tenantDeletionReceiptSchema = z.object({
   deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   status: z.enum([
@@ -126,13 +136,17 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "conversation.turn": Object.freeze({ limit: 20, windowSeconds: 60 }),
   // Cheap nano titles; keep separate so sidebar backfill cannot starve turns.
   "conversation.title": Object.freeze({ limit: 40, windowSeconds: 60 }),
+  "conversation.transcribe": Object.freeze({ limit: 30, windowSeconds: 60 }),
   "oauth.start": Object.freeze({ limit: 5, windowSeconds: 600 }),
   "oauth.callback": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.select": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.disconnect": Object.freeze({ limit: 5, windowSeconds: 3_600 }),
   "review.mutation": Object.freeze({ limit: 30, windowSeconds: 60 }),
+  "dashboard.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "dashboard.refresh": Object.freeze({ limit: 12, windowSeconds: 60 }),
   // A backfill is expensive and vendor-rate-limited; cap it far below click speed.
   "connection.manual_sync": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  "connection.start_ingestion": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;
@@ -234,6 +248,30 @@ export async function loadConnectionsWorkspace(): Promise<unknown> {
   const { data, error } = await supabase.rpc("albert_connections_workspace");
   if (error) throw new ControlPlaneError("Connection status could not be loaded.", 503);
   return toConnectionsWorkspace(singleton(data), context.timezone);
+}
+
+/**
+ * Return the authenticated tenant's connector keys that may still have a
+ * readable analytical surface. Pending connections have never become usable;
+ * disconnected connections are in the deletion lifecycle. Degraded and
+ * blocked connections remain visible because governed historical data can
+ * still be queryable with an explicit freshness qualification.
+ */
+export async function loadActiveConnectorKeys(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<readonly string[]> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_connections_workspace");
+  if (error) throw new ControlPlaneError("Connection routing state could not be loaded.", 503);
+  const parsed = connectorRoutingWorkspaceSchema.safeParse(singleton(data));
+  if (!parsed.success) {
+    throw new ControlPlaneError("Connection routing state returned invalid data.", 503);
+  }
+  return Object.freeze([...new Set(
+    parsed.data.connections
+      .filter(({ status }) => status !== "pending" && status !== "disconnected")
+      .map(({ connector_key: connectorKey }) => connectorKey),
+  )].sort());
 }
 
 export async function disconnectConnection(
@@ -385,6 +423,51 @@ export async function consumeAlbertRateLimit(
     remaining: parsed.data.remaining,
     limit: policy.limit,
   });
+}
+
+const usageEntrySchema = z.object({
+  usageLedgerId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  turnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  recordedAt: z.string(),
+  model: z.string().min(1),
+  fastMode: z.boolean(),
+  requests: z.coerce.number().int().nonnegative(),
+  inputTokens: z.coerce.number().int().nonnegative(),
+  outputTokens: z.coerce.number().int().nonnegative(),
+  cachedInputTokens: z.coerce.number().int().nonnegative(),
+  estimatedCostUsdMicros: z.coerce.number().int().nonnegative(),
+  query: z.string().nullable().transform((value) => value ?? ""),
+  conversationTitle: z.string().nullable(),
+}).strict();
+
+const usageWorkspaceSchema = z.object({
+  entries: z.array(usageEntrySchema),
+  totals: z.object({
+    queries: z.coerce.number().int().nonnegative(),
+    inputTokens: z.coerce.number().int().nonnegative(),
+    outputTokens: z.coerce.number().int().nonnegative(),
+    estimatedCostUsdMicros: z.coerce.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+export type ModelUsageEntry = z.infer<typeof usageEntrySchema>;
+export type ModelUsageWorkspace = z.infer<typeof usageWorkspaceSchema>;
+
+export async function listModelUsage(limit = 100): Promise<ModelUsageWorkspace> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_list_model_usage", {
+    p_limit: Math.max(1, Math.min(200, Math.trunc(limit))),
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new ControlPlaneError("The Albert control-plane migration is not deployed.", 503);
+    }
+    throw new ControlPlaneError("Usage history could not be loaded.", 503);
+  }
+  const parsed = usageWorkspaceSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Usage history returned invalid state.", 503);
+  return parsed.data;
 }
 
 export class ControlPlaneError extends Error {

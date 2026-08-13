@@ -8,7 +8,7 @@
  */
 
 import { sanitizeTraceText, type TraceProvenance } from "../../../packages/shared/src/index.js";
-import type { GovernedResult } from "../../../packages/agent/src/semantic-tools.js";
+import type { GovernedResult } from "../../../packages/agent/src/v3-contracts.js";
 import { governedTerm, governedTermList } from "./live-terms.js";
 
 const MONTHS_LONG = [
@@ -569,6 +569,9 @@ export function unavailableEvidenceExplanation(
   readableCheckName: (checkId: string) => string,
 ): string {
   const missing = [...new Set(evidence.flatMap((item) => item.capabilities?.missing ?? []))];
+  if (missing.some((item) => /semantic_service|fly_semantic/iu.test(item))) {
+    return "Fly is not connected. The semantic query service could not be reached, so no figures are available.";
+  }
   if (missing.length > 0) {
     return `I can't answer this from the sources connected today. It needs ${governedTermList(missing, 4)}, which no connected source currently provides. Connecting a source that supplies it would unlock this answer.`;
   }

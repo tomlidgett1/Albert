@@ -95,6 +95,8 @@ jobs:
       - run: npm ci
       - run: npm run migrate -- --target=analytical --bootstrap
       - run: npm run migrate -- --target=analytical
+      - name: Prove the Momence 0152 to 0153 production upgrade path
+        run: npx tsx scripts/test-momence-0153-upgrade.mts
       - run: npm run provision:runtime-logins -- --target=analytical
       - run: npm run provision:analytical-capability-key -- --target=analytical
       - run: npm run test:lightspeed-supplier-transform
@@ -111,6 +113,7 @@ jobs:
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-canonical-record-hardening.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-multi-account-authority.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-reconciliation-lifecycle.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-momence-reconciliation-policy.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-durable-reconciliation-findings.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-lookup-backed-statuses.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-run-bound-pipeline-stats.sql
@@ -295,17 +298,6 @@ jobs:
           -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
         env:
           PGPASSWORD: ci-control-sync-password-00000000001
-      - name: Record protected dogfood transform-worker deployment observation
-        run: >-
-          psql -h 127.0.0.1 -p 54322 -U albert_transform_control_runtime -d postgres
-          -v ON_ERROR_STOP=1
-          -v dogfood_login=albert_transform_control_runtime
-          -v dogfood_group=albert_transform_control
-          -v dogfood_worker_id=ci-dogfood-transform
-          -v dogfood_service=transform-worker
-          -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
-        env:
-          PGPASSWORD: ci-control-transform-password-0000001
       - name: Record protected dogfood deletion-worker deployment observation
         run: >-
           psql -h 127.0.0.1 -p 54322 -U albert_deletion_control_runtime -d postgres

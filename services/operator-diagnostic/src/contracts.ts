@@ -13,6 +13,47 @@ export const operatorDiagnosticRequestSchema = z.object({
   revealId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
 }).strict();
 
+const shopifyReferenceSchema = z.string().regex(/^(0|[1-9][0-9]{0,29})$/u);
+
+export const shopifyPrivacyExportRequestSchema = z.object({
+  exportId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+}).strict();
+
+export const shopifyPrivacyExportGrantSchema = z.object({
+  export_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  case_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  tenant_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  connection_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  customer_reference: shopifyReferenceSchema.nullable(),
+  order_references: z.array(shopifyReferenceSchema).max(5_000),
+  data_request_reference: shopifyReferenceSchema,
+  expires_at: z.string().min(1),
+  analytical_capability: z.string().min(100).max(4_096),
+}).strict();
+
+const shopifyPrivacyRecordSchema = z.record(z.string(), z.unknown());
+const shopifyPrivacyCollectionSchema = z.object({
+  name: z.enum([
+    "customers","orders","order_lines","transactions","refund_lines",
+    "fulfillments","returns","metafield_values","long_tail_fields",
+    "normalized_source_records",
+  ]),
+  records: z.array(shopifyPrivacyRecordSchema),
+}).strict();
+
+export const shopifyPrivacyArtifactSchema = z.object({
+  schemaVersion: z.literal(1),
+  exportId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  caseId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
+  generatedAt: z.string().datetime({ offset: true }),
+  source: z.literal("albert_shopify_customer_data"),
+  customerReference: shopifyReferenceSchema.nullable(),
+  orderReferences: z.array(shopifyReferenceSchema).max(5_000),
+  dataRequestReference: shopifyReferenceSchema,
+  collections: z.array(shopifyPrivacyCollectionSchema).length(10),
+  recordCount: z.number().int().nonnegative(),
+}).strict();
+
 export const operatorDiagnosticGrantSchema = z.object({
   reveal_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
   tenant_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
@@ -62,6 +103,8 @@ export const protectedDogfoodOnboardingReceiptSchema = z.object({
 
 export type OperatorDiagnosticGrant = z.infer<typeof operatorDiagnosticGrantSchema>;
 export type OperatorDiagnosticSample = z.infer<typeof operatorDiagnosticSampleSchema>;
+export type ShopifyPrivacyExportGrant = z.infer<typeof shopifyPrivacyExportGrantSchema>;
+export type ShopifyPrivacyArtifact = z.infer<typeof shopifyPrivacyArtifactSchema>;
 export type ProtectedDogfoodOnboardingReceiptRequest = z.infer<
   typeof protectedDogfoodOnboardingReceiptRequestSchema
 >;

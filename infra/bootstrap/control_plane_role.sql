@@ -285,6 +285,35 @@ REVOKE ALL ON FUNCTION extensions.albert_install_deletion_queue()
 GRANT EXECUTE ON FUNCTION extensions.albert_install_deletion_queue()
   TO albert_control_migration_owner;
 
+-- Shopify customer privacy work is deliberately isolated from ingestion. The
+-- least-privilege deletion worker claims this queue: customer redaction enters
+-- verified full-connection erasure and data requests become durable operator
+-- export/delivery cases. Queue receipt alone is never fulfilment evidence.
+CREATE OR REPLACE FUNCTION extensions.albert_install_shopify_privacy_queue()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pgmq
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pgmq.meta WHERE queue_name = 'albert_shopify_privacy'
+  ) THEN
+    PERFORM pgmq.create('albert_shopify_privacy');
+  END IF;
+  GRANT ALL PRIVILEGES ON TABLE
+    pgmq.q_albert_shopify_privacy,
+    pgmq.a_albert_shopify_privacy
+  TO albert_control_migration_owner;
+  GRANT ALL PRIVILEGES ON SEQUENCE pgmq.q_albert_shopify_privacy_msg_id_seq
+  TO albert_control_migration_owner;
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_shopify_privacy_queue()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_shopify_privacy_queue()
+  TO albert_control_migration_owner;
+
 -- pg_cron records current_user as the job identity and later executes with
 -- that identity's permissions. The DDL owner is intentionally NOLOGIN, so it
 -- must never own scheduled jobs. This administrator-owned, fixed-input wrapper
