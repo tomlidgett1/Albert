@@ -40,7 +40,10 @@ function resultRedirect(
   url.searchParams.set("view", "Connections");
   url.searchParams.set("provider", provider);
   url.searchParams.set("oauth", status);
-  if (detail && process.env.NODE_ENV !== "production") {
+  // Vendor error strings are the owner's own connection diagnostics; the UI
+  // renders them as plain text. Hiding them in production made OAuth failures
+  // undiagnosable.
+  if (detail) {
     url.searchParams.set("oauth_detail", detail.slice(0, 280));
   }
   return Response.redirect(url, 302);
@@ -53,7 +56,20 @@ export async function GET(
   const { provider } = await params;
   if (!isOAuthWebProvider(provider)) return resultRedirect(request, provider, "unknown_provider");
   const callback = new URL(request.url);
-  if (callback.searchParams.get("error")) return resultRedirect(request, provider, "cancelled");
+  const vendorError = callback.searchParams.get("error");
+  if (vendorError) {
+    // The vendor refused before our flow ran. Surface its actual reason —
+    // "cancelled" alone made provider-side misconfiguration undiagnosable.
+    const description = callback.searchParams.get("error_description")
+      ?? callback.searchParams.get("error_hint") ?? "";
+    console.error("oauth.vendor_error", { provider, vendorError, description });
+    return resultRedirect(
+      request,
+      provider,
+      "cancelled",
+      [vendorError, description].filter(Boolean).join(": ").slice(0, 200),
+    );
+  }
   const state = callback.searchParams.get("state");
   const code = callback.searchParams.get("code");
   if (!state || !code) return resultRedirect(request, provider, "invalid_callback");
