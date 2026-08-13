@@ -423,27 +423,32 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   if (lane === "quick" || lane === "explain") {
     finalAnswer = await runQuickLane(laneInput);
     // A quick question that turned out to need more work falls through to the
-    // analytical lane rather than returning a half answer. Grok already retried
-    // the investigation pass when it skipped tools, so do not pay for a third
-    // xAI round on the same empty evidence.
+    // analytical lane rather than returning a half answer. That covers three
+    // shapes: no terminal answer at all, an answer produced without any query,
+    // and an explicit state=Escalate (the quick lane found evidence it could
+    // not reconcile within its budget). Grok already retried the investigation
+    // pass when it skipped tools, so do not pay for a third xAI round on the
+    // same empty evidence.
     const grokAlreadyRetriedInvestigation = isXaiModel(options.preferences.model) && lane !== "explain";
-    if (!finalAnswer) {
-      finalAnswer = await runAnalyticalLane(laneInput);
-    } else if (
-      lane === "quick"
+    const ranNoQueries = lane === "quick"
       && context.executedQueries.length === 0
-      && !grokAlreadyRetriedInvestigation
-    ) {
+      && !grokAlreadyRetriedInvestigation;
+    const askedToEscalate = lane === "quick" && finalAnswer?.state === "Escalate";
+    if (!finalAnswer || ranNoQueries || askedToEscalate) {
+      // A surprise refills the budget: escalation must never stop one query
+      // short of the answer because the first pass spent its allowance.
       context.budget.maxQueries = Math.max(
         context.budget.maxQueries,
-        config.lanes.analytical.maxQueries,
+        context.budget.executed + config.lanes.analytical.maxQueries,
       );
       await emit({
         type: "progress",
         status: "running",
         stage: "query",
-        label: "Looking up the figures",
-        detail: "The first pass did not run a data query.",
+        label: askedToEscalate ? "Digging deeper" : "Looking up the figures",
+        detail: askedToEscalate
+          ? "The first pass found evidence it could not reconcile."
+          : "The first pass did not run a data query.",
         progress: 0.2,
       });
       finalAnswer = await runAnalyticalLane(laneInput);
@@ -469,9 +474,12 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   }
 
   const rowsSeen = context.executedQueries.reduce((total, query) => total + query.rowCount, 0);
+  // Escalate is an engine-internal handoff, not a terminal state. If a lane
+  // with no deeper pass left still returns it, ship the evidence gathered as
+  // exploratory rather than a dead end.
   const state = groundedAnswerState({
     lane,
-    requested: finalAnswer.state,
+    requested: finalAnswer.state === "Escalate" ? "Exploratory" : finalAnswer.state,
     queriesExecuted: context.executedQueries.length,
     rowsSeen,
   });

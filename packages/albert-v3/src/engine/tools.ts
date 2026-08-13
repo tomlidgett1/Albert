@@ -23,7 +23,7 @@ import {
   hydrateViewSchemas,
   searchSemanticCatalogue,
 } from "../cube/catalogue.js";
-import type { CubeQuery } from "../cube/types.js";
+import type { CubeFilter, CubeQuery } from "../cube/types.js";
 import { findSkill, renderSkillsCatalogue } from "../agent-config/loader.js";
 import {
   shopifyQLCatalogueInputSchema,
@@ -600,6 +600,126 @@ function toTraceCell(value: unknown): TraceCell {
   return JSON.stringify(value).slice(0, 400);
 }
 
+const DATE_RELAXABLE_OPERATORS: ReadonlySet<string> = new Set([
+  "inDateRange", "notInDateRange", "beforeDate", "afterDate",
+]);
+const EMPTY_RESULT_DIAGNOSTIC_CAP = 3;
+const EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS = 36;
+
+type RelaxedDateConstraints = Readonly<{
+  /** The date-constrained member the diagnostic groups by. */
+  member: string;
+  /** Human-readable descriptions of every dropped date constraint. */
+  dropped: readonly string[];
+  diagnostic: CubeQuery;
+}>;
+
+/**
+ * Rebuilds a query with its date constraints removed, grouped monthly on the
+ * constrained member, so an empty windowed result can be explained by where
+ * the data actually falls. Returns null when the query carries no date
+ * constraint, or when one is nested inside boolean filter groups that cannot
+ * be relaxed without changing the query's meaning.
+ */
+export function relaxDateConstraints(query: CubeQuery): RelaxedDateConstraints | null {
+  const dropped: string[] = [];
+  let member: string | undefined;
+  for (const td of query.timeDimensions ?? []) {
+    if (!td.dateRange && !td.compareDateRange) continue;
+    member ??= td.dimension;
+    const range = td.dateRange ?? td.compareDateRange;
+    dropped.push(`${td.dimension} in ${JSON.stringify(range)}`);
+  }
+  const keptFilters: CubeFilter[] = [];
+  for (const filter of query.filters ?? []) {
+    if (!("member" in filter)) {
+      // A date operator nested in and/or groups cannot be dropped without
+      // altering the group's meaning; better no diagnostic than a wrong one.
+      if (/"(inDateRange|notInDateRange|beforeDate|afterDate)"/u.test(JSON.stringify(filter))) {
+        return null;
+      }
+      keptFilters.push(filter);
+      continue;
+    }
+    if (DATE_RELAXABLE_OPERATORS.has(filter.operator)) {
+      member ??= filter.member;
+      dropped.push(`${filter.member} ${filter.operator} ${(filter.values ?? []).join("..")}`);
+      continue;
+    }
+    keptFilters.push(filter);
+  }
+  if (!member) return null;
+  return {
+    member,
+    dropped,
+    diagnostic: {
+      ...(query.measures?.length ? { measures: query.measures } : {}),
+      ...(query.segments?.length ? { segments: query.segments } : {}),
+      timeDimensions: [{ dimension: member, granularity: "month" }],
+      ...(keptFilters.length > 0 ? { filters: keptFilters } : {}),
+      order: { [member]: "asc" },
+      limit: 120,
+      ...(query.timezone ? { timezone: query.timezone } : {}),
+    },
+  };
+}
+
+/**
+ * A zero-row result under a date constraint is a lead, not an answer. This
+ * free diagnostic (it never consumes the query budget) reruns the query
+ * without its date constraints so the model sees where the data actually
+ * falls instead of guessing why the window is empty. Best effort: any failure
+ * leaves the empty result standing alone.
+ */
+async function explainEmptyDateWindow(
+  context: V3TurnContext,
+  query: CubeQuery,
+): Promise<Record<string, unknown> | undefined> {
+  const relaxed = relaxDateConstraints(query);
+  if (!relaxed) return undefined;
+  const used = context.emptyResultDiagnostics ?? 0;
+  if (used >= EMPTY_RESULT_DIAGNOSTIC_CAP) return undefined;
+  context.emptyResultDiagnostics = used + 1;
+  let loaded;
+  try {
+    loaded = await context.cube.loadQuery(relaxed.diagnostic, { signal: context.signal });
+  } catch {
+    return undefined;
+  }
+  const { validated, result } = loaded;
+  if (!result.ok || !validated) return undefined;
+  const shortMember = relaxed.member.split(".").at(-1) ?? relaxed.member;
+  const spanKey = result.rows.length > 0
+    ? Object.keys(result.rows[0]!).find((key) => key === relaxed.member || key.startsWith(`${relaxed.member}.`))
+    : undefined;
+  const spanOf = (row: Record<string, unknown> | undefined): string =>
+    spanKey && row ? String(row[spanKey]).slice(0, 10) : "unknown";
+  await context.emit({
+    type: "progress",
+    status: "complete",
+    stage: "query",
+    label: sanitizeTraceText(
+      result.rows.length > 0
+        ? `Empty window — checked where ${shortMember} data actually falls`
+        : `Empty window — no ${shortMember} data exists under these filters at all`,
+      160,
+    ),
+    ...(result.rows.length > 0
+      ? { detail: sanitizeTraceText(`Without the date constraints: data spans ${spanOf(result.rows[0])} to ${spanOf(result.rows.at(-1))}`, 300) }
+      : {}),
+  });
+  return {
+    relaxedDateConstraints: relaxed.dropped,
+    groupedBy: `${relaxed.member} by month`,
+    rowCount: result.rows.length,
+    truncated: result.rows.length > EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS,
+    rows: result.rows.slice(0, EMPTY_RESULT_DIAGNOSTIC_MODEL_ROWS),
+    note: result.rows.length === 0
+      ? "Even without the date constraints this query returns nothing, so the window is not the cause. Suspect the segments or remaining filters: rerun without them and group by the filtered dimensions before concluding anything."
+      : "The requested window is genuinely empty; the rows above show where this data actually falls without the date constraints. Answer with where the data sits (for example everything falls earlier or later than the window) instead of calling the data incomplete. To present these figures, run a governed query; this diagnostic is context only and did not consume the query budget.",
+  };
+}
+
 /**
  * Shared execution path for every query-shaped tool: budget check, validated
  * Cube load, `query` + `table` trace events, provenance registration, and a
@@ -760,6 +880,12 @@ export async function executeGovernedCubeQuery(
     presentation: "evidence",
   });
 
+  // An empty result with a date constraint ships with its own explanation so
+  // the model resolves the emptiness instead of guessing about data quality.
+  const emptyResultDiagnostic = result.rows.length === 0
+    ? await explainEmptyDateWindow(context, validated.query)
+    : undefined;
+
   return {
     ok: true,
     resultId,
@@ -768,6 +894,7 @@ export async function executeGovernedCubeQuery(
     truncated: result.rows.length > MAX_MODEL_ROWS,
     rows: result.rows.slice(0, MAX_MODEL_ROWS),
     executionMs: result.executionMs,
+    ...(emptyResultDiagnostic ? { emptyResultDiagnostic } : {}),
   };
 }
 

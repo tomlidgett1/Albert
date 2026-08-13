@@ -76,6 +76,11 @@ export type V3TurnContext = {
    * budget so exploration never starves analysis; capped separately per turn.
    */
   entityLookups?: number;
+  /**
+   * Free zero-row autopsies (date constraints relaxed to show where the data
+   * actually falls) run outside the query budget; capped per turn.
+   */
+  emptyResultDiagnostics?: number;
   catalogueSearches?: number;
   catalogueSchemaLoads?: number;
   shopifyQLCatalogueSearches?: number;
