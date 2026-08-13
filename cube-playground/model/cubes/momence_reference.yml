@@ -319,11 +319,11 @@ cubes:
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
       - { name: tag_id, sql: record_id, type: string, public: false }
-      - { name: tag_name, sql: "COALESCE(NULLIF(payload_json ->> 'name', ''), name)", type: string }
-      - { name: badge_label, sql: "payload_json ->> 'badgeLabel'", type: string }
-      - { name: badge_color, sql: "payload_json ->> 'badgeColor'", type: string }
-      - { name: corporate_tag_id, sql: "payload_json ->> 'corporateTagId'", type: string, public: false }
-      - { name: is_customer_badge, sql: "COALESCE((payload_json ->> 'isCustomerBadge')::boolean, false)", type: boolean }
+      - { name: tag_name, sql: "COALESCE(NULLIF({CUBE}.payload_json ->> 'name', ''), name)", type: string }
+      - { name: badge_label, sql: "{CUBE}.payload_json ->> 'badgeLabel'", type: string }
+      - { name: badge_color, sql: "{CUBE}.payload_json ->> 'badgeColor'", type: string }
+      - { name: corporate_tag_id, sql: "{CUBE}.payload_json ->> 'corporateTagId'", type: string, public: false }
+      - { name: is_customer_badge, sql: "COALESCE(({CUBE}.payload_json ->> 'isCustomerBadge')::boolean, false)", type: boolean }
     measures:
       - { name: tags, type: count }
       - name: customer_badge_tags

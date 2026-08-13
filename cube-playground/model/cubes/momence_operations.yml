@@ -72,20 +72,20 @@ cubes:
       )
       SELECT t.*,
              COALESCE(
-               NULLIF(BTRIM(CONCAT_WS(' ', payload_json ->> 'firstName', payload_json ->> 'lastName')), ''),
+               NULLIF(BTRIM(CONCAT_WS(' ', {CUBE}.payload_json ->> 'firstName', {CUBE}.payload_json ->> 'lastName')), ''),
                NULLIF(name, ''),
                'Member ' || record_id
              ) AS cc_full_name,
-             NULLIF(payload_json ->> 'firstSeen', '')::timestamptz AS cc_first_seen,
-             NULLIF(payload_json ->> 'lastSeen', '')::timestamptz AS cc_last_seen,
-             NULLIF(payload_json #>> ARRAY['visits', 'total'], '')::numeric AS cc_visit_total,
-             NULLIF(payload_json #>> ARRAY['visits', 'totalVisits'], '')::numeric AS cc_total_visits,
-             NULLIF(payload_json #>> ARRAY['visits', 'bookings'], '')::numeric AS cc_session_bookings,
-             NULLIF(payload_json #>> ARRAY['visits', 'bookingsVisits'], '')::numeric AS cc_session_visits,
-             NULLIF(payload_json #>> ARRAY['visits', 'appointments'], '')::numeric AS cc_appointment_bookings,
-             NULLIF(payload_json #>> ARRAY['visits', 'appointmentsVisits'], '')::numeric AS cc_appointment_visits,
-             NULLIF(payload_json #>> ARRAY['visits', 'openAreaVisits'], '')::numeric AS cc_open_area_visits,
-             COALESCE(payload_json -> 'customerTags', '[]'::jsonb)::text AS cc_customer_tags
+             NULLIF({CUBE}.payload_json ->> 'firstSeen', '')::timestamptz AS cc_first_seen,
+             NULLIF({CUBE}.payload_json ->> 'lastSeen', '')::timestamptz AS cc_last_seen,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'total'], '')::numeric AS cc_visit_total,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'totalVisits'], '')::numeric AS cc_total_visits,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'bookings'], '')::numeric AS cc_session_bookings,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'bookingsVisits'], '')::numeric AS cc_session_visits,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'appointments'], '')::numeric AS cc_appointment_bookings,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'appointmentsVisits'], '')::numeric AS cc_appointment_visits,
+             NULLIF({CUBE}.payload_json #>> ARRAY['visits', 'openAreaVisits'], '')::numeric AS cc_open_area_visits,
+             COALESCE({CUBE}.payload_json -> 'customerTags', '[]'::jsonb)::text AS cc_customer_tags
       FROM source_momence.momence_members t
       JOIN latest l USING (tenant_id, connection_id, mapping_version)
       WHERE NOT t.tombstone
@@ -118,18 +118,18 @@ cubes:
         type: string
         title: Member
       - name: email
-        sql: "payload_json ->> 'email'"
+        sql: "{CUBE}.payload_json ->> 'email'"
         type: string
         public: false
       - name: phone_number
-        sql: "payload_json ->> 'phoneNumber'"
+        sql: "{CUBE}.payload_json ->> 'phoneNumber'"
         type: string
         public: false
       - name: has_email
-        sql: "NULLIF(BTRIM(payload_json ->> 'email'), '') IS NOT NULL"
+        sql: "NULLIF(BTRIM({CUBE}.payload_json ->> 'email'), '') IS NOT NULL"
         type: boolean
       - name: has_phone_number
-        sql: "NULLIF(BTRIM(payload_json ->> 'phoneNumber'), '') IS NOT NULL"
+        sql: "NULLIF(BTRIM({CUBE}.payload_json ->> 'phoneNumber'), '') IS NOT NULL"
         type: boolean
       - name: first_seen
         sql: cc_first_seen

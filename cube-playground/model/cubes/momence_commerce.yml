@@ -345,19 +345,19 @@ cubes:
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
       - { name: payment_transaction_id, sql: record_id, type: string }
-      - { name: host_id, sql: "payload_json ->> 'hostId'", type: string, public: false }
-      - { name: payment_status, sql: "payload_json ->> 'paymentStatus'", type: string }
-      - { name: payment_source, sql: "payload_json ->> 'paymentSource'", type: string }
-      - { name: purchase_type, sql: "payload_json ->> 'purchaseType'", type: string }
-      - { name: currency_code, sql: "payload_json ->> 'currency'", type: string }
+      - { name: host_id, sql: "{CUBE}.payload_json ->> 'hostId'", type: string, public: false }
+      - { name: payment_status, sql: "{CUBE}.payload_json ->> 'paymentStatus'", type: string }
+      - { name: payment_source, sql: "{CUBE}.payload_json ->> 'paymentSource'", type: string }
+      - { name: purchase_type, sql: "{CUBE}.payload_json ->> 'purchaseType'", type: string }
+      - { name: currency_code, sql: "{CUBE}.payload_json ->> 'currency'", type: string }
       - { name: created_at, sql: cc_created_at, type: time }
-      - { name: paying_member_id, sql: "payload_json #>> ARRAY['payingMember', 'id']", type: string, public: false }
-      - { name: paying_member_name, sql: "NULLIF(BTRIM(CONCAT_WS(' ', payload_json #>> ARRAY['payingMember', 'firstName'], payload_json #>> ARRAY['payingMember', 'lastName'])), '')", type: string }
-      - { name: paying_member_email, sql: "payload_json #>> ARRAY['payingMember', 'email']", type: string, public: false }
-      - { name: paying_member_phone, sql: "payload_json #>> ARRAY['payingMember', 'phoneNumber']", type: string, public: false }
-      - { name: failure_reason, sql: "payload_json #>> ARRAY['failure', 'failureReason']", type: string }
-      - { name: is_apple_pay, sql: "COALESCE((payload_json #>> ARRAY['metadata', 'isApplePay'])::boolean, false)", type: boolean }
-      - { name: is_google_pay, sql: "COALESCE((payload_json #>> ARRAY['metadata', 'isGooglePay'])::boolean, false)", type: boolean }
+      - { name: paying_member_id, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'id']", type: string, public: false }
+      - { name: paying_member_name, sql: "NULLIF(BTRIM(CONCAT_WS(' ', {CUBE}.payload_json #>> ARRAY['payingMember', 'firstName'], {CUBE}.payload_json #>> ARRAY['payingMember', 'lastName'])), '')", type: string }
+      - { name: paying_member_email, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'email']", type: string, public: false }
+      - { name: paying_member_phone, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'phoneNumber']", type: string, public: false }
+      - { name: failure_reason, sql: "{CUBE}.payload_json #>> ARRAY['failure', 'failureReason']", type: string }
+      - { name: is_apple_pay, sql: "COALESCE(({CUBE}.payload_json #>> ARRAY['metadata', 'isApplePay'])::boolean, false)", type: boolean }
+      - { name: is_google_pay, sql: "COALESCE(({CUBE}.payload_json #>> ARRAY['metadata', 'isGooglePay'])::boolean, false)", type: boolean }
       - { name: refund_count, sql: cc_refund_count, type: number }
       - name: coverage_scope
         sql: "'Only transaction IDs discoverable from member notes'"
@@ -414,7 +414,7 @@ cubes:
       - name: net_captured_currency_after_refunds
         type: sum
         sql: >
-          CASE WHEN payload_json ->> 'paymentStatus' = 'succeeded'
+          CASE WHEN {CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'
                THEN COALESCE(cc_paid_currency, 0) - COALESCE(cc_refunded_currency, 0)
                ELSE -COALESCE(cc_refunded_currency, 0) END
         format: currency

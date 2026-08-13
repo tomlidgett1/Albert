@@ -77,33 +77,33 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: sale_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
-      - { name: outlet_id, sql: "jsonb_extract_path_text(payload_json, 'source', 'outlet_id')", type: string, public: false }
-      - { name: register_id, sql: "jsonb_extract_path_text(payload_json, 'source', 'register_id')", type: string, public: false }
-      - { name: author_id, sql: "jsonb_extract_path_text(payload_json, 'source', 'author', 'id')", type: string, public: false }
-      - { name: invoice_number, sql: "payload_json->>'invoice_number'", type: string }
-      - { name: receipt_number, sql: "payload_json->>'receipt_number'", type: string }
-      - { name: short_code, sql: "payload_json->>'short_code'", type: string }
-      - { name: sale_state, sql: "payload_json->>'state'", type: string, description: "parked, pending, voided or closed." }
-      - { name: source_type, sql: "jsonb_extract_path_text(payload_json, 'source', 'type')", type: string }
-      - { name: source_reference, sql: "jsonb_extract_path_text(payload_json, 'source', 'id')", type: string }
+      - { name: sale_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'customer_id'", type: string, public: false }
+      - { name: outlet_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'outlet_id')", type: string, public: false }
+      - { name: register_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'register_id')", type: string, public: false }
+      - { name: author_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'author', 'id')", type: string, public: false }
+      - { name: invoice_number, sql: "{CUBE}.payload_json->>'invoice_number'", type: string }
+      - { name: receipt_number, sql: "{CUBE}.payload_json->>'receipt_number'", type: string }
+      - { name: short_code, sql: "{CUBE}.payload_json->>'short_code'", type: string }
+      - { name: sale_state, sql: "{CUBE}.payload_json->>'state'", type: string, description: "parked, pending, voided or closed." }
+      - { name: source_type, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'type')", type: string }
+      - { name: source_reference, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'id')", type: string }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
-      - { name: sold_at, sql: "(payload_json->>'date')::timestamptz", type: time, title: Sale time (UTC) }
+      - { name: sold_at, sql: "({CUBE}.payload_json->>'date')::timestamptz", type: time, title: Sale time (UTC) }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "({CUBE}.payload_json->>'deleted_at')::timestamptz", type: time }
       - { name: is_closed, sql: "({CUBE}.payload_json->>'state' = 'closed')", type: boolean }
-      - { name: is_return, sql: "COALESCE((jsonb_extract_path_text(payload_json, 'return', 'is_return'))::boolean, false)", type: boolean }
-      - { name: original_sale_id, sql: "jsonb_extract_path_text(payload_json, 'return', 'original_sale_id')", type: string, public: false }
-      - { name: is_on_account, sql: "COALESCE(payload_json->'attributes', '[]'::jsonb) ? 'onaccount'", type: boolean }
-      - { name: is_layby, sql: "COALESCE(payload_json->'attributes', '[]'::jsonb) ? 'layby'", type: boolean }
-      - { name: requires_delivery, sql: "COALESCE(payload_json->'attributes', '[]'::jsonb) ? 'delivery'", type: boolean }
-      - { name: requires_pickup, sql: "COALESCE(payload_json->'attributes', '[]'::jsonb) ? 'pickup'", type: boolean }
-      - { name: is_service_sale, sql: "COALESCE(payload_json->'attributes', '[]'::jsonb) ? 'service'", type: boolean }
+      - { name: is_return, sql: "COALESCE((jsonb_extract_path_text({CUBE}.payload_json, 'return', 'is_return'))::boolean, false)", type: boolean }
+      - { name: original_sale_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'return', 'original_sale_id')", type: string, public: false }
+      - { name: is_on_account, sql: "COALESCE({CUBE}.payload_json->'attributes', '[]'::jsonb) ? 'onaccount'", type: boolean }
+      - { name: is_layby, sql: "COALESCE({CUBE}.payload_json->'attributes', '[]'::jsonb) ? 'layby'", type: boolean }
+      - { name: requires_delivery, sql: "COALESCE({CUBE}.payload_json->'attributes', '[]'::jsonb) ? 'delivery'", type: boolean }
+      - { name: requires_pickup, sql: "COALESCE({CUBE}.payload_json->'attributes', '[]'::jsonb) ? 'pickup'", type: boolean }
+      - { name: is_service_sale, sql: "COALESCE({CUBE}.payload_json->'attributes', '[]'::jsonb) ? 'service'", type: boolean }
       - { name: has_customer, sql: "({CUBE}.payload_json->>'customer_id' IS NOT NULL)", type: boolean }
-      - { name: note, sql: "payload_json->>'note'", type: string, public: false }
+      - { name: note, sql: "{CUBE}.payload_json->>'note'", type: string, public: false }
     measures:
       - { name: sale_records, type: count }
       - name: closed_transactions
@@ -125,29 +125,29 @@ cubes:
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'voided' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: purchasing_customers
-        sql: "payload_json->>'customer_id'"
+        sql: "{CUBE}.payload_json->>'customer_id'"
         type: count_distinct
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL AND COALESCE((jsonb_extract_path_text({CUBE}.payload_json, 'return', 'is_return'))::boolean, false) = false" }]
       - name: gross_sales_including_tax
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value"
         type: sum
         format: currency
         description: Closed non-return earned sales after excluding gift-card loads.
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL AND COALESCE((jsonb_extract_path_text({CUBE}.payload_json, 'return', 'is_return'))::boolean, false) = false" }]
       - name: returns_including_tax
-        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value)"
+        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value)"
         type: sum
         format: currency
         description: Absolute value of closed return sales.
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL AND COALESCE((jsonb_extract_path_text({CUBE}.payload_json, 'return', 'is_return'))::boolean, false)" }]
       - name: net_sales_including_tax
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value"
         type: sum
         format: currency
         description: Signed closed earned sales; return sales subtract naturally.
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: net_sales_excluding_tax
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price'), '')::numeric, 0) - gift_card_load_value_excluding_tax"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price'), '')::numeric, 0) - gift_card_load_value_excluding_tax"
         type: sum
         format: currency
         description: >
@@ -156,17 +156,17 @@ cubes:
           their explicit source tax, preserving the API's two money bases.
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: net_tax
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'tax'), '')::numeric, 0)"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'tax'), '')::numeric, 0)"
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: net_surcharges
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'surcharge'), '')::numeric, 0)"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'surcharge'), '')::numeric, 0)"
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: loyalty_value
-        sql: "COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'loyalty'), '')::numeric, 0)"
+        sql: "COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'loyalty'), '')::numeric, 0)"
         type: sum
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: gift_card_loads
@@ -181,7 +181,7 @@ cubes:
         description: Signed payments embedded in closed sales; not a revenue substitute.
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: current_outstanding_value
-        sql: "(COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value) - payment_value"
+        sql: "(COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0) - gift_card_load_value) - payment_value"
         type: sum
         format: currency
         description: Current sale total less current non-deleted payments; a balance, not a period cash flow.
@@ -522,31 +522,31 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: return_sale_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: original_sale_id, sql: "jsonb_extract_path_text(payload_json, 'return', 'original_sale_id')", type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
-      - { name: outlet_id, sql: "jsonb_extract_path_text(payload_json, 'source', 'outlet_id')", type: string, public: false }
-      - { name: return_invoice_number, sql: "payload_json->>'invoice_number'", type: string }
+      - { name: return_sale_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: original_sale_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'return', 'original_sale_id')", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'customer_id'", type: string, public: false }
+      - { name: outlet_id, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'source', 'outlet_id')", type: string, public: false }
+      - { name: return_invoice_number, sql: "{CUBE}.payload_json->>'invoice_number'", type: string }
       - { name: original_invoice_number, sql: "original_sale_payload->>'invoice_number'", type: string }
-      - { name: return_state, sql: "payload_json->>'state'", type: string }
+      - { name: return_state, sql: "{CUBE}.payload_json->>'state'", type: string }
       - { name: currency_code, sql: "COALESCE(outlet_payload->>'currency', jsonb_extract_path_text(retailer_payload, 'currency', 'code'))", type: string }
-      - { name: returned_at, sql: "(payload_json->>'date')::timestamptz", type: time, title: Return time (UTC) }
+      - { name: returned_at, sql: "({CUBE}.payload_json->>'date')::timestamptz", type: time, title: Return time (UTC) }
       - { name: original_sold_at, sql: "(original_sale_payload->>'date')::timestamptz", type: time }
       - { name: business_date, sql: business_date, type: time, title: Outlet business date }
       - { name: is_closed_return, sql: "({CUBE}.payload_json->>'state' = 'closed')", type: boolean }
-      - { name: days_to_return, sql: "EXTRACT(EPOCH FROM ((payload_json->>'date')::timestamptz - (original_sale_payload->>'date')::timestamptz)) / 86400.0", type: number }
+      - { name: days_to_return, sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'date')::timestamptz - (original_sale_payload->>'date')::timestamptz)) / 86400.0", type: number }
     measures:
       - { name: return_records, type: count }
       - name: closed_returns
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: refund_value_including_tax
-        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0))"
+        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'price_incl_tax'), '')::numeric, 0))"
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
       - name: refunded_tax
-        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text(payload_json, 'totals', 'tax'), '')::numeric, 0))"
+        sql: "ABS(COALESCE(NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'tax'), '')::numeric, 0))"
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.payload_json->>'deleted_at' IS NULL" }]
@@ -555,7 +555,7 @@ cubes:
         type: number
         format: currency
       - name: average_days_to_return
-        sql: "EXTRACT(EPOCH FROM ((payload_json->>'date')::timestamptz - (original_sale_payload->>'date')::timestamptz)) / 86400.0"
+        sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'date')::timestamptz - (original_sale_payload->>'date')::timestamptz)) / 86400.0"
         type: avg
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'closed' AND {CUBE}.original_sale_payload->>'date' IS NOT NULL" }]
 

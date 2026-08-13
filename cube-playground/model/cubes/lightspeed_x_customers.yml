@@ -75,25 +75,25 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: display_name, sql: "COALESCE(NULLIF(payload_json->>'name', ''), NULLIF(TRIM(CONCAT_WS(' ', payload_json->>'first_name', payload_json->>'last_name')), ''), payload_json->>'company_name')", type: string, title: Customer }
-      - { name: company_name, sql: "payload_json->>'company_name'", type: string }
-      - { name: customer_code, sql: "payload_json->>'customer_code'", type: string, public: false }
-      - { name: city, sql: "payload_json->>'physical_city'", type: string }
-      - { name: suburb, sql: "payload_json->>'physical_suburb'", type: string }
-      - { name: state, sql: "payload_json->>'physical_state'", type: string }
-      - { name: postcode, sql: "payload_json->>'physical_postcode'", type: string }
-      - { name: country_code, sql: "payload_json->>'physical_country_id'", type: string }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: display_name, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'name', ''), NULLIF(TRIM(CONCAT_WS(' ', {CUBE}.payload_json->>'first_name', {CUBE}.payload_json->>'last_name')), ''), {CUBE}.payload_json->>'company_name')", type: string, title: Customer }
+      - { name: company_name, sql: "{CUBE}.payload_json->>'company_name'", type: string }
+      - { name: customer_code, sql: "{CUBE}.payload_json->>'customer_code'", type: string, public: false }
+      - { name: city, sql: "{CUBE}.payload_json->>'physical_city'", type: string }
+      - { name: suburb, sql: "{CUBE}.payload_json->>'physical_suburb'", type: string }
+      - { name: state, sql: "{CUBE}.payload_json->>'physical_state'", type: string }
+      - { name: postcode, sql: "{CUBE}.payload_json->>'physical_postcode'", type: string }
+      - { name: country_code, sql: "{CUBE}.payload_json->>'physical_country_id'", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: email_opted_out, sql: "COALESCE((payload_json->>'do_not_email')::boolean, false)", type: boolean }
-      - { name: promotional_sms_enabled, sql: "COALESCE((payload_json->>'enable_promotional_sms')::boolean, false)", type: boolean }
-      - { name: loyalty_enabled, sql: "COALESCE((payload_json->>'enable_loyalty')::boolean, false)", type: boolean }
+      - { name: email_opted_out, sql: "COALESCE(({CUBE}.payload_json->>'do_not_email')::boolean, false)", type: boolean }
+      - { name: promotional_sms_enabled, sql: "COALESCE(({CUBE}.payload_json->>'enable_promotional_sms')::boolean, false)", type: boolean }
+      - { name: loyalty_enabled, sql: "COALESCE(({CUBE}.payload_json->>'enable_loyalty')::boolean, false)", type: boolean }
       - { name: has_email, sql: "(NULLIF({CUBE}.payload_json->>'email', '') IS NOT NULL)", type: boolean }
       - { name: has_mobile, sql: "(NULLIF({CUBE}.payload_json->>'mobile', '') IS NOT NULL)", type: boolean }
-      - { name: current_account_balance, sql: "COALESCE(NULLIF(payload_json->>'balance', '')::numeric, 0)", type: number, format: currency }
-      - { name: current_loyalty_balance, sql: "COALESCE(NULLIF(payload_json->>'loyalty_balance', '')::numeric, 0)", type: number }
-      - { name: on_account_limit, sql: "NULLIF(payload_json->>'on_account_limit', '')::numeric", type: number, format: currency }
-      - { name: source_year_to_date_value, sql: "NULLIF(payload_json->>'year_to_date', '')::numeric", type: number, format: currency, description: Source-managed current year-to-date snapshot; not lifetime value. }
+      - { name: current_account_balance, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'balance', '')::numeric, 0)", type: number, format: currency }
+      - { name: current_loyalty_balance, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'loyalty_balance', '')::numeric, 0)", type: number }
+      - { name: on_account_limit, sql: "NULLIF({CUBE}.payload_json->>'on_account_limit', '')::numeric", type: number, format: currency }
+      - { name: source_year_to_date_value, sql: "NULLIF({CUBE}.payload_json->>'year_to_date', '')::numeric", type: number, format: currency, description: Source-managed current year-to-date snapshot; not lifetime value. }
       - { name: first_purchase_at, sql: first_purchase_at, type: time }
       - { name: last_purchase_at, sql: last_purchase_at, type: time }
       - { name: lifetime_sales, sql: lifetime_sales, type: number }
@@ -103,14 +103,14 @@ cubes:
       - { name: lifetime_refunds, sql: lifetime_refunds, type: number, format: currency }
       - { name: is_repeat_customer, sql: "({CUBE}.lifetime_sales > 1)", type: boolean }
       - { name: days_since_last_purchase, sql: "EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_purchase_at)) / 86400.0", type: number }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
-      - { name: email, sql: "payload_json->>'email'", type: string, public: false }
-      - { name: mobile, sql: "payload_json->>'mobile'", type: string, public: false }
-      - { name: phone, sql: "payload_json->>'phone'", type: string, public: false }
-      - { name: date_of_birth, sql: "(payload_json->>'date_of_birth')::timestamptz", type: time, public: false }
-      - { name: note, sql: "payload_json->>'note'", type: string, public: false }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "({CUBE}.payload_json->>'deleted_at')::timestamptz", type: time }
+      - { name: email, sql: "{CUBE}.payload_json->>'email'", type: string, public: false }
+      - { name: mobile, sql: "{CUBE}.payload_json->>'mobile'", type: string, public: false }
+      - { name: phone, sql: "{CUBE}.payload_json->>'phone'", type: string, public: false }
+      - { name: date_of_birth, sql: "({CUBE}.payload_json->>'date_of_birth')::timestamptz", type: time, public: false }
+      - { name: note, sql: "{CUBE}.payload_json->>'note'", type: string, public: false }
     measures:
       - { name: customers, type: count }
       - name: active_customers
@@ -135,8 +135,8 @@ cubes:
       - { name: total_lifetime_net_spend, sql: lifetime_net_spend, type: sum, format: currency }
       - { name: average_lifetime_net_spend, sql: lifetime_net_spend, type: avg, format: currency }
       - { name: average_lifetime_sales, sql: lifetime_sales, type: avg }
-      - { name: current_customer_account_balance, sql: "COALESCE(NULLIF(payload_json->>'balance', '')::numeric, 0)", type: sum, format: currency, description: Current snapshot across selected customers; never trend over ingestion time. }
-      - { name: current_customer_loyalty_balance, sql: "COALESCE(NULLIF(payload_json->>'loyalty_balance', '')::numeric, 0)", type: sum, description: Current snapshot across selected customers. }
+      - { name: current_customer_account_balance, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'balance', '')::numeric, 0)", type: sum, format: currency, description: Current snapshot across selected customers; never trend over ingestion time. }
+      - { name: current_customer_loyalty_balance, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'loyalty_balance', '')::numeric, 0)", type: sum, description: Current snapshot across selected customers. }
 
   - name: lightspeed_x_gift_cards
     title: Lightspeed X-Series gift cards
@@ -157,26 +157,26 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: gift_card_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: card_last_four, sql: "RIGHT(payload_json->>'number', 4)", type: string, title: Gift card ending }
-      - { name: gift_card_status, sql: "payload_json->>'status'", type: string }
+      - { name: gift_card_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: card_last_four, sql: "RIGHT({CUBE}.payload_json->>'number', 4)", type: string, title: Gift card ending }
+      - { name: gift_card_status, sql: "{CUBE}.payload_json->>'status'", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
-      - { name: lifetime_sold_value, sql: "NULLIF(payload_json->>'total_sold', '')::numeric", type: number, format: currency }
-      - { name: lifetime_redeemed_value, sql: "NULLIF(payload_json->>'total_redeemed', '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: expires_at, sql: "(payload_json->>'expires_at')::timestamptz", type: time }
-      - { name: source_sale_id, sql: "payload_json->>'sale_id'", type: string, public: false }
-      - { name: source_sale_type, sql: "payload_json->>'sale_source'", type: string }
-      - { name: card_number, sql: "payload_json->>'number'", type: string, public: false }
+      - { name: current_balance, sql: "NULLIF({CUBE}.payload_json->>'balance', '')::numeric", type: number, format: currency }
+      - { name: lifetime_sold_value, sql: "NULLIF({CUBE}.payload_json->>'total_sold', '')::numeric", type: number, format: currency }
+      - { name: lifetime_redeemed_value, sql: "NULLIF({CUBE}.payload_json->>'total_redeemed', '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: expires_at, sql: "({CUBE}.payload_json->>'expires_at')::timestamptz", type: time }
+      - { name: source_sale_id, sql: "{CUBE}.payload_json->>'sale_id'", type: string, public: false }
+      - { name: source_sale_type, sql: "{CUBE}.payload_json->>'sale_source'", type: string }
+      - { name: card_number, sql: "{CUBE}.payload_json->>'number'", type: string, public: false }
     measures:
       - { name: gift_cards, type: count }
       - name: active_gift_cards
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'status' = 'ACTIVE'" }]
-      - { name: current_gift_card_liability, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never sum over observations. }
-      - { name: lifetime_gift_card_value_sold, sql: "NULLIF(payload_json->>'total_sold', '')::numeric", type: sum, format: currency }
-      - { name: lifetime_gift_card_value_redeemed, sql: "NULLIF(payload_json->>'total_redeemed', '')::numeric", type: sum, format: currency }
+      - { name: current_gift_card_liability, sql: "NULLIF({CUBE}.payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never sum over observations. }
+      - { name: lifetime_gift_card_value_sold, sql: "NULLIF({CUBE}.payload_json->>'total_sold', '')::numeric", type: sum, format: currency }
+      - { name: lifetime_gift_card_value_redeemed, sql: "NULLIF({CUBE}.payload_json->>'total_redeemed', '')::numeric", type: sum, format: currency }
 
   - name: lightspeed_x_gift_card_transactions
     title: Lightspeed X-Series gift card transactions
@@ -270,18 +270,18 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: store_credit_account_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
+      - { name: store_credit_account_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'customer_id'", type: string, public: false }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: current_balance, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: number, format: currency }
-      - { name: lifetime_credit_issued, sql: "NULLIF(payload_json->>'total_credit_issued', '')::numeric", type: number, format: currency }
-      - { name: lifetime_credit_redeemed, sql: "NULLIF(payload_json->>'total_credit_redeemed', '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: current_balance, sql: "NULLIF({CUBE}.payload_json->>'balance', '')::numeric", type: number, format: currency }
+      - { name: lifetime_credit_issued, sql: "NULLIF({CUBE}.payload_json->>'total_credit_issued', '')::numeric", type: number, format: currency }
+      - { name: lifetime_credit_redeemed, sql: "NULLIF({CUBE}.payload_json->>'total_credit_redeemed', '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
     measures:
       - { name: store_credit_accounts, type: count }
-      - { name: current_store_credit_liability, sql: "NULLIF(payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never trend over ingestion observations. }
-      - { name: lifetime_store_credit_issued, sql: "NULLIF(payload_json->>'total_credit_issued', '')::numeric", type: sum, format: currency }
-      - { name: lifetime_store_credit_redeemed, sql: "NULLIF(payload_json->>'total_credit_redeemed', '')::numeric", type: sum, format: currency }
+      - { name: current_store_credit_liability, sql: "NULLIF({CUBE}.payload_json->>'balance', '')::numeric", type: sum, format: currency, description: Current balance snapshot; never trend over ingestion observations. }
+      - { name: lifetime_store_credit_issued, sql: "NULLIF({CUBE}.payload_json->>'total_credit_issued', '')::numeric", type: sum, format: currency }
+      - { name: lifetime_store_credit_redeemed, sql: "NULLIF({CUBE}.payload_json->>'total_credit_redeemed', '')::numeric", type: sum, format: currency }
 
   - name: lightspeed_x_store_credit_transactions
     title: Lightspeed X-Series store-credit transactions

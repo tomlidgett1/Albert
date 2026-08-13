@@ -40,31 +40,31 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: inventory_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: product_id, sql: "payload_json->>'product_id'", type: string, public: false }
-      - { name: outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
+      - { name: inventory_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: product_id, sql: "{CUBE}.payload_json->>'product_id'", type: string, public: false }
+      - { name: outlet_id, sql: "{CUBE}.payload_json->>'outlet_id'", type: string, public: false }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: units_on_hand, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric", type: number }
-      - { name: average_cost, sql: "NULLIF(payload_json->>'average_cost', '')::numeric", type: number, format: currency }
-      - { name: stock_value, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric * NULLIF(payload_json->>'average_cost', '')::numeric", type: number, format: currency }
-      - { name: quantity_to_procure, sql: "NULLIF(payload_json->>'quantity_to_procure', '')::numeric", type: number }
-      - { name: planning_available_units, sql: "COALESCE(NULLIF(payload_json->>'current_inventory_level', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'quantity_to_procure', '')::numeric, 0)", type: number, description: Planning estimate only; current_inventory_level is the API available-to-sell balance. }
-      - { name: reorder_method, sql: "payload_json->>'reorder_method'", type: string }
-      - { name: reorder_point, sql: "NULLIF(payload_json->>'reorder_point', '')::numeric", type: number }
-      - { name: reorder_target, sql: "NULLIF(payload_json->>'reorder_target', '')::numeric", type: number }
-      - { name: reorder_amount, sql: "NULLIF(payload_json->>'reorder_amount', '')::numeric", type: number }
+      - { name: units_on_hand, sql: "NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric", type: number }
+      - { name: average_cost, sql: "NULLIF({CUBE}.payload_json->>'average_cost', '')::numeric", type: number, format: currency }
+      - { name: stock_value, sql: "NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric * NULLIF({CUBE}.payload_json->>'average_cost', '')::numeric", type: number, format: currency }
+      - { name: quantity_to_procure, sql: "NULLIF({CUBE}.payload_json->>'quantity_to_procure', '')::numeric", type: number }
+      - { name: planning_available_units, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric, 0) - COALESCE(NULLIF({CUBE}.payload_json->>'quantity_to_procure', '')::numeric, 0)", type: number, description: Planning estimate only; current_inventory_level is the API available-to-sell balance. }
+      - { name: reorder_method, sql: "{CUBE}.payload_json->>'reorder_method'", type: string }
+      - { name: reorder_point, sql: "NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric", type: number }
+      - { name: reorder_target, sql: "NULLIF({CUBE}.payload_json->>'reorder_target', '')::numeric", type: number }
+      - { name: reorder_amount, sql: "NULLIF({CUBE}.payload_json->>'reorder_amount', '')::numeric", type: number }
       - { name: at_or_below_reorder_point, sql: "(NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric)", type: boolean }
       - { name: out_of_stock, sql: "(COALESCE(NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric, 0) <= 0)", type: boolean }
-      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "({CUBE}.payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - name: inventory_balances
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }]
-      - { name: stocked_products, sql: "payload_json->>'product_id'", type: count_distinct, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: current_units_on_hand, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }], description: Current snapshot across selected products/outlets. }
-      - { name: current_stock_value, sql: "NULLIF(payload_json->>'current_inventory_level', '')::numeric * NULLIF(payload_json->>'average_cost', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: current_quantity_to_procure, sql: "NULLIF(payload_json->>'quantity_to_procure', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: current_suggested_reorder_units, sql: "NULLIF(payload_json->>'reorder_amount', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric" }] }
+      - { name: stocked_products, sql: "{CUBE}.payload_json->>'product_id'", type: count_distinct, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_units_on_hand, sql: "NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }], description: Current snapshot across selected products/outlets. }
+      - { name: current_stock_value, sql: "NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric * NULLIF({CUBE}.payload_json->>'average_cost', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_quantity_to_procure, sql: "NULLIF({CUBE}.payload_json->>'quantity_to_procure', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: current_suggested_reorder_units, sql: "NULLIF({CUBE}.payload_json->>'reorder_amount', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric IS NOT NULL AND NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric <= NULLIF({CUBE}.payload_json->>'reorder_point', '')::numeric" }] }
       - name: out_of_stock_balances
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND COALESCE(NULLIF({CUBE}.payload_json->>'current_inventory_level', '')::numeric, 0) <= 0" }]
@@ -105,27 +105,27 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: consignment_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: destination_outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
-      - { name: source_outlet_id, sql: "payload_json->>'source_outlet_id'", type: string, public: false }
-      - { name: supplier_id, sql: "payload_json->>'supplier_id'", type: string, public: false }
-      - { name: consignment_name, sql: "payload_json->>'name'", type: string, title: Consignment }
-      - { name: consignment_type, sql: "payload_json->>'type'", type: string }
-      - { name: consignment_status, sql: "payload_json->>'status'", type: string }
-      - { name: reference, sql: "payload_json->>'reference'", type: string }
-      - { name: supplier_invoice, sql: "payload_json->>'supplier_invoice'", type: string }
+      - { name: consignment_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: destination_outlet_id, sql: "{CUBE}.payload_json->>'outlet_id'", type: string, public: false }
+      - { name: source_outlet_id, sql: "{CUBE}.payload_json->>'source_outlet_id'", type: string, public: false }
+      - { name: supplier_id, sql: "{CUBE}.payload_json->>'supplier_id'", type: string, public: false }
+      - { name: consignment_name, sql: "{CUBE}.payload_json->>'name'", type: string, title: Consignment }
+      - { name: consignment_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: consignment_status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: reference, sql: "{CUBE}.payload_json->>'reference'", type: string }
+      - { name: supplier_invoice, sql: "{CUBE}.payload_json->>'supplier_invoice'", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: consignment_date, sql: "(payload_json->>'consignment_date')::timestamptz", type: time }
-      - { name: due_at, sql: "(payload_json->>'due_at')::timestamptz", type: time }
-      - { name: received_at, sql: "(payload_json->>'received_at')::timestamptz", type: time }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
-      - { name: receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM ((payload_json->>'received_at')::timestamptz - (payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: number }
-      - { name: total_count_gain, sql: "NULLIF(payload_json->>'total_count_gain', '')::numeric", type: number }
-      - { name: total_count_loss, sql: "NULLIF(payload_json->>'total_count_loss', '')::numeric", type: number }
-      - { name: total_cost_gain, sql: "NULLIF(payload_json->>'total_cost_gain', '')::numeric", type: number, format: currency }
-      - { name: total_cost_loss, sql: "NULLIF(payload_json->>'total_cost_loss', '')::numeric", type: number, format: currency }
+      - { name: consignment_date, sql: "({CUBE}.payload_json->>'consignment_date')::timestamptz", type: time }
+      - { name: due_at, sql: "({CUBE}.payload_json->>'due_at')::timestamptz", type: time }
+      - { name: received_at, sql: "({CUBE}.payload_json->>'received_at')::timestamptz", type: time }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "({CUBE}.payload_json->>'deleted_at')::timestamptz", type: time }
+      - { name: receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'received_at')::timestamptz - ({CUBE}.payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: number }
+      - { name: total_count_gain, sql: "NULLIF({CUBE}.payload_json->>'total_count_gain', '')::numeric", type: number }
+      - { name: total_count_loss, sql: "NULLIF({CUBE}.payload_json->>'total_count_loss', '')::numeric", type: number }
+      - { name: total_cost_gain, sql: "NULLIF({CUBE}.payload_json->>'total_cost_gain', '')::numeric", type: number, format: currency }
+      - { name: total_cost_loss, sql: "NULLIF({CUBE}.payload_json->>'total_cost_loss', '')::numeric", type: number, format: currency }
     measures:
       - { name: consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
       - { name: supplier_orders, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'SUPPLIER'" }] }
@@ -134,11 +134,11 @@ cubes:
       - { name: stocktakes, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
       - { name: open_consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'status' NOT IN ('RECEIVED', 'CLOSED', 'CANCELLED', 'STOCKTAKE_COMPLETE')" }] }
       - { name: received_consignments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL AND {CUBE}.payload_json->>'status' = 'RECEIVED'" }] }
-      - { name: average_receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM ((payload_json->>'received_at')::timestamptz - (payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'received_at' IS NOT NULL AND {CUBE}.payload_json->>'consignment_date' IS NOT NULL" }] }
-      - { name: stocktake_units_gained, sql: "NULLIF(payload_json->>'total_count_gain', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
-      - { name: stocktake_units_lost, sql: "NULLIF(payload_json->>'total_count_loss', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
-      - { name: stocktake_cost_gain, sql: "NULLIF(payload_json->>'total_cost_gain', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
-      - { name: stocktake_cost_loss, sql: "NULLIF(payload_json->>'total_cost_loss', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: average_receipt_lead_time_days, sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'received_at')::timestamptz - ({CUBE}.payload_json->>'consignment_date')::timestamptz)) / 86400.0", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'received_at' IS NOT NULL AND {CUBE}.payload_json->>'consignment_date' IS NOT NULL" }] }
+      - { name: stocktake_units_gained, sql: "NULLIF({CUBE}.payload_json->>'total_count_gain', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_units_lost, sql: "NULLIF({CUBE}.payload_json->>'total_count_loss', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_cost_gain, sql: "NULLIF({CUBE}.payload_json->>'total_cost_gain', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
+      - { name: stocktake_cost_loss, sql: "NULLIF({CUBE}.payload_json->>'total_cost_loss', '')::numeric", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'STOCKTAKE'" }] }
 
   - name: lightspeed_x_consignment_products
     title: Lightspeed X-Series consignment products
@@ -168,25 +168,25 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: consignment_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, '_albert', 'parent', 'consignment_id'), payload_json->>'consignment_id')", type: string, public: false }
-      - { name: product_id, sql: "payload_json->>'product_id'", type: string, public: false }
-      - { name: product_sku, sql: "payload_json->>'product_sku'", type: string }
-      - { name: line_status, sql: "payload_json->>'status'", type: string }
-      - { name: is_included, sql: "COALESCE((payload_json->>'is_included')::boolean, false)", type: boolean }
-      - { name: unit_cost, sql: "NULLIF(payload_json->>'cost', '')::numeric", type: number, format: currency }
-      - { name: ordered_quantity, sql: "NULLIF(payload_json->>'count', '')::numeric", type: number }
-      - { name: received_quantity, sql: "NULLIF(payload_json->>'received', '')::numeric", type: number }
-      - { name: outstanding_quantity, sql: "GREATEST(COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0), 0)", type: number }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: deleted_at, sql: "(payload_json->>'deleted_at')::timestamptz", type: time }
+      - { name: consignment_id, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, '_albert', 'parent', 'consignment_id'), {CUBE}.payload_json->>'consignment_id')", type: string, public: false }
+      - { name: product_id, sql: "{CUBE}.payload_json->>'product_id'", type: string, public: false }
+      - { name: product_sku, sql: "{CUBE}.payload_json->>'product_sku'", type: string }
+      - { name: line_status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: is_included, sql: "COALESCE(({CUBE}.payload_json->>'is_included')::boolean, false)", type: boolean }
+      - { name: unit_cost, sql: "NULLIF({CUBE}.payload_json->>'cost', '')::numeric", type: number, format: currency }
+      - { name: ordered_quantity, sql: "NULLIF({CUBE}.payload_json->>'count', '')::numeric", type: number }
+      - { name: received_quantity, sql: "NULLIF({CUBE}.payload_json->>'received', '')::numeric", type: number }
+      - { name: outstanding_quantity, sql: "GREATEST(COALESCE(NULLIF({CUBE}.payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF({CUBE}.payload_json->>'received', '')::numeric, 0), 0)", type: number }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: deleted_at, sql: "({CUBE}.payload_json->>'deleted_at')::timestamptz", type: time }
     measures:
       - { name: consignment_lines, type: count, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: ordered_units, sql: "NULLIF(payload_json->>'count', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: received_units, sql: "NULLIF(payload_json->>'received', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: outstanding_units, sql: "GREATEST(COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0), 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: ordered_cost, sql: "COALESCE(NULLIF(payload_json->>'count', '')::numeric, 0) * COALESCE(NULLIF(payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
-      - { name: received_cost, sql: "COALESCE(NULLIF(payload_json->>'received', '')::numeric, 0) * COALESCE(NULLIF(payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: ordered_units, sql: "NULLIF({CUBE}.payload_json->>'count', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: received_units, sql: "NULLIF({CUBE}.payload_json->>'received', '')::numeric", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: outstanding_units, sql: "GREATEST(COALESCE(NULLIF({CUBE}.payload_json->>'count', '')::numeric, 0) - COALESCE(NULLIF({CUBE}.payload_json->>'received', '')::numeric, 0), 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: ordered_cost, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'count', '')::numeric, 0) * COALESCE(NULLIF({CUBE}.payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
+      - { name: received_cost, sql: "COALESCE(NULLIF({CUBE}.payload_json->>'received', '')::numeric, 0) * COALESCE(NULLIF({CUBE}.payload_json->>'cost', '')::numeric, 0)", type: sum, format: currency, filters: [{ sql: "{CUBE}.payload_json->>'deleted_at' IS NULL" }] }
 
   - name: lightspeed_x_fulfillments
     title: Lightspeed X-Series fulfillments
@@ -210,16 +210,16 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: fulfillment_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: sale_id, sql: "payload_json->>'sale_id'", type: string, public: false }
-      - { name: outlet_id, sql: "payload_json->>'outlet_id'", type: string, public: false }
-      - { name: fulfillment_type, sql: "payload_json->>'type'", type: string }
-      - { name: fulfillment_state, sql: "COALESCE(payload_json->>'state', payload_json->>'status')", type: string }
-      - { name: note, sql: "payload_json->>'note'", type: string, public: false }
-      - { name: assigned_user_count, sql: "jsonb_array_length(COALESCE(payload_json->'user_ids', '[]'::jsonb))", type: number }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: observed_cycle_hours, sql: "EXTRACT(EPOCH FROM ((payload_json->>'updated_at')::timestamptz - (payload_json->>'created_at')::timestamptz)) / 3600.0", type: number, description: Created-to-last-update duration; exact fulfilment transition time needs history. }
+      - { name: fulfillment_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: sale_id, sql: "{CUBE}.payload_json->>'sale_id'", type: string, public: false }
+      - { name: outlet_id, sql: "{CUBE}.payload_json->>'outlet_id'", type: string, public: false }
+      - { name: fulfillment_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: fulfillment_state, sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status')", type: string }
+      - { name: note, sql: "{CUBE}.payload_json->>'note'", type: string, public: false }
+      - { name: assigned_user_count, sql: "jsonb_array_length(COALESCE({CUBE}.payload_json->'user_ids', '[]'::jsonb))", type: number }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: observed_cycle_hours, sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'updated_at')::timestamptz - ({CUBE}.payload_json->>'created_at')::timestamptz)) / 3600.0", type: number, description: Created-to-last-update duration; exact fulfilment transition time needs history. }
     measures:
       - { name: fulfillments, type: count }
       - { name: open_fulfillments, type: count, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('OPEN', 'STARTED', 'PICKED', 'PACKED')" }] }
@@ -227,7 +227,7 @@ cubes:
       - { name: dispatch_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'DISPATCH'" }] }
       - { name: pickup_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'PICKUP'" }] }
       - { name: service_fulfillments, type: count, filters: [{ sql: "{CUBE}.payload_json->>'type' = 'SERVICE'" }] }
-      - { name: average_observed_cycle_hours, sql: "EXTRACT(EPOCH FROM ((payload_json->>'updated_at')::timestamptz - (payload_json->>'created_at')::timestamptz)) / 3600.0", type: avg, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('FULFILLED', 'SHIPPED', 'PICKED_UP')" }] }
+      - { name: average_observed_cycle_hours, sql: "EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'updated_at')::timestamptz - ({CUBE}.payload_json->>'created_at')::timestamptz)) / 3600.0", type: avg, filters: [{ sql: "COALESCE({CUBE}.payload_json->>'state', {CUBE}.payload_json->>'status') IN ('FULFILLED', 'SHIPPED', 'PICKED_UP')" }] }
 
   - name: lightspeed_x_fulfillment_lines
     title: Lightspeed X-Series fulfillment lines
@@ -290,22 +290,22 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: promotion_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: promotion_name, sql: "payload_json->>'name'", type: string, title: Promotion }
-      - { name: description, sql: "payload_json->>'description'", type: string }
-      - { name: promotion_status, sql: "payload_json->>'status'", type: string }
-      - { name: action_type, sql: "jsonb_extract_path_text(payload_json, 'action', 'type')", type: string }
-      - { name: action_value, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'action', 'value'), '')::numeric", type: number }
-      - { name: condition_type, sql: "jsonb_extract_path_text(payload_json, 'condition', 'type')", type: string }
-      - { name: condition_quantity, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'condition', 'quantity'), '')::numeric", type: number }
-      - { name: minimum_price, sql: "NULLIF(jsonb_extract_path_text(payload_json, 'condition', 'min_price'), '')::numeric", type: number, format: currency }
-      - { name: requires_promo_code, sql: "COALESCE((payload_json->>'use_promo_code')::boolean, false)", type: boolean }
-      - { name: loyalty_multiplier, sql: "NULLIF(payload_json->>'loyalty_multiplier', '')::numeric", type: number }
-      - { name: outlet_count, sql: "jsonb_array_length(COALESCE(payload_json->'outlet_ids', '[]'::jsonb))", type: number }
-      - { name: channel_count, sql: "jsonb_array_length(COALESCE(payload_json->'channels', '[]'::jsonb))", type: number }
-      - { name: customer_group_count, sql: "jsonb_array_length(COALESCE(payload_json->'customer_group_ids', '[]'::jsonb))", type: number }
-      - { name: starts_at, sql: "(payload_json->>'start_time')::timestamptz", type: time }
-      - { name: ends_at, sql: "(payload_json->>'end_time')::timestamptz", type: time }
+      - { name: promotion_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: promotion_name, sql: "{CUBE}.payload_json->>'name'", type: string, title: Promotion }
+      - { name: description, sql: "{CUBE}.payload_json->>'description'", type: string }
+      - { name: promotion_status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: action_type, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'action', 'type')", type: string }
+      - { name: action_value, sql: "NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'action', 'value'), '')::numeric", type: number }
+      - { name: condition_type, sql: "jsonb_extract_path_text({CUBE}.payload_json, 'condition', 'type')", type: string }
+      - { name: condition_quantity, sql: "NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'condition', 'quantity'), '')::numeric", type: number }
+      - { name: minimum_price, sql: "NULLIF(jsonb_extract_path_text({CUBE}.payload_json, 'condition', 'min_price'), '')::numeric", type: number, format: currency }
+      - { name: requires_promo_code, sql: "COALESCE(({CUBE}.payload_json->>'use_promo_code')::boolean, false)", type: boolean }
+      - { name: loyalty_multiplier, sql: "NULLIF({CUBE}.payload_json->>'loyalty_multiplier', '')::numeric", type: number }
+      - { name: outlet_count, sql: "jsonb_array_length(COALESCE({CUBE}.payload_json->'outlet_ids', '[]'::jsonb))", type: number }
+      - { name: channel_count, sql: "jsonb_array_length(COALESCE({CUBE}.payload_json->'channels', '[]'::jsonb))", type: number }
+      - { name: customer_group_count, sql: "jsonb_array_length(COALESCE({CUBE}.payload_json->'customer_group_ids', '[]'::jsonb))", type: number }
+      - { name: starts_at, sql: "({CUBE}.payload_json->>'start_time')::timestamptz", type: time }
+      - { name: ends_at, sql: "({CUBE}.payload_json->>'end_time')::timestamptz", type: time }
       - name: is_currently_scheduled
         sql: >
           (({CUBE}.payload_json->>'start_time' IS NULL OR ({CUBE}.payload_json->>'start_time')::timestamptz <= NOW())
@@ -348,30 +348,30 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: service_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'id'), payload_json->>'id')", type: string, public: false }
-      - { name: sale_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'sale_id'), payload_json->>'sale_id')", type: string, public: false }
-      - { name: assigned_user_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'assigned_user_id'), payload_json->>'assigned_user_id')", type: string, public: false }
-      - { name: service_status, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status'), payload_json->>'status')", type: string }
-      - { name: service_status_name, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status_details', 'display_name'), jsonb_extract_path_text(payload_json, 'status_details', 'display_name'))", type: string }
-      - { name: service_status_key, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'status_details', 'status_key'), jsonb_extract_path_text(payload_json, 'status_details', 'status_key'))", type: string }
-      - { name: location, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'location'), payload_json->>'location')", type: string }
+      - { name: service_id, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'id'), {CUBE}.payload_json->>'id')", type: string, public: false }
+      - { name: sale_id, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'sale_id'), {CUBE}.payload_json->>'sale_id')", type: string, public: false }
+      - { name: assigned_user_id, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'assigned_user_id'), {CUBE}.payload_json->>'assigned_user_id')", type: string, public: false }
+      - { name: service_status, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'status'), {CUBE}.payload_json->>'status')", type: string }
+      - { name: service_status_name, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'status_details', 'display_name'), jsonb_extract_path_text({CUBE}.payload_json, 'status_details', 'display_name'))", type: string }
+      - { name: service_status_key, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'status_details', 'status_key'), jsonb_extract_path_text({CUBE}.payload_json, 'status_details', 'status_key'))", type: string }
+      - { name: location, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'location'), {CUBE}.payload_json->>'location')", type: string }
       - { name: currency_code, sql: "jsonb_extract_path_text(retailer_payload, 'currency', 'code')", type: string }
-      - { name: scheduled_for, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text(payload_json, 'agenda', 'date'))", type: time }
-      - { name: scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: number }
-      - { name: subtotal, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'sub_total'), jsonb_extract_path_text(payload_json, 'totals', 'sub_total')), '')::numeric", type: number, format: currency }
-      - { name: total_amount, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text(payload_json, 'totals', 'total_amount')), '')::numeric", type: number, format: currency }
-      - { name: total_tax, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_tax'), jsonb_extract_path_text(payload_json, 'totals', 'total_tax')), '')::numeric", type: number, format: currency }
-      - { name: total_promotion, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_promotion'), jsonb_extract_path_text(payload_json, 'totals', 'total_promotion')), '')::numeric", type: number, format: currency }
-      - { name: created_at, sql: "(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'created_at'), payload_json->>'created_at'))::timestamptz", type: time }
-      - { name: updated_at, sql: "(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'updated_at'), payload_json->>'updated_at'))::timestamptz", type: time }
+      - { name: scheduled_for, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'date'))", type: time }
+      - { name: scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: number }
+      - { name: subtotal, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'totals', 'sub_total'), jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'sub_total')), '')::numeric", type: number, format: currency }
+      - { name: total_amount, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'total_amount')), '')::numeric", type: number, format: currency }
+      - { name: total_tax, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'totals', 'total_tax'), jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'total_tax')), '')::numeric", type: number, format: currency }
+      - { name: total_promotion, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'totals', 'total_promotion'), jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'total_promotion')), '')::numeric", type: number, format: currency }
+      - { name: created_at, sql: "(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'created_at'), {CUBE}.payload_json->>'created_at'))::timestamptz", type: time }
+      - { name: updated_at, sql: "(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'updated_at'), {CUBE}.payload_json->>'updated_at'))::timestamptz", type: time }
       - { name: scheduled_date_has_passed, sql: "(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'date'))::timestamptz < NOW())", type: boolean, description: Scheduling fact only; custom status determines whether work is actually overdue. }
-      - { name: notes, sql: "CAST(payload_json->'notes' AS text)", type: string, public: false }
+      - { name: notes, sql: "CAST({CUBE}.payload_json->'notes' AS text)", type: string, public: false }
     measures:
       - { name: service_orders, type: count }
-      - { name: scheduled_service_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: sum }
+      - { name: scheduled_service_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: sum }
       - { name: scheduled_dates_passed, type: count, filters: [{ sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'date'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'date'))::timestamptz < NOW()" }], description: Not automatically overdue because service statuses can be custom. }
-      - { name: service_order_total_reference, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text(payload_json, 'totals', 'total_amount')), '')::numeric", type: sum, format: currency, description: Reference value already represented by the linked sale; never add to sales revenue. }
-      - { name: average_scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text(payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text(payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: avg }
+      - { name: service_order_total_reference, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'totals', 'total_amount'), jsonb_extract_path_text({CUBE}.payload_json, 'totals', 'total_amount')), '')::numeric", type: sum, format: currency, description: Reference value already represented by the linked sale; never add to sales revenue. }
+      - { name: average_scheduled_minutes, sql: "NULLIF(COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'service', 'agenda', 'minutes_scheduled'), jsonb_extract_path_text({CUBE}.payload_json, 'agenda', 'minutes_scheduled')), '')::numeric", type: avg }
 
   - name: lightspeed_x_service_lines
     title: Lightspeed X-Series service order lines
@@ -441,15 +441,15 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: customer_id, sql: "COALESCE(jsonb_extract_path_text(payload_json, '_albert', 'parent', 'customer_id'), payload_json->>'customer_id')", type: string, public: false }
-      - { name: service_item_id, sql: "COALESCE(payload_json->>'item_id', jsonb_extract_path_text(payload_json, 'item_details', 'item_id'))", type: string, public: false }
-      - { name: item_name, sql: "COALESCE(payload_json->>'item_name', jsonb_extract_path_text(payload_json, 'item_details', 'item_name'))", type: string, title: Service item }
-      - { name: service_location, sql: "payload_json->>'location'", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: serial_number, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'serial_number'), payload_json->>'serial_number')", type: string, public: false }
-      - { name: description, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'description'), payload_json->>'description')", type: string, public: false }
-      - { name: initial_condition, sql: "COALESCE(jsonb_extract_path_text(payload_json, 'item_details', 'initial_condition'), payload_json->>'initial_condition')", type: string, public: false }
+      - { name: customer_id, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, '_albert', 'parent', 'customer_id'), {CUBE}.payload_json->>'customer_id')", type: string, public: false }
+      - { name: service_item_id, sql: "COALESCE({CUBE}.payload_json->>'item_id', jsonb_extract_path_text({CUBE}.payload_json, 'item_details', 'item_id'))", type: string, public: false }
+      - { name: item_name, sql: "COALESCE({CUBE}.payload_json->>'item_name', jsonb_extract_path_text({CUBE}.payload_json, 'item_details', 'item_name'))", type: string, title: Service item }
+      - { name: service_location, sql: "{CUBE}.payload_json->>'location'", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: serial_number, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'item_details', 'serial_number'), {CUBE}.payload_json->>'serial_number')", type: string, public: false }
+      - { name: description, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'item_details', 'description'), {CUBE}.payload_json->>'description')", type: string, public: false }
+      - { name: initial_condition, sql: "COALESCE(jsonb_extract_path_text({CUBE}.payload_json, 'item_details', 'initial_condition'), {CUBE}.payload_json->>'initial_condition')", type: string, public: false }
     measures:
       - { name: service_items, type: count }
 
@@ -474,20 +474,20 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: shift_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: user_id, sql: "payload_json->>'user_id'", type: string, public: false }
-      - { name: time_in, sql: "(payload_json->>'time_in')::timestamptz", type: time }
-      - { name: time_out, sql: "(payload_json->>'time_out')::timestamptz", type: time }
+      - { name: shift_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: user_id, sql: "{CUBE}.payload_json->>'user_id'", type: string, public: false }
+      - { name: time_in, sql: "({CUBE}.payload_json->>'time_in')::timestamptz", type: time }
+      - { name: time_out, sql: "({CUBE}.payload_json->>'time_out')::timestamptz", type: time }
       - { name: is_open_shift, sql: "({CUBE}.payload_json->>'time_out' IS NULL)", type: boolean }
-      - { name: shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: number }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'time_out')::timestamptz - ({CUBE}.payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: number }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: shifts, type: count }
       - { name: completed_shifts, type: count, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
       - { name: open_shifts, type: count, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NULL" }] }
-      - { name: worked_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
-      - { name: average_shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM ((payload_json->>'time_out')::timestamptz - (payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
+      - { name: worked_hours, sql: "GREATEST(EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'time_out')::timestamptz - ({CUBE}.payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: sum, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
+      - { name: average_shift_hours, sql: "GREATEST(EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'time_out')::timestamptz - ({CUBE}.payload_json->>'time_in')::timestamptz)) / 3600.0, 0)", type: avg, filters: [{ sql: "{CUBE}.payload_json->>'time_out' IS NOT NULL" }] }
 
   - name: lightspeed_x_audit_log_events
     title: Lightspeed X-Series audit log events
@@ -511,21 +511,21 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: audit_event_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: entity_id, sql: "payload_json->>'entity_id'", type: string, public: false }
-      - { name: user_id, sql: "payload_json->>'user_id'", type: string, public: false }
-      - { name: entity_type, sql: "payload_json->>'type'", type: string }
-      - { name: action, sql: "payload_json->>'action'", type: string }
-      - { name: occurred_at, sql: "(payload_json->>'occurred_at')::timestamptz", type: time }
-      - { name: persisted_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: changed_data, sql: "CAST(payload_json->'data' AS text)", type: string, public: false }
-      - { name: old_data, sql: "CAST(payload_json->'old_data' AS text)", type: string, public: false }
-      - { name: ip_address, sql: "payload_json->>'ip_address'", type: string, public: false }
-      - { name: user_agent, sql: "payload_json->>'user_agent'", type: string, public: false }
+      - { name: audit_event_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: entity_id, sql: "{CUBE}.payload_json->>'entity_id'", type: string, public: false }
+      - { name: user_id, sql: "{CUBE}.payload_json->>'user_id'", type: string, public: false }
+      - { name: entity_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: action, sql: "{CUBE}.payload_json->>'action'", type: string }
+      - { name: occurred_at, sql: "({CUBE}.payload_json->>'occurred_at')::timestamptz", type: time }
+      - { name: persisted_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: changed_data, sql: "CAST({CUBE}.payload_json->'data' AS text)", type: string, public: false }
+      - { name: old_data, sql: "CAST({CUBE}.payload_json->'old_data' AS text)", type: string, public: false }
+      - { name: ip_address, sql: "{CUBE}.payload_json->>'ip_address'", type: string, public: false }
+      - { name: user_agent, sql: "{CUBE}.payload_json->>'user_agent'", type: string, public: false }
     measures:
       - { name: audit_events, type: count }
       - { name: insert_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'insert'" }] }
       - { name: update_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'update'" }] }
       - { name: delete_events, type: count, filters: [{ sql: "{CUBE}.payload_json->>'action' = 'delete'" }] }
-      - { name: affected_entities, sql: "payload_json->>'entity_id'", type: count_distinct }
-      - { name: acting_users, sql: "payload_json->>'user_id'", type: count_distinct }
+      - { name: affected_entities, sql: "{CUBE}.payload_json->>'entity_id'", type: count_distinct }
+      - { name: acting_users, sql: "{CUBE}.payload_json->>'user_id'", type: count_distinct }

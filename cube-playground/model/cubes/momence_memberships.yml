@@ -60,34 +60,34 @@ cubes:
       - { name: membership_id, sql: record_id, type: string, title: Membership ID }
       - { name: plan_name, sql: cc_plan_name, type: string, title: Membership plan }
       - name: description
-        sql: "payload_json ->> 'description'"
+        sql: "{CUBE}.payload_json ->> 'description'"
         type: string
         description: Host-authored plan description, which is untrusted source text and may contain HTML.
       - name: membership_type
-        sql: "payload_json ->> 'type'"
+        sql: "{CUBE}.payload_json ->> 'type'"
         type: string
         description: Subscription, on-demand subscription, event package, money package or patron plan.
       - { name: location_id, sql: cc_location_id, type: string, public: false }
-      - { name: disabled, sql: "COALESCE((payload_json ->> 'disabled')::boolean, false)", type: boolean }
-      - { name: featured, sql: "COALESCE((payload_json ->> 'featured')::boolean, false)", type: boolean }
-      - { name: auto_renewing, sql: "COALESCE((payload_json ->> 'autoRenewing')::boolean, false)", type: boolean }
-      - { name: minimum_auto_renews, sql: "NULLIF(payload_json ->> 'minimumAutoRenews', '')::numeric", type: number }
-      - { name: duration, sql: "NULLIF(payload_json ->> 'duration', '')::numeric", type: number }
-      - { name: duration_unit, sql: "payload_json ->> 'durationUnit'", type: string }
+      - { name: disabled, sql: "COALESCE(({CUBE}.payload_json ->> 'disabled')::boolean, false)", type: boolean }
+      - { name: featured, sql: "COALESCE(({CUBE}.payload_json ->> 'featured')::boolean, false)", type: boolean }
+      - { name: auto_renewing, sql: "COALESCE(({CUBE}.payload_json ->> 'autoRenewing')::boolean, false)", type: boolean }
+      - { name: minimum_auto_renews, sql: "NULLIF({CUBE}.payload_json ->> 'minimumAutoRenews', '')::numeric", type: number }
+      - { name: duration, sql: "NULLIF({CUBE}.payload_json ->> 'duration', '')::numeric", type: number }
+      - { name: duration_unit, sql: "{CUBE}.payload_json ->> 'durationUnit'", type: string }
       - { name: start_at, sql: cc_start_at, type: time }
       - { name: end_at, sql: cc_end_at, type: time }
       - { name: catalogue_state, sql: cc_catalogue_state, type: string }
-      - { name: display_order, sql: "NULLIF(payload_json ->> 'order', '')::numeric", type: number }
-      - { name: activated_on_first_use, sql: "COALESCE((payload_json ->> 'isActivatedOnFirstUse')::boolean, false)", type: boolean }
-      - { name: activation_deadline_days, sql: "NULLIF(payload_json ->> 'activationDeadlineInDays', '')::numeric", type: number }
-      - { name: has_free_trial, sql: "COALESCE((payload_json ->> 'hasFreeTrial')::boolean, false)", type: boolean }
-      - { name: free_trial_duration_days, sql: "NULLIF(payload_json ->> 'freeTrialDurationInDays', '')::numeric", type: number }
+      - { name: display_order, sql: "NULLIF({CUBE}.payload_json ->> 'order', '')::numeric", type: number }
+      - { name: activated_on_first_use, sql: "COALESCE(({CUBE}.payload_json ->> 'isActivatedOnFirstUse')::boolean, false)", type: boolean }
+      - { name: activation_deadline_days, sql: "NULLIF({CUBE}.payload_json ->> 'activationDeadlineInDays', '')::numeric", type: number }
+      - { name: has_free_trial, sql: "COALESCE(({CUBE}.payload_json ->> 'hasFreeTrial')::boolean, false)", type: boolean }
+      - { name: free_trial_duration_days, sql: "NULLIF({CUBE}.payload_json ->> 'freeTrialDurationInDays', '')::numeric", type: number }
       - name: free_trial_price_source_value
         sql: cc_free_trial_price
         type: number
         description: Source-native trial price value; currency and minor/major-unit convention are not returned.
-      - { name: is_intro_offer, sql: "COALESCE((payload_json ->> 'isIntroOffer')::boolean, false)", type: boolean }
-      - { name: price_type, sql: "payload_json ->> 'priceType'", type: string }
+      - { name: is_intro_offer, sql: "COALESCE(({CUBE}.payload_json ->> 'isIntroOffer')::boolean, false)", type: boolean }
+      - { name: price_type, sql: "{CUBE}.payload_json ->> 'priceType'", type: string }
       - name: price_source_value
         sql: cc_price
         type: number
@@ -95,27 +95,27 @@ cubes:
       - { name: minimum_price_source_value, sql: cc_minimum_price, type: number }
       - { name: maximum_price_source_value, sql: cc_maximum_price, type: number }
       - { name: recommended_price_source_value, sql: cc_recommended_price, type: number }
-      - { name: price_includes_tax, sql: "COALESCE((payload_json ->> 'priceIncludesTax')::boolean, false)", type: boolean }
-      - { name: tax_rate_percent, sql: "NULLIF(payload_json ->> 'taxRateInPercent', '')::numeric", type: number }
-      - { name: event_credits_included, sql: "NULLIF(payload_json ->> 'eventCredits', '')::numeric", type: number }
+      - { name: price_includes_tax, sql: "COALESCE(({CUBE}.payload_json ->> 'priceIncludesTax')::boolean, false)", type: boolean }
+      - { name: tax_rate_percent, sql: "NULLIF({CUBE}.payload_json ->> 'taxRateInPercent', '')::numeric", type: number }
+      - { name: event_credits_included, sql: "NULLIF({CUBE}.payload_json ->> 'eventCredits', '')::numeric", type: number }
       - name: money_credits_included
-        sql: "NULLIF(payload_json ->> 'moneyCredits', '')::numeric"
+        sql: "NULLIF({CUBE}.payload_json ->> 'moneyCredits', '')::numeric"
         type: number
         description: Source money-credit units, not independently evidenced cash or revenue.
-      - { name: session_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
-      - { name: appointment_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
-      - { name: combined_usage_limit_enabled, sql: "COALESCE((payload_json ->> 'combinedUsageLimitEnabled')::boolean, false)", type: boolean }
-      - { name: combined_usage_limit, sql: "NULLIF(payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
-      - { name: usage_limit_renewal_enabled, sql: "COALESCE((payload_json ->> 'usageLimitRenewalEnabled')::boolean, false)", type: boolean }
-      - { name: usage_limit_renewal_duration, sql: "NULLIF(payload_json ->> 'usageLimitRenewalDuration', '')::numeric", type: number }
-      - { name: usage_limit_renewal_duration_unit, sql: "payload_json ->> 'usageLimitRenewalDurationUnit'", type: string }
-      - { name: usage_rollover_enabled, sql: "COALESCE((payload_json ->> 'usageLimitRolloverEnabled')::boolean, false)", type: boolean }
-      - { name: usage_rollover_mode, sql: "payload_json ->> 'usageLimitRolloverMode'", type: string }
-      - { name: rollover_expiration_duration, sql: "NULLIF(payload_json ->> 'usageLimitRolloverExpirationDuration', '')::numeric", type: number }
-      - { name: rollover_expiration_duration_unit, sql: "payload_json ->> 'usageLimitRolloverExpirationDurationUnit'", type: string }
+      - { name: session_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
+      - { name: appointment_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
+      - { name: combined_usage_limit_enabled, sql: "COALESCE(({CUBE}.payload_json ->> 'combinedUsageLimitEnabled')::boolean, false)", type: boolean }
+      - { name: combined_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
+      - { name: usage_limit_renewal_enabled, sql: "COALESCE(({CUBE}.payload_json ->> 'usageLimitRenewalEnabled')::boolean, false)", type: boolean }
+      - { name: usage_limit_renewal_duration, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitRenewalDuration', '')::numeric", type: number }
+      - { name: usage_limit_renewal_duration_unit, sql: "{CUBE}.payload_json ->> 'usageLimitRenewalDurationUnit'", type: string }
+      - { name: usage_rollover_enabled, sql: "COALESCE(({CUBE}.payload_json ->> 'usageLimitRolloverEnabled')::boolean, false)", type: boolean }
+      - { name: usage_rollover_mode, sql: "{CUBE}.payload_json ->> 'usageLimitRolloverMode'", type: string }
+      - { name: rollover_expiration_duration, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitRolloverExpirationDuration', '')::numeric", type: number }
+      - { name: rollover_expiration_duration_unit, sql: "{CUBE}.payload_json ->> 'usageLimitRolloverExpirationDurationUnit'", type: string }
       - { name: tags, sql: cc_tags, type: string, description: Plan tags as source JSON text. }
       - name: contract_agreement
-        sql: "payload_json ->> 'contractAgreement'"
+        sql: "{CUBE}.payload_json ->> 'contractAgreement'"
         type: string
         public: false
         description: Potentially sensitive host-authored contract text; use only for an explicit authorized request.
@@ -216,34 +216,34 @@ cubes:
       - { name: member_id, sql: cc_member_id, type: string, public: false }
       - { name: membership_id, sql: cc_membership_id, type: string, public: false }
       - { name: membership_name, sql: cc_membership_name, type: string }
-      - { name: entitlement_type, sql: "payload_json ->> 'type'", type: string }
+      - { name: entitlement_type, sql: "{CUBE}.payload_json ->> 'type'", type: string }
       - { name: entitlement_state, sql: cc_entitlement_state, type: string }
       - { name: starts_at, sql: cc_start_at, type: time }
       - { name: ends_at, sql: cc_end_at, type: time }
-      - { name: is_frozen, sql: "COALESCE((payload_json ->> 'isFrozen')::boolean, false)", type: boolean }
+      - { name: is_frozen, sql: "COALESCE(({CUBE}.payload_json ->> 'isFrozen')::boolean, false)", type: boolean }
       - { name: frozen_at, sql: cc_frozen_at, type: time }
       - { name: scheduled_freeze_at, sql: cc_scheduled_freeze_at, type: time }
       - { name: unfrozen_at, sql: cc_unfrozen_at, type: time }
       - { name: scheduled_unfreeze_at, sql: cc_scheduled_unfreeze_at, type: time }
-      - { name: remaining_frozen_minutes, sql: "NULLIF(payload_json #>> ARRAY['freeze', 'remainingFreezedMinutes'], '')::numeric", type: number }
+      - { name: remaining_frozen_minutes, sql: "NULLIF({CUBE}.payload_json #>> ARRAY['freeze', 'remainingFreezedMinutes'], '')::numeric", type: number }
       - { name: usage_period_starts_at, sql: cc_usage_start_at, type: time }
       - { name: usage_period_ends_at, sql: cc_usage_end_at, type: time }
-      - { name: event_credits_left, sql: "NULLIF(payload_json ->> 'eventCreditsLeft', '')::numeric", type: number }
-      - { name: event_credits_total, sql: "NULLIF(payload_json ->> 'eventCreditsTotal', '')::numeric", type: number }
+      - { name: event_credits_left, sql: "NULLIF({CUBE}.payload_json ->> 'eventCreditsLeft', '')::numeric", type: number }
+      - { name: event_credits_total, sql: "NULLIF({CUBE}.payload_json ->> 'eventCreditsTotal', '')::numeric", type: number }
       - name: money_credits_left
-        sql: "NULLIF(payload_json ->> 'moneyCreditsLeft', '')::numeric"
+        sql: "NULLIF({CUBE}.payload_json ->> 'moneyCreditsLeft', '')::numeric"
         type: number
         description: Current source money-credit units; currency is not returned on this endpoint.
-      - { name: money_credits_total, sql: "NULLIF(payload_json ->> 'moneyCreditsTotal', '')::numeric", type: number }
-      - { name: session_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
-      - { name: sessions_used, sql: "NULLIF(payload_json ->> 'usedSessions', '')::numeric", type: number }
-      - { name: appointment_usage_limit, sql: "NULLIF(payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
-      - { name: appointments_used, sql: "NULLIF(payload_json ->> 'usedAppointments', '')::numeric", type: number }
-      - { name: combined_usage_limit, sql: "NULLIF(payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
-      - { name: combined_usage, sql: "NULLIF(payload_json ->> 'combinedUsage', '')::numeric", type: number }
+      - { name: money_credits_total, sql: "NULLIF({CUBE}.payload_json ->> 'moneyCreditsTotal', '')::numeric", type: number }
+      - { name: session_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitForSessions', '')::numeric", type: number }
+      - { name: sessions_used, sql: "NULLIF({CUBE}.payload_json ->> 'usedSessions', '')::numeric", type: number }
+      - { name: appointment_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'usageLimitForAppointments', '')::numeric", type: number }
+      - { name: appointments_used, sql: "NULLIF({CUBE}.payload_json ->> 'usedAppointments', '')::numeric", type: number }
+      - { name: combined_usage_limit, sql: "NULLIF({CUBE}.payload_json ->> 'combinedUsageLimit', '')::numeric", type: number }
+      - { name: combined_usage, sql: "NULLIF({CUBE}.payload_json ->> 'combinedUsage', '')::numeric", type: number }
       - { name: declined_renewal_at, sql: cc_declined_renewal_at, type: time }
       - { name: has_declined_renewal, sql: "cc_declined_renewal_at IS NOT NULL", type: boolean }
-      - { name: declined_card_last_four, sql: "payload_json #>> ARRAY['declinedRenewal', 'cardLast4']", type: string, public: false }
+      - { name: declined_card_last_four, sql: "{CUBE}.payload_json #>> ARRAY['declinedRenewal', 'cardLast4']", type: string, public: false }
     measures:
       - name: active_endpoint_entitlements
         type: count
@@ -267,11 +267,11 @@ cubes:
         type: count
         filters:
           - sql: "{CUBE}.cc_declined_renewal_at IS NOT NULL"
-      - { name: current_event_credits, type: sum, sql: "NULLIF(payload_json ->> 'eventCreditsLeft', '')::numeric" }
-      - { name: current_money_credit_units, type: sum, sql: "NULLIF(payload_json ->> 'moneyCreditsLeft', '')::numeric" }
-      - { name: sessions_used_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'usedSessions', '')::numeric" }
-      - { name: appointments_used_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'usedAppointments', '')::numeric" }
-      - { name: combined_usage_in_current_limit_period, type: sum, sql: "NULLIF(payload_json ->> 'combinedUsage', '')::numeric" }
+      - { name: current_event_credits, type: sum, sql: "NULLIF({CUBE}.payload_json ->> 'eventCreditsLeft', '')::numeric" }
+      - { name: current_money_credit_units, type: sum, sql: "NULLIF({CUBE}.payload_json ->> 'moneyCreditsLeft', '')::numeric" }
+      - { name: sessions_used_in_current_limit_period, type: sum, sql: "NULLIF({CUBE}.payload_json ->> 'usedSessions', '')::numeric" }
+      - { name: appointments_used_in_current_limit_period, type: sum, sql: "NULLIF({CUBE}.payload_json ->> 'usedAppointments', '')::numeric" }
+      - { name: combined_usage_in_current_limit_period, type: sum, sql: "NULLIF({CUBE}.payload_json ->> 'combinedUsage', '')::numeric" }
       - name: weighted_usage_limit_utilization_pct
         type: number
         sql: >

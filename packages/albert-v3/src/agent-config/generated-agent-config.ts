@@ -104,6 +104,17 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "guidance": "Square inventory change events. Adjustments and physical counts by item, store, reason and state transition. units_affected is absolute, not net.\n"
       },
       {
+        "name": "square_roster_analytics",
+        "connector": "square",
+        "routing_terms": [
+          "roster for this week",
+          "who is scheduled to work",
+          "rostered hours",
+          "upcoming shifts"
+        ],
+        "guidance": "Published Square scheduled shifts: the planned roster by team member, location and day, with rostered hours. Planned time only - actual worked hours live in square_workforce_analytics.\n"
+      },
+      {
         "name": "square_workforce_analytics",
         "connector": "square",
         "routing_terms": [

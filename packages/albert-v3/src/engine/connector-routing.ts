@@ -74,6 +74,9 @@ function inferredCubeConnectorHints(
   if (available.has("deputy") && /\b(?:rosters?|rostered hours?|employee availability|leave requests?|leave balances?|scheduled shifts?)\b/u.test(text)) {
     found.add("deputy");
   }
+  if (available.has("square") && /\b(?:rosters?|rostered hours?|scheduled shifts?)\b/u.test(text)) {
+    found.add("square");
+  }
   if (found.size === 0 && ORDINARY_COMMERCE.test(value)) {
     const connectedCommerce = ["lightspeed", "lightspeed-x", "square", "shopify", "momence"]
       .filter((connector) => available.has(connector));

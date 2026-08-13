@@ -11,18 +11,18 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: name, sql: "payload_json->>'name'", type: string, title: Location }
-      - { name: business_name, sql: "payload_json->>'business_name'", type: string }
-      - { name: status, sql: "payload_json->>'status'", type: string }
-      - { name: location_type, sql: "payload_json->>'type'", type: string }
-      - { name: timezone, sql: "payload_json->>'timezone'", type: string }
-      - { name: currency, sql: "payload_json->>'currency'", type: string }
-      - { name: country, sql: "payload_json->>'country'", type: string }
-      - { name: locality, sql: "payload_json#>> ARRAY['address', 'locality']", type: string, title: Suburb / locality }
-      - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string, title: State / region }
-      - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: name, sql: "{CUBE}.payload_json->>'name'", type: string, title: Location }
+      - { name: business_name, sql: "{CUBE}.payload_json->>'business_name'", type: string }
+      - { name: status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: location_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: timezone, sql: "{CUBE}.payload_json->>'timezone'", type: string }
+      - { name: currency, sql: "{CUBE}.payload_json->>'currency'", type: string }
+      - { name: country, sql: "{CUBE}.payload_json->>'country'", type: string }
+      - { name: locality, sql: "{CUBE}.payload_json#>> ARRAY['address', 'locality']", type: string, title: Suburb / locality }
+      - { name: region, sql: "{CUBE}.payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string, title: State / region }
+      - { name: postcode, sql: "{CUBE}.payload_json#>> ARRAY['address', 'postal_code']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
     measures:
       - { name: locations, type: count }
       - name: active_locations
@@ -44,20 +44,20 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
       - name: display_name
-        sql: "NULLIF(TRIM(CONCAT_WS(' ', payload_json->>'given_name', payload_json->>'family_name')), '')"
+        sql: "NULLIF(TRIM(CONCAT_WS(' ', {CUBE}.payload_json->>'given_name', {CUBE}.payload_json->>'family_name')), '')"
         type: string
         title: Customer
-      - { name: company_name, sql: "payload_json->>'company_name'", type: string }
-      - { name: creation_source, sql: "payload_json->>'creation_source'", type: string }
-      - { name: email_unsubscribed, sql: "(payload_json#>> ARRAY['preferences', 'email_unsubscribed'])::boolean", type: boolean }
-      - { name: locality, sql: "payload_json#>> ARRAY['address', 'locality']", type: string }
-      - { name: region, sql: "payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string }
-      - { name: postcode, sql: "payload_json#>> ARRAY['address', 'postal_code']", type: string }
-      - { name: country, sql: "payload_json#>> ARRAY['address', 'country']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: company_name, sql: "{CUBE}.payload_json->>'company_name'", type: string }
+      - { name: creation_source, sql: "{CUBE}.payload_json->>'creation_source'", type: string }
+      - { name: email_unsubscribed, sql: "({CUBE}.payload_json#>> ARRAY['preferences', 'email_unsubscribed'])::boolean", type: boolean }
+      - { name: locality, sql: "{CUBE}.payload_json#>> ARRAY['address', 'locality']", type: string }
+      - { name: region, sql: "{CUBE}.payload_json#>> ARRAY['address', 'administrative_district_level_1']", type: string }
+      - { name: postcode, sql: "{CUBE}.payload_json#>> ARRAY['address', 'postal_code']", type: string }
+      - { name: country, sql: "{CUBE}.payload_json#>> ARRAY['address', 'country']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: customers, type: count }
       - name: contactable_customers
@@ -79,37 +79,37 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: catalog_object_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: object_type, sql: "payload_json->>'type'", type: string, title: Catalogue object type }
+      - { name: catalog_object_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: object_type, sql: "{CUBE}.payload_json->>'type'", type: string, title: Catalogue object type }
       - name: object_name
         sql: >
-          COALESCE(payload_json#>> ARRAY['item_data', 'name'], payload_json#>> ARRAY['item_variation_data', 'name'],
-                   payload_json#>> ARRAY['category_data', 'name'], payload_json#>> ARRAY['modifier_list_data', 'name'],
-                   payload_json#>> ARRAY['tax_data', 'name'], payload_json#>> ARRAY['discount_data', 'name'])
+          COALESCE({CUBE}.payload_json#>> ARRAY['item_data', 'name'], {CUBE}.payload_json#>> ARRAY['item_variation_data', 'name'],
+                   {CUBE}.payload_json#>> ARRAY['category_data', 'name'], {CUBE}.payload_json#>> ARRAY['modifier_list_data', 'name'],
+                   {CUBE}.payload_json#>> ARRAY['tax_data', 'name'], {CUBE}.payload_json#>> ARRAY['discount_data', 'name'])
         type: string
         title: Catalogue name
-      - { name: item_id, sql: "payload_json#>> ARRAY['item_variation_data', 'item_id']", type: string, public: false }
-      - { name: category_id, sql: "payload_json#>> ARRAY['item_data', 'category_id']", type: string, public: false }
-      - { name: sku, sql: "payload_json#>> ARRAY['item_variation_data', 'sku']", type: string }
-      - { name: upc, sql: "payload_json#>> ARRAY['item_variation_data', 'upc']", type: string }
-      - { name: product_type, sql: "payload_json#>> ARRAY['item_data', 'product_type']", type: string }
-      - { name: is_taxable, sql: "(payload_json#>> ARRAY['item_data', 'is_taxable'])::boolean", type: boolean }
-      - { name: is_archived, sql: "(payload_json->>'is_archived')::boolean", type: boolean }
-      - { name: is_alcoholic, sql: "(payload_json#>> ARRAY['item_data', 'is_alcoholic'])::boolean", type: boolean }
-      - { name: track_inventory, sql: "(payload_json#>> ARRAY['item_variation_data', 'track_inventory'])::boolean", type: boolean }
-      - { name: sellable, sql: "(payload_json#>> ARRAY['item_variation_data', 'sellable'])::boolean", type: boolean }
-      - { name: stockable, sql: "(payload_json#>> ARRAY['item_variation_data', 'stockable'])::boolean", type: boolean }
-      - { name: price_currency, sql: "payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']", type: string }
+      - { name: item_id, sql: "{CUBE}.payload_json#>> ARRAY['item_variation_data', 'item_id']", type: string, public: false }
+      - { name: category_id, sql: "{CUBE}.payload_json#>> ARRAY['item_data', 'category_id']", type: string, public: false }
+      - { name: sku, sql: "{CUBE}.payload_json#>> ARRAY['item_variation_data', 'sku']", type: string }
+      - { name: upc, sql: "{CUBE}.payload_json#>> ARRAY['item_variation_data', 'upc']", type: string }
+      - { name: product_type, sql: "{CUBE}.payload_json#>> ARRAY['item_data', 'product_type']", type: string }
+      - { name: is_taxable, sql: "({CUBE}.payload_json#>> ARRAY['item_data', 'is_taxable'])::boolean", type: boolean }
+      - { name: is_archived, sql: "({CUBE}.payload_json->>'is_archived')::boolean", type: boolean }
+      - { name: is_alcoholic, sql: "({CUBE}.payload_json#>> ARRAY['item_data', 'is_alcoholic'])::boolean", type: boolean }
+      - { name: track_inventory, sql: "({CUBE}.payload_json#>> ARRAY['item_variation_data', 'track_inventory'])::boolean", type: boolean }
+      - { name: sellable, sql: "({CUBE}.payload_json#>> ARRAY['item_variation_data', 'sellable'])::boolean", type: boolean }
+      - { name: stockable, sql: "({CUBE}.payload_json#>> ARRAY['item_variation_data', 'stockable'])::boolean", type: boolean }
+      - { name: price_currency, sql: "{CUBE}.payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']", type: string }
       - name: price
         sql: >
-          (payload_json#>> ARRAY['item_variation_data', 'price_money', 'amount'])::numeric /
-          POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['item_variation_data', 'price_money', 'amount'])::numeric /
+          POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['item_variation_data', 'price_money', 'currency']))
         type: number
         format: currency
         title: Variation price
         description: Currency-exponent-aware decimal price; populated only for variations with fixed pricing.
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: catalogue_objects, type: count }
       - name: items
@@ -154,17 +154,17 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: order_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
-      - { name: customer_id, sql: "payload_json->>'customer_id'", type: string, public: false }
-      - { name: reference_id, sql: "payload_json->>'reference_id'", type: string }
-      - { name: source_name, sql: "payload_json#>> ARRAY['source', 'name']", type: string, title: Last-touch source }
-      - { name: state, sql: "payload_json->>'state'", type: string, description: "OPEN, COMPLETED, CANCELED or DRAFT." }
-      - { name: ticket_name, sql: "payload_json->>'ticket_name'", type: string, description: "Human ticket/table label; not a stable identifier." }
-      - { name: currency, sql: "payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, description: "Basket creation time, not the default revenue time." }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
-      - { name: closed_at, sql: "(payload_json->>'closed_at')::timestamptz", type: time, title: Closed at (business time) }
+      - { name: order_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json->>'customer_id'", type: string, public: false }
+      - { name: reference_id, sql: "{CUBE}.payload_json->>'reference_id'", type: string }
+      - { name: source_name, sql: "{CUBE}.payload_json#>> ARRAY['source', 'name']", type: string, title: Last-touch source }
+      - { name: state, sql: "{CUBE}.payload_json->>'state'", type: string, description: "OPEN, COMPLETED, CANCELED or DRAFT." }
+      - { name: ticket_name, sql: "{CUBE}.payload_json->>'ticket_name'", type: string, description: "Human ticket/table label; not a stable identifier." }
+      - { name: currency, sql: "{CUBE}.payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time, description: "Basket creation time, not the default revenue time." }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: closed_at, sql: "({CUBE}.payload_json->>'closed_at')::timestamptz", type: time, title: Closed at (business time) }
       - { name: has_customer, sql: "({CUBE}.payload_json->>'customer_id' IS NOT NULL)", type: boolean }
       - { name: is_completed, sql: "({CUBE}.payload_json->>'state' = 'COMPLETED')", type: boolean }
       - { name: is_open, sql: "({CUBE}.payload_json->>'state' IN ('OPEN', 'DRAFT'))", type: boolean }
@@ -181,54 +181,54 @@ cubes:
         type: count
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CANCELED'" }]
       - name: purchasing_customers
-        sql: "payload_json->>'customer_id'"
+        sql: "{CUBE}.payload_json->>'customer_id'"
         type: count_distinct
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: total_order_value
         sql: >
-          (payload_json#>> ARRAY['total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['total_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['total_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: net_order_value
         sql: >
-          (payload_json#>> ARRAY['net_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amounts', 'total_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: returns_value
         sql: >
-          (payload_json#>> ARRAY['return_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['return_amounts', 'total_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['return_amounts', 'total_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['return_amounts', 'total_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: tax_collected
         sql: >
-          (payload_json#>> ARRAY['net_amounts', 'tax_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'tax_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amounts', 'tax_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amounts', 'tax_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: discounts_given
         sql: >
-          (payload_json#>> ARRAY['net_amounts', 'discount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'discount_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amounts', 'discount_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amounts', 'discount_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: tips_collected
         sql: >
-          (payload_json#>> ARRAY['net_amounts', 'tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'tip_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amounts', 'tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amounts', 'tip_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: service_charges
         sql: >
-          (payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amounts', 'service_charge_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'COMPLETED'" }]
       - name: outstanding_amount
         sql: >
-          (payload_json#>> ARRAY['net_amount_due_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['net_amount_due_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['net_amount_due_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['net_amount_due_money', 'currency']))
         type: sum
         format: currency
         description: Current outstanding balance; not a period flow.

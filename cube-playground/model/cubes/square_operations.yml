@@ -29,22 +29,22 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: catalog_object_id, sql: "payload_json->>'catalog_object_id'", type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
-      - { name: inventory_state, sql: "payload_json->>'state'", type: string }
-      - { name: quantity, sql: "(payload_json->>'quantity')::numeric", type: number }
-      - { name: is_estimated, sql: "COALESCE((payload_json->>'is_estimated')::boolean, false)", type: boolean }
-      - { name: calculated_at, sql: "(payload_json->>'calculated_at')::timestamptz", type: time, title: Inventory calculated at }
+      - { name: catalog_object_id, sql: "{CUBE}.payload_json->>'catalog_object_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: inventory_state, sql: "{CUBE}.payload_json->>'state'", type: string }
+      - { name: quantity, sql: "({CUBE}.payload_json->>'quantity')::numeric", type: number }
+      - { name: is_estimated, sql: "COALESCE(({CUBE}.payload_json->>'is_estimated')::boolean, false)", type: boolean }
+      - { name: calculated_at, sql: "({CUBE}.payload_json->>'calculated_at')::timestamptz", type: time, title: Inventory calculated at }
       - { name: is_in_stock, sql: "({CUBE}.payload_json->>'state' = 'IN_STOCK')", type: boolean }
     measures:
       - { name: inventory_balances, type: count }
-      - { name: stocked_variations, sql: "payload_json->>'catalog_object_id'", type: count_distinct }
+      - { name: stocked_variations, sql: "{CUBE}.payload_json->>'catalog_object_id'", type: count_distinct }
       - name: quantity_by_state
-        sql: "(payload_json->>'quantity')::numeric"
+        sql: "({CUBE}.payload_json->>'quantity')::numeric"
         type: sum
         description: Quantity for the selected inventory state at the latest loaded observation.
       - name: units_in_stock
-        sql: "(payload_json->>'quantity')::numeric"
+        sql: "({CUBE}.payload_json->>'quantity')::numeric"
         type: sum
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'IN_STOCK'" }]
       - name: estimated_balances
@@ -79,19 +79,19 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: change_type, sql: "payload_json->>'type'", type: string }
-      - { name: catalog_object_id, sql: "COALESCE(payload_json#>> ARRAY['adjustment', 'catalog_object_id'], payload_json#>> ARRAY['physical_count', 'catalog_object_id'])", type: string, public: false }
-      - { name: location_id, sql: "COALESCE(payload_json#>> ARRAY['adjustment', 'location_id'], payload_json#>> ARRAY['physical_count', 'location_id'])", type: string, public: false }
-      - { name: from_state, sql: "payload_json#>> ARRAY['adjustment', 'from_state']", type: string }
-      - { name: to_state, sql: "payload_json#>> ARRAY['adjustment', 'to_state']", type: string }
-      - { name: reference_id, sql: "payload_json#>> ARRAY['adjustment', 'reference_id']", type: string }
-      - { name: change_reason, sql: "payload_json#>> ARRAY['adjustment', 'reason']", type: string }
-      - { name: quantity, sql: "COALESCE(payload_json#>> ARRAY['adjustment', 'quantity'], payload_json#>> ARRAY['physical_count', 'quantity'])::numeric", type: number }
-      - { name: occurred_at, sql: "(COALESCE(payload_json#>> ARRAY['adjustment', 'occurred_at'], payload_json#>> ARRAY['physical_count', 'occurred_at']))::timestamptz", type: time }
+      - { name: change_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: catalog_object_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'catalog_object_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'catalog_object_id'])", type: string, public: false }
+      - { name: location_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'location_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'location_id'])", type: string, public: false }
+      - { name: from_state, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'from_state']", type: string }
+      - { name: to_state, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'to_state']", type: string }
+      - { name: reference_id, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'reference_id']", type: string }
+      - { name: change_reason, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'reason']", type: string }
+      - { name: quantity, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'quantity'], {CUBE}.payload_json#>> ARRAY['physical_count', 'quantity'])::numeric", type: number }
+      - { name: occurred_at, sql: "(COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'occurred_at'], {CUBE}.payload_json#>> ARRAY['physical_count', 'occurred_at']))::timestamptz", type: time }
     measures:
       - { name: inventory_changes, type: count }
       - name: units_affected
-        sql: "ABS(COALESCE(payload_json#>> ARRAY['adjustment', 'quantity'], payload_json#>> ARRAY['physical_count', 'quantity'])::numeric)"
+        sql: "ABS(COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'quantity'], {CUBE}.payload_json#>> ARRAY['physical_count', 'quantity'])::numeric)"
         type: sum
         description: Absolute units mentioned by events; not net stock movement.
       - name: physical_counts
@@ -113,13 +113,13 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: team_member_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: display_name, sql: "NULLIF(TRIM(CONCAT_WS(' ', payload_json->>'given_name', payload_json->>'family_name')), '')", type: string, title: Team member }
-      - { name: status, sql: "payload_json->>'status'", type: string }
-      - { name: is_owner, sql: "COALESCE((payload_json->>'is_owner')::boolean, false)", type: boolean }
-      - { name: location_assignment_type, sql: "payload_json#>> ARRAY['assigned_locations', 'assignment_type']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: display_name, sql: "NULLIF(TRIM(CONCAT_WS(' ', {CUBE}.payload_json->>'given_name', {CUBE}.payload_json->>'family_name')), '')", type: string, title: Team member }
+      - { name: status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: is_owner, sql: "COALESCE(({CUBE}.payload_json->>'is_owner')::boolean, false)", type: boolean }
+      - { name: location_assignment_type, sql: "{CUBE}.payload_json#>> ARRAY['assigned_locations', 'assignment_type']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: team_members, type: count }
       - name: active_team_members
@@ -162,18 +162,18 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: timecard_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: team_member_id, sql: "payload_json->>'team_member_id'", type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
-      - { name: status, sql: "payload_json->>'status'", type: string }
-      - { name: timezone, sql: "payload_json->>'timezone'", type: string }
-      - { name: job_id, sql: "payload_json#>> ARRAY['wage', 'job_id']", type: string, public: false }
-      - { name: job_title, sql: "payload_json#>> ARRAY['wage', 'title']", type: string }
-      - { name: wage_currency, sql: "payload_json#>> ARRAY['wage', 'hourly_rate', 'currency']", type: string }
-      - { name: start_at, sql: "(payload_json->>'start_at')::timestamptz", type: time, title: Clocked in at }
-      - { name: end_at, sql: "(payload_json->>'end_at')::timestamptz", type: time, title: Clocked out at }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: timecard_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'team_member_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: timezone, sql: "{CUBE}.payload_json->>'timezone'", type: string }
+      - { name: job_id, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'job_id']", type: string, public: false }
+      - { name: job_title, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'title']", type: string }
+      - { name: wage_currency, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'currency']", type: string }
+      - { name: start_at, sql: "({CUBE}.payload_json->>'start_at')::timestamptz", type: time, title: Clocked in at }
+      - { name: end_at, sql: "({CUBE}.payload_json->>'end_at')::timestamptz", type: time, title: Clocked out at }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
       - { name: is_open, sql: "({CUBE}.payload_json->>'end_at' IS NULL)", type: boolean }
     measures:
       - { name: timecards, type: count }
@@ -185,21 +185,69 @@ cubes:
         filters: [{ sql: "{CUBE}.payload_json->>'end_at' IS NULL" }]
       - name: completed_worked_hours
         sql: >
-          GREATEST(0, EXTRACT(EPOCH FROM ((payload_json->>'end_at')::timestamptz - (payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0
+          GREATEST(0, EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'end_at')::timestamptz - ({CUBE}.payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0
         type: sum
         filters: [{ sql: "{CUBE}.payload_json->>'start_at' IS NOT NULL AND {CUBE}.payload_json->>'end_at' IS NOT NULL" }]
       - name: estimated_labour_cost
         sql: >
-          (GREATEST(0, EXTRACT(EPOCH FROM ((payload_json->>'end_at')::timestamptz - (payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0) *
-          ((payload_json#>> ARRAY['wage', 'hourly_rate', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'])))
+          (GREATEST(0, EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'end_at')::timestamptz - ({CUBE}.payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0) *
+          (({CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'])))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'start_at' IS NOT NULL AND {CUBE}.payload_json->>'end_at' IS NOT NULL" }]
       - name: declared_cash_tips
         sql: >
-          (payload_json#>> ARRAY['declared_cash_tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['declared_cash_tip_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['declared_cash_tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['declared_cash_tip_money', 'currency']))
         type: sum
         format: currency
+
+  - name: square_scheduled_shifts
+    title: Square scheduled shifts (roster)
+    public: false
+    description: >
+      One row per published Square scheduled shift: the roster as planned, not
+      time actually worked. Draft-only shifts are excluded. Actual worked time
+      lives in square_timecards.
+    meta:
+      ai_context: >
+        Use for roster, rostered hours, planned shifts, who is scheduled to
+        work and upcoming coverage questions. starts_at/ends_at are the
+        published roster times. This is planned time; for hours actually
+        worked or labour cost use square_timecards instead. rostered_hours is
+        the published shift span; unpaid breaks are not deducted from a roster.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_scheduled_shifts t
+      WHERE NOT t.tombstone
+        AND t.payload_json ? 'published_shift_details'
+        AND COALESCE((t.payload_json#>> ARRAY['published_shift_details', 'is_deleted'])::boolean, false) = false
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json#>> ARRAY['published_shift_details', 'location_id'] = {square_locations}.payload_json->>'id'"
+      - name: square_team_members
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_team_members}.tenant_id AND {CUBE}.connection_id = {square_team_members}.connection_id AND {CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id'] = {square_team_members}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: scheduled_shift_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: team_member_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id']", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'location_id']", type: string, public: false }
+      - { name: job_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'job_id']", type: string, public: false }
+      - { name: shift_notes, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'notes']", type: string }
+      - { name: starts_at, sql: "({CUBE}.payload_json#>> ARRAY['published_shift_details', 'start_at'])::timestamptz", type: time, title: Rostered start }
+      - { name: ends_at, sql: "({CUBE}.payload_json#>> ARRAY['published_shift_details', 'end_at'])::timestamptz", type: time, title: Rostered end }
+    measures:
+      - { name: scheduled_shifts, type: count, title: Rostered shifts }
+      - name: rostered_hours
+        sql: >
+          EXTRACT(EPOCH FROM (({CUBE}.payload_json#>> ARRAY['published_shift_details', 'end_at'])::timestamptz -
+                              ({CUBE}.payload_json#>> ARRAY['published_shift_details', 'start_at'])::timestamptz)) / 3600.0
+        type: sum
+        title: Rostered hours
+      - { name: rostered_team_members, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id']", type: count_distinct, title: Team members rostered }
 
   - name: square_cash_drawer_shifts
     title: Square cash drawer shifts
@@ -220,16 +268,16 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: cash_drawer_shift_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
-      - { name: state, sql: "payload_json->>'state'", type: string }
-      - { name: description, sql: "payload_json->>'description'", type: string }
-      - { name: device_id, sql: "payload_json#>> ARRAY['device', 'id']", type: string, public: false }
-      - { name: device_name, sql: "payload_json#>> ARRAY['device', 'name']", type: string }
-      - { name: currency, sql: "payload_json#>> ARRAY['expected_cash_money', 'currency']", type: string }
-      - { name: opened_at, sql: "(payload_json->>'opened_at')::timestamptz", type: time }
-      - { name: ended_at, sql: "(payload_json->>'ended_at')::timestamptz", type: time }
-      - { name: closed_at, sql: "(payload_json->>'closed_at')::timestamptz", type: time, title: Drawer closed at }
+      - { name: cash_drawer_shift_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: state, sql: "{CUBE}.payload_json->>'state'", type: string }
+      - { name: description, sql: "{CUBE}.payload_json->>'description'", type: string }
+      - { name: device_id, sql: "{CUBE}.payload_json#>> ARRAY['device', 'id']", type: string, public: false }
+      - { name: device_name, sql: "{CUBE}.payload_json#>> ARRAY['device', 'name']", type: string }
+      - { name: currency, sql: "{CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']", type: string }
+      - { name: opened_at, sql: "({CUBE}.payload_json->>'opened_at')::timestamptz", type: time }
+      - { name: ended_at, sql: "({CUBE}.payload_json->>'ended_at')::timestamptz", type: time }
+      - { name: closed_at, sql: "({CUBE}.payload_json->>'closed_at')::timestamptz", type: time, title: Drawer closed at }
     measures:
       - { name: drawer_shifts, type: count }
       - name: closed_drawer_shifts
@@ -237,19 +285,19 @@ cubes:
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
       - name: expected_cash
         sql: >
-          (payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['expected_cash_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']))
         type: sum
         format: currency
       - name: counted_cash
         sql: >
-          (payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['closed_cash_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
       - name: cash_variance
         sql: >
-          ((payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric - (payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric) /
-          POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['expected_cash_money', 'currency']))
+          (({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric - ({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric) /
+          POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']))
         type: sum
         format: currency
         filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
@@ -276,17 +324,17 @@ cubes:
       - { name: connection_id, sql: connection_id, type: string, public: false }
       - { name: event_source_record_id, sql: source_record_id, type: string, public: false }
       - { name: cash_drawer_shift_id, sql: cash_drawer_shift_id, type: string, public: false }
-      - { name: event_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: event_type, sql: "payload_json->>'event_type'", type: string }
-      - { name: description, sql: "payload_json->>'description'", type: string }
-      - { name: team_member_id, sql: "payload_json->>'team_member_id'", type: string, public: false }
-      - { name: currency, sql: "payload_json#>> ARRAY['event_money', 'currency']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Drawer event at }
+      - { name: event_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: event_type, sql: "{CUBE}.payload_json->>'event_type'", type: string }
+      - { name: description, sql: "{CUBE}.payload_json->>'description'", type: string }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'team_member_id'", type: string, public: false }
+      - { name: currency, sql: "{CUBE}.payload_json#>> ARRAY['event_money', 'currency']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time, title: Drawer event at }
     measures:
       - { name: drawer_events, type: count }
       - name: event_amount
         sql: >
-          (payload_json#>> ARRAY['event_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent(payload_json#>> ARRAY['event_money', 'currency']))
+          ({CUBE}.payload_json#>> ARRAY['event_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['event_money', 'currency']))
         type: sum
         format: currency
 
@@ -304,19 +352,19 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: loyalty_account_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: program_id, sql: "payload_json->>'program_id'", type: string, public: false }
-      - { name: customer_id, sql: "payload_json#>> ARRAY['mapping', 'id']", type: string, public: false }
-      - { name: point_balance, sql: "(payload_json->>'balance')::numeric", type: number }
-      - { name: lifetime_points, sql: "(payload_json->>'lifetime_points')::numeric", type: number }
-      - { name: enrolled_at, sql: "(payload_json->>'enrolled_at')::timestamptz", type: time }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time }
-      - { name: updated_at, sql: "(payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: loyalty_account_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: program_id, sql: "{CUBE}.payload_json->>'program_id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json#>> ARRAY['mapping', 'id']", type: string, public: false }
+      - { name: point_balance, sql: "({CUBE}.payload_json->>'balance')::numeric", type: number }
+      - { name: lifetime_points, sql: "({CUBE}.payload_json->>'lifetime_points')::numeric", type: number }
+      - { name: enrolled_at, sql: "({CUBE}.payload_json->>'enrolled_at')::timestamptz", type: time }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
     measures:
       - { name: loyalty_members, type: count }
-      - { name: current_points_outstanding, sql: "(payload_json->>'balance')::numeric", type: sum }
-      - { name: lifetime_points_earned, sql: "(payload_json->>'lifetime_points')::numeric", type: sum }
-      - { name: average_point_balance, sql: "(payload_json->>'balance')::numeric", type: avg }
+      - { name: current_points_outstanding, sql: "({CUBE}.payload_json->>'balance')::numeric", type: sum }
+      - { name: lifetime_points_earned, sql: "({CUBE}.payload_json->>'lifetime_points')::numeric", type: sum }
+      - { name: average_point_balance, sql: "({CUBE}.payload_json->>'balance')::numeric", type: avg }
 
   - name: square_loyalty_events
     title: Square loyalty events
@@ -340,36 +388,36 @@ cubes:
       - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
       - { name: tenant_id, sql: tenant_id, type: string, public: false }
       - { name: connection_id, sql: connection_id, type: string, public: false }
-      - { name: loyalty_event_id, sql: "payload_json->>'id'", type: string, public: false }
-      - { name: loyalty_account_id, sql: "payload_json->>'loyalty_account_id'", type: string, public: false }
-      - { name: location_id, sql: "payload_json->>'location_id'", type: string, public: false }
-      - { name: event_type, sql: "payload_json->>'type'", type: string }
-      - { name: source, sql: "payload_json->>'source'", type: string }
-      - { name: order_id, sql: "COALESCE(payload_json#>> ARRAY['accumulate_points', 'order_id'], payload_json#>> ARRAY['accumulate_promotion_points', 'order_id'], payload_json#>> ARRAY['redeem_reward', 'order_id'])", type: string, public: false }
-      - { name: adjustment_reason, sql: "payload_json#>> ARRAY['adjust_points', 'reason']", type: string }
-      - { name: created_at, sql: "(payload_json->>'created_at')::timestamptz", type: time, title: Loyalty event at }
+      - { name: loyalty_event_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: loyalty_account_id, sql: "{CUBE}.payload_json->>'loyalty_account_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: event_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: source, sql: "{CUBE}.payload_json->>'source'", type: string }
+      - { name: order_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['accumulate_points', 'order_id'], {CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'order_id'], {CUBE}.payload_json#>> ARRAY['redeem_reward', 'order_id'])", type: string, public: false }
+      - { name: adjustment_reason, sql: "{CUBE}.payload_json#>> ARRAY['adjust_points', 'reason']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time, title: Loyalty event at }
     measures:
       - { name: loyalty_events, type: count }
       - name: points_net_change
         sql: >
-          CASE payload_json->>'type'
-            WHEN 'ACCUMULATE_POINTS' THEN COALESCE((payload_json#>> ARRAY['accumulate_points', 'points'])::numeric, 0)
-            WHEN 'ACCUMULATE_PROMOTION_POINTS' THEN COALESCE((payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
-            WHEN 'ADJUST_POINTS' THEN COALESCE((payload_json#>> ARRAY['adjust_points', 'points'])::numeric, 0)
-            WHEN 'CREATE_REWARD' THEN -COALESCE((payload_json#>> ARRAY['create_reward', 'points'])::numeric, 0)
-            WHEN 'DELETE_REWARD' THEN COALESCE((payload_json#>> ARRAY['delete_reward', 'points'])::numeric, 0)
-            WHEN 'EXPIRE_POINTS' THEN -COALESCE((payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)
-            ELSE COALESCE((payload_json#>> ARRAY['other_event', 'points'])::numeric, 0)
+          CASE {CUBE}.payload_json->>'type'
+            WHEN 'ACCUMULATE_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_points', 'points'])::numeric, 0)
+            WHEN 'ACCUMULATE_PROMOTION_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
+            WHEN 'ADJUST_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['adjust_points', 'points'])::numeric, 0)
+            WHEN 'CREATE_REWARD' THEN -COALESCE(({CUBE}.payload_json#>> ARRAY['create_reward', 'points'])::numeric, 0)
+            WHEN 'DELETE_REWARD' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['delete_reward', 'points'])::numeric, 0)
+            WHEN 'EXPIRE_POINTS' THEN -COALESCE(({CUBE}.payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)
+            ELSE COALESCE(({CUBE}.payload_json#>> ARRAY['other_event', 'points'])::numeric, 0)
           END
         type: sum
       - name: points_earned
         sql: >
-          COALESCE((payload_json#>> ARRAY['accumulate_points', 'points'])::numeric,
-                   (payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
+          COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_points', 'points'])::numeric,
+                   ({CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
         type: sum
         filters: [{ sql: "{CUBE}.payload_json->>'type' IN ('ACCUMULATE_POINTS', 'ACCUMULATE_PROMOTION_POINTS')" }]
       - name: points_expired
-        sql: "COALESCE((payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)"
+        sql: "COALESCE(({CUBE}.payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)"
         type: sum
         filters: [{ sql: "{CUBE}.payload_json->>'type' = 'EXPIRE_POINTS'" }]
       - name: rewards_created
