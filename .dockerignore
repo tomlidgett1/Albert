@@ -13,3 +13,10 @@ work
 .env.*
 !.env.example
 npm-debug.log*
+.venv
+.xero-dlt-venv
+.dlt
+.albert-agent-qa-out
+.albert-eval*.jsonl
+.claude
+.vercel
