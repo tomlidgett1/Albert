@@ -76,7 +76,11 @@ export const xeroManifest: ConnectorManifest = {
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-nz.yaml`,
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-identity.yaml`,
   ],
-  ingestion: { initialStart: "automatic" },
+  // Manual-only by product decision: ingestion starts from the Connections
+  // workspace button, never automatically on connect. The control-plane
+  // schedulers and the webhook router exclude xero on the same basis
+  // (control-plane migration 0142).
+  ingestion: { initialStart: "manual" },
   oauth: {
     scopes: XERO_DEFAULT_SCOPES,
     leastPrivilegeNotes: [

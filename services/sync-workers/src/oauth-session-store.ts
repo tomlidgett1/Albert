@@ -673,6 +673,7 @@ export class OAuthSessionStore {
       const effectiveInitialStart = input.context.provider === "shopify"
         || input.context.provider === "momence"
         || input.context.provider === "lightspeed-x"
+        || input.context.provider === "xero"
         ? "manual"
         : input.ingestionInitialStart;
       await client.query(
@@ -713,6 +714,7 @@ export class OAuthSessionStore {
       const suppressInitialBackfill = input.context.provider === "shopify"
         || input.context.provider === "momence"
         || input.context.provider === "lightspeed-x"
+        || input.context.provider === "xero"
         || operationallySuppressed
         || effectiveInitialStart === "manual";
       let jobRequestId: string | null = null;

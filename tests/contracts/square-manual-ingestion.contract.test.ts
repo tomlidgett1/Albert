@@ -17,7 +17,10 @@ async function source(path: string): Promise<string> {
 
 test("Square declares explicit first ingestion while established connectors preserve automatic start", () => {
   assert.equal(squareManifest.ingestion.initialStart, "manual");
-  for (const manifest of [lightspeedRManifest, xeroManifest, deputyManifest, stripeManifest]) {
+  // Xero is manual-only by product decision: ingestion starts from the
+  // workspace button, never on connect (control-plane migration 0142).
+  assert.equal(xeroManifest.ingestion.initialStart, "manual");
+  for (const manifest of [lightspeedRManifest, deputyManifest, stripeManifest]) {
     assert.equal(manifest.ingestion.initialStart, "automatic", manifest.id);
   }
 });
