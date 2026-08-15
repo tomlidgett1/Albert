@@ -1,6 +1,6 @@
 -- Retires the dlt-loaded XER_OFFICIAL snapshot and the single-tenant scaffolding
 -- around it, completing the move of the Xero data home to the connector-owned
--- source_xero staging (restored in 0160, viewed through 0163).
+-- source_xero staging (restored in 0160, viewed through 0164).
 --
 -- After this migration every byte of Xero data lives in tables that carry
 -- tenant_id + connection_id, so a disconnect purge (repaired in 0159) removes
@@ -15,7 +15,7 @@
 --
 -- Apply order is enforced, not assumed: this migration refuses to run while
 -- any source_xero_official view still reads XER_OFFICIAL, the hard-coded
--- tenant_binding, or the xero_ts() dlt timestamp shim — i.e. before 0163 has
+-- tenant_binding, or the xero_ts() dlt timestamp shim — i.e. before 0164 has
 -- been applied. It also refuses while source_xero is missing (0160 unapplied),
 -- so it can never leave the xo_* contract reading nothing.
 
@@ -36,7 +36,7 @@ BEGIN
       OR definition ~ 'xero_ts');
   IF offender IS NOT NULL THEN
     RAISE EXCEPTION
-      'views still read the retired snapshot (apply 0163 first): %', offender;
+      'views still read the retired snapshot (apply 0164 first): %', offender;
   END IF;
 END $$;
 
