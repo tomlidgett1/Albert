@@ -195,7 +195,14 @@ export async function fetchWithRetry(
       attempt === maxAttempts ||
       (retryAfter !== null && retryAfter > maxInlineRetryAfterMs)
     ) {
-      await response.body?.cancel().catch(() => undefined);
+      // Vendors put the machine-readable reason (invalid_grant, invalid_client,
+      // unauthorized_client) in the body; keep a bounded excerpt so a rejected
+      // OAuth exchange is diagnosable from logs. Client-error bodies never carry
+      // credentials, and the cap keeps a stray HTML page from flooding logs.
+      const vendorReason = response.status >= 400 && response.status < 500
+        ? await response.text().then((text) => text.slice(0, 512)).catch(() => null)
+        : null;
+      if (vendorReason === null) await response.body?.cancel().catch(() => undefined);
       throw new ConnectorHttpError(response.status, "The vendor API rejected the request.", {
         retryable: retryableStatus(response.status),
         retryAfterMs: retryAfter ?? undefined,
@@ -203,6 +210,7 @@ export async function fetchWithRetry(
           response.headers.get("x-request-id") ??
           response.headers.get("cf-ray") ??
           undefined,
+        details: vendorReason === null ? undefined : { vendorReason },
       });
     }
 

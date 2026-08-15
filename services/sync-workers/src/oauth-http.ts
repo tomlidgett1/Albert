@@ -1,6 +1,7 @@
 import { verifyInternalRequest } from "../../../packages/security/src/index.js";
 import {
   ConnectorError,
+  ConnectorHttpError,
   createDeadlineSignal,
   raceWithSignal,
   type OAuthConnectorPack,
@@ -175,6 +176,8 @@ export class OAuthWorkerHttpHandler {
         errorName: error instanceof Error ? error.name : "UnknownError",
         message: error instanceof Error ? error.message : "unknown",
         code: error instanceof ConnectorError ? error.code : undefined,
+        status: error instanceof ConnectorHttpError ? error.status : undefined,
+        details: error instanceof ConnectorError ? error.details ?? undefined : undefined,
       });
       return publicError(error);
     } finally {
