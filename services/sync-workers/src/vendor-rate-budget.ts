@@ -91,6 +91,20 @@ function asRetryAfter(value: string | number | null | undefined): number {
 
 /** Wait inline for short budget delays so multipage claims do not thrash. */
 const INLINE_BUDGET_WAIT_MS = 30_000;
+/**
+ * A slow pacer (Xero's 1,000/day = one call per 86s) emits tokens further
+ * apart than the flat inline ceiling. Kicking a claim out at 30s made every
+ * winner spend its token and lose the slot before the next call, so no page
+ * ever completed and the freed slot just fed the herd. Let a claim ride out
+ * one emission interval of the policy that denied it (bounded) instead.
+ */
+const MAX_INLINE_BUDGET_WAIT_MS = 180_000;
+
+function inlineWaitCeilingMs(policies: readonly RatePolicy[], budgetKey: string): number {
+  const policy = policies.find((candidate) => candidate.key === budgetKey);
+  const emission = policy?.emissionIntervalMs ?? 0;
+  return Math.min(MAX_INLINE_BUDGET_WAIT_MS, Math.max(INLINE_BUDGET_WAIT_MS, emission + 5_000));
+}
 
 class VendorRateReservationDenied extends Error {
   constructor(
@@ -136,7 +150,12 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
 
   async beforeRequest(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    const deadline = Date.now() + INLINE_BUDGET_WAIT_MS;
+    // Total inline budget for one request: the slowest policy's ceiling, so a
+    // request may ride out one emission interval but never accumulate more.
+    const deadline = Date.now() + this.policies.reduce(
+      (maximum, policy) => Math.max(maximum, inlineWaitCeilingMs(this.policies, policy.key)),
+      INLINE_BUDGET_WAIT_MS,
+    );
     while (true) {
       let denied: VendorRateReservationDenied | null = null;
       try {
@@ -174,7 +193,8 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
         denied = error;
       }
       if (!denied) return;
-      if (Date.now() + denied.retryAfterMs > deadline) {
+      const ceiling = inlineWaitCeilingMs(this.policies, denied.budgetKey);
+      if (denied.retryAfterMs > ceiling || Date.now() + denied.retryAfterMs > deadline) {
         throw new ConnectorError(
           "RATE_LIMITED",
           "The shared vendor request budget is temporarily exhausted.",
