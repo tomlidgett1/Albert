@@ -100,6 +100,21 @@ const INLINE_BUDGET_WAIT_MS = 30_000;
  */
 const MAX_INLINE_BUDGET_WAIT_MS = 180_000;
 
+/**
+ * How long a claim bounced by the budget should stay off the queue. Under a
+ * slow pacer the herd of waiting jobs otherwise wakes at the pacer's cadence
+ * and snipes the token from the claim that is mid-walk. Backing off by
+ * several emission intervals thins the herd; the slot holder keeps walking.
+ */
+const MIN_SLOW_PACER_DEFERRAL_MS = 5 * 60_000;
+
+function deferralMs(policies: readonly RatePolicy[], denied: VendorRateReservationDenied): number {
+  const policy = policies.find((candidate) => candidate.key === denied.budgetKey);
+  const emission = policy?.emissionIntervalMs ?? 0;
+  if (emission <= INLINE_BUDGET_WAIT_MS) return denied.retryAfterMs;
+  return Math.max(denied.retryAfterMs, MIN_SLOW_PACER_DEFERRAL_MS);
+}
+
 function inlineWaitCeilingMs(policies: readonly RatePolicy[], budgetKey: string): number {
   const policy = policies.find((candidate) => candidate.key === budgetKey);
   const emission = policy?.emissionIntervalMs ?? 0;
@@ -200,7 +215,7 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
           "The shared vendor request budget is temporarily exhausted.",
           {
             retryable: true,
-            retryAfterMs: denied.retryAfterMs,
+            retryAfterMs: deferralMs(this.policies, denied),
             details: { budgetKey: denied.budgetKey },
           },
         );

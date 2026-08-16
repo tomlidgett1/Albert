@@ -120,7 +120,13 @@ export const xeroManifest: ConnectorManifest = {
       },
       {
         key: "xero.api-day",
-        burstCapacity: 60,
+        // The long-run rate is the daily allowance spread over 24h (one call
+        // per ~86s at 1,000/day). A burst of 60 drained in the first two
+        // minutes of a 190-stream backfill and then handed out single tokens
+        // to a racing herd, so no multi-call page ever completed and most
+        // grants were wasted. A quarter-day burst lets a claim that holds a
+        // worker slot walk consecutive pages; the burst refills over ~6h.
+        burstCapacity: 240,
         interval: {
           kind: "window_budget",
           windowMilliseconds: 86_400_000,

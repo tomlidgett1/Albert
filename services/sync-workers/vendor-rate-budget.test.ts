@@ -94,7 +94,7 @@ test("Xero reserves both its minute gate and configured daily tier budget", asyn
 
   assert.deepEqual(calls, [
     ["tenant", "connection", "xero.api-minute", 1_000, 5],
-    ["tenant", "connection", "xero.api-day", 17_280, 60],
+    ["tenant", "connection", "xero.api-day", 17_280, 240],
   ]);
 });
 
