@@ -112,6 +112,14 @@ export type StreamContract = Readonly<{
   /** Optional streams may be durably unavailable without retrying forever. */
   availability?: "required" | "optional";
   /**
+   * Streams whose extraction cost is a call per source record (attachments,
+   * history, per-contact detail) are declared but not walked by backfill or
+   * scheduled sync; they wait for an explicit operator request. Under a daily
+   * vendor allowance a per-record fan-out would consume the whole budget for
+   * data no product surface reads.
+   */
+  ingestionMode?: "backfill" | "on_demand";
+  /**
    * Streams whose complete current phase must be durably transformed before
    * this stream may materialise canonical rows. Dependencies are connector
    * local, immutable for a connection generation, and must form a DAG.

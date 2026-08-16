@@ -155,7 +155,7 @@ export function manifestBackfillStreams(connector: ConnectorPack): readonly Conn
   // registers the live list after a successful connection check.
   const contracts = connector.manifest?.streams;
   if (!contracts) return [];
-  return contracts.map((stream) => ({
+  return contracts.filter((stream) => stream.ingestionMode !== "on_demand").map((stream) => ({
     id: stream.id,
     label: stream.resource,
     domains: stream.productDomains,

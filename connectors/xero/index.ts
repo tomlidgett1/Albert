@@ -434,8 +434,16 @@ export class XeroConnector implements OAuthConnectorPack {
     return selected;
   }
 
+  /** Backfill and scheduled sync see only streams the manifest lets them walk. */
   async list_streams(context: ConnectorContext): Promise<readonly ConnectorStream[]> {
     void context;
+    return this.list_all_streams().filter((stream) =>
+      this.manifest.streams.find((candidate) => candidate.id === stream.id)?.ingestionMode !== "on_demand"
+    );
+  }
+
+  /** Every declared stream, including on-demand ones an operator may walk explicitly. */
+  list_all_streams(): readonly ConnectorStream[] {
     return this.manifest.streams
       .map((stream) => ({
         id: stream.id,
