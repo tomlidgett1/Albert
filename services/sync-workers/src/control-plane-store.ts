@@ -885,14 +885,15 @@ export class ControlPlaneStore implements RawManifestRepository {
         [input.job.tenantId,input.job.connectionId,input.job.connectionGeneration],
       );
       if (generationFence.rows[0]?.ok !== true) throw new Error("connection_generation_stale");
-      await client.query(
+      const landingUpdate = await client.query<{ batch_id: string }>(
         `update control_plane.raw_batch_landings
             set status = $3,
                 staged_record_count = $4,
                 quarantine_count = $5,
                 analytical_committed_at = now(),
                 last_error = null
-          where tenant_id = $1 and batch_id = $2`,
+          where tenant_id = $1 and batch_id = $2
+          returning batch_id`,
         [
           input.job.tenantId,
           input.job.batchId,
@@ -901,6 +902,11 @@ export class ControlPlaneStore implements RawManifestRepository {
           input.quarantineCount,
         ],
       );
+      // A mid-walk page that yielded nothing for this stream never minted a
+      // manifest or landing row (the worker skips that bookkeeping), so there
+      // is no batch for a transform to consume; enqueueing one would fail the
+      // whole claim on "not durably landed" and dead-letter the stream.
+      const pageLandedBatch = landingUpdate.rows.length > 0;
       if ("stream" in input.job && input.job.stream) {
         const advancesPrimaryCursor = input.job.type === "IncrementalSync" ||
           (input.job.type === "InitialBackfill" && input.job.phase === "recent");
@@ -1136,19 +1142,21 @@ export class ControlPlaneStore implements RawManifestRepository {
           ],
         );
       }
-      await client.query(
-        `select transform_job_id,created
-           from control_plane.enqueue_canonical_transform_job(
-             $1::text,$2::text,$3::text,$4::text[],$5::boolean
-           )`,
-        [
-          input.job.tenantId,
-          input.job.batchId,
-          input.mappingVersion,
-          [...input.domains],
-          input.backfillComplete,
-        ],
-      );
+      if (pageLandedBatch) {
+        await client.query(
+          `select transform_job_id,created
+             from control_plane.enqueue_canonical_transform_job(
+               $1::text,$2::text,$3::text,$4::text[],$5::boolean
+             )`,
+          [
+            input.job.tenantId,
+            input.job.batchId,
+            input.mappingVersion,
+            [...input.domains],
+            input.backfillComplete,
+          ],
+        );
+      }
       if (input.reconciliationTransition) {
         const transition = input.reconciliationTransition;
         const reconciliationJob = transition.claim.job;

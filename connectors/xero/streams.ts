@@ -243,8 +243,17 @@ function toStream(
  * Advanced grant, fan-outs are budget-priced. Only the accounting core and the
  * tenant connection inventory are unconditionally required.
  */
+/**
+ * Xero retired the classic ExpenseClaims endpoints when it moved organisations
+ * to the Expenses product; those organisations get a hard 4xx, not an empty
+ * page. Treat the family as optional so an ordinary organisation does not
+ * fail its connection over a product it was never on.
+ */
+const RETIRED_ACCOUNTING_FAMILIES = ["xero_expense_claim"] as const;
+
 function availabilityOf(table: XeroSpecTable): "required" | "optional" {
   if (table.source.availability === "optional") return "optional";
+  if (RETIRED_ACCOUNTING_FAMILIES.some((prefix) => table.id.startsWith(prefix))) return "optional";
   if (table.source.api === "accounting" || table.source.api === "identity") return "required";
   return "optional";
 }
