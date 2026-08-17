@@ -1,0 +1,2187 @@
+{
+ "xero_accounts": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000002",
+   "fields": {
+    "AccountID": "00000000-0000-4000-8000-000000000002",
+    "Code": "200",
+    "Name": "Sales",
+    "Type": "REVENUE",
+    "BankAccountNumber": "",
+    "Status": "ACTIVE",
+    "CurrencyCode": "AUD",
+    "TaxType": "OUTPUT",
+    "EnablePaymentsToAccount": false,
+    "Class": "REVENUE",
+    "SystemAccount": "",
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_bank_transactions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000008",
+   "fields": {
+    "BankTransactionID": "00000000-0000-4000-8000-000000000008",
+    "Type": "RECEIVE",
+    "Contact_ContactID": "00000000-0000-4000-8000-000000000003",
+    "Contact_Name": "Sample Customer",
+    "BankAccount_AccountID": "00000000-0000-4000-8000-000000000007",
+    "IsReconciled": true,
+    "Date": "2026-07-31T00:00:00Z",
+    "Reference": "DEMO-DEPOSIT-1",
+    "CurrencyCode": "AUD",
+    "CurrencyRate": "1.0000",
+    "Status": "AUTHORISED",
+    "LineAmountTypes": "Inclusive",
+    "SubTotal": "1362.7273",
+    "TotalTax": "136.2727",
+    "Total": "1499.0000",
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "Contact": {
+     "ContactID": "00000000-0000-4000-8000-000000000003",
+     "Name": "Sample Customer"
+    },
+    "LineItems": [],
+    "BankAccount": {
+     "AccountID": "00000000-0000-4000-8000-000000000007"
+    }
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_bank_transaction_line_item_tracking": [],
+ "xero_bank_transaction_line_items": [],
+ "xero_bank_transfers": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000124",
+   "fields": {
+    "BankTransferID": "00000000-0000-4000-8000-000000000124",
+    "Amount": "100.0000",
+    "Date": "2026-08-01",
+    "CurrencyRate": "100.0000",
+    "FromBankTransactionID": "00000000-0000-4000-8000-000000000127",
+    "ToBankTransactionID": "00000000-0000-4000-8000-000000000128",
+    "FromIsReconciled": false,
+    "ToIsReconciled": false,
+    "Reference": "sanitized-reference",
+    "HasAttachments": false,
+    "CreatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "Status": "AUTHORISED",
+    "FromTracking": {},
+    "ToTracking": {},
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_batch_payments": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000129",
+   "fields": {
+    "BatchPaymentID": "00000000-0000-4000-8000-000000000129",
+    "Type": "PAYBATCH",
+    "Status": "AUTHORISED",
+    "Date": "2026-08-01",
+    "DateString": "sanitized-date_string",
+    "Amount": "100.0000",
+    "TotalAmount": "100.0000",
+    "IsReconciled": false,
+    "Reference": "sanitized-reference",
+    "Particulars": "sanitized-particulars",
+    "Code": "sanitized-code",
+    "Details": "sanitized-details",
+    "Narrative": "sanitized-narrative",
+    "Payments": [],
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_branding_themes": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000131",
+   "fields": {
+    "BrandingThemeID": "00000000-0000-4000-8000-000000000131",
+    "Name": "sanitized-name",
+    "LogoUrl": "sanitized-logo_url",
+    "Type": "INVOICE",
+    "SortOrder": 1,
+    "CreatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_budgets": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000139",
+   "fields": {
+    "BudgetID": "00000000-0000-4000-8000-000000000139",
+    "Type": "OVERALL",
+    "Description": "sanitized-description",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_budget_tracking": [],
+ "xero_contact_groups": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000148",
+   "fields": {
+    "ContactGroupID": "00000000-0000-4000-8000-000000000148",
+    "Name": "sanitized-name",
+    "Status": "ACTIVE",
+    "Contacts": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_contacts": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000003",
+   "fields": {
+    "ContactID": "00000000-0000-4000-8000-000000000003",
+    "ContactNumber": "C-1",
+    "ContactStatus": "ACTIVE",
+    "Name": "Sample Customer",
+    "FirstName": "Sam",
+    "LastName": "Example",
+    "EmailAddress": "sam@example.invalid",
+    "BankAccountDetails": "",
+    "TaxNumber": "",
+    "IsSupplier": false,
+    "IsCustomer": true,
+    "DefaultCurrency": "AUD",
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "Addresses": [],
+    "Phones": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_contact_addresses": [],
+ "xero_contact_balances": [],
+ "xero_contact_persons": [],
+ "xero_contact_phones": [],
+ "xero_credit_notes": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000005",
+   "fields": {
+    "CreditNoteID": "00000000-0000-4000-8000-000000000005",
+    "Type": "ACCRECCREDIT",
+    "Status": "PAID",
+    "Contact_ContactID": "00000000-0000-4000-8000-000000000003",
+    "Contact_Name": "Sample Customer",
+    "CreditNoteNumber": "CN-DEMO-1",
+    "Reference": "DEMO-REFUND-1",
+    "Date": "2026-07-31T00:00:00Z",
+    "LineAmountTypes": "Inclusive",
+    "CurrencyCode": "AUD",
+    "CurrencyRate": "1.0000",
+    "SubTotal": "90.9091",
+    "TotalTax": "9.0909",
+    "Total": "100.0000",
+    "RemainingCredit": "0.0000",
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "UpdatedDateUTCString": "2026-07-31T01:00:00Z",
+    "Contact": {
+     "ContactID": "00000000-0000-4000-8000-000000000003",
+     "Name": "Sample Customer"
+    },
+    "LineItems": [],
+    "Allocations": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_credit_note_allocations": [],
+ "xero_credit_note_line_items": [],
+ "xero_currencies": [
+  {
+   "sourceRecordId": "AED",
+   "fields": {
+    "Code": "AED",
+    "Description": "sanitized-description"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_expense_claims": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000162",
+   "fields": {
+    "ExpenseClaimID": "00000000-0000-4000-8000-000000000162",
+    "Status": "SUBMITTED",
+    "Total": "100.0000",
+    "AmountDue": "100.0000",
+    "AmountPaid": "100.0000",
+    "PaymentDueDate": "2026-08-01",
+    "ReportingDate": "2026-08-01",
+    "ReceiptID": "00000000-0000-4000-8000-000000000164",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "Receipts": [],
+    "Payments": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_expense_claim_payments": [],
+ "xero_expense_claim_receipts": [],
+ "xero_invoice_reminders": [
+  {
+   "sourceRecordId": "sanitized-settings_key:invoice_reminders",
+   "fields": {
+    "settings_key": "invoice_reminders",
+    "Enabled": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_invoices": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000004",
+   "fields": {
+    "InvoiceID": "00000000-0000-4000-8000-000000000004",
+    "Type": "ACCREC",
+    "Status": "AUTHORISED",
+    "Contact_ContactID": "00000000-0000-4000-8000-000000000003",
+    "Contact_Name": "Sample Customer",
+    "InvoiceNumber": "INV-DEMO-1",
+    "Reference": "DEMO-ORDER-1",
+    "Date": "2026-07-31T00:00:00Z",
+    "DueDate": "2026-08-14T00:00:00Z",
+    "LineAmountTypes": "Inclusive",
+    "CurrencyCode": "AUD",
+    "CurrencyRate": "1.0000",
+    "SubTotal": "1362.7273",
+    "TotalTax": "136.2727",
+    "Total": "1499.0000",
+    "AmountDue": "0.0000",
+    "AmountPaid": "1499.0000",
+    "FullyPaidOnDate": "2026-07-31T00:00:00Z",
+    "HasAttachments": false,
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "UpdatedDateUTCString": "2026-07-31T01:00:00Z",
+    "Contact": {
+     "ContactID": "00000000-0000-4000-8000-000000000003",
+     "Name": "Sample Customer"
+    },
+    "LineItems": [
+     {
+      "LineItemID": "00000000-0000-4000-8000-000000000014",
+      "Description": "Demo sale",
+      "Quantity": "1.0000",
+      "UnitAmount": "1362.7273",
+      "TaxAmount": "136.2727",
+      "LineAmount": "1362.7273",
+      "AccountCode": "200"
+     }
+    ]
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_invoice_line_items": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000014",
+   "fields": {
+    "LineItems_LineItemID": "00000000-0000-4000-8000-000000000014",
+    "InvoiceID": "00000000-0000-4000-8000-000000000004",
+    "LineItems": 0,
+    "LineItems_Description": "Demo sale",
+    "LineItems_Quantity": "1.0000",
+    "LineItems_UnitAmount": "1362.7273",
+    "LineItems_LineAmount": "1362.7273",
+    "LineItems_TaxAmount": "136.2727",
+    "LineItems_AccountCode": "200"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_items": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000177",
+   "fields": {
+    "ItemID": "00000000-0000-4000-8000-000000000177",
+    "Code": "sanitized-code",
+    "Name": "sanitized-name",
+    "Description": "sanitized-description",
+    "PurchaseDescription": "sanitized-purchase_description",
+    "IsSold": false,
+    "IsPurchased": false,
+    "IsTrackedAsInventory": false,
+    "InventoryAssetAccountCode": "sanitized-inventory_asset_account_code",
+    "QuantityOnHand": "100.0000",
+    "TotalCostPool": "100.0000",
+    "StatusAttributeString": "sanitized-status_attribute_string",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_journals": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000010",
+   "fields": {
+    "JournalID": "00000000-0000-4000-8000-000000000010",
+    "JournalDate": "2026-07-31T00:00:00Z",
+    "JournalNumber": 101,
+    "CreatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "SourceID": "00000000-0000-4000-8000-000000000009",
+    "SourceType": "MANUALJOURNAL",
+    "JournalLines": [
+     {
+      "JournalLineID": "00000000-0000-4000-8000-000000000011",
+      "AccountCode": "090",
+      "NetAmount": "1499.0000",
+      "GrossAmount": "1499.0000",
+      "TaxAmount": "0.0000"
+     },
+     {
+      "JournalLineID": "00000000-0000-4000-8000-000000000012",
+      "AccountCode": "200",
+      "NetAmount": "-1499.0000",
+      "GrossAmount": "-1499.0000",
+      "TaxAmount": "0.0000"
+     }
+    ]
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_journal_line_tracking": [],
+ "xero_journal_lines": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000011",
+   "fields": {
+    "JournalLineID": "00000000-0000-4000-8000-000000000011",
+    "JournalID": "00000000-0000-4000-8000-000000000010",
+    "JournalLines": 0,
+    "AccountCode": "090",
+    "NetAmount": "1499.0000",
+    "GrossAmount": "1499.0000",
+    "TaxAmount": "0.0000"
+   },
+   "tombstone": false
+  },
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000012",
+   "fields": {
+    "JournalLineID": "00000000-0000-4000-8000-000000000012",
+    "JournalID": "00000000-0000-4000-8000-000000000010",
+    "JournalLines": 1,
+    "AccountCode": "200",
+    "NetAmount": "-1499.0000",
+    "GrossAmount": "-1499.0000",
+    "TaxAmount": "0.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_linked_transactions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000185",
+   "fields": {
+    "LinkedTransactionID": "00000000-0000-4000-8000-000000000185",
+    "Type": "BILLABLEEXPENSE",
+    "Status": "APPROVED",
+    "SourceTransactionID": "00000000-0000-4000-8000-000000000186",
+    "SourceLineItemID": "00000000-0000-4000-8000-000000000187",
+    "SourceTransactionTypeCode": "ACCPAY",
+    "TargetTransactionID": "00000000-0000-4000-8000-000000000188",
+    "TargetLineItemID": "00000000-0000-4000-8000-000000000189",
+    "ContactID": "00000000-0000-4000-8000-000000000190",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_manual_journals": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000009",
+   "fields": {
+    "ManualJournalID": "00000000-0000-4000-8000-000000000009",
+    "Narration": "Sanitized daily takings",
+    "Date": "2026-07-31T00:00:00Z",
+    "Status": "POSTED",
+    "LineAmountTypes": "NoTax",
+    "Url": "",
+    "ShowOnCashBasisReports": true,
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "JournalLines": [
+     {
+      "LineAmount": "1499.0000",
+      "AccountCode": "090",
+      "Description": "Settlement"
+     },
+     {
+      "LineAmount": "-1499.0000",
+      "AccountCode": "200",
+      "Description": "Sales"
+     }
+    ]
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_manual_journal_line_tracking": [],
+ "xero_manual_journal_lines": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000009|0",
+   "fields": {
+    "ManualJournalID": "00000000-0000-4000-8000-000000000009",
+    "JournalLines": 0,
+    "LineAmount": "1499.0000",
+    "AccountCode": "090",
+    "Description": "Settlement"
+   },
+   "tombstone": false
+  },
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000009|1",
+   "fields": {
+    "ManualJournalID": "00000000-0000-4000-8000-000000000009",
+    "JournalLines": 1,
+    "LineAmount": "-1499.0000",
+    "AccountCode": "200",
+    "Description": "Sales"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_organisations": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000001",
+   "fields": {
+    "OrganisationID": "00000000-0000-4000-8000-000000000001",
+    "Name": "Demo Retailer",
+    "LegalName": "Demo Retailer Pty Ltd",
+    "Version": "AU",
+    "BaseCurrency": "AUD",
+    "CountryCode": "AU",
+    "OrganisationStatus": "ACTIVE",
+    "TaxNumber": "00000000000",
+    "FinancialYearEndDay": 30,
+    "FinancialYearEndMonth": 6,
+    "SalesTaxBasis": "ACCRUALS",
+    "ShortCode": "DEMO"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_organisation_addresses": [],
+ "xero_organisation_external_links": [],
+ "xero_organisation_payment_terms": [],
+ "xero_organisation_phones": [],
+ "xero_organisation_actions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000197:sanitized-name",
+   "fields": {
+    "Name": "sanitized-name",
+    "Status": "ALLOWED"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_overpayments": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000206",
+   "fields": {
+    "OverpaymentID": "00000000-0000-4000-8000-000000000206",
+    "Type": "RECEIVE-OVERPAYMENT",
+    "Date": "2026-08-01",
+    "Status": "AUTHORISED",
+    "LineAmountTypes": "Exclusive",
+    "LineItems": [],
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "CurrencyCode": "AED",
+    "CurrencyRate": "100.0000",
+    "RemainingCredit": "100.0000",
+    "AppliedAmount": "100.0000",
+    "Allocations": [],
+    "Payments": [],
+    "Reference": "sanitized-reference",
+    "HasAttachments": false,
+    "Attachments": [],
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "UpdatedDateUTCString": "sanitized-updated_date_utc_string"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_overpayment_allocations": [],
+ "xero_payments": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000006",
+   "fields": {
+    "PaymentID": "00000000-0000-4000-8000-000000000006",
+    "PaymentType": "ACCRECPAYMENT",
+    "Status": "AUTHORISED",
+    "Date": "2026-07-31T00:00:00Z",
+    "Amount": "1499.0000",
+    "BankAmount": "1499.0000",
+    "CurrencyRate": "1.0000",
+    "Reference": "DEMO-PAYMENT-1",
+    "IsReconciled": true,
+    "Account_AccountID": "00000000-0000-4000-8000-000000000007",
+    "Invoice_InvoiceID": "00000000-0000-4000-8000-000000000004",
+    "BatchPaymentID": "00000000-0000-4000-8000-000000000016",
+    "BatchPayment": {
+     "BatchPaymentID": "00000000-0000-4000-8000-000000000016"
+    },
+    "HasAccount": true,
+    "HasValidationErrors": false,
+    "UpdatedDateUTC": "2026-07-31T05:00:00.000Z",
+    "UpdatedDateUTCString": "2026-07-31T01:00:00Z",
+    "Invoice": {
+     "InvoiceID": "00000000-0000-4000-8000-000000000004"
+    },
+    "CreditNote": null,
+    "Prepayment": null,
+    "Overpayment": null,
+    "Account": {
+     "AccountID": "00000000-0000-4000-8000-000000000007"
+    }
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payment_services": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000208",
+   "fields": {
+    "PaymentServiceID": "00000000-0000-4000-8000-000000000208",
+    "PaymentServiceName": "sanitized-payment_service_name",
+    "PaymentServiceUrl": "sanitized-payment_service_url",
+    "PayNowText": "sanitized-pay_now_text",
+    "PaymentServiceType": "sanitized-payment_service_type",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_prepayments": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000446",
+   "fields": {
+    "PrepaymentID": "00000000-0000-4000-8000-000000000446",
+    "Type": "RECEIVE-PREPAYMENT",
+    "Date": "2026-08-01",
+    "Status": "AUTHORISED",
+    "LineAmountTypes": "Exclusive",
+    "LineItems": [],
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "Reference": "sanitized-reference",
+    "InvoiceNumber": "sanitized-invoice_number",
+    "CurrencyCode": "AED",
+    "BrandingThemeID": "00000000-0000-4000-8000-000000000448",
+    "CurrencyRate": "100.0000",
+    "RemainingCredit": "100.0000",
+    "AppliedAmount": "100.0000",
+    "Allocations": [],
+    "Payments": [],
+    "HasAttachments": false,
+    "Attachments": [],
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "UpdatedDateUTCString": "sanitized-updated_date_utc_string"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_prepayment_allocations": [],
+ "xero_purchase_orders": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000461",
+   "fields": {
+    "PurchaseOrderID": "00000000-0000-4000-8000-000000000461",
+    "PurchaseOrderNumber": "sanitized-purchase_order_number",
+    "Status": "DRAFT",
+    "Date": "2026-08-01",
+    "DeliveryDate": "2026-08-01",
+    "ExpectedArrivalDate": "2026-08-01",
+    "Reference": "sanitized-reference",
+    "LineAmountTypes": "Exclusive",
+    "CurrencyCode": "AUD",
+    "CurrencyRate": "100.0000",
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "TotalDiscount": "100.0000",
+    "SentToContact": false,
+    "DeliveryAddress": "sanitized-delivery_address",
+    "AttentionTo": "sanitized-attention_to",
+    "Telephone": "sanitized-telephone",
+    "DeliveryInstructions": "sanitized-delivery_instructions",
+    "BrandingThemeID": "00000000-0000-4000-8000-000000000463",
+    "HasAttachments": false,
+    "StatusAttributeString": "sanitized-status_attribute_string",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": [],
+    "Warnings": [],
+    "Attachments": [],
+    "LineItems": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_purchase_order_line_items": [],
+ "xero_quotes": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000469",
+   "fields": {
+    "QuoteID": "00000000-0000-4000-8000-000000000469",
+    "QuoteNumber": "sanitized-quote_number",
+    "Status": "DRAFT",
+    "Reference": "sanitized-reference",
+    "Terms": "sanitized-terms",
+    "Title": "sanitized-title",
+    "Summary": "sanitized-summary",
+    "Date": "2026-08-01",
+    "DateString": "sanitized-date_string",
+    "ExpiryDate": "2026-08-01",
+    "ExpiryDateString": "sanitized-expiry_date_string",
+    "CurrencyCode": "AUD",
+    "CurrencyRate": "100.0000",
+    "LineAmountTypes": "EXCLUSIVE",
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "TotalDiscount": "100.0000",
+    "BrandingThemeID": "00000000-0000-4000-8000-000000000471",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "StatusAttributeString": "sanitized-status_attribute_string",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_quote_line_items": [],
+ "xero_receipts": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000475",
+   "fields": {
+    "ReceiptID": "00000000-0000-4000-8000-000000000475",
+    "ReceiptNumber": "sanitized-receipt_number",
+    "Date": "2026-08-01",
+    "Reference": "sanitized-reference",
+    "LineAmountTypes": "Exclusive",
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "Status": "DRAFT",
+    "Url": "sanitized-url",
+    "HasAttachments": false,
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": [],
+    "Warnings": [],
+    "Attachments": [],
+    "LineItems": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_receipt_line_items": [],
+ "xero_repeating_invoices": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000482",
+   "fields": {
+    "RepeatingInvoiceID": "00000000-0000-4000-8000-000000000482",
+    "ID": "00000000-0000-4000-8000-000000000483",
+    "Type": "ACCPAY",
+    "Status": "DRAFT",
+    "Reference": "sanitized-reference",
+    "LineAmountTypes": "Exclusive",
+    "CurrencyCode": "AUD",
+    "SubTotal": "100.0000",
+    "TotalTax": "100.0000",
+    "Total": "100.0000",
+    "BrandingThemeID": "00000000-0000-4000-8000-000000000485",
+    "ApprovedForSending": false,
+    "SendCopy": false,
+    "MarkAsSent": false,
+    "IncludePDF": false,
+    "HasAttachments": false,
+    "Attachments": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_repeating_invoice_line_items": [],
+ "xero_1099_reports": [
+  {
+   "sourceRecordId": "1:0",
+   "fields": {
+    "ReportName": "sanitized-report_name",
+    "ReportType": "AgedPayablesByContact",
+    "ReportTitle": "sanitized-report_title",
+    "ReportDate": "2026-08-01",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "Contacts": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_1099_contacts": [],
+ "xero_tax_rates": [
+  {
+   "sourceRecordId": "OUTPUT",
+   "fields": {
+    "TaxType": "OUTPUT",
+    "Name": "GST on Income",
+    "Status": "ACTIVE",
+    "CanApplyToAssets": true,
+    "CanApplyToEquity": true,
+    "CanApplyToExpenses": true,
+    "CanApplyToLiabilities": true,
+    "CanApplyToRevenue": true,
+    "DisplayTaxRate": "10.0000",
+    "EffectiveRate": "10.0000",
+    "TaxComponents": [
+     {
+      "Name": "GST",
+      "Rate": "10.0000",
+      "IsCompound": false
+     }
+    ]
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_tax_rate_components": [
+  {
+   "sourceRecordId": "OUTPUT|0",
+   "fields": {
+    "TaxType": "OUTPUT",
+    "TaxComponents": 0,
+    "Name": "GST",
+    "Rate": "10.0000",
+    "IsCompound": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_tracking_categories": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000013",
+   "fields": {
+    "TrackingCategoryID": "00000000-0000-4000-8000-000000000013",
+    "Name": "Location",
+    "Status": "ACTIVE",
+    "Options": [
+     {
+      "TrackingOptionID": "00000000-0000-4000-8000-000000000015",
+      "Name": "Melbourne",
+      "Status": "ACTIVE"
+     }
+    ]
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_tracking_options": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000015",
+   "fields": {
+    "TrackingOptionID": "00000000-0000-4000-8000-000000000015",
+    "TrackingCategoryID": "00000000-0000-4000-8000-000000000013",
+    "Options": 0,
+    "Name": "Melbourne",
+    "Status": "ACTIVE"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_users": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000488",
+   "fields": {
+    "UserID": "00000000-0000-4000-8000-000000000488",
+    "EmailAddress": "sanitized@example.invalid",
+    "FirstName": "sanitized-first_name",
+    "LastName": "sanitized-last_name",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "IsSubscriber": false,
+    "OrganisationRole": "READONLY"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_assets": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000112",
+   "fields": {
+    "assetId": "00000000-0000-4000-8000-000000000112",
+    "assetName": "sanitized-asset_name",
+    "assetTypeId": "00000000-0000-4000-8000-000000000113",
+    "assetNumber": "sanitized-asset_number",
+    "purchaseDate": "2026-08-01",
+    "purchasePrice": "100.0000",
+    "disposalDate": "2026-08-01",
+    "disposalPrice": "100.0000",
+    "assetStatus": "Draft",
+    "warrantyExpiryDate": "2026-08-01",
+    "serialNumber": "sanitized-serial_number",
+    "canRollback": false,
+    "accountingBookValue": "100.0000",
+    "isDeleteEnabledForDate": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_asset_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000106",
+   "fields": {
+    "assetTypeId": "00000000-0000-4000-8000-000000000106",
+    "assetTypeName": "sanitized-asset_type_name",
+    "fixedAssetAccountId": "00000000-0000-4000-8000-000000000107",
+    "depreciationExpenseAccountId": "00000000-0000-4000-8000-000000000108",
+    "accumulatedDepreciationAccountId": "00000000-0000-4000-8000-000000000109",
+    "locks": 1
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_asset_settings": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000102:settings",
+   "fields": {
+    "singleton_id": "settings",
+    "assetNumberPrefix": "sanitized-asset_number_prefix",
+    "assetNumberSequence": "sanitized-asset_number_sequence",
+    "assetStartDate": "2026-08-01",
+    "lastDepreciationDate": "2026-08-01",
+    "defaultGainOnDisposalAccountId": "00000000-0000-4000-8000-000000000103",
+    "defaultLossOnDisposalAccountId": "00000000-0000-4000-8000-000000000104",
+    "defaultCapitalGainOnDisposalAccountId": "00000000-0000-4000-8000-000000000105",
+    "optInForTax": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_files": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000167",
+   "fields": {
+    "Id": "00000000-0000-4000-8000-000000000167",
+    "FolderId": "00000000-0000-4000-8000-000000000168",
+    "Name": "sanitized-name",
+    "MimeType": "sanitized-mime_type",
+    "Size": 1,
+    "CreatedDateUtc": "2026-08-01T00:00:00.000Z",
+    "UpdatedDateUtc": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_folders": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000170",
+   "fields": {
+    "Id": "00000000-0000-4000-8000-000000000170",
+    "Name": "sanitized-name",
+    "FileCount": 1,
+    "Email": "sanitized@example.invalid",
+    "IsInbox": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_connections": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000140",
+   "fields": {
+    "id": "00000000-0000-4000-8000-000000000140",
+    "authEventId": "00000000-0000-4000-8000-000000000142",
+    "tenantType": "sanitized-tenant_type",
+    "tenantName": "sanitized-tenant_name",
+    "createdDateUtc": "2026-08-01T00:00:00.000Z",
+    "updatedDateUtc": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_employees": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000219",
+   "fields": {
+    "EmployeeID": "00000000-0000-4000-8000-000000000219",
+    "FirstName": "sanitized-first_name",
+    "LastName": "sanitized-last_name",
+    "MiddleNames": "sanitized-middle_names",
+    "Title": "sanitized-title",
+    "DateOfBirth": "2026-08-01",
+    "Gender": "N",
+    "Email": "sanitized@example.invalid",
+    "Phone": "sanitized-phone",
+    "Mobile": "sanitized-mobile",
+    "TwitterUserName": "sanitized-twitter_user_name",
+    "StartDate": "2026-08-01",
+    "TerminationDate": "2026-08-01",
+    "TerminationReason": "V",
+    "Status": "ACTIVE",
+    "JobTitle": "sanitized-job_title",
+    "Classification": "sanitized-classification",
+    "EmployeeGroupName": "sanitized-employee_group_name",
+    "IsAuthorisedToApproveLeave": false,
+    "IsAuthorisedToApproveTimesheets": false,
+    "OrdinaryEarningsRateID": "00000000-0000-4000-8000-000000000220",
+    "PayrollCalendarID": "00000000-0000-4000-8000-000000000221",
+    "IncomeType": "SALARYANDWAGES",
+    "EmploymentType": "EMPLOYEE",
+    "CountryOfResidence": "AF",
+    "IsSTP2Qualified": false,
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": [],
+    "HomeAddress": [],
+    "BankAccounts": [],
+    "PayTemplate": {},
+    "OpeningBalances": [],
+    "TaxDeclaration": {},
+    "LeaveBalances": [],
+    "SuperMemberships": [],
+    "EarningsLines": [],
+    "DeductionLines": [],
+    "SuperLines": [],
+    "ReimbursementLines": [],
+    "LeaveLines": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_leave_applications": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000222",
+   "fields": {
+    "LeaveApplicationID": "00000000-0000-4000-8000-000000000222",
+    "EmployeeID": "00000000-0000-4000-8000-000000000223",
+    "LeaveTypeID": "00000000-0000-4000-8000-000000000224",
+    "Title": "sanitized-title",
+    "StartDate": "2026-08-01",
+    "EndDate": "2026-08-01",
+    "Description": "sanitized-description",
+    "PayOutType": "DEFAULT",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_leave_periods": [],
+ "xero_payroll_au_deduction_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000209",
+   "fields": {
+    "DeductionTypeID": "00000000-0000-4000-8000-000000000209",
+    "Name": "sanitized-name",
+    "AccountCode": "sanitized-account_code",
+    "ReducesTax": false,
+    "ReducesSuper": false,
+    "IsExemptFromW1": false,
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "DeductionCategory": "NONE",
+    "CurrentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_earnings_rates": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000210",
+   "fields": {
+    "EarningsRateID": "00000000-0000-4000-8000-000000000210",
+    "Name": "sanitized-name",
+    "AccountCode": "sanitized-account_code",
+    "TypeOfUnits": "sanitized-type_of_units",
+    "IsExemptFromTax": false,
+    "IsExemptFromSuper": false,
+    "IsReportableAsW1": false,
+    "IsQualifyingEarnings": false,
+    "AllowanceContributesToAnnualLeaveRate": false,
+    "AllowanceContributesToOvertimeRate": false,
+    "EarningsType": "FIXED",
+    "RateType": "FIXEDAMOUNT",
+    "RatePerUnit": "100.0000",
+    "Multiplier": "100.0000",
+    "AccrueLeave": false,
+    "Amount": "100.0000",
+    "EmploymentTerminationPaymentType": "O",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "CurrentRecord": false,
+    "AllowanceType": "CAR",
+    "AllowanceCategory": "NONDEDUCTIBLE"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_leave_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000226",
+   "fields": {
+    "LeaveTypeID": "00000000-0000-4000-8000-000000000226",
+    "Name": "sanitized-name",
+    "TypeOfUnits": "sanitized-type_of_units",
+    "NormalEntitlement": "100.0000",
+    "LeaveLoadingRate": "100.0000",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "IsPaidLeave": false,
+    "ShowOnPayslip": false,
+    "CurrentRecord": false,
+    "LeaveCategoryCode": "ANNUALLEAVE",
+    "SGCExempt": false,
+    "IsQualifyingEarnings": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_reimbursement_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000272",
+   "fields": {
+    "ReimbursementTypeID": "00000000-0000-4000-8000-000000000272",
+    "Name": "sanitized-name",
+    "AccountCode": "sanitized-account_code",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "CurrentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_payroll_calendars": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000252",
+   "fields": {
+    "PayrollCalendarID": "00000000-0000-4000-8000-000000000252",
+    "Name": "sanitized-name",
+    "CalendarType": "WEEKLY",
+    "StartDate": "2026-08-01",
+    "PaymentDate": "2026-08-01",
+    "ReferenceDate": "2026-08-01",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_pay_runs": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000240",
+   "fields": {
+    "PayRunID": "00000000-0000-4000-8000-000000000240",
+    "PayrollCalendarID": "00000000-0000-4000-8000-000000000241",
+    "PayRunPeriodStartDate": "2026-08-01",
+    "PayRunPeriodEndDate": "2026-08-01",
+    "PayRunStatus": "DRAFT",
+    "PaymentDate": "2026-08-01",
+    "PayslipMessage": "sanitized-payslip_message",
+    "Wages": "100.0000",
+    "Deductions": "100.0000",
+    "Tax": "100.0000",
+    "Super": "100.0000",
+    "Reimbursement": "100.0000",
+    "NetPay": "100.0000",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "Payslips": [],
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_settings": [
+  {
+   "sourceRecordId": "sanitized-settings_scope:AU_PAYROLL",
+   "fields": {
+    "settings_scope": "AU_PAYROLL",
+    "DaysInPayrollYear": 1,
+    "EmployeesAreSTP2": false,
+    "TrackingCategories": [],
+    "Accounts": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_settings_accounts": [],
+ "xero_payroll_au_super_funds": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000274",
+   "fields": {
+    "SuperFundID": "00000000-0000-4000-8000-000000000274",
+    "Type": "REGULATED",
+    "Name": "sanitized-name",
+    "ABN": "sanitized-abn",
+    "BSB": "sanitized-bsb",
+    "AccountNumber": "sanitized-account_number",
+    "AccountName": "sanitized-account_name",
+    "ElectronicServiceAddress": "sanitized-electronic_service_address",
+    "EmployerNumber": "sanitized-employer_number",
+    "SPIN": "sanitized-spin",
+    "USI": "sanitized-usi",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_timesheets": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000278",
+   "fields": {
+    "TimesheetID": "00000000-0000-4000-8000-000000000278",
+    "EmployeeID": "00000000-0000-4000-8000-000000000279",
+    "StartDate": "2026-08-01",
+    "EndDate": "2026-08-01",
+    "Status": "DRAFT",
+    "Hours": "100.0000",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "ValidationErrors": [],
+    "TimesheetLines": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_timesheet_lines": [],
+ "xero_payroll_nz_deductions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000280",
+   "fields": {
+    "deductionId": "00000000-0000-4000-8000-000000000280",
+    "deductionName": "sanitized-deduction_name",
+    "deductionCategory": "PayrollGiving",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000281",
+    "currentRecord": false,
+    "standardAmount": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_earnings_rates": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000282",
+   "fields": {
+    "earningsRateID": "00000000-0000-4000-8000-000000000282",
+    "name": "sanitized-name",
+    "earningsType": "Allowance",
+    "rateType": "RatePerUnit",
+    "typeOfUnits": "sanitized-type_of_units",
+    "currentRecord": false,
+    "expenseAccountID": "00000000-0000-4000-8000-000000000283",
+    "ratePerUnit": "100.0000",
+    "multipleOfOrdinaryEarningsRate": "100.0000",
+    "fixedAmount": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employees": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "title": "sanitized-title",
+    "firstName": "sanitized-first_name",
+    "lastName": "sanitized-last_name",
+    "dateOfBirth": "2026-08-01",
+    "email": "sanitized@example.invalid",
+    "gender": "M",
+    "phoneNumber": "sanitized-phone_number",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000304",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "createdDateUTC": "2026-08-01T00:00:00.000Z",
+    "jobTitle": "sanitized-job_title",
+    "engagementType": "sanitized-engagement_type",
+    "fixedTermEndDate": "2026-08-01"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_leave_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000305",
+   "fields": {
+    "leaveTypeID": "00000000-0000-4000-8000-000000000305",
+    "name": "sanitized-name",
+    "isPaidLeave": false,
+    "showOnPayslip": false,
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "isActive": false,
+    "typeOfUnits": "sanitized-type_of_units",
+    "typeOfUnitsToAccrue": "sanitized-type_of_units_to_accrue"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_pay_run_calendars": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000306",
+   "fields": {
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000306",
+    "name": "sanitized-name",
+    "calendarType": "Weekly",
+    "periodStartDate": "2026-08-01",
+    "periodEndDate": "2026-08-01",
+    "paymentDate": "2026-08-01",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_pay_runs": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000307",
+   "fields": {
+    "payRunID": "00000000-0000-4000-8000-000000000307",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000308",
+    "periodStartDate": "2026-08-01",
+    "periodEndDate": "2026-08-01",
+    "paymentDate": "2026-08-01",
+    "totalCost": "100.0000",
+    "totalPay": "100.0000",
+    "payRunStatus": "Draft",
+    "payRunType": "Scheduled",
+    "calendarType": "Weekly",
+    "postedDateTime": "2026-08-01T00:00:00.000Z",
+    "paySlips": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_payslips": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000336",
+   "fields": {
+    "paySlipID": "00000000-0000-4000-8000-000000000336",
+    "employeeID": "00000000-0000-4000-8000-000000000337",
+    "payRunID": "00000000-0000-4000-8000-000000000338",
+    "lastEdited": "2026-08-01T00:00:00.000Z",
+    "firstName": "sanitized-first_name",
+    "lastName": "sanitized-last_name",
+    "totalEarnings": "100.0000",
+    "grossEarnings": "100.0000",
+    "totalPay": "100.0000",
+    "totalEmployerTaxes": "100.0000",
+    "totalEmployeeTaxes": "100.0000",
+    "totalDeductions": "100.0000",
+    "totalReimbursements": "100.0000",
+    "totalStatutoryDeductions": "100.0000",
+    "totalSuperannuation": "100.0000",
+    "bacsHash": "sanitized-bacs_hash",
+    "paymentMethod": "Cheque",
+    "earningsLines": [],
+    "leaveEarningsLines": [],
+    "timesheetEarningsLines": [],
+    "deductionLines": [],
+    "reimbursementLines": [],
+    "leaveAccrualLines": [],
+    "superannuationLines": [],
+    "paymentLines": [],
+    "employeeTaxLines": [],
+    "employerTaxLines": [],
+    "statutoryDeductionLines": [],
+    "taxSettings": [],
+    "grossEarningsHistory": {}
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_payslip_deduction_lines": [],
+ "xero_payroll_nz_payslip_earnings_lines": [],
+ "xero_payroll_nz_payslip_employee_tax_lines": [],
+ "xero_payroll_nz_payslip_employer_tax_lines": [],
+ "xero_payroll_nz_payslip_leave_accrual_lines": [],
+ "xero_payroll_nz_payslip_leave_earnings_lines": [],
+ "xero_payroll_nz_payslip_payment_lines": [],
+ "xero_payroll_nz_payslip_reimbursement_lines": [],
+ "xero_payroll_nz_payslip_statutory_deduction_lines": [],
+ "xero_payroll_nz_payslip_superannuation_lines": [],
+ "xero_payroll_nz_payslip_timesheet_earnings_lines": [],
+ "xero_payroll_nz_reimbursements": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000339",
+   "fields": {
+    "reimbursementID": "00000000-0000-4000-8000-000000000339",
+    "name": "sanitized-name",
+    "accountID": "00000000-0000-4000-8000-000000000340",
+    "currentRecord": false,
+    "reimbursementCategory": "GST",
+    "calculationType": "Unknown",
+    "standardAmount": "100.0000",
+    "standardTypeOfUnits": "Hours",
+    "standardRatePerUnit": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_settings_accounts": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000344",
+   "fields": {
+    "accountID": "00000000-0000-4000-8000-000000000344",
+    "type": "PAYELIABILITY",
+    "code": "sanitized-code",
+    "name": "sanitized-name"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_tracking_categories": [
+  {
+   "sourceRecordId": "sanitized-settings_key:payroll_nz",
+   "fields": {
+    "settings_key": "payroll_nz",
+    "employeeGroupsTrackingCategoryID": "00000000-0000-4000-8000-000000000358",
+    "timesheetTrackingCategoryID": "00000000-0000-4000-8000-000000000359"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_statutory_deductions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000345",
+   "fields": {
+    "id": "00000000-0000-4000-8000-000000000345",
+    "name": "sanitized-name",
+    "statutoryDeductionCategory": "PriorityOrder",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000346",
+    "currentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_superannuations": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000347",
+   "fields": {
+    "id": "00000000-0000-4000-8000-000000000347",
+    "name": "sanitized-name",
+    "category": "KiwiSaver",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000348",
+    "expenseAccountId": "00000000-0000-4000-8000-000000000349",
+    "calculationTypeNZ": "FixedAmount",
+    "standardAmount": "100.0000",
+    "percentage": "100.0000",
+    "companyMax": "100.0000",
+    "currentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_timesheets": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000355",
+   "fields": {
+    "timesheetID": "00000000-0000-4000-8000-000000000355",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000356",
+    "employeeID": "00000000-0000-4000-8000-000000000357",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "status": "Draft",
+    "totalHours": "100.0000",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_timesheet_lines": [],
+ "xero_payroll_uk_benefits": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000360",
+   "fields": {
+    "id": "00000000-0000-4000-8000-000000000360",
+    "name": "sanitized-name",
+    "category": "StakeholderPension",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000361",
+    "expenseAccountId": "00000000-0000-4000-8000-000000000362",
+    "standardAmount": "100.0000",
+    "percentage": "100.0000",
+    "calculationType": "FixedAmount",
+    "currentRecord": false,
+    "subjectToNIC": false,
+    "subjectToPension": false,
+    "subjectToTax": false,
+    "isCalculatingOnQualifyingEarnings": false,
+    "showBalanceToEmployee": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_deductions": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000363",
+   "fields": {
+    "deductionId": "00000000-0000-4000-8000-000000000363",
+    "deductionName": "sanitized-deduction_name",
+    "deductionCategory": "CapitalContributions",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000364",
+    "currentRecord": false,
+    "standardAmount": "100.0000",
+    "reducesSuperLiability": false,
+    "reducesTaxLiability": false,
+    "calculationType": "FixedAmount",
+    "percentage": "100.0000",
+    "subjectToNIC": false,
+    "subjectToTax": false,
+    "isReducedByBasicRate": false,
+    "applyToPensionCalculations": false,
+    "isCalculatingOnQualifyingEarnings": false,
+    "isPension": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_earnings_orders": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000365",
+   "fields": {
+    "id": "00000000-0000-4000-8000-000000000365",
+    "name": "sanitized-name",
+    "statutoryDeductionCategory": "AdditionalStudentLoan",
+    "liabilityAccountId": "00000000-0000-4000-8000-000000000366",
+    "currentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_earnings_rates": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000367",
+   "fields": {
+    "earningsRateID": "00000000-0000-4000-8000-000000000367",
+    "name": "sanitized-name",
+    "earningsType": "Allowance",
+    "rateType": "RatePerUnit",
+    "typeOfUnits": "sanitized-type_of_units",
+    "currentRecord": false,
+    "expenseAccountID": "00000000-0000-4000-8000-000000000368",
+    "ratePerUnit": "100.0000",
+    "multipleOfOrdinaryEarningsRate": "100.0000",
+    "fixedAmount": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employees": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "title": "sanitized-title",
+    "firstName": "sanitized-first_name",
+    "lastName": "sanitized-last_name",
+    "dateOfBirth": "2026-08-01",
+    "email": "sanitized@example.invalid",
+    "gender": "M",
+    "phoneNumber": "sanitized-phone_number",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000391",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "createdDateUTC": "2026-08-01T00:00:00.000Z",
+    "niCategory": "A",
+    "nationalInsuranceNumber": "sanitized-national_insurance_number",
+    "isOffPayrollWorker": false,
+    "niCategories": [],
+    "contracts": [],
+    "earningTemplates": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_contracts": [],
+ "xero_payroll_uk_employee_ni_categories": [],
+ "xero_payroll_uk_leave_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000392",
+   "fields": {
+    "leaveTypeID": "00000000-0000-4000-8000-000000000392",
+    "leaveID": "00000000-0000-4000-8000-000000000393",
+    "name": "sanitized-name",
+    "isPaidLeave": false,
+    "showOnPayslip": false,
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "isActive": false,
+    "isStatutoryLeave": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_pay_run_calendars": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000394",
+   "fields": {
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000394",
+    "name": "sanitized-name",
+    "calendarType": "Weekly",
+    "periodStartDate": "2026-08-01",
+    "periodEndDate": "2026-08-01",
+    "paymentDate": "2026-08-01",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_pay_runs": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000395",
+   "fields": {
+    "payRunID": "00000000-0000-4000-8000-000000000395",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000396",
+    "periodStartDate": "2026-08-01",
+    "periodEndDate": "2026-08-01",
+    "paymentDate": "2026-08-01",
+    "totalCost": "100.0000",
+    "totalPay": "100.0000",
+    "payRunStatus": "Draft",
+    "payRunType": "Scheduled",
+    "calendarType": "Weekly",
+    "postedDateTime": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_reimbursements": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000425",
+   "fields": {
+    "reimbursementID": "00000000-0000-4000-8000-000000000425",
+    "name": "sanitized-name",
+    "accountID": "00000000-0000-4000-8000-000000000426",
+    "currentRecord": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_settings_accounts": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000427",
+   "fields": {
+    "accountID": "00000000-0000-4000-8000-000000000427",
+    "type": "BANK",
+    "code": "sanitized-code",
+    "name": "sanitized-name"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_tracking_categories": [
+  {
+   "sourceRecordId": "sanitized-record_key:payroll_uk",
+   "fields": {
+    "record_key": "payroll_uk",
+    "employeeGroupsTrackingCategoryID": "00000000-0000-4000-8000-000000000440",
+    "timesheetTrackingCategoryID": "00000000-0000-4000-8000-000000000441"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_timesheets": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000437",
+   "fields": {
+    "timesheetID": "00000000-0000-4000-8000-000000000437",
+    "payrollCalendarID": "00000000-0000-4000-8000-000000000438",
+    "employeeID": "00000000-0000-4000-8000-000000000439",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "status": "Draft",
+    "totalHours": "100.0000",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "timesheetLines": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_timesheet_lines": [],
+ "xero_projects": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000456",
+   "fields": {
+    "projectId": "00000000-0000-4000-8000-000000000456",
+    "contactId": "00000000-0000-4000-8000-000000000457",
+    "name": "sanitized-name",
+    "status": "INPROGRESS",
+    "currencyCode": "AUD",
+    "deadlineUtc": "2026-08-01T00:00:00.000Z",
+    "minutesLogged": 1,
+    "minutesToBeInvoiced": 1
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_project_users": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000455",
+   "fields": {
+    "userId": "00000000-0000-4000-8000-000000000455",
+    "name": "sanitized-name",
+    "email": "sanitized@example.invalid"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_attachments": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000117",
+   "fields": {
+    "parent_endpoint": "Invoices",
+    "AttachmentID": "00000000-0000-4000-8000-000000000117",
+    "FileName": "sanitized-file_name",
+    "Url": "sanitized-url",
+    "MimeType": "sanitized-mime_type",
+    "ContentLength": 1,
+    "IncludeOnline": false
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_budget_lines": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000134|00000000-0000-4000-8000-000000000135",
+   "fields": {
+    "BudgetID": "00000000-0000-4000-8000-000000000134",
+    "AccountID": "00000000-0000-4000-8000-000000000135",
+    "AccountCode": "sanitized-account_code",
+    "BudgetLines": 0
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_budget_balances": [],
+ "xero_contact_cis_settings": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000003",
+   "fields": {
+    "ContactID": "00000000-0000-4000-8000-000000000003",
+    "CISEnabled": false,
+    "Rate": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_contact_group_members": [],
+ "xero_file_associations": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000165|00000000-0000-4000-8000-000000000166",
+   "fields": {
+    "FileId": "00000000-0000-4000-8000-000000000165",
+    "ObjectId": "00000000-0000-4000-8000-000000000166",
+    "ObjectGroup": "Account",
+    "ObjectType": "Unknown",
+    "SendWithObject": false,
+    "Name": "sanitized-name",
+    "Size": 1,
+    "CreatedDateUtc": "2026-08-01T00:00:00.000Z",
+    "AssociationDateUtc": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_history_records": [
+  {
+   "sourceRecordId": "sanitized-parent_endpoint:Invoices|0",
+   "fields": {
+    "parent_endpoint": "Invoices",
+    "ordinal": 0,
+    "Details": "sanitized-details",
+    "Changes": "sanitized-changes",
+    "User": "sanitized-user",
+    "DateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_online_invoices": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000004:00000000-0000-4000-8000-000000000004",
+   "fields": {
+    "InvoiceID": "00000000-0000-4000-8000-000000000004",
+    "OnlineInvoiceUrl": "sanitized-online_invoice_url"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_organisation_cis_settings": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000001",
+   "fields": {
+    "OrganisationID": "00000000-0000-4000-8000-000000000001",
+    "CISContractorEnabled": false,
+    "CISSubContractorEnabled": false,
+    "Rate": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_employee_home_addresses": [],
+ "xero_payroll_au_employee_bank_accounts": [],
+ "xero_payroll_au_employee_leave_balances": [],
+ "xero_payroll_au_employee_tax_declarations": [],
+ "xero_payroll_au_opening_balances": [],
+ "xero_payroll_au_employee_super_memberships": [],
+ "xero_payroll_au_pay_template_leave_lines": [],
+ "xero_payroll_au_pay_template_super_lines": [],
+ "xero_payroll_au_pay_template_earnings_lines": [],
+ "xero_payroll_au_opening_balance_leave_lines": [],
+ "xero_payroll_au_opening_balance_super_lines": [],
+ "xero_payroll_au_pay_template_deduction_lines": [],
+ "xero_payroll_au_opening_balance_earnings_lines": [],
+ "xero_payroll_au_opening_balance_deduction_lines": [],
+ "xero_payroll_au_pay_template_reimbursement_lines": [],
+ "xero_payroll_au_opening_balance_reimbursement_lines": [],
+ "xero_payroll_au_opening_balance_paid_leave_lines": [],
+ "xero_payroll_au_payslips": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000269",
+   "fields": {
+    "PayslipID": "00000000-0000-4000-8000-000000000269",
+    "PayRunID": "00000000-0000-4000-8000-000000000240",
+    "EmployeeID": "00000000-0000-4000-8000-000000000271",
+    "FirstName": "sanitized-first_name",
+    "LastName": "sanitized-last_name",
+    "Wages": "100.0000",
+    "Deductions": "100.0000",
+    "Tax": "100.0000",
+    "Super": "100.0000",
+    "Reimbursements": "100.0000",
+    "NetPay": "100.0000",
+    "UpdatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "EarningsLines": [],
+    "TimesheetEarningsLines": [],
+    "DeductionLines": [],
+    "ReimbursementLines": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_au_payslip_deduction_lines": [],
+ "xero_payroll_au_payslip_earnings_lines": [],
+ "xero_payroll_au_payslip_leave_accrual_lines": [],
+ "xero_payroll_au_payslip_leave_earnings_lines": [],
+ "xero_payroll_au_payslip_reimbursement_lines": [],
+ "xero_payroll_au_payslip_superannuation_lines": [],
+ "xero_payroll_au_payslip_tax_lines": [],
+ "xero_payroll_au_payslip_timesheet_earnings_lines": [],
+ "xero_payroll_au_super_fund_products": [
+  {
+   "sourceRecordId": "sanitized-abn|sanitized-usi",
+   "fields": {
+    "ABN": "sanitized-abn",
+    "USI": "sanitized-usi",
+    "SPIN": "sanitized-spin",
+    "ProductName": "sanitized-product_name"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_payment_methods": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303:00000000-0000-4000-8000-000000000303",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "paymentMethod": "Cheque"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_bank_accounts": [],
+ "xero_payroll_nz_employee_leave": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000285",
+   "fields": {
+    "leaveID": "00000000-0000-4000-8000-000000000285",
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000287",
+    "description": "sanitized-description",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_leave_periods": [],
+ "xero_payroll_nz_employee_leave_balances": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303|00000000-0000-4000-8000-000000000289",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000289",
+    "name": "sanitized-name",
+    "balance": "100.0000",
+    "typeOfUnits": "sanitized-type_of_units"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_leave_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303|00000000-0000-4000-8000-000000000293",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000293",
+    "scheduleOfAccrual": "AnnuallyAfter6Months",
+    "unitsAccruedAnnually": "100.0000",
+    "typeOfUnitsToAccrue": "sanitized-type_of_units_to_accrue",
+    "maximumToAccrue": "100.0000",
+    "openingBalance": "100.0000",
+    "openingBalanceTypeOfUnits": "sanitized-opening_balance_type_of_units",
+    "rateAccruedHourly": "100.0000",
+    "percentageOfGrossEarnings": "100.0000",
+    "includeHolidayPayEveryPay": false,
+    "showAnnualLeaveInAdvance": false,
+    "annualLeaveTotalAmountPaid": "100.0000",
+    "scheduleOfAccrualDate": "2026-08-01"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_opening_balances": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303|0",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "balance_ordinal": 0,
+    "periodEndDate": "2026-08-01",
+    "daysPaid": 1,
+    "unpaidWeeks": 1,
+    "grossEarnings": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_pay_template_earnings": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000295|00000000-0000-4000-8000-000000000296",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000295",
+    "payTemplateEarningID": "00000000-0000-4000-8000-000000000296",
+    "earningTemplates": 0,
+    "earningsRateID": "00000000-0000-4000-8000-000000000297",
+    "ratePerUnit": "100.0000",
+    "numberOfUnits": "100.0000",
+    "fixedAmount": "100.0000",
+    "name": "sanitized-name"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_tax": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000303:00000000-0000-4000-8000-000000000303",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "irdNumber": "sanitized-ird_number",
+    "taxCode": "ND",
+    "specialTaxRatePercentage": "100.0000",
+    "hasSpecialStudentLoanRate": false,
+    "specialStudentLoanRatePercentage": "100.0000",
+    "isEligibleForKiwiSaver": false,
+    "esctRatePercentage": "100.0000",
+    "kiwiSaverContributions": "MakeContributions",
+    "kiwiSaverEmployeeContributionRatePercentage": "100.0000",
+    "kiwiSaverEmployerContributionRatePercentage": "100.0000",
+    "kiwiSaverEmployerSalarySacrificeContributionRatePercentage": "100.0000",
+    "kiwiSaverOptOutDate": "2026-08-01",
+    "kiwiSaverContributionHolidayEndDate": "2026-08-01",
+    "hasStudentLoanBalance": false,
+    "studentLoanBalance": "100.0000",
+    "studentLoanAsAt": "2026-08-01"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_working_patterns": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000300",
+   "fields": {
+    "payeeWorkingPatternID": "00000000-0000-4000-8000-000000000300",
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "effectiveFrom": "2026-08-01"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_employee_working_weeks": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000302|0",
+   "fields": {
+    "payeeWorkingPatternID": "00000000-0000-4000-8000-000000000302",
+    "workingWeeks": 0,
+    "effectiveFrom": "2026-08-01",
+    "monday": "100.0000",
+    "tuesday": "100.0000",
+    "wednesday": "100.0000",
+    "thursday": "100.0000",
+    "friday": "100.0000",
+    "saturday": "100.0000",
+    "sunday": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_nz_salary_and_wages": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000341",
+   "fields": {
+    "salaryAndWagesID": "00000000-0000-4000-8000-000000000341",
+    "employeeID": "00000000-0000-4000-8000-000000000303",
+    "earningsRateID": "00000000-0000-4000-8000-000000000343",
+    "numberOfUnitsPerWeek": "100.0000",
+    "ratePerUnit": "100.0000",
+    "numberOfUnitsPerDay": "100.0000",
+    "daysPerWeek": "100.0000",
+    "effectiveFrom": "2026-08-01",
+    "annualSalary": "100.0000",
+    "status": "Active",
+    "paymentType": "Salary",
+    "workPatternType": "DaysAndHours"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_payment_methods": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390:00000000-0000-4000-8000-000000000390",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "paymentMethod": "Cheque",
+    "bankAccounts": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_bank_accounts": [],
+ "xero_payroll_uk_employee_leave": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000371",
+   "fields": {
+    "leaveID": "00000000-0000-4000-8000-000000000371",
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000373",
+    "description": "sanitized-description",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "updatedDateUTC": "2026-08-01T00:00:00.000Z",
+    "periods": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_leave_periods": [],
+ "xero_payroll_uk_employee_leave_balances": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390|00000000-0000-4000-8000-000000000375",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000375",
+    "name": "sanitized-name",
+    "balance": "100.0000",
+    "typeOfUnits": "sanitized-type_of_units"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_leave_types": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390|00000000-0000-4000-8000-000000000378",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000378",
+    "scheduleOfAccrual": "BeginningOfCalendarYear",
+    "hoursAccruedAnnually": "100.0000",
+    "maximumToAccrue": "100.0000",
+    "openingBalance": "100.0000",
+    "rateAccruedHourly": "100.0000",
+    "scheduleOfAccrualDate": "2026-08-01"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_opening_balances": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390:00000000-0000-4000-8000-000000000390",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "statutoryAdoptionPay": "100.0000",
+    "statutoryMaternityPay": "100.0000",
+    "statutoryPaternityPay": "100.0000",
+    "statutorySharedParentalPay": "100.0000",
+    "statutorySickPay": "100.0000",
+    "priorEmployeeNumber": "100.0000"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_pay_template_earnings": [],
+ "xero_payroll_uk_employee_salary_and_wages": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000385",
+   "fields": {
+    "salaryAndWagesID": "00000000-0000-4000-8000-000000000385",
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "earningsRateID": "00000000-0000-4000-8000-000000000387",
+    "numberOfUnitsPerWeek": "100.0000",
+    "ratePerUnit": "100.0000",
+    "numberOfUnitsPerDay": "100.0000",
+    "effectiveFrom": "2026-08-01",
+    "annualSalary": "100.0000",
+    "status": "Active",
+    "paymentType": "Salary"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_statutory_leave_balances": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390:00000000-0000-4000-8000-000000000390|Sick",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "leaveType": "Sick",
+    "balanceRemaining": "100.0000",
+    "units": "Hours"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_employee_tax": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000390:00000000-0000-4000-8000-000000000390",
+   "fields": {
+    "employeeID": "00000000-0000-4000-8000-000000000390",
+    "starterType": "sanitized-starter_type",
+    "starterDeclaration": "sanitized-starter_declaration",
+    "taxCode": "sanitized-tax_code",
+    "w1M1": false,
+    "previousTaxablePay": "100.0000",
+    "previousTaxPaid": "100.0000",
+    "studentLoanDeduction": "sanitized-student_loan_deduction",
+    "hasPostGraduateLoans": false,
+    "isDirector": false,
+    "directorshipStartDate": "2026-08-01",
+    "nicCalculationMethod": "sanitized-nic_calculation_method"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_payslips": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000422",
+   "fields": {
+    "paySlipID": "00000000-0000-4000-8000-000000000422",
+    "employeeID": "00000000-0000-4000-8000-000000000423",
+    "payRunID": "00000000-0000-4000-8000-000000000424",
+    "lastEdited": "2026-08-01T00:00:00.000Z",
+    "firstName": "sanitized-first_name",
+    "lastName": "sanitized-last_name",
+    "totalEarnings": "100.0000",
+    "grossEarnings": "100.0000",
+    "totalPay": "100.0000",
+    "totalEmployerTaxes": "100.0000",
+    "totalEmployeeTaxes": "100.0000",
+    "totalDeductions": "100.0000",
+    "totalReimbursements": "100.0000",
+    "totalCourtOrders": "100.0000",
+    "totalBenefits": "100.0000",
+    "bacsHash": "sanitized-bacs_hash",
+    "paymentMethod": "Cheque"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_payslip_benefit_lines": [],
+ "xero_payroll_uk_payslip_court_order_lines": [],
+ "xero_payroll_uk_payslip_deduction_lines": [],
+ "xero_payroll_uk_payslip_earnings_lines": [],
+ "xero_payroll_uk_payslip_employee_tax_lines": [],
+ "xero_payroll_uk_payslip_employer_tax_lines": [],
+ "xero_payroll_uk_payslip_leave_accrual_lines": [],
+ "xero_payroll_uk_payslip_leave_earnings_lines": [],
+ "xero_payroll_uk_payslip_payment_lines": [],
+ "xero_payroll_uk_payslip_reimbursement_lines": [],
+ "xero_payroll_uk_payslip_timesheet_earnings_lines": [],
+ "xero_payroll_uk_statutory_leave_summaries": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000428",
+   "fields": {
+    "statutoryLeaveID": "00000000-0000-4000-8000-000000000428",
+    "employeeID": "00000000-0000-4000-8000-000000000429",
+    "type": "Sick",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "isEntitled": false,
+    "status": "Pending"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_payroll_uk_statutory_sick_leaves": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000430",
+   "fields": {
+    "statutoryLeaveID": "00000000-0000-4000-8000-000000000430",
+    "employeeID": "00000000-0000-4000-8000-000000000431",
+    "leaveTypeID": "00000000-0000-4000-8000-000000000432",
+    "startDate": "2026-08-01",
+    "endDate": "2026-08-01",
+    "type": "sanitized-type",
+    "status": "sanitized-status",
+    "workPattern": {},
+    "isPregnancyRelated": false,
+    "sufficientNotice": false,
+    "isEntitled": false,
+    "entitlementWeeksRequested": "100.0000",
+    "entitlementWeeksQualified": "100.0000",
+    "entitlementWeeksRemaining": "100.0000",
+    "overlapsWithOtherLeave": false,
+    "entitlementFailureReasons": []
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_project_tasks": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000449",
+   "fields": {
+    "taskId": "00000000-0000-4000-8000-000000000449",
+    "projectId": "00000000-0000-4000-8000-000000000450",
+    "name": "sanitized-name",
+    "chargeType": "TIME",
+    "estimateMinutes": 1,
+    "totalMinutes": 1,
+    "minutesInvoiced": 1,
+    "minutesToBeInvoiced": 1,
+    "fixedMinutes": 1,
+    "nonChargeableMinutes": 1,
+    "status": "ACTIVE"
+   },
+   "tombstone": false
+  }
+ ],
+ "xero_project_time_entries": [
+  {
+   "sourceRecordId": "00000000-0000-4000-8000-000000000451",
+   "fields": {
+    "timeEntryId": "00000000-0000-4000-8000-000000000451",
+    "userId": "00000000-0000-4000-8000-000000000452",
+    "projectId": "00000000-0000-4000-8000-000000000453",
+    "taskId": "00000000-0000-4000-8000-000000000454",
+    "dateUtc": "2026-08-01T00:00:00.000Z",
+    "dateEnteredUtc": "2026-08-01T00:00:00.000Z",
+    "duration": 1,
+    "description": "sanitized-description",
+    "status": "ACTIVE"
+   },
+   "tombstone": false
+  }
+ ]
+}
