@@ -286,6 +286,13 @@ class SyncEndToEnd(unittest.TestCase):
         self.assertEqual(sales[0]["period_start"], date(2026, 7, 1))
         net = [r for r in pnl if r["row_title"] == "Net Profit" and r["period_end"] == date(2026, 7, 31) and r["basis"] == "CASH"]
         self.assertEqual(net[0]["amount"], "-10.00000000")
+        pnl_calls = [query for path, query, _headers in MockXero.calls if path.endswith("/Reports/ProfitAndLoss")]
+        self.assertEqual(len(pnl_calls), 4)
+        self.assertEqual(
+            {(query["fromDate"][0], query["toDate"][0]) for query in pnl_calls},
+            {("2026-08-01", "2026-08-31"), ("2025-08-01", "2025-08-31")},
+        )
+        self.assertEqual(sum(query.get("paymentsOnly") == ["true"] for query in pnl_calls), 2)
         # Keys are stable across runs (same input → same source_record_id).
         emitted_again: dict[str, list] = {}
         XeroReports(client, lambda t, r: emitted_again.setdefault(t, []).append(r),

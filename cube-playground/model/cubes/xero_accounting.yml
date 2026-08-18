@@ -2,10 +2,10 @@ cubes:
   # ---------------------------------------------------------------------------
   # Xero accounting cubes: the transactional finance surface.
   #
-  # Source: source_xero_official.xo_* views over the XER_OFFICIAL raw ingest.
-  # Views stamp tenant_id, enforce the capability check, snake_case Xero's
-  # PascalCase fields and parse the legacy /Date(ms)/ timestamps. Field
-  # semantics follow the official Xero Accounting API docs.
+  # Source: source_xero_official.xo_* security-barrier views over the
+  # per-connection Fivetran Connector SDK schemas. Views stamp tenant_id,
+  # enforce the signed capability check and preserve the official Xero API
+  # field semantics.
   #
   # Document model recap: an Invoice is either a sales invoice (ACCREC, money
   # owed to the business) or a bill (ACCPAY, money the business owes).
@@ -299,11 +299,30 @@ cubes:
       ai_context: >
         The line-level detail behind invoices and bills: "what did we sell",
         "spend by account/category", "which products appear on invoices".
-        line_amount is ex-GST. invoice_type ACCREC = sales lines, ACCPAY =
-        bill lines; exclude DRAFT/VOIDED/DELETED parent status for financial
+        total_line_amount is normalized ex-GST for both Inclusive and Exclusive
+        source documents; total_line_amount_including_tax is the GST-inclusive
+        equivalent. invoice_type ACCREC = sales lines, ACCPAY = bill lines;
+        exclude DRAFT/VOIDED/DELETED parent status for financial
         totals. account_code/account_name (via join) give the GL coding;
         item_name gives the inventory item when the line references one.
-    sql: SELECT * FROM source_xero_official.xo_invoice_line_items
+    sql: >
+      SELECT
+        line.*,
+        invoice.line_amount_types AS source_line_amount_types,
+        invoice.currency_code AS source_currency_code,
+        CASE
+          WHEN invoice.line_amount_types = 'Inclusive'
+            THEN line.line_amount - COALESCE(line.tax_amount, 0)
+          ELSE line.line_amount
+        END AS line_amount_ex_tax,
+        CASE
+          WHEN invoice.line_amount_types = 'Inclusive' THEN line.line_amount
+          ELSE line.line_amount + COALESCE(line.tax_amount, 0)
+        END AS line_amount_including_tax
+      FROM source_xero_official.xo_invoice_line_items AS line
+      JOIN source_xero_official.xo_invoices AS invoice
+        ON invoice.tenant_id = line.tenant_id
+       AND invoice.invoice_id = line.invoice_id
 
     joins:
       - name: xero_organisation
@@ -370,10 +389,33 @@ cubes:
         sql: unit_amount
         type: number
         title: Unit price
+        description: >
+          Source unit amount. Whether it includes tax follows line_amount_types;
+          use normalized line total measures for aggregation.
       - name: line_amount_value
-        sql: line_amount
+        sql: line_amount_ex_tax
         type: number
         title: Line amount (excl. GST)
+        description: Source LineAmount normalized to exclude tax exactly once.
+      - name: line_amount_including_tax_value
+        sql: line_amount_including_tax
+        type: number
+        title: Line amount (incl. GST)
+        description: Source LineAmount normalized to include tax exactly once.
+      - name: source_line_amount_value
+        sql: line_amount
+        type: number
+        public: false
+      - name: line_amount_types
+        sql: source_line_amount_types
+        type: string
+        title: Source tax basis
+        description: Inclusive, Exclusive or NoTax for the parent invoice/bill.
+      - name: currency_code
+        sql: source_currency_code
+        type: string
+        title: Line currency
+        description: Document currency of this invoice or bill line.
       - name: tax_amount_value
         sql: tax_amount
         type: number
@@ -408,20 +450,34 @@ cubes:
       - name: line_count
         type: count
         title: Lines
+        description: Number of invoice or bill lines in the selection.
       - name: total_line_amount
         type: sum
-        sql: line_amount
+        sql: line_amount_ex_tax
         format: currency
         title: Line total (excl. GST)
+        description: >
+          Sum of line values normalized to exclude GST. Filter/group one
+          currency_code and financially-real parent statuses.
+      - name: total_line_amount_including_tax
+        type: sum
+        sql: line_amount_including_tax
+        format: currency
+        title: Line total (incl. GST)
+        description: >
+          Sum of line values normalized to include GST. Filter/group one
+          currency_code and financially-real parent statuses.
       - name: total_line_tax
         type: sum
         sql: tax_amount
         format: currency
         title: GST
+        description: Tax component recorded by Xero on selected lines.
       - name: total_quantity
         type: sum
         sql: quantity
         title: Quantity
+        description: Sum of source line quantities; credit/return quantities may be negative.
 
     segments:
       - name: sales_lines
@@ -967,16 +1023,25 @@ cubes:
       - name: transaction_count
         type: count
         title: Bank transactions
+        description: >
+          Number of bank-transaction documents in the selection. Filter status
+          AUTHORISED for financial activity; DELETED rows remain audit history.
       - name: total_value
         type: sum
         sql: total
         format: currency
         title: Total value
+        description: >
+          Raw bank-transaction total in currency_code. Never add different
+          currencies; use money_in/money_out with one currency selected.
       - name: money_in
         type: sum
         sql: total
         format: currency
         title: Money in
+        description: >
+          AUTHORISED RECEIVE-type bank transactions in currency_code. This is
+          direct bank activity, not accounting revenue and not invoice payments.
         filters:
           - sql: "{CUBE}.transaction_type LIKE 'RECEIVE%' AND {CUBE}.status <> 'DELETED'"
       - name: money_out
@@ -984,6 +1049,9 @@ cubes:
         sql: total
         format: currency
         title: Money out
+        description: >
+          AUTHORISED SPEND-type bank transactions in currency_code. This is
+          direct cash activity, not automatically a P&L expense.
         filters:
           - sql: "{CUBE}.transaction_type LIKE 'SPEND%' AND {CUBE}.status <> 'DELETED'"
       - name: gst_total
@@ -991,6 +1059,9 @@ cubes:
         sql: total_tax
         format: currency
         title: GST
+        description: >
+          Tax component recorded on selected bank transactions in currency_code.
+          It is not the organisation's BAS or GST control-account balance.
       - name: unreconciled_count
         type: count
         title: Unreconciled transactions
@@ -1011,10 +1082,29 @@ cubes:
       slice of the spend/receive was coded to.
     meta:
       ai_context: >
-        Category-level bank spending: "spend by category/account" = line_amount
-        grouped by account_code (join xero_accounts for the account name).
-        transaction_type SPEND% = outgoings, RECEIVE% = income.
-    sql: SELECT * FROM source_xero_official.xo_bank_transaction_line_items
+        Category-level bank activity: use total_line_amount for ex-tax spend or
+        total_line_amount_including_tax for cash value, grouped by account_code
+        (join xero_accounts for name). transaction_type SPEND% = outgoings,
+        RECEIVE% = inflows. Filter transaction_status AUTHORISED and one currency.
+    sql: >
+      SELECT
+        line.*,
+        transaction.line_amount_types AS source_line_amount_types,
+        transaction.currency_code AS source_currency_code,
+        transaction.status AS transaction_status,
+        CASE
+          WHEN transaction.line_amount_types = 'Inclusive'
+            THEN line.line_amount - COALESCE(line.tax_amount, 0)
+          ELSE line.line_amount
+        END AS line_amount_ex_tax,
+        CASE
+          WHEN transaction.line_amount_types = 'Inclusive' THEN line.line_amount
+          ELSE line.line_amount + COALESCE(line.tax_amount, 0)
+        END AS line_amount_including_tax
+      FROM source_xero_official.xo_bank_transaction_line_items AS line
+      JOIN source_xero_official.xo_bank_transactions AS transaction
+        ON transaction.tenant_id = line.tenant_id
+       AND transaction.bank_transaction_id = line.bank_transaction_id
     joins:
       - name: xero_organisation
         relationship: many_to_one
@@ -1051,6 +1141,11 @@ cubes:
       - name: transaction_type
         sql: transaction_type
         type: string
+        description: SPEND/RECEIVE and their prepayment/overpayment variants.
+      - name: transaction_status
+        sql: transaction_status
+        type: string
+        description: AUTHORISED or DELETED; financial analysis uses AUTHORISED.
       - name: occurred_on
         sql: occurred_on
         type: time
@@ -1072,9 +1167,31 @@ cubes:
       - name: unit_amount
         sql: unit_amount
         type: number
+        description: Source unit amount; tax inclusion follows line_amount_types.
       - name: line_amount_value
+        sql: line_amount_ex_tax
+        type: number
+        title: Line amount (excl. GST)
+        description: Source LineAmount normalized to exclude tax exactly once.
+      - name: line_amount_including_tax_value
+        sql: line_amount_including_tax
+        type: number
+        title: Line amount (incl. GST)
+        description: Source LineAmount normalized to include tax exactly once.
+      - name: source_line_amount_value
         sql: line_amount
         type: number
+        public: false
+      - name: line_amount_types
+        sql: source_line_amount_types
+        type: string
+        title: Source tax basis
+        description: Inclusive, Exclusive or NoTax for the parent bank transaction.
+      - name: currency_code
+        sql: source_currency_code
+        type: string
+        title: Line currency
+        description: Currency of the parent bank transaction.
       - name: tax_amount_value
         sql: tax_amount
         type: number
@@ -1092,16 +1209,28 @@ cubes:
     measures:
       - name: line_count
         type: count
+        description: Number of bank-transaction coding lines in the selection.
       - name: total_line_amount
         type: sum
-        sql: line_amount
+        sql: line_amount_ex_tax
         format: currency
         title: Line total (excl. GST)
+        description: >
+          Sum normalized to exclude GST. Filter transaction_status AUTHORISED
+          and one currency_code.
+      - name: total_line_amount_including_tax
+        type: sum
+        sql: line_amount_including_tax
+        format: currency
+        title: Line total (incl. GST)
+        description: >
+          Cash-value line total normalized to include GST. Filter one currency.
       - name: total_line_tax
         type: sum
         sql: tax_amount
         format: currency
         title: GST
+        description: Tax component recorded by Xero on selected bank lines.
 
   - name: xero_bank_transfers
     title: Bank transfers (Xero)
@@ -1847,22 +1976,29 @@ cubes:
       - name: default_currency
         sql: default_currency
         type: string
+        description: >
+          Contact's default document currency. Xero's contact balance snapshot
+          is not converted to organisation base currency.
       - name: receivable_outstanding_value
         sql: receivable_outstanding
         type: number
         title: Receivable outstanding
+        description: Current amount this contact owes, in default_currency.
       - name: receivable_overdue_value
         sql: receivable_overdue
         type: number
         title: Receivable overdue
+        description: Current overdue amount this contact owes, in default_currency.
       - name: payable_outstanding_value
         sql: payable_outstanding
         type: number
         title: Payable outstanding
+        description: Current amount owed to this contact, in default_currency.
       - name: payable_overdue_value
         sql: payable_overdue
         type: number
         title: Payable overdue
+        description: Current overdue amount owed to this contact, in default_currency.
       - name: sales_payment_terms_day
         sql: sales_payment_terms_day
         type: number
@@ -1887,14 +2023,17 @@ cubes:
       - name: contact_count
         type: count
         title: Contacts
+        description: Number of Xero contact records in the selection.
       - name: customer_count
         type: count
         title: Customers
+        description: Contacts Xero marks as customers because they have sales activity.
         filters:
           - sql: "COALESCE({CUBE}.is_customer, false)"
       - name: supplier_count
         type: count
         title: Suppliers
+        description: Contacts Xero marks as suppliers because they have purchase activity.
         filters:
           - sql: "COALESCE({CUBE}.is_supplier, false)"
       - name: total_receivable_outstanding
@@ -1902,21 +2041,29 @@ cubes:
         sql: receivable_outstanding
         format: currency
         title: Total owed by customers
+        description: >
+          Sum of Xero's current receivable snapshot. Valid only within one
+          contact default currency; Xero does not base-convert these balances.
       - name: total_receivable_overdue
         type: sum
         sql: receivable_overdue
         format: currency
         title: Overdue owed by customers
+        description: Sum of overdue receivable snapshot amounts within one contact currency.
       - name: total_payable_outstanding
         type: sum
         sql: payable_outstanding
         format: currency
         title: Total owed to suppliers
+        description: >
+          Sum of Xero's current payable snapshot. Valid only within one contact
+          default currency; supplier credits may reduce this below bill totals.
       - name: total_payable_overdue
         type: sum
         sql: payable_overdue
         format: currency
         title: Overdue owed to suppliers
+        description: Sum of overdue payable snapshot amounts within one contact currency.
     segments:
       - name: customers
         sql: "COALESCE({CUBE}.is_customer, false)"
@@ -2034,29 +2181,24 @@ cubes:
         type: count
 
   - name: xero_pnl_lines
-    title: Profit and loss lines (Xero)
+    title: Document-coded profit activity (Xero, incomplete)
     public: false
     description: >
-      The derived profit-and-loss ledger: every financially-real line coded to
-      a REVENUE or EXPENSE class account, unioned from invoice/bill lines,
-      spend/receive bank transaction lines, posted manual journal lines and
-      credit note lines. Amounts are GST-exclusive. revenue_amount is positive
-      when earned, expense_amount positive when incurred, and profit_impact is
-      the signed effect on net profit (revenue minus expense).
+      Partial document-coded profit activity unioned from invoice/bill lines,
+      spend/receive bank transaction lines, posted manual-journal lines and
+      credit-note lines. It excludes Xero system journals such as payroll and
+      automatic depreciation, so it is not a Profit and Loss statement and its
+      profit impact is not Net Profit. Retained only for backward-compatible
+      document-level drill-down.
     meta:
       ai_context: >
-        THE source for P&L, profit, net income, margin, and revenue or expense
-        by account questions. Do not assemble a P&L from invoice lines alone:
-        most trading activity here is posted via journals and bank
-        transactions. total_revenue, total_expenses and net_profit over a date
-        range on occurred_on give the P&L; group by account_name or
-        account_type for the statement rows. IMPORTANT CAVEAT: wage, super and
-        payroll tax costs are posted by Xero's system payroll journals, which
-        this organisation's API access cannot expose, so they are ABSENT from
-        these lines. For a complete P&L, take wages/super from
-        xero_payroll_analytics pay runs and present them as a separate labour
-        line, and say so. Depreciation auto-journals are similarly absent
-        unless posted manually.
+        NEVER use this cube for Profit and Loss, Net Profit, Gross Profit,
+        margins, total income or total expenses. It is an intentionally partial
+        backward-compatibility surface and omits system-posted wages, super,
+        payroll tax and depreciation. Use xero_profit_and_loss_analytics for
+        headline statement figures and xero_profit_and_loss_account_analytics
+        for account breakdowns. Do not repair these rows by subtracting payroll:
+        the authoritative Xero report already includes it exactly once.
     sql: SELECT * FROM source_xero_official.xo_pnl_lines
 
     joins:
@@ -2122,25 +2264,32 @@ cubes:
     measures:
       - name: pnl_line_count
         type: count
-        title: P&L line count
+        title: Partial document activity lines
       - name: total_revenue
         sql: revenue_amount
         type: sum
         format: currency
-        title: Revenue
-        description: GST-exclusive revenue earned (REVENUE-class lines, credits positive).
+        title: Partial document revenue
+        description: >
+          GST-exclusive REVENUE-class activity visible on the supported source
+          documents. Not total Xero income; use xero_profit_and_loss_analytics.
       - name: total_expenses
         sql: expense_amount
         type: sum
         format: currency
-        title: Expenses
-        description: GST-exclusive expenses incurred (EXPENSE-class lines, debits positive). Excludes system-posted wages; see ai_context.
+        title: Partial document expenses
+        description: >
+          GST-exclusive EXPENSE-class activity visible on supported documents.
+          Excludes system payroll and depreciation journals and is not total expense.
       - name: net_profit
         sql: profit_impact
         type: sum
         format: currency
-        title: Net profit
-        description: Revenue minus expenses across the selected lines (before system-posted wages and depreciation).
+        title: Incomplete document profit impact (deprecated)
+        description: >
+          Backward-compatible partial revenue-minus-expense activity. This is
+          NOT Net Profit because system wages, super and depreciation are
+          absent. New queries must use xero_profit_and_loss_analytics.net_profit.
 
   - name: xero_gst_lines
     title: GST lines (Xero)

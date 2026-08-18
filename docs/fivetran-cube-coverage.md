@@ -7,7 +7,9 @@
 > tables incl. AU/UK/NZ payroll) plus `xero_report_*` line tables (P&L, balance
 > sheet, trial balance, bank/executive/budget summaries) into `xero_<id>`, so
 > the Xero payroll and reports gaps below no longer apply and the `xo_*` views
-> port across with a schema re-point only.
+> port across with a schema re-point only. ADR 0099 and analytical migration
+> 0173 make the landed standard ProfitAndLoss report the governed CubeCore P&L
+> authority, including wages and Xero system journals.
 >
 > **Superseded for Lightspeed R-Series (2026-08-17):** the standard
 > `light_speed_retail` connector (Connect Card, ~80% coverage) is likewise
@@ -87,11 +89,12 @@ Legend: ✅ available (possibly via join) · ◐ partial · ❌ not in Fivetran.
 | xo_repeating_invoices / line items | repeating_invoice(+line_item) | ✅ (`schedule_*` flattened) |
 | xo_assets, xo_asset_types | asset, asset_type | ✅ (`depreciation_*` flattened) |
 | xo_files, xo_file_associations | — | ❌ Fivetran Xero has no Files API tables |
-| xo_pnl_lines, xo_gst_lines (derived) | invoice_line_item + bank_transaction_line_items + manual_journal_line ⋈ account | ✅ derivable exactly as today |
+| xo_profit_and_loss_lines / periods | xero_report_profit_and_loss_lines ⋈ account | ✅ authoritative latest Xero report snapshot; monthly accrual P&L incl. wages |
+| xo_pnl_lines (legacy partial), xo_gst_lines | invoice_line_item + bank_transaction_line_items + manual_journal_line ⋈ account | ◐ compatibility/document drill only; never authoritative Net Profit |
 
 Bonus available from Fivetran that Albert does not model yet: `tracking_category(_option)` and the `*_has_tracking_category` join tables, `purchase_order(_line_item)`, `prepayment(_line_item)`, `contact_group(_member)`, `bank_linked_transactions`, `invoice_linked_transactions`.
 
-**General ledger caveat (important):** Fivetran's `journal` / `journal_line` / `journal_cash*` tables — the true GL — are **disabled on the live connection: "We do not have required permissions to access this table"** (also `employee`, `expense_claim`, `receipt*`). The org is on Xero `ULTIMATE_10`, so it is not the plan; the Fivetran-requested `accounting.journals.read` scope did not make it into the grant. Today's `xo_pnl_lines` reconstructs P&L from documents and manual journals, so nothing breaks — but if the semantic layer is ever moved to journal-based P&L/balance sheet, this must be resolved with Fivetran/Xero first (re-authorise and confirm the consent screen lists Journals).
+**General ledger caveat (important):** Fivetran's `journal` / `journal_line` tables — the true transaction-level GL — are **disabled on the live connection: "We do not have required permissions to access this table"**. P&L no longer depends on them: Xero's own standard ProfitAndLoss report is landed and governed. Day-level ledger drill, tracking-category statements and journal-built balance sheets still require the Advanced Journals grant; never substitute the legacy document union.
 
 ### 1b. AU payroll (xero_payroll.yml) — **mostly NOT covered**
 
@@ -183,7 +186,7 @@ Fivetran adds pre-aggregated helper tables Albert could use: `payment_by_day`, `
 
 | Source | Semantic layer coverage | Real gaps | Recommendation |
 |---|---|---|---|
-| Xero accounting/reference | ✅ complete (2 minor cols, budgets, files) | payment terms, budgets, files | Re-point `xo_*` at Fivetran; keep pnl/gst derivation; chase the Journals scope for future GL work |
+| Xero accounting/reference | ✅ complete (2 minor cols, budgets, files) | payment terms, budgets, files; day-level statutory journals | Use the landed Xero report for P&L; keep document/GST drill separate; pursue Journals only for transaction-level GL work |
 | Xero AU payroll | ❌ ~30% | pay runs, payslips, super, pay items, calendars | Keep Albert's own payroll extraction for these endpoints, or retire the payroll cubes |
 | Deputy | ✅ complete bar one dimension | leave-rule names | Re-point `dp_*`; hardcode/derive leave-rule labels or drop `paid_leave` |
 | Lightspeed R-Series | ◐ ~80% of tables, ~90% of the analytics people actually ask for | tips, inventory logs, shipments, vendor returns, processing fees | Re-point `ls_*`; decide whether the five gaps justify keeping Albert's own extraction for those endpoints only |

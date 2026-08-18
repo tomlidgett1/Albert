@@ -1,10 +1,11 @@
-import { Agent, system, user } from "@openai/agents";
+import { Agent, system, user, type AgentInputItem } from "@openai/agents";
 import { z } from "zod";
-import { sanitizeTraceText } from "../../../shared/src/index.js";
+import { isXaiModel, sanitizeTraceText } from "../../../shared/src/index.js";
 import {
   ANSWER_CONTRACT,
   buildKnowledgeBlock,
   finalAnswerSchema,
+  GROK_INVESTIGATION_ADDENDUM,
   laneConversationInput,
   laneModelSettings,
   renderAlwaysRulesForRoute,
@@ -14,11 +15,14 @@ import {
   type FinalAnswer,
   type LaneRunInput,
 } from "./lanes.js";
+import { MISSING_QUERY_RETRY_MESSAGE } from "./grounding.js";
 import { createComposeTableTool, createV3Tools } from "./tools.js";
 import type { V3TurnContext } from "./context.js";
 import {
+  clipToSentence,
   createV3CommentaryState,
   prepareV3CommentaryUpdate,
+  STEP_SUMMARY_MAX_CHARS,
   type V3CommentaryKind,
 } from "./commentary.js";
 import { resolveV3ToolRoute, type V3ToolRoute } from "./connector-routing.js";
@@ -47,6 +51,29 @@ function naturalList(values: readonly string[]): string {
   return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
 }
 
+function endSentence(value: string): string {
+  const text = value.trim();
+  if (!text) return "";
+  return /[.!?]$/u.test(text) ? text : `${text}.`;
+}
+
+/**
+ * A glanceable owner-facing summary for a finished branch: the headline, plus
+ * the size of the effect when it is short and adds a figure the headline
+ * lacks. Supporting detail stays in the answer — the wait-screen paragraph
+ * must read in a couple of seconds.
+ */
+export function branchStepSummary(title: string, findings: BranchFindings): string {
+  const headline = endSentence(clipToSentence(sanitizeTraceText(findings.headline, 240), 200));
+  const materiality = endSentence(sanitizeTraceText(findings.materiality, 160));
+  const materialityFits = materiality.length > 0
+    && materiality.length <= 110
+    && !/^(?:not|unknown|n\/a|none|unclear|cannot|insufficient)/iu.test(materiality)
+    && !headline.toLocaleLowerCase("en-AU").includes(materiality.toLocaleLowerCase("en-AU").replace(/\.$/u, ""));
+  const body = materialityFits ? `${headline} ${materiality}` : headline;
+  return clipToSentence(sanitizeTraceText(`${title}: ${body}`, STEP_SUMMARY_MAX_CHARS), STEP_SUMMARY_MAX_CHARS);
+}
+
 async function emitDeepCommentary(
   context: V3TurnContext,
   kind: V3CommentaryKind,
@@ -61,6 +88,83 @@ async function emitDeepCommentary(
   if (update.accepted) {
     await context.emit({ type: "narrative", text: update.text });
   }
+}
+
+/** Queries a deep-lane branch ran itself; branches share one turn-wide list. */
+function branchQueries(context: V3TurnContext, branchTitle: string) {
+  return context.executedQueries.filter((query) => query.branchLabel === branchTitle);
+}
+
+/**
+ * Grok 4.6 fills a structured outputType on its first Responses turn and skips
+ * tools (see runGrokInvestigation in lanes.ts). A deep-lane branch therefore
+ * investigates with required tool choice and no output schema, retries once if
+ * it still ran nothing, then composes its findings from the queries it ran.
+ * Returns undefined when the branch never retrieved evidence, so it is reported
+ * as failed rather than shipping an invented headline.
+ */
+async function runGrokBranch(args: Readonly<{
+  input: LaneRunInput;
+  branchContext: V3TurnContext;
+  branchTitle: string;
+  instructions: string;
+  tools: ReturnType<typeof createV3Tools>;
+  conversation: AgentInputItem[];
+  effort: Parameters<typeof laneModelSettings>[1];
+}>): Promise<BranchFindings | undefined> {
+  const { input, branchContext, branchTitle } = args;
+  const investigator = new Agent<V3TurnContext>({
+    name: `Albert v3 branch: ${branchTitle}`,
+    instructions: `${args.instructions}\n${GROK_INVESTIGATION_ADDENDUM}`,
+    model: input.preferences.model,
+    modelSettings: laneModelSettings(input.preferences, args.effort, { toolChoice: "required" }),
+    tools: [...args.tools],
+  });
+  const runOptions = { context: branchContext, maxTurns: 16, signal: input.context.signal };
+  await input.runner.run(investigator, args.conversation, runOptions);
+  if (branchQueries(branchContext, branchTitle).length === 0) {
+    await input.runner.run(
+      investigator,
+      [...args.conversation, user(MISSING_QUERY_RETRY_MESSAGE)],
+      runOptions,
+    );
+  }
+  const queries = branchQueries(branchContext, branchTitle);
+  if (queries.length === 0) return undefined;
+
+  const topics = new Set(queries.map((query) => query.topic));
+  const evidence = [...branchContext.tableResults.values()]
+    .filter((table) => table.presentation === "evidence" && topics.has(table.caption))
+    .slice(0, 12)
+    .map((table) => ({
+      resultId: table.resultId,
+      caption: table.caption,
+      columns: table.columns,
+      rows: table.rows,
+    }));
+  const composer = new Agent<V3TurnContext, typeof branchFindingsSchema>({
+    name: `Albert v3 branch findings: ${branchTitle}`,
+    instructions: `You are one investigation branch of a deeper analysis. The queries for
+your branch have already run; their results are below. Report your findings from those
+numbers only. Do not run new queries. Ground every finding in retrieved numbers and
+quantify materiality in dollars where possible. If the data shows nothing noteworthy,
+say so plainly; a null finding is a valid finding.
+
+# Queries executed by this branch
+${queries.map((query) => `- [${query.view}] ${query.topic} (${query.rowCount} rows, ${query.timeRangeLabel})`).join("\n")}
+
+# Result cells
+${JSON.stringify(evidence)}`,
+    model: input.preferences.model,
+    modelSettings: laneModelSettings(input.preferences, "medium", { maxEffort: "medium" }),
+    outputType: branchFindingsSchema,
+  });
+  const run = await input.runner.run(composer, args.conversation, {
+    context: branchContext,
+    maxTurns: 2,
+    signal: input.context.signal,
+  });
+  return run.finalOutput;
 }
 
 /**
@@ -177,9 +281,7 @@ ${knowledge}`,
       // their own activity to the owner.
       commentary: createV3CommentaryState(false),
     };
-    const agent = new Agent<V3TurnContext, typeof branchFindingsSchema>({
-      name: `Albert v3 branch: ${branch.title}`,
-      instructions: `You are one investigation branch of a deeper analysis. Investigate exactly
+    const branchInstructions = `You are one investigation branch of a deeper analysis. Investigate exactly
 this question with governed typed queries and report findings; other branches cover the
 other angles, so stay in your lane.
 
@@ -187,46 +289,78 @@ ${branchKnowledge}
 
 Run at most ${perBranchQueries} queries. Ground every finding in retrieved numbers and
 quantify materiality in dollars where possible. If the data shows nothing noteworthy,
-say so plainly; a null finding is a valid finding.`,
-      model: input.preferences.model,
-      modelSettings: laneModelSettings(input.preferences, budget.reasoningEffort, {
-        toolChoice: "required",
-        promptCacheKey: v3PromptCacheKey({
-          partition: input.context.promptCachePartition,
-          profile: "deep-branch",
-          route: branchRoute,
-        }),
-      }),
-      tools: [...createV3Tools({
-        route: branchRoute,
-        lane: "deep",
-        purpose: "investigation",
-      })],
-      outputType: branchFindingsSchema,
-    });
+say so plainly; a null finding is a valid finding.`;
+    const branchTools = [...createV3Tools({
+      route: branchRoute,
+      lane: "deep",
+      purpose: "investigation",
+    })];
+    const branchConversation = withV3PromptCacheBoundary(
+      input.preferences.model,
+      [
+        system(`${renderRequestContext({
+          config: input.config,
+          question: branch.question,
+          route: input.context.toolRoute,
+        })}\n\n# Branch assignment\nBranch: ${branch.title}\nWhy it matters: ${branch.rationale}`),
+        user(branch.question),
+      ],
+    );
     try {
-      const run = await input.runner.run(agent, withV3PromptCacheBoundary(
-        input.preferences.model,
-        [
-          system(`${renderRequestContext({
-            config: input.config,
-            question: branch.question,
-            route: input.context.toolRoute,
-          })}\n\n# Branch assignment\nBranch: ${branch.title}\nWhy it matters: ${branch.rationale}`),
-          user(branch.question),
-        ],
-      ), {
-        context: branchContext,
-        maxTurns: 16,
-        signal: input.context.signal,
-      });
-      const findings: BranchFindings | undefined = run.finalOutput;
+      let findings: BranchFindings | undefined;
+      if (isXaiModel(input.preferences.model)) {
+        // Grok 4.6 fills a structured outputType on its first Responses turn
+        // and never calls a tool, so the branch would "finish" with a headline
+        // like "Need sales schema" and zero queries. Investigate without an
+        // output schema first, then compose the findings from what actually ran.
+        findings = await runGrokBranch({
+          input,
+          branchContext,
+          branchTitle: branch.title,
+          instructions: branchInstructions,
+          tools: branchTools,
+          conversation: branchConversation,
+          effort: budget.reasoningEffort,
+        });
+      } else {
+        const agent = new Agent<V3TurnContext, typeof branchFindingsSchema>({
+          name: `Albert v3 branch: ${branch.title}`,
+          instructions: branchInstructions,
+          model: input.preferences.model,
+          modelSettings: laneModelSettings(input.preferences, budget.reasoningEffort, {
+            toolChoice: "required",
+            promptCacheKey: v3PromptCacheKey({
+              partition: input.context.promptCachePartition,
+              profile: "deep-branch",
+              route: branchRoute,
+            }),
+          }),
+          tools: branchTools,
+          outputType: branchFindingsSchema,
+        });
+        const run = await input.runner.run(agent, branchConversation, {
+          context: branchContext,
+          maxTurns: 16,
+          signal: input.context.signal,
+        });
+        findings = run.finalOutput;
+      }
       await input.context.emit({
         type: "progress",
         status: "complete",
         stage: "query",
         label: sanitizeTraceText(`${branch.title}: ${findings?.headline ?? "no conclusive finding"}`, 160),
       });
+      // Each finished branch is a completed step: tell the owner what it found
+      // in a sentence or three, so the wait is never silent. Commentary is
+      // cosmetic — a failure here must never discard the branch's findings.
+      if (findings) {
+        try {
+          await emitDeepCommentary(input.context, "step", branchStepSummary(branch.title, findings));
+        } catch (error) {
+          if (process.env.ALBERT_V3_DEBUG_PLAN) console.error("[deep-lane] step summary failed", error);
+        }
+      }
       return { branch, findings };
     } catch (error) {
       await input.context.emit({

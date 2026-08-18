@@ -405,7 +405,13 @@ Routing lanes:
   and answer briefly; the owner can widen it. When a business context block is
   present, its revenue streams, vocabulary and tools decide the natural reading:
   "how's the workshop going" is that business's service department (jobs, labour,
-  parts) in the tool the context names, not a clarification.
+  parts) in the tool the context names, not a clarification. "How's X going / how
+  did X go / how is X doing / how are we tracking / what are X looking like" always means the current period
+  AGAINST the previous comparable one (this month vs last month, last week vs the
+  week before): a comparison, so recipe=null (recipes cover one period) and quick
+  or analytical with the comparison in answerMustCover. When the metric is left
+  unsaid ("compare the last two periods", "how are we doing"), it is the business's
+  headline measure — sales/takings — never a clarification about which metric.
 - explain: the user asks about a previous answer itself: what a term meant, what was
   included or excluded, how a figure was worked out ("what are you considering as
   workshop", "does that include GST", "how did you calculate profit"). The answer

@@ -77,13 +77,21 @@ views:
           - is_bank_account
           - name: system_account
             alias: account_system_role
+          - reporting_code
+          - reporting_code_name
           - name: on_watchlist
             alias: account_on_watchlist
           - account_count
+          - mapped_reporting_code_count
+          - reporting_code_coverage_pct
           - active_accounts
           - revenue_accounts
           - expense_accounts
           - bank_accounts
+          - sales_revenue_accounts
+          - other_income_accounts
+          - direct_cost_accounts
+          - operating_expense_accounts
 
       # Products and services.
       - join_path: xero_items
@@ -197,7 +205,12 @@ views:
           - account_class
           - account_status
           - account_tax_type
+          - account_system_role
+          - reporting_code
+          - reporting_code_name
           - account_count
+          - mapped_reporting_code_count
+          - reporting_code_coverage_pct
           - is_bank_account
       - name: Products and services
         includes:

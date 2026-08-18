@@ -1,7 +1,7 @@
 # ADR 0098: Business context layer
 
 - Status: Accepted (implemented 2026-08-18; validated on Ashburton Cycles — see
-  `evals/albert/context/` and `evals/albert/REPORT.md` §8)
+  `evals/albert/context/` and `evals/albert/REPORT.md` §7)
 - Date: 2026-08-18
 - Supersedes: ADR 0096 (tenant connection brief — the sketch; this is the built
   version, with a model-generated narrative on top of the deterministic facts)
@@ -105,6 +105,14 @@ new connector ships probes in the config and gets a `tools` entry from the
 generator. The renderer, storage, refresh and injection are shared.
 
 ## Consequences
+
+Measured (42 paired turns, context off vs on, same engine and judge —
+`evals/albert/REPORT.md` §7): ambiguous-tier pass 65% → 70% and ambiguity
+handling 3.79 → 4.07; the six vocabulary questions 50% → 67% pass; zero
+clarifications either way; overall unchanged (3.64 → 3.62); cross-tool
+investigations ran wider with the context (queries 4.6 → 6.8) — the knowledge
+block now says the context is for scoping and phrasing, not angles to
+investigate.
 
 - Vague and vocabulary-laden questions get the business's own reading without
   clarification; cross-tool answers are scoped to the business's streams and

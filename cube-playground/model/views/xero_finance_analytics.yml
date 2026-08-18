@@ -6,33 +6,26 @@ views:
       and ageing, per-line account/item detail, payments received and made,
       direct bank spending and income with category coding, credit notes,
       manual journal (GL) activity, bank transfers, recurring invoice
-      templates and the customer/supplier list with live AR/AP balances.
-      Also carries the derived profit-and-loss ledger (pnl_* members):
-      every revenue and expense line across invoices, bank transactions,
-      journals and credit notes. Unprefixed members are invoice grain;
+      templates and the customer/supplier list with live AR/AP balances. Its
+      legacy pnl_* members are an incomplete document-activity compatibility
+      surface, not a financial statement. Unprefixed members are invoice grain;
       line_*, payment_*, bank_*, credit_note_*, journal_*, transfer_*,
       recurring_* and pnl_* members are their own grains.
     meta:
       ai_context: >
-        Use this view for anything about money owed, earned or spent through
-        the accounts: revenue invoiced, bills payable, who owes me / who I
-        owe (debtors, creditors), overdue amounts and ageing bands, payments
-        received or made, bank account spending by category, GST on
-        documents, credit notes, journal debits/credits, and recurring
-        invoices. FINANCIAL STATEMENTS (P&L, balance sheet, trial balance,
-        aged receivables/payables) come from Xero's own live report tools,
-        not from this view; those reports already include system-posted
-        wages/super. Use the pnl_* members (pnl_revenue, pnl_expenses,
-        pnl_net_profit over pnl_date, grouped by pnl_account or
-        pnl_account_type) only for per-day, per-contact or per-line detail a
-        statement cannot show, or when the live tools are unavailable — and
-        then say that pnl_* lines omit system-posted wages/super (which come
-        from xero_payroll_analytics pay runs) and never assemble a P&L from
-        invoice lines alone. Sales invoices = document_kind 'Sales invoice'; bills =
+        Use for invoices/bills, AR/AP, payments, bank activity, GST on source
+        documents, credit notes, manual-journal inspection and recurring
+        templates. NEVER use pnl_* for Profit and Loss, Net/Gross Profit,
+        income, total expense or margins: those backward-compatible members
+        omit Xero system payroll and depreciation journals. Use
+        xero_profit_and_loss_analytics for headline Xero statement figures and
+        xero_profit_and_loss_account_analytics for account breakdowns; Net
+        Profit there already deducts wages and super exactly once. Sales invoices =
+        document_kind 'Sales invoice'; bills =
         'Bill'. Use the financially_real segment (AUTHORISED/PAID) for
         financial totals. issued_on is the invoice business date;
-        payment_paid_on for payments; bank_occurred_on for bank activity;
-        pnl_date for the P&L. GST QUESTIONS: use gst_collected, gst_paid and
+        payment_paid_on for payments; bank_occurred_on for bank activity.
+        GST QUESTIONS: use gst_collected, gst_paid and
         gst_net over gst_date (group by gst_tax_type or gst_account), and
         always disclose that gst_collected only covers directly invoiced
         sales because register sales are posted via tax-blind journals; the
@@ -61,33 +54,46 @@ views:
         includes:
           - tenant_id
 
-      # Derived P&L ledger: the authoritative source for profit questions.
+      # Backward-compatible partial document activity. Never use for a P&L;
+      # authoritative statement/account views live in xero_reports.yml.
       - join_path: xero_pnl_lines
         includes:
           - name: occurred_on
             alias: pnl_date
+            meta: { ai_hidden: true }
           - name: source_kind
             alias: pnl_source
+            meta: { ai_hidden: true }
           - name: account_name
             alias: pnl_account
+            meta: { ai_hidden: true }
           - name: account_code
             alias: pnl_account_code
+            meta: { ai_hidden: true }
           - name: account_class
             alias: pnl_account_class
+            meta: { ai_hidden: true }
           - name: account_type
             alias: pnl_account_type
+            meta: { ai_hidden: true }
           - name: contact_name
             alias: pnl_contact
+            meta: { ai_hidden: true }
           - name: description
             alias: pnl_description
+            meta: { ai_hidden: true }
           - name: total_revenue
             alias: pnl_revenue
+            meta: { ai_hidden: true }
           - name: total_expenses
             alias: pnl_expenses
+            meta: { ai_hidden: true }
           - name: net_profit
             alias: pnl_net_profit
+            meta: { ai_hidden: true }
           - name: pnl_line_count
             alias: pnl_line_count
+            meta: { ai_hidden: true }
 
       - join_path: xero_contacts
         includes:
@@ -98,6 +104,8 @@ views:
             alias: contact_status
           - is_customer
           - is_supplier
+          - name: default_currency
+            alias: contact_default_currency
           - name: sales_payment_terms_day
             alias: contact_sales_terms_day
           - name: bills_payment_terms_day
@@ -165,6 +173,10 @@ views:
             alias: line_quantity
           - name: unit_amount
             alias: line_unit_price
+          - name: line_amount_types
+            alias: line_tax_basis
+          - name: currency_code
+            alias: line_currency
           - name: tax_type
             alias: line_tax_type
           - name: account_code
@@ -181,6 +193,7 @@ views:
             alias: line_contact
           - line_count
           - total_line_amount
+          - total_line_amount_including_tax
           - total_line_tax
           - name: total_quantity
             alias: line_quantity_total
@@ -235,6 +248,8 @@ views:
             alias: bank_status
           - name: reference
             alias: bank_reference
+          - name: currency_code
+            alias: bank_currency
           - name: transaction_count
             alias: bank_transaction_count
           - money_in
@@ -259,10 +274,18 @@ views:
             alias: bank_line_occurred_on
           - name: transaction_type
             alias: bank_line_transaction_type
+          - name: transaction_status
+            alias: bank_line_transaction_status
+          - name: line_amount_types
+            alias: bank_line_tax_basis
+          - name: currency_code
+            alias: bank_line_currency
           - name: line_count
             alias: bank_line_count
           - name: total_line_amount
             alias: bank_line_total
+          - name: total_line_amount_including_tax
+            alias: bank_line_total_including_tax
           - name: total_line_tax
             alias: bank_line_gst
       - join_path: xero_bank_transaction_line_items.xero_accounts
@@ -454,6 +477,7 @@ views:
       - name: Line detail (accounts and items)
         includes:
           - total_line_amount
+          - total_line_amount_including_tax
           - total_line_tax
           - line_count
           - line_quantity_total
@@ -464,6 +488,8 @@ views:
           - line_item_name
           - line_contact
           - line_issued_on
+          - line_tax_basis
+          - line_currency
       - name: Payments
         includes:
           - total_payments
@@ -485,8 +511,13 @@ views:
           - money_direction
           - bank_occurred_on
           - bank_account_name
+          - bank_currency
           - bank_contact
           - bank_line_total
+          - bank_line_total_including_tax
+          - bank_line_tax_basis
+          - bank_line_currency
+          - bank_line_transaction_status
           - bank_line_account_name
           - bank_line_account_class
       - name: Credit notes
@@ -512,6 +543,7 @@ views:
         includes:
           - contact_name
           - contact_status
+          - contact_default_currency
           - is_customer
           - is_supplier
           - contact_count

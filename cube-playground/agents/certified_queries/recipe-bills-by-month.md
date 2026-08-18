@@ -25,6 +25,14 @@ matches:
       "values": [
         "Bill"
       ]
+    },
+    {
+      "member": "xero_finance_analytics.invoice_status",
+      "operator": "equals",
+      "values": [
+        "AUTHORISED",
+        "PAID"
+      ]
     }
   ],
   "timeDimensions": [

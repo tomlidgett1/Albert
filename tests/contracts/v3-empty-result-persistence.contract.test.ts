@@ -336,7 +336,7 @@ test("the intent agent infers a goal and useful-answer criteria that reach every
 });
 
 test("the user's reasoning effort is a floor for lane effort, never silently downgraded", () => {
-  assert.equal(elevatedLaneEffort("low", "max"), "xhigh");
+  assert.equal(elevatedLaneEffort("low", "max"), "max");
   assert.equal(elevatedLaneEffort("low", "high"), "high");
   assert.equal(elevatedLaneEffort("high", "low"), "high");
   assert.equal(elevatedLaneEffort("medium", undefined), "medium");
@@ -344,7 +344,7 @@ test("the user's reasoning effort is a floor for lane effort, never silently dow
     { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
     "low",
   );
-  assert.equal(settings.reasoning?.effort, "xhigh");
+  assert.equal(settings.reasoning?.effort, "max");
 });
 
 test("the visible plan tool ships on the analytical lane and its events pass the persistence gate", () => {

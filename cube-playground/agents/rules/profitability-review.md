@@ -8,6 +8,15 @@ description: >
 
 # Profitability review methodology
 
+Choose the accounting meaning before decomposing:
+
+- Whole-business Xero profitability uses `xero_profit_and_loss_analytics`.
+  `net_profit` is Xero's reported result after every posted expense, including
+  wages and super. Account drivers use
+  `xero_profit_and_loss_account_analytics`; never use legacy `pnl_*` members.
+- POS/product profitability uses the commerce views below and is Gross Profit
+  only because POS has no whole-business operating expenses.
+
 Decompose into independent branches, each grounded in its own queries:
 
 1. Margin structure: `gross_profit`, `gross_margin_pct`, `cost_of_goods`
@@ -23,4 +32,5 @@ Decompose into independent branches, each grounded in its own queries:
    card tender.
 
 Rank findings by dollar impact for the same period and only recommend actions
-supported by the retrieved numbers. State that profit here is gross margin.
+supported by retrieved numbers. When the source is POS, state that profit is
+Gross Profit; when the source is Xero P&L, use the exact Xero measure name.

@@ -11,7 +11,12 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAlbertV3Turn } from "../packages/albert-v3/src/index.js";
-import { DEFAULT_AGENT_PREFERENCES, type TraceEvent } from "../packages/shared/src/index.js";
+import {
+  DEFAULT_AGENT_PREFERENCES,
+  isXaiModel,
+  normalizeAgentPreferences,
+  type TraceEvent,
+} from "../packages/shared/src/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -34,6 +39,18 @@ const cubeApiSecret = process.env.CUBEJS_API_SECRET || envLocal.CUBEJS_API_SECRE
 const openaiApiKey = process.env.OPENAI_API_KEY || envLocal.OPENAI_API_KEY;
 if (!cubeApiSecret || !openaiApiKey) {
   console.error("Missing CUBEJS_API_SECRET or OPENAI_API_KEY");
+  process.exit(1);
+}
+// ALBERT_MODEL / ALBERT_EFFORT / ALBERT_FAST pick the model the dashboard would
+// send (for example ALBERT_MODEL=grok-4.6). Grok needs XAI_API_KEY.
+const preferences = normalizeAgentPreferences({
+  model: process.env.ALBERT_MODEL ?? DEFAULT_AGENT_PREFERENCES.model,
+  reasoningEffort: process.env.ALBERT_EFFORT ?? DEFAULT_AGENT_PREFERENCES.reasoningEffort,
+  fastMode: process.env.ALBERT_FAST ? process.env.ALBERT_FAST !== "0" : DEFAULT_AGENT_PREFERENCES.fastMode,
+});
+const xaiApiKey = process.env.XAI_API_KEY || envLocal.XAI_API_KEY;
+if (isXaiModel(preferences.model) && !xaiApiKey) {
+  console.error("Missing XAI_API_KEY for a Grok model");
   process.exit(1);
 }
 
@@ -64,7 +81,7 @@ let sequence = 0;
 const result = await runAlbertV3Turn({
   message: question,
   conversation: [],
-  preferences: DEFAULT_AGENT_PREFERENCES,
+  preferences,
   tenantId: TENANT_ID,
   ...(ACTIVE_CONNECTORS ? { activeConnectors: ACTIVE_CONNECTORS } : {}),
   conversationId: CONVERSATION_ID,
@@ -72,6 +89,7 @@ const result = await runAlbertV3Turn({
   cubeApiUrl,
   cubeApiSecret,
   openaiApiKey,
+  ...(xaiApiKey ? { xaiApiKey } : {}),
   signal: controller.signal,
   emit: async (event) => {
     const at = `${((Date.now() - started) / 1000).toFixed(1)}s`;

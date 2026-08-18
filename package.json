@@ -28,6 +28,7 @@
     "audit:production-environment": "node scripts/audit-production-environment.mjs",
     "provenance:vercel": "node scripts/collect-vercel-platform-provenance.mjs",
     "verify:semantic-v2-production": "node scripts/verify-semantic-v2-production.mjs",
+    "verify:xero-pnl-production": "node --import tsx scripts/verify-xero-pnl-production.mts",
     "capacity:transform": "tsx scripts/transform-capacity-harness.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run registry:check && npm run registry:v2:check && npm run prompt-docs:check && npm run albert-v3-agent-config:check && npm run test:deployment && npm run lint && npm run typecheck && npm test",

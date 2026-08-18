@@ -266,6 +266,11 @@ class XeroReports:
             for offset in (0, 12):
                 to_date = month_end(shift_months(current_end, -offset))
                 report = self._fetch("ProfitAndLoss", {
+                    # Xero applies periods/timeframe to the explicit report
+                    # window. Supplying only toDate can fall back to the current
+                    # month on some organisations, causing the older 12-month
+                    # request to re-fetch and overwrite the newest window.
+                    "fromDate": month_start(to_date).isoformat(),
                     "toDate": to_date.isoformat(),
                     "periods": "11",
                     "timeframe": "MONTH",

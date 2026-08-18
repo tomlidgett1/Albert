@@ -1,14 +1,14 @@
 /**
  * Albert eval runner.
  *
- * Drives `runAlbertV3Turn` against production Cube (and the live Xero MCP
- * boundary on the sync worker) with the exact inputs the web route injects for
+ * Drives `runAlbertV3Turn` against production-shaped CubeCore/Fivetran with the
+ * exact inputs the web route injects for
  * Ashburton Cycles: Luna at max reasoning, fast mode off, active connectors
  * lightspeed-r/xero/deputy, the tenant's source findings, and the
  * production-shaped conversation context for multi-turn threads.
  *
  * Usage:
- *   npx tsx scripts/albert-eval/run.mts --run baseline               # all 250 turns
+ *   npx tsx scripts/albert-eval/run.mts --run baseline               # all 256 turns
  *   npx tsx scripts/albert-eval/run.mts --run smoke --ids E-LS-01,F-01a,F-01b
  *   npx tsx scripts/albert-eval/run.mts --run baseline --resume        # skip ids already recorded
  *   npx tsx scripts/albert-eval/run.mts --run x --filter pattern=chart_reformat
@@ -22,7 +22,6 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { runAlbertV3Turn } from "../../packages/albert-v3/src/index.js";
 import type { TraceEvent } from "../../packages/shared/src/index.js";
-import { xeroMcpServiceUrl } from "../../packages/xero-mcp/src/client.js";
 import { QUESTIONS, type EvalQuestion } from "./questions.js";
 import { priorResultsFromRecords , loadEvalBusinessContext } from "./lib.js";
 import {
@@ -107,9 +106,6 @@ const totalTurns = limited.reduce((n, u) => n + u.turns.length, 0);
 console.log(`[eval] run=${args.run} engine=${engineVersion} units=${limited.length} turns=${totalTurns} concurrency=${args.concurrency} leases=${LEASES.length}`);
 
 const cube = createEvalCube(env);
-const xeroServiceUrl = xeroMcpServiceUrl() || undefined;
-const xeroSecret = env.ALBERT_OAUTH_WORKER_SIGNING_SECRET || undefined;
-if (!xeroServiceUrl || !xeroSecret) console.warn("[eval] Xero MCP boundary not configured; live Xero statements will be unavailable");
 
 async function runTurn(question: EvalQuestion, prior: EvalTurnRecord[], lease: Readonly<{ conversationId: string; turnId: string }>): Promise<EvalTurnRecord> {
   const startedAt = new Date();
@@ -162,8 +158,6 @@ async function runTurn(question: EvalQuestion, prior: EvalTurnRecord[], lease: R
       turnId: lease.turnId,
       cubeApiUrl: env.CUBE_API_URL!,
       cubeApiSecret: env.CUBEJS_API_SECRET!,
-      xeroMcpServiceUrl: xeroServiceUrl,
-      xeroMcpSigningSecret: xeroSecret,
       openaiApiKey: env.OPENAI_API_KEY!,
       openaiBaseUrl: env.OPENAI_BASE_URL || undefined,
       signal: controller.signal,

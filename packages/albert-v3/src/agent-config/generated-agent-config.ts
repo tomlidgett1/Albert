@@ -285,9 +285,32 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "guidance": "Workforce (Deputy) grain. Authoritative hours worked and wage cost from timesheets, rostered / scheduled shifts and planned cost, open and published shifts, leave requests by type and status, staff headcount and positions. For cross-tool questions (e.g. hours vs sales), query this and the sales views separately, matching the person by name in each tool, then combine narratively.\n"
       },
       {
+        "name": "xero_profit_and_loss_analytics",
+        "connector": "xero",
+        "routing_terms": [
+          "net profit this financial year",
+          "profit and loss by month",
+          "gross profit and margin",
+          "total income and expenses",
+          "how much did wages reduce profit"
+        ],
+        "guidance": "AUTHORITATIVE Xero accrual Profit and Loss at monthly grain, landed from Xero's own standard report through Fivetran. Use for P&L/income statement, Net or Gross Profit, revenue/income, cost of sales, operating/total expenses, wages in profit, and margins. Net Profit already deducts every posted wage, super, depreciation, interest and tax expense; never subtract payroll again. Sum period_start months for quarter/FY/YTD. Current month is partial through report_updated_at. Amounts are organisation base currency. Use the account view for named-line rankings.\n"
+      },
+      {
+        "name": "xero_profit_and_loss_account_analytics",
+        "connector": "xero",
+        "routing_terms": [
+          "biggest Xero expense accounts",
+          "wages and salaries in the P&L",
+          "rent and merchant fees by month",
+          "income accounts"
+        ],
+        "guidance": "Xero P&L leaf account rows at monthly accrual grain. Use statement_amount grouped by account_name/type/category for expense or income rankings and wage/super drill-down. Official report codes, not names, identify wages. It excludes statement subtotal/formula rows to prevent double counting. Never derive Net Profit by summing this view; headline profit and margins live in xero_profit_and_loss_analytics.\n"
+      },
+      {
         "name": "xero_finance_analytics",
         "connector": "xero",
-        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe, average days to pay (avg_days_to_pay), payments received and made, bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). FINANCIAL STATEMENTS come from Xero itself, never from this view: a P&L / profit and loss / income statement, balance sheet, trial balance, or one contact's aged receivables/payables is fetched with the live xero_* statement tools (xero_profit_and_loss, xero_balance_sheet, xero_trial_balance, xero_aged_receivables/payables). Those are Xero's own reports and are complete — wages, superannuation and every posted expense account are already in them; there is nothing to add from payroll or ledger views. Use the pnl_* members here (pnl_revenue, pnl_expenses, pnl_net_profit over pnl_date by pnl_account) only for what a statement cannot show — per-day trends, per-contact or per-line-item detail — or when the live statement tools are unavailable, and in that fallback say that pnl_* lines omit system-posted wages/super (which then come from xero_payroll_analytics pay runs) and never build a P&L from invoice lines alone. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. NOT AVAILABLE from this connection, say so honestly: live bank balances, budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
+        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe, average days to pay (avg_days_to_pay), payments received and made, bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). NEVER use legacy pnl_* members for Profit and Loss, Net/Gross Profit, income, total expenses or margins: they omit system payroll and depreciation journals. Use xero_profit_and_loss_analytics for headline statement figures and xero_profit_and_loss_account_analytics for account breakdowns. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. NOT AVAILABLE from this connection, say so honestly: live bank balances, budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
       },
       {
         "name": "xero_payroll_analytics",
@@ -499,6 +522,11 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "connector": "xero",
         "domain": "invoices",
         "member": "xero_finance_analytics.issued_on"
+      },
+      {
+        "connector": "xero",
+        "domain": "profit_and_loss",
+        "member": "xero_profit_and_loss_analytics.report_updated_at"
       }
     ],
     "context_probes": [
@@ -806,6 +834,16 @@ export const ALBERT_V3_AGENT_CONFIG = {
             "xero_finance_analytics.invoice_count",
             "xero_finance_analytics.total_invoiced"
           ],
+          "filters": [
+            {
+              "member": "xero_finance_analytics.invoice_status",
+              "operator": "equals",
+              "values": [
+                "AUTHORISED",
+                "PAID"
+              ]
+            }
+          ],
           "timeDimensions": [
             {
               "dimension": "xero_finance_analytics.issued_on",
@@ -816,20 +854,21 @@ export const ALBERT_V3_AGENT_CONFIG = {
       },
       {
         "connector": "xero",
-        "key": "pnl_by_account_class_12m",
-        "purpose": "Ledger revenue and expenses by account class, last 12 months — the shape of income and costs in the accounts.",
-        "rows": 12,
+        "key": "profit_and_loss_by_month_12m",
+        "purpose": "Xero's authoritative monthly accrual P&L — income, gross profit, all expenses including wages, and Net Profit.",
+        "rows": 14,
         "query": {
           "measures": [
-            "xero_finance_analytics.pnl_revenue",
-            "xero_finance_analytics.pnl_expenses"
-          ],
-          "dimensions": [
-            "xero_finance_analytics.pnl_account_class"
+            "xero_profit_and_loss_analytics.total_income",
+            "xero_profit_and_loss_analytics.gross_profit",
+            "xero_profit_and_loss_analytics.total_expenses",
+            "xero_profit_and_loss_analytics.wage_expenses",
+            "xero_profit_and_loss_analytics.net_profit"
           ],
           "timeDimensions": [
             {
-              "dimension": "xero_finance_analytics.pnl_date",
+              "dimension": "xero_profit_and_loss_analytics.period_start",
+              "granularity": "month",
               "dateRange": "last 12 months"
             }
           ]
@@ -838,23 +877,33 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "connector": "xero",
         "key": "top_expense_accounts_12m",
-        "purpose": "Largest expense accounts in the ledger, last 12 months — the main cost lines (rent, wages, purchases…).",
+        "purpose": "Largest accounts in Xero's authoritative P&L, last 12 months — including purchases, wages, super, rent and other posted costs.",
         "rows": 12,
         "query": {
           "measures": [
-            "xero_finance_analytics.pnl_expenses"
+            "xero_profit_and_loss_account_analytics.statement_amount"
           ],
           "dimensions": [
-            "xero_finance_analytics.pnl_account"
+            "xero_profit_and_loss_account_analytics.account_name",
+            "xero_profit_and_loss_account_analytics.profit_category"
+          ],
+          "filters": [
+            {
+              "member": "xero_profit_and_loss_account_analytics.account_class",
+              "operator": "equals",
+              "values": [
+                "EXPENSE"
+              ]
+            }
           ],
           "timeDimensions": [
             {
-              "dimension": "xero_finance_analytics.pnl_date",
+              "dimension": "xero_profit_and_loss_account_analytics.period_start",
               "dateRange": "last 12 months"
             }
           ],
           "order": {
-            "xero_finance_analytics.pnl_expenses": "desc"
+            "xero_profit_and_loss_account_analytics.statement_amount": "desc"
           },
           "limit": 12
         }
@@ -896,9 +945,10 @@ export const ALBERT_V3_AGENT_CONFIG = {
             },
             {
               "member": "xero_finance_analytics.invoice_status",
-              "operator": "notEquals",
+              "operator": "equals",
               "values": [
-                "VOIDED"
+                "AUTHORISED",
+                "PAID"
               ]
             }
           ],
@@ -982,6 +1032,10 @@ export const ALBERT_V3_AGENT_CONFIG = {
     {
       "name": "view-routing",
       "body": "# Choosing the right view\n\n- One query stays within one view. To combine perspectives, run one query per\n  view and join the findings in the answer.\n- sales_analytics: whole transactions. Revenue, refunds, tax, discounts,\n  quotes, voids, stores, staff, and the customer attached to each sale.\n- product_sales_analytics: line items. Anything about products, categories,\n  brands, units, item-level margin. Line revenue across all items slightly\n  exceeds header revenue on split/discounted sales; prefer sales_analytics for\n  headline revenue totals.\n- payments_analytics: tenders. Payment types, tips, card charges, processing\n  fees. Tender totals include change and on-account payments, so they are not\n  a substitute for revenue.\n- customer_analytics: one row per customer. Lifetime behaviour, geography,\n  contactability, store credit. For \"top customers by spend in period X\",\n  prefer sales_analytics grouped by customer instead of lifetime members."
+    },
+    {
+      "name": "xero-accounting-semantics",
+      "body": "# Xero accounting semantics\n\nApply these rules whenever a result comes from a `xero_*` view:\n\n- `xero_profit_and_loss_analytics` is the authoritative whole-business accrual\n  Profit and Loss. It is Xero's own standard report landed through Fivetran,\n  not a reconstruction from invoices. Its `net_profit` already deducts every\n  posted P&L cost, including wages, superannuation, direct costs, overheads,\n  depreciation, interest and tax expenses. Never subtract a payroll figure\n  from it again. A negative Net Profit is a loss, not missing data.\n- Xero's official account-type formulas are: sales revenue = `REVENUE` +\n  `SALES`; other income = `OTHERINCOME`; total income = those three; cost of\n  sales/COGS = `DIRECTCOSTS`; operating expenses = `EXPENSE` + `OVERHEADS` +\n  `DEPRECIATN`; total expenses = direct costs plus operating expenses; Gross\n  Profit = sales revenue - cost of sales; Net Profit = total income - total\n  expenses. Gross margin and Net Profit margin divide by sales revenue, not\n  total income.\n- Ordinary wages (`EXP.WAG` / `EXP.EMP.WAG`) are operating expenses: they\n  reduce Net Profit but not Gross Profit. Direct-production wages\n  (`EXP.COS.WAG`) are cost of sales: they reduce both. `WAGEPAYABLES` is a\n  balance-sheet liability and never a wage expense. Wage flags come from Xero\n  report codes; do not guess from editable account names.\n- Headline statement/trend questions use `xero_profit_and_loss_analytics`.\n  Named expense/revenue rankings and wage-line drill-down use\n  `xero_profit_and_loss_account_analytics`. Never calculate Net Profit by\n  summing account rows, and never use `xero_finance_analytics.pnl_*`: those\n  backward-compatible members omit system payroll and depreciation journals.\n- The P&L views are monthly and accrual basis. Filter/sum on `period_start` for\n  month, quarter, year or financial-year totals. The current month is\n  month-to-date through `report_updated_at` even though `period_end` is month\n  end; say that it is partial. Do not claim an arbitrary day-level P&L or a\n  period older than the retained report window. Organisation `org_gst_basis`\n  is the tax-return basis; it does not turn this accrual P&L into cash basis.\n- Amounts are in the Xero organisation's base `currency`. Do not multiply by a\n  document currency rate or add them to POS takings. Xero is the accounting\n  statement; Lightspeed/Square sales are operational evidence of the same\n  commerce and adding both double counts revenue.\n- P&L is a flow over a date range. A Balance Sheet is a stock as at one date.\n  Invoices/bills, payments and bank transactions are operational document/cash\n  surfaces and are not substitutes for either statement.\n- Sales invoices are `ACCREC`; supplier bills are `ACCPAY`. Only AUTHORISED and\n  PAID documents are financially real. DRAFT, SUBMITTED, DELETED and VOIDED\n  documents may be useful workflow records but do not belong in financial\n  totals. Invoice totals are document currency unless a measure explicitly\n  says base currency.\n- Invoice, payment and bank-document money can be in source currency. Include\n  or filter the relevant currency member (`invoice_currency`, `bank_currency`)\n  before aggregating; never add unlike currencies or assume AUD. The P&L report\n  is different: its amounts are already organisation base currency.\n- Xero `LineAmount` follows the parent `LineAmountTypes`: Inclusive values\n  contain tax, Exclusive values do not. Curated invoice/bank-line measures\n  normalize this exactly once. Use `total_line_amount` for ex-tax analysis and\n  `*_including_tax` for cash/document value; never add `total_line_tax` again\n  to an already tax-inclusive measure.\n- Journal `NetAmount` is base currency, debit positive and credit negative;\n  statement revenue uses the opposite sign of revenue-account journal sums.\n  `GrossAmount` includes tax and is not a P&L measure. Posted manual journals\n  also appear in the statutory journal feed, so never union both line sources.\n- Contact AR/AP balances are current snapshots in each contact's\n  `contact_default_currency`; Xero does not base-convert them. Group or filter\n  one currency before summing. Supplier credits can make the contact snapshot\n  lower than the sum of open bills without either figure being wrong.\n- GST/VAT control accounts are balance-sheet accounts, not profit. Income-tax\n  or business-tax costs coded to an expense account do reduce Net Profit. For\n  GST/BAS, respect the organisation's GST basis and use Xero's tax/report\n  surface; do not infer a BAS from P&L Net Profit.\n- `account_type` and `account_class` are official Xero classifiers. Account\n  names/codes are user-editable. Reporting codes provide finer meaning when\n  present, but vary by country and may be unmapped. Archived accounts remain\n  part of historical reports.\n- Xero does not publish one universal API EBITDA formula. Do not label a\n  derived account-type calculation EBITDA or operating profit. Explain that a\n  mapped/custom Xero report is required unless an exact governed formula and\n  reporting-code coverage are available."
     }
   ],
   "agentRequestedRules": [
@@ -998,7 +1052,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
     {
       "name": "profitability-review",
       "description": "Methodology for open-ended profitability questions: how to decompose \"how do I improve profitability\" into revenue, margin, discounts, refunds, mix and retention investigations.",
-      "body": "# Profitability review methodology\n\nDecompose into independent branches, each grounded in its own queries:\n\n1. Margin structure: `gross_profit`, `gross_margin_pct`, `cost_of_goods`\n   trend by month; category and brand margin on product_sales_analytics.\n2. Discount leakage: follow the discount-leakage methodology.\n3. Refund drag: follow the refund-analysis methodology.\n4. Mix: top and bottom categories/items by `line_gross_profit`, high-revenue\n   low-margin lines are repricing candidates; check `average_selling_price`\n   against `items_default_price` for silent underpricing.\n5. Retention: repeat purchase rate and lifetime revenue distribution on\n   customer_analytics; a small repeat base means acquisition-heavy revenue.\n6. Cost of acceptance: processing fees on payments_analytics as a share of\n   card tender.\n\nRank findings by dollar impact for the same period and only recommend actions\nsupported by the retrieved numbers. State that profit here is gross margin."
+      "body": "# Profitability review methodology\n\nChoose the accounting meaning before decomposing:\n\n- Whole-business Xero profitability uses `xero_profit_and_loss_analytics`.\n  `net_profit` is Xero's reported result after every posted expense, including\n  wages and super. Account drivers use\n  `xero_profit_and_loss_account_analytics`; never use legacy `pnl_*` members.\n- POS/product profitability uses the commerce views below and is Gross Profit\n  only because POS has no whole-business operating expenses.\n\nDecompose into independent branches, each grounded in its own queries:\n\n1. Margin structure: `gross_profit`, `gross_margin_pct`, `cost_of_goods`\n   trend by month; category and brand margin on product_sales_analytics.\n2. Discount leakage: follow the discount-leakage methodology.\n3. Refund drag: follow the refund-analysis methodology.\n4. Mix: top and bottom categories/items by `line_gross_profit`, high-revenue\n   low-margin lines are repricing candidates; check `average_selling_price`\n   against `items_default_price` for silent underpricing.\n5. Retention: repeat purchase rate and lifetime revenue distribution on\n   customer_analytics; a small repeat base means acquisition-heavy revenue.\n6. Cost of acceptance: processing fees on payments_analytics as a share of\n   card tender.\n\nRank findings by dollar impact for the same period and only recommend actions\nsupported by retrieved numbers. When the source is POS, state that profit is\nGross Profit; when the source is Xero P&L, use the exact Xero measure name."
     },
     {
       "name": "refund-analysis",
@@ -1843,6 +1897,14 @@ export const ALBERT_V3_AGENT_CONFIG = {
             "values": [
               "Bill"
             ]
+          },
+          {
+            "member": "xero_finance_analytics.invoice_status",
+            "operator": "equals",
+            "values": [
+              "AUTHORISED",
+              "PAID"
+            ]
           }
         ],
         "timeDimensions": [
@@ -2489,9 +2551,10 @@ export const ALBERT_V3_AGENT_CONFIG = {
           },
           {
             "member": "xero_finance_analytics.invoice_status",
-            "operator": "notEquals",
+            "operator": "equals",
             "values": [
-              "VOIDED"
+              "AUTHORISED",
+              "PAID"
             ]
           }
         ],
@@ -3215,6 +3278,186 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "product_sales_analytics.line_gross_profit": "desc"
         },
         "limit": 20
+      }
+    },
+    {
+      "name": "xero-expense-accounts",
+      "userRequest": "Rank the largest Xero expense or cost accounts for a period.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_profit_and_loss_account_analytics.statement_amount"
+        ],
+        "dimensions": [
+          "xero_profit_and_loss_account_analytics.account_name",
+          "xero_profit_and_loss_account_analytics.account_type",
+          "xero_profit_and_loss_account_analytics.profit_category"
+        ],
+        "filters": [
+          {
+            "member": "xero_profit_and_loss_account_analytics.account_class",
+            "operator": "equals",
+            "values": [
+              "EXPENSE"
+            ]
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_profit_and_loss_account_analytics.period_start",
+            "dateRange": "this financial year"
+          }
+        ],
+        "order": {
+          "xero_profit_and_loss_account_analytics.statement_amount": "desc"
+        },
+        "limit": 20
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Rank account lines by amount and distinguish cost of sales from operating expenses. Wages and super must appear when material; do not use invoice/bill totals.",
+        "dateParameter": "xero_profit_and_loss_account_analytics.period_start",
+        "matches": [
+          "What are our biggest expense accounts this financial year?",
+          "Where did our P&L costs go?",
+          "Rank expenses by Xero account",
+          "What costs grew the most?"
+        ]
+      }
+    },
+    {
+      "name": "xero-gross-profit-margin",
+      "userRequest": "What are Xero Gross Profit and Gross Profit margin for a period?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_profit_and_loss_analytics.sales_revenue",
+          "xero_profit_and_loss_analytics.cost_of_sales",
+          "xero_profit_and_loss_analytics.gross_profit",
+          "xero_profit_and_loss_analytics.gross_margin_pct"
+        ],
+        "dimensions": [
+          "xero_profit_and_loss_analytics.currency"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_profit_and_loss_analytics.period_start",
+            "dateRange": "this financial year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "Give sales revenue, cost of sales, Gross Profit and margin. Explain that ordinary operating wages are below Gross Profit; direct-cost wages are in COGS.",
+        "dateParameter": "xero_profit_and_loss_analytics.period_start",
+        "matches": [
+          "What's my gross profit margin this year?",
+          "Gross profit last month",
+          "How much did we make after cost of sales?"
+        ]
+      }
+    },
+    {
+      "name": "xero-monthly-profit-and-loss",
+      "userRequest": "Show Xero's Profit and Loss by month for a period.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_profit_and_loss_analytics.sales_revenue",
+          "xero_profit_and_loss_analytics.cost_of_sales",
+          "xero_profit_and_loss_analytics.gross_profit",
+          "xero_profit_and_loss_analytics.operating_expenses",
+          "xero_profit_and_loss_analytics.net_profit"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_profit_and_loss_analytics.period_start",
+            "granularity": "month",
+            "dateRange": "this financial year"
+          }
+        ],
+        "order": {
+          "xero_profit_and_loss_analytics.period_start": "asc"
+        }
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Present monthly sales revenue, cost of sales, Gross Profit, operating expenses and Net Profit. Name the accrual basis and mark the current month as partial.",
+        "dateParameter": "xero_profit_and_loss_analytics.period_start",
+        "matches": [
+          "Give me the P&L for this financial year split by month",
+          "Show monthly profit and loss",
+          "How has net profit trended each month?",
+          "Compare last quarter's profit to the quarter before"
+        ]
+      }
+    },
+    {
+      "name": "xero-net-profit",
+      "userRequest": "What is our Xero Net Profit for a month, quarter, year or financial year to date?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_profit_and_loss_analytics.total_income",
+          "xero_profit_and_loss_analytics.total_expenses",
+          "xero_profit_and_loss_analytics.wage_expenses",
+          "xero_profit_and_loss_analytics.net_profit",
+          "xero_profit_and_loss_analytics.net_profit_margin_pct",
+          "xero_profit_and_loss_analytics.report_periods"
+        ],
+        "dimensions": [
+          "xero_profit_and_loss_analytics.currency"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_profit_and_loss_analytics.period_start",
+            "dateRange": "this financial year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "Lead with Xero Net Profit (or Net Loss) and the exact accrual period. State that it already includes wages and all posted expenses. If the selected range includes the current month, say it is month-to-date through report_updated_at.",
+        "dateParameter": "xero_profit_and_loss_analytics.period_start",
+        "matches": [
+          "What's my net profit this financial year so far?",
+          "What was our net profit last month?",
+          "Did we make a profit this quarter?",
+          "How profitable are we year to date?"
+        ]
+      }
+    },
+    {
+      "name": "xero-wages-in-profit",
+      "userRequest": "How much did mapped wages reduce Xero Net Profit for a period?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_profit_and_loss_analytics.wage_expenses",
+          "xero_profit_and_loss_analytics.employer_super_expenses",
+          "xero_profit_and_loss_analytics.net_profit",
+          "xero_profit_and_loss_analytics.net_profit_before_mapped_wages"
+        ],
+        "dimensions": [
+          "xero_profit_and_loss_analytics.currency"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_profit_and_loss_analytics.period_start",
+            "dateRange": "this financial year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "Report mapped wage expense and Xero Net Profit for the same accrual period. Explain that Net Profit already deducts wages; before-wage profit is a clearly labelled scenario, not EBITDA. Do not include Wages Payable.",
+        "dateParameter": "xero_profit_and_loss_analytics.period_start",
+        "matches": [
+          "Did net profit include wages?",
+          "How much did wages reduce profit?",
+          "What would profit be before wages?",
+          "Wages versus net profit this year"
+        ]
       }
     }
   ],

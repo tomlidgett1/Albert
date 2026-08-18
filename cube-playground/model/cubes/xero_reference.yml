@@ -4,7 +4,8 @@ cubes:
   # items, tax rates, currencies, users, branding, budgets, fixed assets and
   # the files library.
   #
-  # Source: source_xero_official.xo_* views over XER_OFFICIAL.
+  # Source: source_xero_official.xo_* security-barrier views over Albert's
+  # per-connection Fivetran Connector SDK Xero schemas.
   # ---------------------------------------------------------------------------
 
   - name: xero_organisation
@@ -139,10 +140,13 @@ cubes:
       transaction line codes to.
     meta:
       ai_context: >
-        The chart of accounts. Account names/codes referenced by invoice
-        lines, bank transaction lines and journal lines join here. "Expense
-        categories" = accounts with account_class EXPENSE; "revenue accounts"
-        = REVENUE. account_type BANK identifies bank accounts.
+        Official Xero chart-of-accounts taxonomy. Use account_type for business
+        meaning and account_class for the broad statement side; never infer a
+        category from a user-editable name/code. P&L types: SALES/REVENUE =
+        sales revenue, OTHERINCOME = other income, DIRECTCOSTS = cost of sales,
+        EXPENSE/OVERHEADS/DEPRECIATN = operating expense. WAGEPAYABLES is a
+        current-liability system account, not wage expense. Archived accounts
+        remain valid dimensions for historical activity.
     sql: SELECT * FROM source_xero_official.xo_accounts
 
     joins:
@@ -180,12 +184,19 @@ cubes:
         sql: account_type
         type: string
         title: Account type
-        description: BANK, REVENUE, EXPENSE, CURRENT, CURRLIAB, FIXED, EQUITY...
+        description: >
+          Official detailed Xero classifier. SALES/REVENUE are sales revenue;
+          OTHERINCOME is non-operating income; DIRECTCOSTS is cost of sales;
+          EXPENSE/OVERHEADS/DEPRECIATN are operating expenses. BANK, CURRENT,
+          PREPAYMENT, INVENTORY, FIXED and NONCURRENT are assets; CURRLIAB,
+          LIABILITY and TERMLIAB are liabilities; EQUITY is equity.
       - name: account_class
         sql: account_class
         type: string
         title: Account class
-        description: ASSET, EQUITY, EXPENSE, LIABILITY or REVENUE.
+        description: >
+          Broad class returned by Xero: ASSET, EQUITY, EXPENSE, LIABILITY or
+          REVENUE. Use the returned value; never reconstruct it from names.
       - name: tax_type
         sql: tax_type
         type: string
@@ -196,7 +207,10 @@ cubes:
       - name: system_account
         sql: system_account
         type: string
-        description: Set for Xero-managed accounts (DEBTORS, CREDITORS, GST...).
+        description: >
+          Xero-managed role such as DEBTORS (accounts receivable), CREDITORS
+          (accounts payable), GST or WAGEPAYABLES. System liabilities and tax
+          control accounts belong on the balance sheet, not in profit.
       - name: is_bank_account
         sql: is_bank_account
         type: boolean
@@ -211,11 +225,16 @@ cubes:
       - name: reporting_code
         sql: reporting_code
         type: string
-        public: false
+        title: Reporting code
+        description: >
+          Optional Xero report-template mapping for fine-grained semantics such
+          as wages. Codes vary by country and may be absent; account_type remains
+          the canonical fallback.
       - name: reporting_code_name
         sql: reporting_code_name
         type: string
-        public: false
+        title: Reporting code name
+        description: Xero display label for reporting_code, when supplied.
       - name: enable_payments
         sql: enable_payments
         type: boolean
@@ -236,6 +255,18 @@ cubes:
       - name: account_count
         type: count
         title: Accounts
+      - name: mapped_reporting_code_count
+        type: count
+        title: Accounts with reporting codes
+        description: Accounts carrying a non-empty Xero reporting code.
+        filters:
+          - sql: "NULLIF(BTRIM({CUBE}.reporting_code), '') IS NOT NULL"
+      - name: reporting_code_coverage_pct
+        type: number
+        sql: "100.0 * {mapped_reporting_code_count} / NULLIF({account_count}, 0)"
+        format: percent
+        title: Reporting code coverage %
+        description: Share of selected accounts mapped to a reporting code.
     segments:
       - name: active_accounts
         sql: "{CUBE}.status = 'ACTIVE'"
@@ -245,6 +276,14 @@ cubes:
         sql: "{CUBE}.account_class = 'EXPENSE'"
       - name: bank_accounts
         sql: "{CUBE}.account_type = 'BANK'"
+      - name: sales_revenue_accounts
+        sql: "{CUBE}.account_type IN ('REVENUE', 'SALES')"
+      - name: other_income_accounts
+        sql: "{CUBE}.account_type = 'OTHERINCOME'"
+      - name: direct_cost_accounts
+        sql: "{CUBE}.account_type = 'DIRECTCOSTS'"
+      - name: operating_expense_accounts
+        sql: "{CUBE}.account_type IN ('EXPENSE', 'OVERHEADS', 'DEPRECIATN')"
 
   - name: xero_items
     title: Items (Xero products and services)

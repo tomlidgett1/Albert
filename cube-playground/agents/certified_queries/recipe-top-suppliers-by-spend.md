@@ -32,9 +32,10 @@ matches:
     },
     {
       "member": "xero_finance_analytics.invoice_status",
-      "operator": "notEquals",
+      "operator": "equals",
       "values": [
-        "VOIDED"
+        "AUTHORISED",
+        "PAID"
       ]
     }
   ],

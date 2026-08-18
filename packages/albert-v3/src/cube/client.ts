@@ -91,6 +91,7 @@ function parseMembers(
         ? { type }
         : {}),
       ...(asString(meta.ai_context) ? { aiContext: asString(meta.ai_context) } : {}),
+      ...(meta.ai_hidden === true || meta.aiHidden === true ? { aiHidden: true } : {}),
       ...(memberFolder(folders, name) ? { folder: memberFolder(folders, name) } : {}),
       ...(asString(entry.aliasMember) ? { aliasMember: asString(entry.aliasMember) } : {}),
     }];
@@ -210,6 +211,7 @@ export function cubeSemanticVersionDigest(
       aliasMember: member.aliasMember ?? null,
       title: member.title,
       description: member.description ?? null,
+      aiHidden: member.aiHidden ?? false,
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
   return createHash("sha256").update(JSON.stringify({

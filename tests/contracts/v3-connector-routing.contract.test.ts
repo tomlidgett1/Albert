@@ -57,9 +57,8 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
   assert.equal(result.shopifyAdmin, false);
   assert.deepEqual(result.preferredCubeConnectors, ["xero"]);
   assert.deepEqual(toolNames(result), [
-    // Live Xero statements ride alongside Cube on every answer route; each tool
-    // refuses at call time when the turn has no xero-mcp client.
-    "xero_profit_and_loss",
+    // Native reports not yet qualified in Fivetran ride alongside Cube. Xero
+    // P&L is deliberately absent: it is a governed CubeCore view.
     "xero_balance_sheet",
     "xero_trial_balance",
     "xero_find_contact",

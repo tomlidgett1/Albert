@@ -169,6 +169,9 @@ Rules for the plan:
 - Prefer one query with a dimension or a granularity over many filtered queries: "sales by weekday"
   is one query per day only if the view has no weekday member — otherwise group. Period comparisons
   use compareDateRange (two or more "YYYY-MM-DD,YYYY-MM-DD" ranges) in ONE query, not two queries.
+- "How is X going / how did X go" is a comparison: ONE query with compareDateRange (the current
+  period and the previous comparable one) over X's core measures (volume, value, and one quality
+  measure), never a single period.
 - Cover every point a useful answer must cover (see request context) — usually 1–3 queries; up to 6
   for a genuine multi-angle question. Cross-tool questions take one query per tool.
 - dateRange: a simple relative expression (today, yesterday, last week, last month, this quarter,

@@ -318,6 +318,37 @@ accessible_views:
       and positions. For cross-tool questions (e.g. hours vs sales), query
       this and the sales views separately, matching the person by name in
       each tool, then combine narratively.
+  - name: xero_profit_and_loss_analytics
+    connector: xero
+    routing_terms:
+      - net profit this financial year
+      - profit and loss by month
+      - gross profit and margin
+      - total income and expenses
+      - how much did wages reduce profit
+    guidance: >
+      AUTHORITATIVE Xero accrual Profit and Loss at monthly grain, landed from
+      Xero's own standard report through Fivetran. Use for P&L/income statement,
+      Net or Gross Profit, revenue/income, cost of sales, operating/total
+      expenses, wages in profit, and margins. Net Profit already deducts every
+      posted wage, super, depreciation, interest and tax expense; never subtract
+      payroll again. Sum period_start months for quarter/FY/YTD. Current month
+      is partial through report_updated_at. Amounts are organisation base
+      currency. Use the account view for named-line rankings.
+  - name: xero_profit_and_loss_account_analytics
+    connector: xero
+    routing_terms:
+      - biggest Xero expense accounts
+      - wages and salaries in the P&L
+      - rent and merchant fees by month
+      - income accounts
+    guidance: >
+      Xero P&L leaf account rows at monthly accrual grain. Use statement_amount
+      grouped by account_name/type/category for expense or income rankings and
+      wage/super drill-down. Official report codes, not names, identify wages.
+      It excludes statement subtotal/formula rows to prevent double counting.
+      Never derive Net Profit by summing this view; headline profit and margins
+      live in xero_profit_and_loss_analytics.
   - name: xero_finance_analytics
     connector: xero
     guidance: >
@@ -327,21 +358,12 @@ accessible_views:
       and income by GL category, GST position (gst_* members), credit notes
       and credit note lines, overpayments (customer/supplier credit
       balances), batch payments, journal debits/credits, recurring invoice
-      templates with their lines, and contact details (email, payment
-      terms). FINANCIAL STATEMENTS come from Xero itself, never from this
-      view: a P&L / profit and loss / income statement, balance sheet, trial
-      balance, or one contact's aged receivables/payables is fetched with the
-      live xero_* statement tools (xero_profit_and_loss, xero_balance_sheet,
-      xero_trial_balance, xero_aged_receivables/payables). Those are Xero's
-      own reports and are complete — wages, superannuation and every posted
-      expense account are already in them; there is nothing to add from
-      payroll or ledger views. Use the pnl_* members here (pnl_revenue,
-      pnl_expenses, pnl_net_profit over pnl_date by pnl_account) only for
-      what a statement cannot show — per-day trends, per-contact or
-      per-line-item detail — or when the live statement tools are
-      unavailable, and in that fallback say that pnl_* lines omit
-      system-posted wages/super (which then come from xero_payroll_analytics
-      pay runs) and never build a P&L from invoice lines alone. GST
+      templates with their lines, and contact details (email, payment terms).
+      NEVER use legacy pnl_* members for Profit and Loss, Net/Gross Profit,
+      income, total expenses or margins: they omit system payroll and
+      depreciation journals. Use xero_profit_and_loss_analytics for headline
+      statement figures and xero_profit_and_loss_account_analytics for account
+      breakdowns. GST
       questions use gst_collected / gst_paid / gst_net over gst_date, but
       disclose that GST collected only covers directly invoiced sales
       (register sales post via tax-blind journals) and the authoritative BAS
@@ -608,6 +630,9 @@ freshness_probes:
   - connector: xero
     domain: invoices
     member: xero_finance_analytics.issued_on
+  - connector: xero
+    domain: profit_and_loss
+    member: xero_profit_and_loss_analytics.report_updated_at
 
 # Business-context probes: the small governed queries the context-layer
 # generator runs (once per tenant, refreshed when stale) to learn what THIS
@@ -738,24 +763,25 @@ context_probes:
     rows: 12
     query:
       measures: [xero_finance_analytics.invoice_count, xero_finance_analytics.total_invoiced]
+      filters: [{ member: xero_finance_analytics.invoice_status, operator: equals, values: [AUTHORISED, PAID] }]
       timeDimensions: [{ dimension: xero_finance_analytics.issued_on, granularity: year }]
   - connector: xero
-    key: pnl_by_account_class_12m
-    purpose: "Ledger revenue and expenses by account class, last 12 months — the shape of income and costs in the accounts."
-    rows: 12
+    key: profit_and_loss_by_month_12m
+    purpose: "Xero's authoritative monthly accrual P&L — income, gross profit, all expenses including wages, and Net Profit."
+    rows: 14
     query:
-      measures: [xero_finance_analytics.pnl_revenue, xero_finance_analytics.pnl_expenses]
-      dimensions: [xero_finance_analytics.pnl_account_class]
-      timeDimensions: [{ dimension: xero_finance_analytics.pnl_date, dateRange: last 12 months }]
+      measures: [xero_profit_and_loss_analytics.total_income, xero_profit_and_loss_analytics.gross_profit, xero_profit_and_loss_analytics.total_expenses, xero_profit_and_loss_analytics.wage_expenses, xero_profit_and_loss_analytics.net_profit]
+      timeDimensions: [{ dimension: xero_profit_and_loss_analytics.period_start, granularity: month, dateRange: last 12 months }]
   - connector: xero
     key: top_expense_accounts_12m
-    purpose: "Largest expense accounts in the ledger, last 12 months — the main cost lines (rent, wages, purchases…)."
+    purpose: "Largest accounts in Xero's authoritative P&L, last 12 months — including purchases, wages, super, rent and other posted costs."
     rows: 12
     query:
-      measures: [xero_finance_analytics.pnl_expenses]
-      dimensions: [xero_finance_analytics.pnl_account]
-      timeDimensions: [{ dimension: xero_finance_analytics.pnl_date, dateRange: last 12 months }]
-      order: { xero_finance_analytics.pnl_expenses: desc }
+      measures: [xero_profit_and_loss_account_analytics.statement_amount]
+      dimensions: [xero_profit_and_loss_account_analytics.account_name, xero_profit_and_loss_account_analytics.profit_category]
+      filters: [{ member: xero_profit_and_loss_account_analytics.account_class, operator: equals, values: [EXPENSE] }]
+      timeDimensions: [{ dimension: xero_profit_and_loss_account_analytics.period_start, dateRange: last 12 months }]
+      order: { xero_profit_and_loss_account_analytics.statement_amount: desc }
       limit: 12
   - connector: xero
     key: receivables_payables
@@ -772,7 +798,7 @@ context_probes:
       dimensions: [xero_finance_analytics.invoice_contact]
       filters:
         - { member: xero_finance_analytics.document_kind, operator: equals, values: ["Bill"] }
-        - { member: xero_finance_analytics.invoice_status, operator: notEquals, values: ["VOIDED"] }
+        - { member: xero_finance_analytics.invoice_status, operator: equals, values: ["AUTHORISED", "PAID"] }
       timeDimensions: [{ dimension: xero_finance_analytics.issued_on, dateRange: last 12 months }]
       order: { xero_finance_analytics.total_invoiced: desc }
       limit: 10

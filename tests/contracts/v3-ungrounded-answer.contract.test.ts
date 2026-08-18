@@ -71,6 +71,18 @@ test("Grok data lanes investigate without structured output, then compose", () =
   assert.match(engine, /ownerFacingAnswerText/u);
   assert.match(engine, /buildTurnProvenance/u);
   assert.match(deep, /toolChoice: "required"/u);
+  // Deep-lane branches must take the same split path: Grok fills
+  // branchFindingsSchema on turn one and never queries, which shipped
+  // "Unavailable" for every deep question on grok-4.6.
+  assert.match(deep, /runGrokBranch/u);
+  assert.match(deep, /isXaiModel\(input\.preferences\.model\)/u);
+  assert.match(deep, /MISSING_QUERY_RETRY_MESSAGE/u);
+  assert.match(deep, /GROK_INVESTIGATION_ADDENDUM/u);
+  const grokBranch = deep.slice(deep.indexOf("async function runGrokBranch"), deep.indexOf("export async function runDeepLane"));
+  assert.match(grokBranch, /toolChoice: "required"/u);
+  assert.doesNotMatch(grokBranch.slice(0, grokBranch.indexOf("const composer")), /outputType/u);
+  assert.match(deep, /query\.branchLabel === branchTitle/u);
+  assert.match(read("packages/albert-v3/src/engine/tools.ts"), /branchLabel: context\.branchLabel/u);
 
   const required = laneModelSettings(
     normalizeAgentPreferences({

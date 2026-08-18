@@ -37,6 +37,27 @@ export function normaliseRecipeDateRange(value: string | null | undefined): stri
   const trimmed = value.trim().replace(/\s+/gu, " ").replace(/\s*,\s*/gu, ",")
     .replace(/^(last|next) (one|two|three|four|five|six|seven|eight|nine|ten|twelve) /iu, (_m, dir: string, word: string) => `${dir} ${WORD_NUMBERS[word.toLowerCase()]} `)
     .replace(/^(last|next) (\d+) (day|week|month|quarter|year)$/iu, "$1 $2 $3s");
+  const fiscal = /^(?:this financial year|current financial year|financial year to date|fytd|this fy)$/iu.test(trimmed)
+    ? "current"
+    : /^(?:last financial year|previous financial year|last fy)$/iu.test(trimmed)
+      ? "last"
+      : undefined;
+  if (fiscal) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Australia/Melbourne",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const part = (type: string) => Number(parts.find((candidate) => candidate.type === type)?.value);
+    const year = part("year");
+    const month = part("month");
+    const day = part("day");
+    const currentStartYear = month >= 7 ? year : year - 1;
+    if (fiscal === "last") return `${currentStartYear - 1}-07-01,${currentStartYear}-06-30`;
+    const today = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return `${currentStartYear}-07-01,${today}`;
+  }
   if (!RELATIVE_RANGE.test(trimmed)) return undefined;
   // Relative expressions are case-insensitive to Cube but explicit month names
   // reach the engine's named-month resolver, which lowercases too; normalise once.
@@ -53,10 +74,11 @@ export function recipeToolInput(recipe: CertifiedQuery, dateRange: string | unde
   const timeDimensions: LooseTimeDimension[] = (Array.isArray(q.timeDimensions) ? q.timeDimensions as Array<Record<string, unknown>> : []).map((td) => {
     const applies = Boolean(dateRange) && (dateParameter ? td.dimension === dateParameter : true);
     const original = Array.isArray(td.dateRange) ? (td.dateRange as string[]).join(",") : td.dateRange ? String(td.dateRange) : undefined;
+    const safeOriginal = original ? normaliseRecipeDateRange(original) ?? original : undefined;
     return {
       dimension: String(td.dimension),
       ...(td.granularity ? { granularity: String(td.granularity) } : {}),
-      ...(applies ? { dateRange } : original ? { dateRange: original } : {}),
+      ...(applies ? { dateRange } : safeOriginal ? { dateRange: safeOriginal } : {}),
     };
   });
   // A recipe with a date parameter but no time dimension gains one when the owner named a period.

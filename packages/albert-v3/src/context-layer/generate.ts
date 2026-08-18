@@ -51,8 +51,10 @@ Field guidance:
   window; dataThrough is the latest watermark.
 - cautions: data quirks that change interpretation, drawn from the facts and established
   source findings (e.g. "workshop status fields all read as open — do not report open-job
-  counts as fact"; "Xero payroll is empty — wages come from Deputy"). Only about tools that
-  are connected here; never mention tools that are not. Max 6, one line each.
+  counts as fact"; "Xero payroll is empty — wages come from Deputy"). Every established
+  finding that says a connected tool's area is empty, unreliable or must not be summed goes
+  in (paraphrased, one line); only about tools that are connected here; never mention tools
+  that are not. Max 6.
 - Keep the whole document to about 400 words when rendered: identity.summary ≤ 40 words,
   revenue.basis ≤ 20 words, each note/clause ≤ 12 words, no repetition between sections.
 - State figures plainly, as an owner would read them ("7 staff, 5 active"). Never describe the

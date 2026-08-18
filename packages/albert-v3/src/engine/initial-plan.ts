@@ -153,8 +153,38 @@ export function completeOwnerPlan(steps: readonly OwnerPlanStep[]): OwnerPlanSte
 type PlanPublisher = Pick<V3TurnContext, "emit"> & {
   planUpdates?: number;
   visiblePlan?: V3TurnContext["visiblePlan"];
+  planStepsAwaitingSummary?: V3TurnContext["planStepsAwaitingSummary"];
   executedQueries?: Pick<V3TurnContext, "executedQueries">["executedQueries"];
 };
+
+/** Labels of steps that are done in `next` but were not done in `previous`. */
+export function newlyCompletedSteps(
+  previous: readonly OwnerPlanStep[] | undefined,
+  next: readonly OwnerPlanStep[],
+): string[] {
+  const wasDone = new Set(
+    (previous ?? []).filter((step) => step.status === "done").map((step) => step.label.toLocaleLowerCase("en-AU")),
+  );
+  return next
+    .filter((step) => step.status === "done" && !wasDone.has(step.label.toLocaleLowerCase("en-AU")))
+    .map((step) => step.label);
+}
+
+/**
+ * Tool-result guidance while an engine-ticked step still has no owner-facing
+ * summary. Spread into query tool results so the model writes the 1–3 sentence
+ * "what this step found" paragraph before it moves on.
+ */
+export function planStepSummaryNudge(
+  context: Pick<PlanPublisher, "planStepsAwaitingSummary">,
+): Readonly<{ planUpdate?: string }> {
+  const awaiting = context.planStepsAwaitingSummary ?? [];
+  if (awaiting.length === 0) return {};
+  const labels = awaiting.map((label) => `“${label}”`).join(" and ");
+  return {
+    planUpdate: `The plan step ${labels} is now complete on the owner's screen but has no summary yet. Before your next query, call update_plan (free) with the full step list and a summary: one to three plain sentences of the key findings from that step, with the figures. Skip this only if the step genuinely produced nothing.`,
+  };
+}
 
 export async function publishOwnerPlan(
   context: PlanPublisher,
@@ -182,6 +212,10 @@ export async function syncVisiblePlanToEvidence(context: PlanPublisher): Promise
   if (!current || current.length < 2) return;
   const next = planAfterEvidenceCount(current, context.executedQueries?.length ?? 0);
   if (samePlan(current, next)) return;
+  const completed = newlyCompletedSteps(current, next);
+  if (completed.length > 0) {
+    context.planStepsAwaitingSummary = [...(context.planStepsAwaitingSummary ?? []), ...completed];
+  }
   await publishOwnerPlan(context, next, { countTowardAllowance: false });
 }
 

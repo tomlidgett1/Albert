@@ -1,5 +1,5 @@
 /**
- * The Albert evaluation question matrix (250 turns).
+ * The Albert evaluation question matrix (256 turns).
  *
  * Stratified over: difficulty tier × tool scope × surface area × interaction
  * pattern. Every turn carries the metadata the report groups by. Threads
@@ -63,6 +63,8 @@ const LS_SALES = "sales_analytics";
 const LS_PROD = "product_sales_analytics";
 const DEP = "workforce_analytics";
 const XF = "xero_finance_analytics";
+const XP = "xero_profit_and_loss_analytics";
+const XPA = "xero_profit_and_loss_account_analytics";
 
 function sales(measures: string[], range: [string, string], extra: Record<string, unknown> = {}) {
   return {
@@ -84,6 +86,14 @@ function dep(measures: string[], timeDim: string, range: [string, string], extra
   return {
     measures: measures.map((m) => `${DEP}.${m}`),
     timeDimensions: [{ dimension: `${DEP}.${timeDim}`, dateRange: range }],
+    ...extra,
+  };
+}
+
+function pnl(measures: string[], range: [string, string], extra: Record<string, unknown> = {}) {
+  return {
+    measures: measures.map((m) => `${XP}.${m}`),
+    timeDimensions: [{ dimension: `${XP}.period_start`, dateRange: range }],
     ...extra,
   };
 }
@@ -182,10 +192,12 @@ add({ id: "E-XR-04", tier: "easy", scope: "xero", surface: "cash_ar_ap", pattern
   golden: [{ label: "bills issued last month", member: `${XF}.invoice_count`, mode: "value", tolerancePct: 0, query: { measures: [`${XF}.invoice_count`, `${XF}.total_invoiced`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{last_month_start}", "{last_month_end}"] }] } }] });
 add({ id: "E-XR-05", tier: "easy", scope: "xero", surface: "pnl", pattern: "cold", format: "table",
   question: "What's our P&L for last month?",
-  expect: "Xero's own Profit and Loss for the previous calendar month, presented as a statement table with headline income/gross profit/expenses/net profit. Should come from the live Xero report, not be rebuilt." });
+  expect: "Xero's Fivetran-landed standard accrual P&L for the previous calendar month, with income, Gross Profit, expenses and Net Profit; Net Profit already includes wages.",
+  golden: [{ label: "Xero Net Profit last month", member: `${XP}.net_profit`, mode: "value", tolerancePct: 0, query: pnl(["total_income", "gross_profit", "total_expenses", "wage_expenses", "net_profit"], ["{last_month_start}", "{last_month_end}"]) }] });
 add({ id: "E-XR-06", tier: "easy", scope: "xero", surface: "pnl", pattern: "cold", format: "prose",
   question: "What was our net profit for the last financial year?",
-  expect: "Net profit for FY2025-26 (1 Jul 2025 – 30 Jun 2026) from Xero's P&L." });
+  expect: "Net Profit for FY2025-26 from the governed Xero P&L only if all 12 monthly report periods are present; otherwise states the exact missing coverage and refuses a partial FY total.",
+  golden: [{ label: "available Xero P&L months in FY2025-26", member: `${XP}.report_periods`, mode: "value", tolerancePct: 0, query: pnl(["report_periods", "net_profit"], ["{last_fy_start}", "{last_fy_end}"]), note: "A full FY requires 12 periods; fewer means the answer must disclose incomplete coverage rather than present the partial Net Profit as full-year." }] });
 add({ id: "E-XR-07", tier: "easy", scope: "xero", surface: "pnl", pattern: "cold", format: "table",
   question: "Show me the balance sheet as at 30 June 2026.",
   expect: "Xero's balance sheet as at 30 June 2026 with total assets, liabilities, net assets/equity." });
@@ -206,7 +218,8 @@ add({ id: "E-XR-12", tier: "easy", scope: "xero", surface: "suppliers_inventory"
   golden: [{ label: "Pon Bike bills this year", member: `${XF}.total_invoiced`, mode: "value", tolerancePct: 2, query: { measures: [`${XF}.total_invoiced`, `${XF}.invoice_count`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }, { member: `${XF}.invoice_contact`, operator: "contains", values: ["Pon"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{this_year_start}", "{today}"] }] }, note: "calendar year to date; FY-to-date is acceptable if stated" }] });
 add({ id: "E-XR-13", tier: "easy", scope: "xero", surface: "pnl", pattern: "cold", format: "prose",
   question: "What's our total income this financial year to date?",
-  expect: "Total income from Xero's P&L for 1 Jul 2026 to today." });
+  expect: "Total income from the governed Xero accrual P&L for 1 Jul 2026 to today, with the current month identified as partial.",
+  golden: [{ label: "Xero total income FYTD", member: `${XP}.total_income`, mode: "value", tolerancePct: 0, query: pnl(["sales_revenue", "other_income", "total_income"], ["{fy_start}", "{today}"]) }] });
 add({ id: "E-XR-14", tier: "easy", scope: "xero", surface: "cash_ar_ap", pattern: "cold", format: "table",
   question: "List the bills that are due in the next 14 days.",
   expect: "Unpaid bills with due dates inside the next 14 days; must also lead with anything already overdue (money owed stays owed).",
@@ -336,7 +349,8 @@ add({ id: "M-XR-01", tier: "medium", scope: "xero", surface: "suppliers_inventor
   golden: [{ label: "top supplier by bills FYTD", member: `${XF}.invoice_contact`, mode: "top_entity", query: { measures: [`${XF}.total_invoiced`], dimensions: [`${XF}.invoice_contact`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }, { member: `${XF}.invoice_status`, operator: "notEquals", values: ["VOIDED"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{fy_start}", "{today}"] }], order: { [`${XF}.total_invoiced`]: "desc" }, limit: 10 } }] });
 add({ id: "M-XR-02", tier: "medium", scope: "xero", surface: "pnl", pattern: "cold", format: "table",
   question: "Give me the P&L for this financial year to date split by month.",
-  expect: "Xero P&L with monthly periods (periods+timeframe MONTH) from 1 July 2026 to date." });
+  expect: "Monthly rows from the governed Fivetran-landed Xero accrual P&L from 1 July 2026 to date, including wages and marking the current month partial.",
+  golden: [{ label: "FYTD monthly P&L row count", member: `${XP}.net_profit`, mode: "row_count", tolerancePct: 0, query: pnl(["total_income", "gross_profit", "total_expenses", "wage_expenses", "net_profit"], ["{fy_start}", "{today}"], { timeDimensions: [{ dimension: `${XP}.period_start`, granularity: "month", dateRange: ["{fy_start}", "{today}"] }] }) }] });
 add({ id: "M-XR-03", tier: "medium", scope: "xero", surface: "cash_ar_ap", pattern: "cold", format: "table",
   question: "Give me an ageing breakdown of everything we owe suppliers.",
   expect: "Outstanding payables bucketed by ageing band (current, 1-30, 31-60, 61-90, 90+ or Xero's buckets) with totals; leads with the total owed." });
@@ -348,7 +362,11 @@ add({ id: "M-XR-05", tier: "medium", scope: "xero", surface: "cash_ar_ap", patte
   expect: "Quarterly GST collected from POS sales (source finding), last four quarters." });
 add({ id: "M-XR-06", tier: "medium", scope: "xero", surface: "pnl", pattern: "cold", format: "prose",
   question: "How did last quarter's profit compare to the quarter before?",
-  expect: "Xero P&L net profit for the last complete quarter (Apr–Jun 2026) vs the prior quarter (Jan–Mar 2026), with the change." });
+  expect: "Governed Xero Net Profit for the last complete quarter (Apr–Jun 2026) vs Jan–Mar 2026, with dollar and percentage change; both include wages.",
+  golden: [
+    { label: "Xero Net Profit Apr-Jun 2026", member: `${XP}.net_profit`, mode: "value", tolerancePct: 0, query: pnl(["net_profit"], ["2026-04-01", "2026-06-30"]) },
+    { label: "Xero Net Profit Jan-Mar 2026", member: `${XP}.net_profit`, mode: "value", tolerancePct: 0, query: pnl(["net_profit"], ["2026-01-01", "2026-03-31"]) },
+  ] });
 add({ id: "M-XR-07", tier: "medium", scope: "xero", surface: "suppliers_inventory", pattern: "cold", format: "table",
   question: "What did we spend with our top 5 suppliers last financial year?",
   golden: [{ label: "top supplier FY25-26", member: `${XF}.invoice_contact`, mode: "top_entity", query: { measures: [`${XF}.total_invoiced`], dimensions: [`${XF}.invoice_contact`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }, { member: `${XF}.invoice_status`, operator: "notEquals", values: ["VOIDED"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{last_fy_start}", "{last_fy_end}"] }], order: { [`${XF}.total_invoiced`]: "desc" }, limit: 5 } }] });
@@ -360,7 +378,8 @@ add({ id: "M-XR-09", tier: "medium", scope: "xero", surface: "cash_ar_ap", patte
   golden: [{ label: "largest bill this year (contact)", member: `${XF}.invoice_contact`, mode: "top_entity", query: { measures: [`${XF}.total_invoiced`], dimensions: [`${XF}.invoice_contact`, `${XF}.invoice_number`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{this_year_start}", "{today}"] }], order: { [`${XF}.total_invoiced`]: "desc" }, limit: 3 } }] });
 add({ id: "M-XR-10", tier: "medium", scope: "xero", surface: "pnl", pattern: "cold", format: "table",
   question: "What are our biggest expense accounts this financial year?",
-  expect: "Expense lines from Xero's P&L (or ledger journals) for FY to date, ranked; wages/rent/COGS style accounts." });
+  expect: "Expense account lines from the governed Xero P&L for FYTD, ranked; wages, super, COGS and operating costs are eligible.",
+  golden: [{ label: "largest Xero P&L expense account FYTD", member: `${XPA}.account_name`, mode: "top_entity", query: { measures: [`${XPA}.statement_amount`], dimensions: [`${XPA}.account_name`, `${XPA}.profit_category`], filters: [{ member: `${XPA}.account_class`, operator: "equals", values: ["EXPENSE"] }], timeDimensions: [{ dimension: `${XPA}.period_start`, dateRange: ["{fy_start}", "{today}"] }], order: { [`${XPA}.statement_amount`]: "desc" }, limit: 10 } }] });
 add({ id: "M-XR-11", tier: "medium", scope: "xero", surface: "cash_ar_ap", pattern: "cold", format: "prose",
   question: "On average how long do we take to pay our suppliers?",
   golden: [{ label: "avg days to pay (bills)", member: `${XF}.avg_days_to_pay`, mode: "value", tolerancePct: 5, query: { measures: [`${XF}.avg_days_to_pay`], filters: [{ member: `${XF}.document_kind`, operator: "equals", values: ["Bill"] }, { member: `${XF}.invoice_status`, operator: "equals", values: ["PAID"] }], timeDimensions: [{ dimension: `${XF}.issued_on`, dateRange: ["{last_fy_start}", "{today}"] }] }, note: "window may differ; any reasonable recent window is fine if stated" }] });
@@ -464,13 +483,13 @@ add({ id: "H-XR-02", tier: "hard", scope: "xero", surface: "cash_ar_ap", pattern
   expect: "Bills due 1–30 Sep 2026; must lead with what is already overdue/unpaid now (money owed stays owed) and then the September window." });
 add({ id: "H-XR-03", tier: "hard", scope: "xero", surface: "pnl", pattern: "cold", format: "prose",
   question: "How does our profit this financial year to date compare with the same period last year?",
-  expect: "Xero P&L FY26-27 to date vs FY25-26 same window (1 Jul – today), income/expenses/net profit deltas." });
+  expect: "Xero P&L FY26-27 to date vs the same FY25-26 window only when both monthly windows are present; otherwise names the missing prior-year report coverage and does not compare a partial total." });
 add({ id: "H-XR-04", tier: "hard", scope: "xero", surface: "cash_ar_ap", pattern: "cold", format: "prose",
   question: "Which supplier do we owe the most money to right now, and how overdue is it?",
   expect: "Top creditor with outstanding amount and days overdue / ageing; consistent with the aged payables." });
 add({ id: "H-XR-05", tier: "hard", scope: "xero", surface: "pnl", pattern: "cold", format: "table",
   question: "Which expense lines grew the most this financial year versus last?",
-  expect: "Expense accounts FY26-27 to date vs FY25-26 same period, ranked by increase." });
+  expect: "Expense accounts FY26-27 to date vs the same FY25-26 months, ranked only if both windows have complete monthly P&L coverage; otherwise an exact coverage limitation." });
 add({ id: "H-XR-06", tier: "hard", scope: "xero", surface: "cash_ar_ap", pattern: "cold", format: "prose",
   question: "Are we paying suppliers faster or slower than we were a year ago?",
   expect: "Average days to pay for recent months vs the same months a year earlier." });
@@ -479,7 +498,7 @@ add({ id: "H-XR-07", tier: "hard", scope: "xero", surface: "cash_ar_ap", pattern
   expect: "Largest money-out bank transactions last month with contact/description." });
 add({ id: "H-XR-08", tier: "hard", scope: "xero", surface: "pnl", pattern: "cold", format: "prose",
   question: "What's our expense ratio (expenses as a share of income) for each of the last four quarters?",
-  expect: "Xero P&L quarterly split, computes expenses/income per quarter." });
+  expect: "Governed Xero P&L total expenses divided by total income per complete quarter; wages are inside expenses and incomplete/current quarters are identified." });
 
 add({ id: "H-DP-01", tier: "hard", scope: "deputy", surface: "staff_labour", pattern: "cold", format: "table",
   question: "Which staff members most often work more hours than they were rostered for?",
@@ -511,7 +530,11 @@ add({ id: "X-01", tier: "xhard", scope: "multi", surface: "cross", pattern: "col
   expect: "Deputy wage cost ÷ Lightspeed sales by month for 2026, as a % with a trend; states the two sources." });
 add({ id: "X-02", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "prose",
   question: "Do the wages in our P&L line up with the hours Deputy says were worked in July?",
-  expect: "Xero P&L wages/salaries for July 2026 vs Deputy July wage cost/hours; explains the difference honestly (payroll feed empty vs timesheet cost)." });
+  expect: "Mapped Xero P&L wage expense for July 2026 vs Deputy July timesheet wage cost and hours; explains payroll-posting vs operational-timesheet scope/timing without claiming Xero wages are absent.",
+  golden: [
+    { label: "Xero mapped wage expense July 2026", member: `${XP}.wage_expenses`, mode: "value", tolerancePct: 0, query: pnl(["wage_expenses", "employer_super_expenses", "net_profit"], ["2026-07-01", "2026-07-31"]) },
+    { label: "Deputy wage cost July 2026", member: `${DEP}.wage_cost`, mode: "value", tolerancePct: 1, query: dep(["wage_cost", "hours_worked"], "shift_date", ["2026-07-01", "2026-07-31"]) },
+  ] });
 add({ id: "X-03", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "table",
   question: "What's our revenue per staffed hour, and which days are we overstaffed?",
   expect: "Sales ÷ hours worked by weekday (recent window); names low-productivity days." });
@@ -553,7 +576,7 @@ add({ id: "X-15", tier: "xhard", scope: "multi", surface: "cross", pattern: "col
   expect: "Stock on hand value (Lightspeed inventory) vs supplier spend over a window (Xero bills / LS POs); a ratio with caveats." });
 add({ id: "X-16", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "prose",
   question: "What margin are we really making after wages? Use the last three months.",
-  expect: "Gross profit (Lightspeed) minus wage cost (Deputy) for the last three months, as $ and % of sales; or Xero P&L equivalent — states which." });
+  expect: "Uses Xero Net Profit and Net Profit margin for the last three report months as the whole-business after-wages answer; may compare Deputy wage cost separately but never subtract it from Xero Net Profit again." });
 add({ id: "X-17", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "prose",
   question: "Any red flags I should know about?",
   expect: "A short, evidence-backed list (overdue bills, unapproved timesheets, stock below reorder, sales trend) — concise, not a wall of text." });
@@ -571,7 +594,11 @@ add({ id: "X-21", tier: "xhard", scope: "multi", surface: "cross", pattern: "col
   expect: "Monthly wages vs sales 2026 with growth rates; a clear yes/no." });
 add({ id: "X-22", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "prose",
   question: "What did the July P&L say our expenses were, and how much of that was wages according to Deputy?",
-  expect: "Xero P&L total expenses July vs Deputy July wage cost, as $ and %." });
+  expect: "Governed Xero P&L total expenses for July vs Deputy July wage cost, as $ and %; notes Xero's own wage expense is already included and does not deduct Deputy again.",
+  golden: [
+    { label: "Xero total expenses July 2026", member: `${XP}.total_expenses`, mode: "value", tolerancePct: 0, query: pnl(["total_expenses", "wage_expenses", "net_profit"], ["2026-07-01", "2026-07-31"]) },
+    { label: "Deputy wage cost July 2026", member: `${DEP}.wage_cost`, mode: "value", tolerancePct: 1, query: dep(["wage_cost", "hours_worked"], "shift_date", ["2026-07-01", "2026-07-31"]) },
+  ] });
 add({ id: "X-23", tier: "xhard", scope: "multi", surface: "cross", pattern: "cold", format: "prose",
   question: "Which supplier's stock earns us the best margin?",
   expect: "Margin by manufacturer/vendor (Lightspeed product sales) — Xero has no product grain; states this." });
@@ -675,7 +702,7 @@ const followups: Array<[string, string, string, Scope, Surface, string?, string?
   ["F-06", "What were sales by category this year?", "Just show me the top 5.", "lightspeed", "products", undefined, "Re-presents the same data limited to 5 — no new investigation."],
   ["F-07", "How many hours did each staff member work last month?", "And the month before that?", "deputy", "staff_labour", undefined, "Same breakdown for the earlier month, ideally side by side."],
   ["F-08", "How much did we refund last month?", "Which products were refunded the most?", "lightspeed", "products", undefined, "Refund lines by item last month."],
-  ["F-09", "What's our P&L for last month?", "How does that compare with the same month last year?", "xero", "pnl", undefined, "P&L comparison for the same month a year earlier (Xero periods/timeframe or a second report)."],
+  ["F-09", "What's our P&L for last month?", "How does that compare with the same month last year?", "xero", "pnl", undefined, "Reuses the governed monthly Xero P&L view for the same month a year earlier; if that month predates retained report coverage, says so rather than comparing partial data."],
   ["F-10", "Who's rostered this week?", "And next week?", "deputy", "staff_labour", undefined, "Next week's roster in the same shape."],
   ["F-11", "Who are our top 5 customers this year?", "When did each of them last shop with us?", "lightspeed", "sales", undefined, "Adds last purchase date per customer already listed."],
   ["F-12", "How much GST did we collect last quarter?", "And the quarter before that?", "lightspeed", "sales", undefined, "The prior quarter's GST from POS sales, compared."],

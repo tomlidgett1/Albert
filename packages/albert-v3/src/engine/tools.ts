@@ -37,7 +37,13 @@ import {
 } from "../../../shopify-admin/src/contract.js";
 import type { StoredTableResult, V3TurnContext } from "./context.js";
 import { prepareV3CommentaryUpdate } from "./commentary.js";
-import { canPublishPlanUpdate, publishOwnerPlan, syncVisiblePlanToEvidence } from "./initial-plan.js";
+import {
+  canPublishPlanUpdate,
+  newlyCompletedSteps,
+  planStepSummaryNudge,
+  publishOwnerPlan,
+  syncVisiblePlanToEvidence,
+} from "./initial-plan.js";
 import { derivedTableDigest, materializeDerivedTable } from "./derived-table.js";
 import { describeCubeQueryProvenance, describeDerivedCalculations } from "./query-provenance.js";
 import type { V3ToolRoute } from "./connector-routing.js";
@@ -422,12 +428,14 @@ async function executeGovernedShopifyQLQuery(
     rowCount: output.rows.length,
     executionMs: output.durationMs,
     timeRangeLabel: timeRange.label,
+    branchLabel: context.branchLabel,
   });
   await syncVisiblePlanToEvidence(context);
   // No dashboard replay is registered: a live protected-data query is bound
   // to this actor/turn and must be re-authorised, never silently replayed.
   return {
     ok: true,
+    ...planStepSummaryNudge(context),
     resultId,
     rowCount: output.rows.length,
     rows: output.rows.slice(0, MAX_MODEL_ROWS),
@@ -600,10 +608,12 @@ async function executeGovernedShopifyAdminQuery(
     rowCount: rows.length,
     executionMs: output.durationMs,
     timeRangeLabel: timeRange.label,
+    branchLabel: context.branchLabel,
   });
   await syncVisiblePlanToEvidence(context);
   return {
     ok: true,
+    ...planStepSummaryNudge(context),
     resultId,
     rows,
     accessLimitations: output.accessLimitations,
@@ -1067,6 +1077,7 @@ export async function executeGovernedCubeQuery(
     rowCount: result.rows.length,
     executionMs: result.executionMs,
     timeRangeLabel: timeRange.label,
+    branchLabel: context.branchLabel,
   });
   await syncVisiblePlanToEvidence(context);
   context.tableResults.set(resultId, {
@@ -1137,6 +1148,7 @@ export async function executeGovernedCubeQuery(
 
   return {
     ok: true,
+    ...planStepSummaryNudge(context),
     resultId,
     view: validated.view,
     rowCount: result.rows.length,
@@ -1807,12 +1819,14 @@ export function createV3Tools(
           rowCount: parsed ? parsed.rows.length : 1,
           executionMs,
           timeRangeLabel: periodLabel,
+          branchLabel: context.branchLabel,
         });
         void queryEvent;
         await syncVisiblePlanToEvidence(context);
         if (parsed && resultId) {
           return {
             ok: true,
+            ...planStepSummaryNudge(context),
             organisation,
             ...shaped,
             resultId,
@@ -1825,6 +1839,7 @@ export function createV3Tools(
         }
         return {
           ok: true,
+          ...planStepSummaryNudge(context),
           organisation,
           ...shaped,
           statement: result.text ?? "",
@@ -1846,39 +1861,6 @@ export function createV3Tools(
     if (input.timeframe) args.timeframe = input.timeframe;
     return args;
   };
-
-  const xeroProfitAndLoss = xeroReportTool({
-    name: "xero_profit_and_loss",
-    description:
-      "Fetch the owner's official Xero Profit and Loss statement (income statement) live from Xero, "
-      + "as Xero itself renders it: revenue, cost of sales, gross profit, operating expenses, net profit by "
-      + "section. ALWAYS use this — never assemble a P&L from Cube views — whenever the owner asks for a "
-      + "P&L / profit and loss / income statement / 'how did we do this month/quarter/FY' in Xero terms. "
-      + "Give an explicit window (fromDate, toDate; max 12 months; Australian FY runs 1 July–30 June). "
-      + "Optionally split by month with periods+timeframe, or ask for cash basis with paymentsOnly. "
-      + "Present the returned figures faithfully as the statement, and say the period you used.",
-    parameters: z.object({
-      fromDate: isoDate.describe("Inclusive start, YYYY-MM-DD"),
-      toDate: isoDate.describe("Inclusive end, YYYY-MM-DD (≤ 12 months after fromDate)"),
-      ...comparisonPeriods,
-      paymentsOnly: z.boolean().nullable().describe("true for cash basis, null/false for accrual"),
-    }).strict(),
-    mcpTool: "list-profit-and-loss",
-    runningLabel: () => "Fetching the Profit and Loss from Xero",
-    detail: (input) => `${input.fromDate} to ${input.toDate}`,
-    toArgs: (input) => withComparison(input, {
-      fromDate: input.fromDate,
-      toDate: input.toDate,
-      ...(input.paymentsOnly ? { paymentsOnly: true } : {}),
-    }),
-    result: (input) => ({
-      report: "profit_and_loss",
-      period: { fromDate: input.fromDate, toDate: input.toDate },
-      basis: input.paymentsOnly ? "cash" : "accrual",
-    }),
-    failure: "Xero P&L request failed.",
-    tabular: true,
-  });
 
   const xeroBalanceSheet = xeroReportTool({
     name: "xero_balance_sheet",
@@ -2020,7 +2002,6 @@ export function createV3Tools(
   });
 
   const xeroLiveReportTools: readonly Tool<V3TurnContext>[] = [
-    xeroProfitAndLoss,
     xeroBalanceSheet,
     xeroTrialBalance,
     xeroFindContact,
@@ -2387,13 +2368,15 @@ export function createV3Tools(
   const updatePlan = tool({
     name: "update_plan",
     description:
-      "Tick or revise the short visible plan already on screen. Do not replace the opening list before any work has landed. Call it with the full list when a step completes (completed steps done, next step active), or after a query changes the direction of the investigation. Free: it never consumes the query budget.",
+      "Tick or revise the short visible plan already on screen, and tell the owner what each completed step found. Do not replace the opening list before any work has landed. Call it with the full list when a step completes (completed steps done, next step active) together with a summary of that step's key findings, or after a query changes the direction of the investigation. Free: it never consumes the query budget.",
     parameters: z.object({
       steps: z.array(z.object({
         label: z.string().trim().min(3).max(200)
           .describe("Owner-readable step, e.g. 'Check overdue bills'. No tool or query jargon."),
         status: z.enum(["pending", "active", "done"]),
       }).strict()).min(2).max(6),
+      summary: z.string().trim().min(12).max(320).nullable()
+        .describe("What the step just completed found: one to three short plain sentences (under 50 words) for the business owner, leading with the single most useful figure. No method, period definitions, or lists of numbers. Shown on screen under the plan. Required whenever a step is marked done; null only when no step was completed by this call."),
     }).strict(),
     strict: true,
     execute: async (input, runContext) => {
@@ -2413,7 +2396,37 @@ export function createV3Tools(
           guidance: "A plan is already on screen. Do not replace it. Call update_plan when a step is done, or after a query changes the direction of the work.",
         };
       }
+      const completedNow = newlyCompletedSteps(context.visiblePlan, input.steps);
+      const awaiting = context.planStepsAwaitingSummary ?? [];
       await publishOwnerPlan(context, input.steps);
+
+      const summary = input.summary?.trim() ?? "";
+      if (summary) {
+        try {
+          const update = prepareV3CommentaryUpdate({
+            state: context.commentary,
+            kind: "step",
+            message: summary,
+            queryCount: context.executedQueries.length,
+          });
+          if (update.accepted) {
+            await context.emit({ type: "narrative", text: update.text });
+          }
+        } catch (error) {
+          // Commentary is cosmetic; the plan tick has already landed.
+          if (process.env.ALBERT_V3_DEBUG_PLAN) console.error("[update_plan] step summary failed", error);
+        }
+        // The summary covers every step ticked so far, by the model or the engine.
+        context.planStepsAwaitingSummary = [];
+        return { ok: true };
+      }
+      if (completedNow.length > 0 || awaiting.length > 0) {
+        const labels = [...new Set([...awaiting, ...completedNow])].map((label) => `“${label}”`).join(" and ");
+        return {
+          ok: true,
+          guidance: `The plan is updated, but ${labels} was completed without a summary, so the owner sees nothing about what it found. Call update_plan again now with the same steps and a summary of one to three sentences with the key figures.`,
+        };
+      }
       return { ok: true };
     },
   });
@@ -2482,7 +2495,9 @@ export function createV3Tools(
   if (options.lane === "statement") {
     return Object.freeze([...xeroLiveReportTools]);
   }
-  // Live Xero statements are offered on every answer route; each tool refuses
+  // Remaining live Xero reports are offered on every answer route; P&L is
+  // deliberately absent because Fivetran lands Xero's standard report into
+  // the governed xero_profit_and_loss_* Cube views. Each native tool refuses
   // at call time when the turn context has no xero-mcp client, so exposure is
   // harmless. Xero itself renders these reports — the model never rebuilds
   // them from Cube views.

@@ -1601,27 +1601,25 @@ function ShimmerStatusContent({
   );
 }
 
+/** The rotating "what is happening" line plus the animation settings it renders with. */
+type ProgressShimmer = Readonly<{
+  line: ProgressShimmerLine;
+  durationMs: number;
+  transition: { duration: number; ease?: readonly [number, number, number, number] };
+}>;
+
 /**
- * Codex-style agent progress:
- * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
- * - Done: static "Worked" + "for Xs"
- * - Task list always collapsed by default; expand to inspect steps
+ * One rotating status line per turn. Owned by the trace root so the header and
+ * the live commentary can share it: whichever surface is showing the shimmer
+ * renders the same line, and the two never drift apart.
  */
-function ThinkingTrail({
-  model,
-  streaming,
-  reduceMotion = false,
-}: {
-  model: TrailModel;
-  streaming: boolean;
-  reduceMotion?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [mountedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(() => Date.now());
+function useProgressShimmer(
+  model: TrailModel,
+  streaming: boolean,
+  reduceMotion: boolean,
+): ProgressShimmer {
   const [fillers] = useState(() => pickShimmerFillers(3));
-  const [shimmerDurationMs] = useState(() => Math.round(2400 + Math.random() * 600));
-  const hasTrail = model.steps.length > 0 || model.reasoning.trim().length > 0 || streaming;
+  const [durationMs] = useState(() => Math.round(2400 + Math.random() * 600));
   const liveStatus = highLevelProgressTheme({
     theme: model.statusTheme,
     stage: model.statusStage,
@@ -1667,19 +1665,10 @@ function ThinkingTrail({
     ],
   );
   const [line, setLine] = useState(liveLine);
-  const lineTransition = reduceMotion
-    ? { duration: 0 }
-    : { duration: 0.72, ease: [0.22, 1, 0.36, 1] as const };
 
   useEffect(() => {
     setLine(liveLine);
   }, [liveLine]);
-
-  useEffect(() => {
-    if (!streaming) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [streaming]);
 
   useEffect(() => {
     if (!streaming || reduceMotion || shimmerLines.length < 2) return;
@@ -1698,6 +1687,81 @@ function ThinkingTrail({
       window.clearTimeout(timer);
     };
   }, [reduceMotion, shimmerActivity, shimmerLines, streaming]);
+
+  return useMemo(() => ({
+    line,
+    durationMs,
+    transition: reduceMotion
+      ? { duration: 0 }
+      : { duration: 0.72, ease: [0.22, 1, 0.36, 1] as const },
+  }), [durationMs, line, reduceMotion]);
+}
+
+/** The animated status line: measured ghost copy keeps the width, live copy slides through. */
+function ShimmerStatusLine({
+  shimmer,
+  verb,
+  reduceMotion,
+}: {
+  shimmer: ProgressShimmer;
+  verb: string;
+  reduceMotion: boolean;
+}) {
+  return (
+    <span className={styles.agentTrailStatus}>
+      <span className={styles.agentTrailStatusMeasure} aria-hidden>
+        <ShimmerStatusContent line={shimmer.line} verb={verb} />
+      </span>
+      <AnimatePresence initial={false}>
+        <motion.span
+          key={shimmer.line.id}
+          initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
+          animate={{ y: "0%", opacity: 1 }}
+          exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
+          transition={shimmer.transition}
+          className={styles.agentTrailStatusLive}
+          style={{ "--insights-shimmer-duration": `${shimmer.durationMs}ms` } as CSSProperties}
+        >
+          <ShimmerStatusContent line={shimmer.line} verb={verb} />
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+/**
+ * Codex-style agent progress:
+ * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
+ *   (unless the live commentary below is hosting the status shimmer, in which
+ *   case the header settles to a static "Working")
+ * - Done: static "Worked" + "for Xs"
+ * - Task list always collapsed by default; expand to inspect steps
+ */
+function ThinkingTrail({
+  model,
+  streaming,
+  shimmer,
+  headerShimmer = true,
+  reduceMotion = false,
+}: {
+  model: TrailModel;
+  streaming: boolean;
+  shimmer: ProgressShimmer;
+  /** False while the live commentary shows the status shimmer under its latest paragraph. */
+  headerShimmer?: boolean;
+  reduceMotion?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mountedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const hasTrail = model.steps.length > 0 || model.reasoning.trim().length > 0 || streaming;
+  const line = shimmer.line;
+
+  useEffect(() => {
+    if (!streaming) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [streaming]);
 
   if (!hasTrail) return null;
 
@@ -1742,25 +1806,8 @@ function ThinkingTrail({
         }}
       >
         <span className={styles.agentTrailVerbGroup}>
-          {streaming ? (
-            <span className={styles.agentTrailStatus}>
-              <span className={styles.agentTrailStatusMeasure} aria-hidden>
-                <ShimmerStatusContent line={line} verb={verb} />
-              </span>
-              <AnimatePresence initial={false}>
-                <motion.span
-                  key={line.id}
-                  initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
-                  animate={{ y: "0%", opacity: 1 }}
-                  exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
-                  transition={lineTransition}
-                  className={styles.agentTrailStatusLive}
-                  style={{ "--insights-shimmer-duration": `${shimmerDurationMs}ms` } as CSSProperties}
-                >
-                  <ShimmerStatusContent line={line} verb={verb} />
-                </motion.span>
-              </AnimatePresence>
-            </span>
+          {streaming && headerShimmer ? (
+            <ShimmerStatusLine shimmer={shimmer} verb={verb} reduceMotion={reduceMotion} />
           ) : (
             <span className={styles.agentTrailVerb}>{verb}</span>
           )}
@@ -1870,18 +1917,26 @@ function ThinkingTrail({
 /**
  * Sparse commentary stays visible while a longer turn runs, then folds into
  * the completed "Worked" trail. Routine query/tool events never enter here.
+ *
+ * Each completed plan step lands as its own short paragraph (what that step
+ * found), separated by whitespace rather than a timeline connector. The
+ * rotating status shimmer sits directly under the newest paragraph, so the
+ * reader's eye finds "what happened" and "what is happening now" together.
  */
 function LiveCommentary({
   updates,
+  shimmer,
   reduceMotion,
 }: {
   updates: readonly TrailCommentaryUpdate[];
+  /** Present while the turn is still running; hosts the live status line. */
+  shimmer: ProgressShimmer | null;
   reduceMotion: boolean;
 }) {
   if (updates.length === 0) return null;
 
   return (
-    <motion.ol
+    <motion.div
       className={styles.liveCommentary}
       aria-label="Albert progress updates"
       aria-live="polite"
@@ -1895,7 +1950,7 @@ function LiveCommentary({
         {updates.map((update, index) => {
           const latest = index === updates.length - 1;
           return (
-            <motion.li
+            <motion.p
               key={update.id}
               className={styles.liveCommentaryItem}
               data-latest={latest ? "true" : "false"}
@@ -1903,13 +1958,17 @@ function LiveCommentary({
               animate={{ opacity: 1, y: 0 }}
               transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
             >
-              <span className={styles.liveCommentaryDot} aria-hidden="true" />
-              <p>{update.text}</p>
-            </motion.li>
+              {update.text}
+            </motion.p>
           );
         })}
       </AnimatePresence>
-    </motion.ol>
+      {shimmer ? (
+        <div className={styles.liveCommentaryStatus} aria-hidden>
+          <ShimmerStatusLine shimmer={shimmer} verb="Working" reduceMotion={reduceMotion} />
+        </div>
+      ) : null}
+    </motion.div>
   );
 }
 
@@ -2454,6 +2513,10 @@ export default function InsightsStyleTrace({
       : null,
     [model.answer, model.answerTables.length],
   );
+  const shimmer = useProgressShimmer(model, streaming, reduceMotion);
+  // While step summaries are on screen the status shimmer lives under the
+  // newest one; the header settles to a static "Working" so only one line moves.
+  const commentaryLive = streaming && runtime === "v3" && model.commentaryUpdates.length > 0;
 
   return (
     <div className={styles.root}>
@@ -2461,7 +2524,13 @@ export default function InsightsStyleTrace({
         <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} onAddToDashboard={onAddToDashboard} />
       ) : (
         <>
-          <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
+          <ThinkingTrail
+            model={model}
+            streaming={streaming}
+            shimmer={shimmer}
+            headerShimmer={!commentaryLive}
+            reduceMotion={reduceMotion}
+          />
           {model.plan ? (
             <PlanChecklist
               plan={model.plan}
@@ -2470,10 +2539,11 @@ export default function InsightsStyleTrace({
             />
           ) : null}
           <AnimatePresence initial={false}>
-            {streaming && runtime === "v3" && model.commentaryUpdates.length > 0 ? (
+            {commentaryLive ? (
               <LiveCommentary
                 key="live-commentary"
                 updates={model.commentaryUpdates}
+                shimmer={shimmer}
                 reduceMotion={reduceMotion}
               />
             ) : null}
@@ -2491,7 +2561,7 @@ export default function InsightsStyleTrace({
       {!detailedMode ? (
         <CompactQueries
           tables={model.steps.filter((step) => step.table?.dashboardReplay && tableHasData(step.table))}
-          collapsedByDefault={Boolean(!streaming && model.answer)}
+          collapsedByDefault
           reduceMotion={reduceMotion}
           onAddToDashboard={onAddToDashboard}
         />

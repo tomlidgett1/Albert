@@ -80,6 +80,8 @@ export type CubeCatalogueMember = Readonly<{
   description?: string;
   type?: CubeMemberType;
   aiContext?: string;
+  /** Queryable for replay/validation but omitted from every model-facing catalogue surface. */
+  aiHidden?: boolean;
   folder?: string;
   /** For view members, the underlying cube member the view aliases. */
   aliasMember?: string;

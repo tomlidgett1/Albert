@@ -2,9 +2,10 @@ cubes:
   # ---------------------------------------------------------------------------
   # Xero AU payroll cubes.
   #
-  # Source: source_xero_official.xo_* views over XER_OFFICIAL. Privacy: Tax
-  # File Numbers and employee bank account digits are never landed in these
-  # views. Semantics follow the Xero Payroll AU API: a PayRun is a pay cycle
+  # Source: source_xero_official.xo_* security-barrier views over Albert's
+  # per-connection Fivetran Connector SDK Xero schemas. Privacy: Tax File
+  # Numbers and employee bank account digits are never landed in these views.
+  # Semantics follow the Xero Payroll AU API: a PayRun is a pay cycle
   # execution, a Payslip is one employee's slice of a pay run, a Timesheet is
   # submitted hours for a period, pay items define earnings/deduction/leave/
   # reimbursement types.
@@ -231,42 +232,54 @@ cubes:
       - name: pay_run_count
         type: count
         title: Pay runs
+        description: Number of pay-cycle executions; use posted_pay_runs for finalised payroll.
       - name: total_wages
         type: sum
         sql: wages
         format: currency
         title: Gross wages
+        description: Gross employee earnings recorded by Xero for the pay run.
       - name: total_tax
         type: sum
         sql: tax
         format: currency
         title: PAYG tax withheld
+        description: >
+          Tax withheld from employee earnings. It is payable to the ATO and is
+          not an additional employer wage expense.
       - name: total_super
         type: sum
         sql: super
         format: currency
         title: Superannuation
+        description: Employer superannuation contribution accrued in the pay run.
       - name: total_deductions
         type: sum
         sql: deductions
         format: currency
         title: Deductions
+        description: Employee payroll deductions; not automatically an employer expense.
       - name: total_reimbursements
         type: sum
         sql: reimbursements
         format: currency
         title: Reimbursements
+        description: Amounts reimbursed through payroll; accounting expense classification lives in the P&L.
       - name: total_net_pay
         type: sum
         sql: net_pay
         format: currency
         title: Net pay
+        description: Gross earnings less tax and deductions, plus applicable reimbursements.
       - name: total_payroll_cost
         type: sum
         sql: "COALESCE({CUBE}.wages, 0) + COALESCE({CUBE}.super, 0)"
         format: currency
         title: Payroll cost (wages + super)
-        description: Employer cost approximation, gross wages plus superannuation.
+        description: >
+          Employer cost approximation equal only to gross wages plus employer
+          super. Excludes payroll tax, workers compensation, benefits and other
+          employment on-costs. It is not the complete P&L labour expense.
 
     segments:
       - name: posted_pay_runs

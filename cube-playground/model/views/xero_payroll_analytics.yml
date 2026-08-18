@@ -11,13 +11,15 @@ views:
       their own grains.
     meta:
       ai_context: >
-        Use this view for pay and payroll cost: "how much did X earn", wages
-        by employee, PAYG withheld, super paid or payable, net pay, payroll
-        cost per pay cycle, salaries and hourly rates, payroll hours by day
+        Use this view for payroll detail: "how much did X earn", wages by
+        employee, PAYG withheld, super accrued in the pay run, net pay, the
+        wages-plus-super approximation per pay cycle, salaries and hourly rates, payroll hours by day
         or earnings rate, and super funds. paid_on is the business date for
         payslips; filter pay_run_status = 'POSTED' for finalised pay.
-        Employer payroll cost = wages + super (pay_run_payroll_cost at pay
-        run grain). Operational rostered/worked hours and shift-level wage
+        pay_run_payroll_cost is ONLY gross wages + employer super. It excludes
+        payroll tax, workers compensation, benefits and other on-costs; PAYG
+        withheld is an employee liability, not extra employer cost.
+        Operational rostered/worked hours and shift-level wage
         cost live in workforce_analytics (Deputy); this view is what payroll
         actually paid. Tax File Numbers and bank details are never available.
         The same people may appear in Deputy or Lightspeed under slightly

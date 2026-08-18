@@ -61,6 +61,8 @@ export type ExecutedCubeQuery = Readonly<{
   rowCount: number;
   executionMs: number;
   timeRangeLabel: string;
+  /** Deep-lane branch that ran the query, so a branch can compose from its own evidence. */
+  branchLabel?: string;
 }>;
 
 export type StoredTableResult = Readonly<{
@@ -151,6 +153,12 @@ export type V3TurnContext = {
   planUpdates?: number;
   /** Latest owner-facing plan already shown; the model ticks this list rather than replacing it. */
   visiblePlan?: readonly Readonly<{ label: string; status: "pending" | "active" | "done" }>[];
+  /**
+   * Plan steps the engine ticked off (one per completed query) whose findings
+   * the model has not yet summarised for the owner. Query tools nudge the
+   * model to call update_plan with a summary while this is non-empty.
+   */
+  planStepsAwaitingSummary?: string[];
   catalogueSearches?: number;
   catalogueSchemaLoads?: number;
   shopifyQLCatalogueSearches?: number;

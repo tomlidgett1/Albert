@@ -145,6 +145,10 @@ function shortMemberName(member: CubeCatalogueMember): string {
   return member.name.slice(member.name.indexOf(".") + 1);
 }
 
+function modelVisibleMembers(view: CubeCatalogueView): readonly CubeCatalogueMember[] {
+  return view.members.filter((member) => !member.aiHidden);
+}
+
 function keyMetricPenalty(member: CubeCatalogueMember): number {
   const name = shortMemberName(member).toLowerCase();
   if (/tenant|protected_subject|row_count|source_record|population/u.test(name)) return 100;
@@ -158,7 +162,7 @@ function keyMetricPenalty(member: CubeCatalogueMember): number {
  * still come from get_view_schema before execution.
  */
 export function catalogueKeyMetrics(view: CubeCatalogueView, limit = 3): readonly string[] {
-  return view.members
+  return modelVisibleMembers(view)
     .map((member, index) => ({ member, index }))
     .filter(({ member }) => member.kind === "measure")
     .sort((left, right) => {
@@ -174,7 +178,7 @@ function descriptorKeyMetrics(
   descriptor: CatalogueViewDescriptor | undefined,
 ): readonly string[] {
   const measures = new Set(
-    view.members.filter(({ kind }) => kind === "measure").map(({ name }) => name),
+    modelVisibleMembers(view).filter(({ kind }) => kind === "measure").map(({ name }) => name),
   );
   const configured = (descriptor?.keyMetrics ?? [])
     .map((name) => name.includes(".") ? name : `${view.name}.${name}`)
@@ -252,7 +256,7 @@ function renderView(view: CubeCatalogueView, options: Readonly<{ full: boolean }
   }
 
   const byFolder = new Map<string, CubeCatalogueMember[]>();
-  for (const member of view.members) {
+  for (const member of modelVisibleMembers(view)) {
     const folder = member.folder ?? "Other";
     const bucket = byFolder.get(folder) ?? [];
     bucket.push(member);
@@ -282,9 +286,10 @@ export function renderCatalogueForPrompt(catalogue: CubeCatalogue): string {
 export function renderCatalogueSummary(catalogue: CubeCatalogue): string {
   return catalogue.views
     .map((view) => {
-      const measures = view.members.filter((m) => m.kind === "measure").length;
-      const dimensions = view.members.filter((m) => m.kind === "dimension").length;
-      const segments = view.members.filter((m) => m.kind === "segment").length;
+      const visible = modelVisibleMembers(view);
+      const measures = visible.filter((m) => m.kind === "measure").length;
+      const dimensions = visible.filter((m) => m.kind === "dimension").length;
+      const segments = visible.filter((m) => m.kind === "segment").length;
       return `- ${view.name}: ${view.description ?? view.title} (${measures} measures, ${dimensions} dimensions, ${segments} segments)`;
     })
     .join("\n");
@@ -354,7 +359,7 @@ export function hydrateViewSchemas(
           ? { minimumGroupSize: view.minimumGroupSize }
           : {}),
         ...(view.populationMeasure ? { populationMeasure: view.populationMeasure } : {}),
-        members: Object.freeze(view.members.map((member) => Object.freeze({
+        members: Object.freeze(modelVisibleMembers(view).map((member) => Object.freeze({
           name: member.name,
           kind: member.kind,
           title: member.title,
@@ -449,7 +454,7 @@ export function searchSemanticCatalogue(
       const normalizedViewName = compactWhitespace(view.name.replaceAll("_", " ").toLowerCase());
       const identity = `${view.name} ${view.title}`;
       const purpose = purposeForView(view, descriptor);
-      const relevantMembers = view.members
+      const relevantMembers = modelVisibleMembers(view)
         .map((member) => ({ member, score: memberSearchScore(member, query, normalizedQuestion) }))
         .sort((left, right) => right.score - left.score || left.member.name.localeCompare(right.member.name));
       const positiveMembers = relevantMembers.filter(({ score }) => score > 0);

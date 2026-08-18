@@ -128,34 +128,15 @@
   display: flex;
   width: min(calc(100% - 22px), 680px);
   flex-direction: column;
-  gap: 9px;
-  margin: 5px 12px 10px 10px;
-  padding: 1px 0;
-  list-style: none;
-}
-
-.liveCommentary::before {
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 3px;
-  width: 1px;
-  background: light-dark(#dedede, #34363c);
-  content: "";
-}
-
-.liveCommentaryItem {
-  position: relative;
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
   gap: 10px;
-  align-items: start;
-  margin: 0;
+  margin: 8px 12px 12px 12px;
+  padding: 0;
 }
 
-.liveCommentaryItem p {
+/* One paragraph per completed step; whitespace, not a connector, separates them. */
+.liveCommentaryItem {
   max-width: 68ch;
-  margin: -2px 0 0;
+  margin: 0;
   color: light-dark(#606165, #a8abb4);
   font-size: 13px;
   font-weight: 430;
@@ -163,26 +144,16 @@
   line-height: 1.5;
 }
 
-.liveCommentaryItem[data-latest="true"] p {
+.liveCommentaryItem[data-latest="true"] {
   color: light-dark(#343538, #d6d9e0);
 }
 
-.liveCommentaryDot {
-  position: relative;
-  z-index: 1;
-  display: block;
-  width: 7px;
-  height: 7px;
-  margin-top: 5px;
-  border: 2px solid light-dark(#f6f5f5, #24262a);
-  border-radius: 999px;
-  background: light-dark(#a3a3a3, #6f737c);
-  box-shadow: 0 0 0 1px light-dark(#d4d4d4, #454850);
-}
-
-.liveCommentaryItem[data-latest="true"] .liveCommentaryDot {
-  background: light-dark(#45474b, #e5e7eb);
-  box-shadow: 0 0 0 1px light-dark(#8a8d96, #737782);
+/* The rotating status line, directly under the newest paragraph. */
+.liveCommentaryStatus {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  margin-top: 2px;
 }
 
 .agentTrailHeader {

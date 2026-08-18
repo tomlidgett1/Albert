@@ -111,20 +111,28 @@ test("recipes: flagged certified queries convert to governed tool input with the
   assert.ok(narrowed.filters?.some((f) => f.operator === "contains" && f.values?.includes("Pon Bike")));
   assert.equal(normaliseRecipeDateRange("Last  Month"), "last month");
   assert.equal(normaliseRecipeDateRange("2026-07-01, 2026-07-31"), "2026-07-01,2026-07-31");
+  const currentFy = normaliseRecipeDateRange("this financial year");
+  const lastFy = normaliseRecipeDateRange("last financial year");
+  assert.match(currentFy ?? "", /^\d{4}-07-01,\d{4}-\d{2}-\d{2}$/u);
+  assert.match(lastFy ?? "", /^\d{4}-07-01,\d{4}-06-30$/u);
+  const netProfit = findCertifiedQuery("xero-net-profit", config);
+  assert.ok(netProfit?.recipe);
+  assert.equal(recipeToolInput(netProfit, undefined, null).timeDimensions?.[0]?.dateRange, currentFy);
   assert.equal(normaliseRecipeDateRange("since the shop opened"), undefined);
 });
 
 test("native capabilities: registry detects statement questions by wording and intent, and renders for the classifier", () => {
   const withXero = { xeroMcp: {} } as unknown as Pick<V3TurnContext, "xeroMcp">;
-  assert.equal(detectNativeCapability("What was our net profit for the last financial year?", withXero, ["xero", "deputy"])?.kind, "profit_and_loss");
-  assert.equal(detectNativeCapability("What are our biggest expense accounts this financial year?", withXero, ["xero"])?.kind, "profit_and_loss");
+  assert.equal(detectNativeCapability("What was our net profit for the last financial year?", withXero, ["xero", "deputy"]), undefined, "P&L is governed CubeCore");
+  assert.equal(detectNativeCapability("What are our biggest expense accounts this financial year?", withXero, ["xero"]), undefined, "P&L accounts are governed CubeCore");
   assert.equal(detectNativeCapability("Show me the balance sheet as at 30 June 2026.", withXero, ["xero"])?.kind, "balance_sheet");
   assert.equal(detectNativeCapability("How much do we owe suppliers?", withXero, ["xero"]), undefined);
   assert.equal(detectNativeCapability("What was our net profit last year?", { xeroMcp: undefined }, ["xero"]), undefined, "no client, no delegation");
   assert.equal(detectNativeCapability("What was our net profit last year?", withXero, ["deputy"]), undefined, "not connected, no delegation");
-  assert.equal(resolveNativeCapability("xero.statement:profit_and_loss", withXero, ["xero"])?.kind, "profit_and_loss");
+  assert.equal(resolveNativeCapability("xero.statement:profit_and_loss", withXero, ["xero"]), undefined);
   assert.equal(resolveNativeCapability("xero.statement:nope", withXero, ["xero"]), undefined);
   assert.match(renderNativeCapabilitiesForClassifier(["xero"]), /xero\.statement:balance_sheet/u);
+  assert.doesNotMatch(renderNativeCapabilitiesForClassifier(["xero"]), /profit_and_loss/u);
   assert.equal(renderNativeCapabilitiesForClassifier(["deputy"]), "");
   // Grain the statement lacks keeps the general path.
   assert.equal(detectXeroStatementRequest("P&L by product category for July"), undefined);

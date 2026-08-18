@@ -13,8 +13,8 @@
  *   npx tsx scripts/albert-v3-xero-battery.mts 3          # single question
  *   npx tsx scripts/albert-v3-xero-battery.mts 0 10       # range [from, to)
  *
- * Reuses the smoke-test conversation/turn ids, which hold an active semantic
- * turn lease in the control plane (required by the capability driver).
+ * Reuses the current eval conversation/turn lease by default (required by the
+ * capability driver); override TENANT_ID/CONVERSATION_ID/TURN_ID explicitly.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -22,6 +22,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAlbertV3Turn } from "../packages/albert-v3/src/index.js";
 import type { TraceEvent } from "../packages/shared/src/index.js";
+import {
+  ACTIVE_CONNECTORS,
+  ACTOR_ID,
+  LEASE_CONVERSATION_ID,
+  LEASE_TURN_ID,
+  ROLE,
+  SOURCE_FINDINGS,
+  TENANT_ID as LIVE_TENANT_ID,
+} from "./albert-eval/lib.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -47,9 +56,9 @@ if (!cubeApiSecret || !openaiApiKey) {
   process.exit(1);
 }
 
-const TENANT_ID = process.env.TENANT_ID || "01KZ4ZMVF5QNQ4TX35VF3WDJBM";
-const CONVERSATION_ID = process.env.CONVERSATION_ID || "01SM0KETESTC0NVAAAAAAAAAAA";
-const TURN_ID = process.env.TURN_ID || "01SM0KETESTT0RNAAAAAAAAAAA";
+const TENANT_ID = process.env.TENANT_ID || LIVE_TENANT_ID;
+const CONVERSATION_ID = process.env.CONVERSATION_ID || LEASE_CONVERSATION_ID;
+const TURN_ID = process.env.TURN_ID || LEASE_TURN_ID;
 
 const PREFERENCES = Object.freeze({
   model: "gpt-5.6-luna",
@@ -133,17 +142,24 @@ async function runCase(index: number, testCase: BatteryCase): Promise<boolean> {
   const timer = setTimeout(() => controller.abort(new Error("battery timeout")), testCase.timeoutMs);
   const started = Date.now();
   let sequence = 0;
+  const queriedViews = new Set<string>();
   try {
     const result = await runAlbertV3Turn({
       message: testCase.question,
       conversation: [],
       preferences: PREFERENCES,
       tenantId: TENANT_ID,
+      actorId: ACTOR_ID,
+      role: ROLE,
+      activeConnectors: [...ACTIVE_CONNECTORS],
+      connectorFreshness: [],
+      sourceFindings: [...SOURCE_FINDINGS],
       conversationId: CONVERSATION_ID,
       turnId: TURN_ID,
       cubeApiUrl,
       cubeApiSecret,
       openaiApiKey,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL || envLocal.OPENAI_BASE_URL || undefined,
       signal: controller.signal,
       emit: async (event) => {
         const at = `${((Date.now() - started) / 1000).toFixed(1)}s`;
@@ -156,6 +172,7 @@ async function runCase(index: number, testCase: BatteryCase): Promise<boolean> {
             console.log(`  [${at}] narrative · ${snippet(event.text, 200)}`);
             break;
           case "query":
+            if (event.view) queriedViews.add(event.view);
             console.log(`  [${at}] query · ${event.topic} · view=${event.view ?? "?"} rows=${event.rowCount ?? "?"} ms=${event.executionMs ?? "?"}`);
             break;
           case "table":
@@ -186,6 +203,14 @@ async function runCase(index: number, testCase: BatteryCase): Promise<boolean> {
       },
     });
     console.log(`  RESULT: state=${result.answerState} queries=${result.queriesExecuted} elapsed=${((Date.now() - started) / 1000).toFixed(1)}s`);
+    const isProfitAndLossCase = testCase.label.startsWith("pnl-");
+    const usedGovernedProfitView = [...queriedViews].some((view) =>
+      view === "xero_profit_and_loss_analytics" || view === "xero_profit_and_loss_account_analytics");
+    const usedUnsafeLegacyProfit = queriedViews.has("xero_finance_analytics");
+    if (isProfitAndLossCase && (!usedGovernedProfitView || usedUnsafeLegacyProfit)) {
+      console.log(`  FAILED semantic route · views=${[...queriedViews].join(",") || "none"}`);
+      return false;
+    }
     return result.answerState !== "Unavailable";
   } catch (error) {
     console.log(`  FAILED after ${((Date.now() - started) / 1000).toFixed(1)}s: ${error instanceof Error ? error.message : String(error)}`);

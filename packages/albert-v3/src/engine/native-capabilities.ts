@@ -3,8 +3,9 @@
  * beats the semantic layer" as a first-class, registry-driven pattern.
  *
  * Some answers are better fetched from the source system than rebuilt from
- * governed views: Xero renders its own P&L / balance sheet / trial balance
- * (layout, GST treatment, comparison periods); a future connector may ship an
+ * governed views. Xero's P&L is now landed by Fivetran and governed in
+ * CubeCore; Balance Sheet and Trial Balance remain native until their report
+ * tables are qualified. A future connector may ship an
  * MCP report, a forecast, or a computed metric that no view reproduces. Each
  * such capability registers here with (a) a deterministic detector for the
  * question shapes it owns, (b) a description the intent orchestrator uses for
@@ -40,7 +41,6 @@ const xeroStatements: NativeCapability = Object.freeze({
   connectorKeys: ["xero", "fivetran-xero"],
   label: "Live Xero statement",
   kinds: [
-    { kind: "profit_and_loss", description: "Xero's own Profit and Loss: profit / net profit, total income, total or operating expenses, expense accounts and how they compare, expense ratios, 'how did we do' for a month/quarter/FY, month-by-month or period comparisons of the P&L. Not for sales by product/staff/store, supplier bills, or anything joined with another tool." },
     { kind: "balance_sheet", description: "Xero's own Balance Sheet: assets, liabilities, equity / net assets, bank account balances as at a date." },
     { kind: "trial_balance", description: "Xero's own Trial Balance: every ledger account's balance as at a date." },
   ],
