@@ -53,3 +53,4 @@ export {
   type V3ToolRoute,
 } from "./engine/connector-routing.js";
 export { classifyIntent, type ConversationMessage, type IntentDecision, type Lane } from "./engine/orchestrator.js";
+export * from "./context-layer/index.js";

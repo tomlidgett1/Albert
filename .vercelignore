@@ -15,7 +15,12 @@ uv.lock
 __deployment__.py
 .albert-build
 .albert-agent-qa-out
+.albert-eval75-results.jsonl
+.albert-eval75-results.round1.jsonl
 .albert-lightspeed-full-ingest
+dlt_xero_test
+bun.lock
+pnpm-workspace.yaml
 .anthropic-runtime
 .xero-dlt-venv
 .wrangler

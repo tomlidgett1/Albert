@@ -1,8 +1,9 @@
 import { Agent, type AgentInputItem, type Runner, assistant, user } from "@openai/agents";
 import { z } from "zod";
-import { isXaiModel, type AgentRunPreferences } from "../../../shared/src/index.js";
-import type { AlbertV3AgentConfig } from "../agent-config/loader.js";
+import { isXaiModel, type AgentRunPreferences, type PresentedTableDigest } from "../../../shared/src/index.js";
+import { recipesForRoute, type AlbertV3AgentConfig } from "../agent-config/loader.js";
 import type { TenantSourceFinding } from "./context.js";
+import { normalizeV3Connector } from "./connector-routing.js";
 import {
   laneModelSettings,
   todayLine,
@@ -10,7 +11,7 @@ import {
   withV3PromptCacheBoundary,
 } from "./lanes.js";
 
-export const LANES = ["quick", "analytical", "deep", "explain", "clarification", "off_topic"] as const;
+export const LANES = ["quick", "analytical", "deep", "explain", "represent", "meta", "social", "clarification", "off_topic"] as const;
 export type Lane = (typeof LANES)[number];
 
 export const intentSchema = z.object({
@@ -27,6 +28,14 @@ export const intentSchema = z.object({
   assumptions: z.array(z.string().max(200)).max(4),
   clarificationQuestion: z.string().max(240).nullable(),
   clarificationOptions: z.array(z.string().min(1).max(80)).max(4),
+  /** Name of a certified recipe that answers the question directly (fast path), else null. */
+  recipe: z.string().max(80).nullable(),
+  /** The period the owner named for the recipe (Cube relative expression or YYYY-MM-DD,YYYY-MM-DD), else null. */
+  recipeDateRange: z.string().max(80).nullable(),
+  /** A single named entity the recipe should be narrowed to (a supplier, a person, a product), else null. */
+  recipeEntity: z.string().max(120).nullable(),
+  /** "id:kind" of a native connector capability that answers the question directly, else null. */
+  nativeCapability: z.string().max(80).nullable(),
 });
 
 export type IntentDecision = z.infer<typeof intentSchema>;
@@ -45,20 +54,52 @@ export type ConversationMessage = Readonly<{
     kind: string;
     resolvedQuestion: string;
   }>;
+  /** The tables the owner saw with this answer (bounded digest). */
+  presentedTables?: readonly PresentedTableDigest[];
 }>;
 
-/** Only the most recent assistant answers carry their full query YAML. */
+/** Only the most recent assistant answers carry their full query YAML and tables. */
 const GOVERNED_QUERY_CONTEXT_TURNS = 2;
+
+function renderCell(value: string | number | null): string {
+  if (value === null) return "";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  return value.replace(/\s*\|\s*/gu, " / ").replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * The tables the owner is looking at, rendered compactly so the next turn can
+ * resolve "what subscriptions do we have?" against the Subscriptions line of
+ * the statement on screen. Pipe-separated rows keep it small and unambiguous.
+ */
+export function renderPresentedTables(tables: readonly PresentedTableDigest[]): string {
+  return tables.map((table) => {
+    const shown = table.rows.length;
+    const header = `### Table shown: ${table.caption} (${table.rowCount} row${table.rowCount === 1 ? "" : "s"}${shown < table.rowCount ? `; first ${shown} listed` : ""})`;
+    const columns = table.columns.map(renderCell).join(" | ");
+    const rows = table.rows.map((row) => row.map(renderCell).join(" | ")).join("\n");
+    return `${header}\n${columns}\n${rows}`;
+  }).join("\n");
+}
 
 function renderAssistantMessage(
   message: ConversationMessage,
   includeQueries: boolean,
 ): string {
-  if (!includeQueries || !message.governedQueries?.length) return message.text;
-  const queries = message.governedQueries
-    .map((query) => `### ${query.topic} (view: ${query.view})\n${query.queryYaml}`)
-    .join("\n");
-  return `${message.text}\n\n[Governed typed queries that produced this answer. Views beginning shopifyql: and shopify-admin: contain safe typed IR and must be rerun only with run_shopifyql_query and run_shopify_admin_query respectively; all other views are Cube YAML. For a follow-up, extend the relevant typed query rather than starting over.]\n${queries}`;
+  if (!includeQueries) return message.text;
+  const sections: string[] = [message.text];
+  if (message.presentedTables?.length) {
+    sections.push(
+      `[Tables the owner saw with this answer. When the next message names one of these rows, lines, accounts, products, people or suppliers, it refers to THAT entry: resolve it to the exact label below and, for a statement line, to the account and period of the statement.]\n${renderPresentedTables(message.presentedTables)}`,
+    );
+  }
+  if (message.governedQueries?.length) {
+    const queries = message.governedQueries
+      .map((query) => `### ${query.topic} (view: ${query.view})\n${query.queryYaml}`)
+      .join("\n");
+    sections.push(`[Governed typed queries that produced this answer. Views beginning shopifyql: and shopify-admin: contain safe typed IR and must be rerun only with run_shopifyql_query and run_shopify_admin_query respectively; views beginning xero-mcp: are live Xero statement tools that cannot be filtered or drilled; all other views are Cube YAML. For a follow-up, extend the relevant typed query rather than starting over.]\n${queries}`);
+  }
+  return sections.join("\n\n");
 }
 
 function lastAssistantMessage(
@@ -120,6 +161,7 @@ export function coerceRefinementIntent(
   const userTurnCount = conversation.filter((m) => m.role === "user").length;
   const hasPriorAnswer = Boolean(
     lastAssistant?.governedQueries?.length
+    || lastAssistant?.presentedTables?.length
     || lastAssistant?.resolvedSubject
     || (lastAssistant?.text && userTurnCount >= 2),
   );
@@ -135,6 +177,10 @@ export function coerceRefinementIntent(
       assumptions: decision.assumptions,
       clarificationQuestion: null,
       clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
     };
   }
 
@@ -150,6 +196,57 @@ export function coerceRefinementIntent(
     assumptions: decision.assumptions,
     clarificationQuestion: null,
     clarificationOptions: [],
+    recipe: null,
+    recipeDateRange: null,
+    recipeEntity: null,
+    nativeCapability: null,
+  };
+}
+
+/**
+ * Language that only makes sense with an earlier exchange: "the previously
+ * requested chart", "the preceding request", "that table", "rerun it".
+ * Deliberately narrow — "last month's sales result" is a fresh question.
+ */
+const REFERS_TO_EARLIER_WORK =
+  /\b(?:previous(?:ly)?|preceding|earlier)\b.{0,30}\b(?:requested|request|answer|chart|graph|table|query|analysis)\b|\b(?:the same|that)\s+(?:chart|graph|table|answer|query)\b|\bre-?(?:run|do|try)\s+(?:the|that|it|this)\b/iu;
+
+/**
+ * A refinement needs something to refine. When the classifier resolves a
+ * message like "have dates on x axis" into "present the previously requested
+ * chart…" but the conversation holds no earlier owner message at all, the
+ * lane would run no query and ship Unavailable (or run something invented).
+ * Ask instead — the one case where clarification beats a working lane.
+ */
+export function guardOrphanRefinement(
+  decision: IntentDecision,
+  conversation: readonly ConversationMessage[],
+  message: string,
+): IntentDecision {
+  if (decision.lane === "clarification" || decision.lane === "off_topic" || decision.lane === "social") return decision;
+  const priorUser = priorUserMessage(conversation, message);
+  if (priorUser) return decision;
+  // Refinements are short; a long first message is a real question even if
+  // it happens to mention "that chart".
+  if (message.trim().length > 120) return decision;
+  // Not looksLikeRefinement(): its "gross profit / margin" shortcut would
+  // catch "what is my gross profit this month?" as a first question.
+  const normalized = message.trim().toLowerCase();
+  const deltaOnly = /^(?:add|include|also|and|plus|now|same|instead)\b/u.test(normalized)
+    || /\b(?:too|as well|aswell)\s*[.!?]*$/u.test(normalized);
+  const anchoredToEarlierWork = deltaOnly
+    || REFERS_TO_EARLIER_WORK.test(decision.resolvedQuestion)
+    || REFERS_TO_EARLIER_WORK.test(message);
+  if (!anchoredToEarlierWork) return decision;
+  return {
+    ...decision,
+    lane: "clarification",
+    clarificationQuestion: "There isn't an earlier answer in this chat to change. What would you like me to look at?",
+    clarificationOptions: [
+      "Sales by month this year",
+      "Sales yesterday",
+      "Top products this month",
+    ],
   };
 }
 
@@ -174,13 +271,86 @@ export function buildConversationInput(
   return items;
 }
 
-function classifierInstructions(
+/**
+ * The tenant's connected tools, normalised to the connector keys the view
+ * descriptors use. Missing or unknown connection state widens to every
+ * configured connector (a cost optimisation, never an authorisation gate —
+ * the same fail-open stance as tool routing).
+ */
+export function scopedClassifierConnectors(
+  config: AlbertV3AgentConfig,
+  activeConnectors: readonly string[] | undefined,
+): readonly string[] {
+  const configured = new Set(config.accessibleViews.map(({ connector }) => connector));
+  const active = [...new Set((activeConnectors ?? [])
+    .flatMap((connector) => {
+      const normalized = normalizeV3Connector(connector);
+      return normalized && configured.has(normalized) ? [normalized] : [];
+    }))].sort();
+  return active.length > 0 ? active : [...configured].sort();
+}
+
+export const CONNECTOR_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  "lightspeed": "Lightspeed Retail (R-Series) point of sale",
+  "lightspeed-x": "Lightspeed Retail (X-Series) point of sale",
+  "xero": "Xero accounting and payroll",
+  "deputy": "Deputy rostering and timesheets",
+  "square": "Square point of sale and staff",
+  "shopify": "Shopify online store",
+  "stripe": "Stripe payments",
+  "momence": "Momence studio management",
+  "meta-ads": "Meta Ads",
+  "google-ads": "Google Ads",
+});
+
+export function classifierInstructions(
   config: AlbertV3AgentConfig,
   sourceFindings: readonly TenantSourceFinding[],
+  activeConnectors?: readonly string[],
+  nativeCapabilities = "",
+  /** Compact business context digest (context-layer/render.ts renderBusinessContextForClassifier). */
+  businessContext = "",
 ): string {
+  const connectors = scopedClassifierConnectors(config, activeConnectors);
+  const connected = new Set(connectors);
+  const connectionKnown = (activeConnectors ?? []).length > 0;
+  const shopifyConnected = connected.has("shopify");
   const views = config.accessibleViews
-    .map((view) => `- ${view.name}: ${view.guidance}`)
+    .filter((view) => connected.has(view.connector))
+    .map((view) => `- ${view.name} [${view.connector}]: ${view.guidance}`)
     .join("\n");
+  const connectedTools = connectors
+    .map((connector) => `- ${connector}: ${CONNECTOR_LABELS[connector] ?? connector}`)
+    .join("\n");
+  const connectionsBlock = connectionKnown
+    ? `Tools connected to Albert for THIS business (the only sources of data):
+${connectedTools}
+Reason only about these. If the owner names a tool that is not listed (for example
+asks about Shopify when only a POS and accounting are connected), do NOT route
+off_topic and do NOT clarify: route to a working lane, which will say plainly that the
+tool is not connected and offer the closest connected figures.`
+    : `Tools that may be connected to this business (connection state was unavailable, so
+every configured tool is listed):
+${connectedTools}`;
+  const recipes = recipesForRoute(config, connectors);
+  const recipeBlock = recipes.length > 0
+    ? `
+Certified recipes — complete, pre-built answers for common questions (fast path). Each line
+is name [presentation]: what it answers (other phrasings). When the owner's question IS one of
+these — one period, no comparison with another period, no extra filter or breakdown the recipe
+lacks, no join with another tool — set recipe to its exact name and lane to quick. Set
+recipeDateRange to the period the owner named as one of: today, yesterday, tomorrow, this week,
+last week, next week, this month, last month, this quarter, last quarter, this year, last year,
+"last N days/weeks/months", a month name ("July", "July 2025"), or an explicit
+YYYY-MM-DD,YYYY-MM-DD pair; null keeps the recipe's default period. Australian financial year:
+"this financial year" = 1 July of the current FY to today as an explicit pair. Set recipeEntity
+only when the owner named one specific supplier, person, product or category to narrow to; else
+null. Otherwise recipe=null. A recipe is never used for a message that re-presents an earlier
+answer (a subset of its rows or points, a different chart type, a sort, a flip, a table instead
+of a chart): those route to represent with recipe=null, because the rows are already on screen.
+${recipes.map((r) => `- ${r.name} [${r.recipe!.presentation}]: ${r.userRequest.replace(/\s+/gu, " ").trim()}${r.recipe!.matches?.length ? ` (e.g. ${r.recipe!.matches.slice(0, 4).map((m) => `"${m}"`).join(", ")})` : ""}`).join("\n")}
+`
+    : "";
   const findings = sourceFindings.length > 0
     ? `\nEstablished source facts for THIS business (verified by earlier investigations;
 they override generic assumptions and must shape resolvedQuestion and
@@ -188,15 +358,8 @@ answerMustCover — for example, if a concept is established to live in one
 source, the useful-answer points must direct the work there):
 ${sourceFindings.map((entry) => `- [${entry.concept}] ${entry.finding}`).join("\n")}\n`
     : "";
-  return `You are the intent orchestrator for Albert, an analytics assistant for a small
-business. You never answer the question yourself; you route it.
-
-${todayLine(config.timezone)}
-
-The data available (through these semantic views over the business's connected tools):
-${views}
-${findings}
-
+  const shopifyPlanes = shopifyConnected
+    ? `
 An additional governed live Shopify reporting plane can answer Shopify-native traffic,
 sessions, conversion funnels, storefront/search behaviour, marketing attribution,
 customer cohorts and Shopify-calculated profitability questions from the official
@@ -208,7 +371,24 @@ A second governed live Shopify Admin 2026-07 read plane can answer exact merchan
 and long-tail field lookups not represented by Cube or ShopifyQL. It exposes only registry
 search plus typed selections/arguments; no raw GraphQL or mutation surface. Shopify store
 object and field questions are in scope even when no Cube view lists them.
+`
+    : "";
+  const shopifyOffTopicNote = shopifyConnected
+    ? ` Website traffic, search, conversion and marketing
+  attribution are in scope when they concern a connected Shopify store.`
+    : "";
+  return `You are the intent orchestrator for Albert, an analytics assistant for a small
+business. You never answer the question yourself; you route it.
 
+${todayLine(config.timezone)}
+
+${businessContext ? `${businessContext}
+
+` : ""}${connectionsBlock}
+
+The data available (semantic views over those connected tools; the [tag] names the tool):
+${views}
+${findings}${shopifyPlanes}${recipeBlock}${nativeCapabilities}
 Routing lanes:
 - quick: a single fact or list a single governed query can answer ("sales yesterday",
   "top 5 products this month", "how many customers do we have").
@@ -217,13 +397,44 @@ Routing lanes:
   and customer", "why did sales dip in June").
 - deep: open-ended diagnosis or strategy needing a multi-angle investigation
   ("how can I improve profitability", "what should I do about churn",
-  "give me a health check of the business").
+  "give me a health check of the business"). Only when the owner explicitly asks
+  for a wide review, a health check, a diagnosis or a strategy. A short vague
+  question ("How are we doing?", "Sales?", "How busy were we?", "How did last week
+  go?") is NOT deep: pick the most natural reading (recent sales versus the period
+  before, on the quick lane — a recipe if one fits), record it as an assumption,
+  and answer briefly; the owner can widen it. When a business context block is
+  present, its revenue streams, vocabulary and tools decide the natural reading:
+  "how's the workshop going" is that business's service department (jobs, labour,
+  parts) in the tool the context names, not a clarification.
 - explain: the user asks about a previous answer itself: what a term meant, what was
   included or excluded, how a figure was worked out ("what are you considering as
   workshop", "does that include GST", "how did you calculate profit"). The answer
   comes from the conversation and the recorded governed queries behind the earlier
   answer. NEVER route these to clarification: the user is asking Albert to explain
   Albert's own choice, so asking them to pick a definition is backwards.
+- represent: the owner asks to change how the PREVIOUS answer is shown, not what it
+  shows: bar instead of line (or the reverse), flip the axes / put dates on the y axis,
+  sort it, show only the top N or the last N points, show it as a table instead of a
+  chart, drop or reorder columns. The rows are already on screen (see the tables the
+  earlier answer lists), so nothing new is retrieved. Route represent for these even
+  when the message is terse ("make it a bar chart", "top 5 only", "flip it"). If the
+  change needs data that was NOT retrieved — a different or longer period, finer or
+  coarser time buckets that need re-aggregation (weekly → monthly), another measure or
+  dimension, a comparison year — route quick instead (it will still reuse what it can).
+  resolvedQuestion for represent names the change and the earlier result it applies to.
+- meta: a question about Albert's data itself rather than the business figures: what tools
+  are connected, whether a named tool (Shopify, Square, payroll) is connected, how fresh or
+  up to date the data is, what date range exists, what kinds of questions can be answered,
+  what data is missing. Albert answers these from its own registry (connected tools,
+  freshness watermarks, coverage) without running data queries. A question that needs an
+  actual figure (a count of products, staff who appear in two systems, the latest transaction
+  amount) is NOT meta — route quick.
+- social: a greeting, thanks, acknowledgement or sign-off that carries no question
+  ("thanks", "great, cheers Albert", "hi", "ok bye", "that's all for now"). Nothing is
+  queried; Albert replies in a sentence. A message that thanks AND asks ("thanks, now
+  by store", "great — what about last year?") is NOT social: route it by the question.
+  Bare agreement ("yes", "ok", "sure") right after Albert asked something is an answer
+  to that question, not social.
 - clarification: a last resort, almost never used. Only when an instruction is so
   contradictory it cannot be executed. Ambiguity alone is NOT a reason to clarify,
   and neither is an unfamiliar name: the working lanes can search the stored data
@@ -238,16 +449,15 @@ Routing lanes:
   user to define a term that Albert itself introduced in a previous answer or
   that appears in the recorded queries; that is the explain lane. When torn
   between clarification and any other lane, always choose the other lane.
-- off_topic: not answerable from the views or the live Shopify reporting plane at all
-  (the weather, general knowledge). Website traffic, search, conversion and marketing
-  attribution are in scope when they concern a connected Shopify store. Read the view list before
+- off_topic: not answerable from the connected tools at all (the weather, general
+  knowledge).${shopifyOffTopicNote} Read the view list before
   refusing: sales, products, customers, workshop jobs, stock, purchasing,
   accounting (invoices, bills, P&L, GST, bank activity, transfers), payroll
   (wages, super, pay runs) and staffing are all available when a view above
   covers them. Only route off_topic when no view could plausibly hold the
-  answer; when a view says something specific is NOT available, route to a
-  working lane so the answer can say so honestly with whatever related data
-  exists.
+  answer; when a view says something specific is NOT available, or the owner
+  names a tool that is not connected, route to a working lane so the answer
+  can say so honestly with whatever related data exists.
 
 Also produce resolvedQuestion: the user's request restated precisely, resolving
 pronouns and follow-up references from the conversation. Assistant messages may end
@@ -256,7 +466,18 @@ previous result ("now add gross profit", "same but by store", "make it monthly")
 resolvedQuestion must restate the previous request in full with the change applied
 (for example "Show a table of monthly sales with gross takings AND gross profit"),
 never just the delta. Such refinements route to the same lane the original needed,
-usually quick. Record any assumptions you made. If lane is clarification, set
+usually quick. Assistant messages may also list the tables the owner saw ("Table
+shown: …"). When the new message names an entry from one of those tables — a
+statement line or account ("what subscriptions do we have", "break down rent",
+"what's in repairs and maintenance"), a product, a supplier, a person — it is a
+DRILL into that entry, not a new topic: resolvedQuestion must name the entry
+exactly as the table labels it, carry the table's period, and ask for the
+breakdown behind it (for a P&L or expense line: the transactions coded to that
+account, by supplier/contact, description and month, reconciling to the line's
+total). Statement drills route to quick or analytical using the governed Xero
+ledger views (the pnl_* members filtered by account name); the live statement
+tools cannot filter or drill and must not be re-run for this. Record any
+assumptions you made. If lane is clarification, set
 clarificationQuestion and 2-4 short options; otherwise set clarificationQuestion
 to null and options to [].
 
@@ -264,6 +485,10 @@ Beyond routing, read the question critically and infer the goal behind it:
 - ownerGoal: one sentence naming what the owner is practically trying to decide
   or do (null only when the question has no wider goal).
 - answerMustCover: up to 4 short points a genuinely useful answer must cover.
+  When the owner asks for a Xero financial statement (P&L, balance sheet, trial
+  balance, aged report), the statement itself is the deliverable: keep the
+  points to the statement's own sections, period/basis and a one-line read of
+  it; do not add separate payroll, expense-account or ledger breakdowns.
   Think about the practical meaning, not the literal wording. A question scoped
   to a period, category or state usually implies the neighbouring reality the
   owner cares about: someone asking what is due in a period is planning
@@ -297,11 +522,23 @@ export async function classifyIntent(input: Readonly<{
   conversation: readonly ConversationMessage[];
   message: string;
   sourceFindings?: readonly TenantSourceFinding[];
+  /** Authenticated control-plane connector keys; scopes the view list to this tenant. */
+  activeConnectors?: readonly string[];
+  /** Rendered native-capability block (see native-capabilities.ts). */
+  nativeCapabilities?: string;
+  /** Compact business context digest for this tenant. */
+  businessContext?: string;
   signal?: AbortSignal;
 }>): Promise<IntentDecision> {
   const agent = new Agent({
     name: "Albert v3 intent orchestrator",
-    instructions: classifierInstructions(input.config, input.sourceFindings ?? []),
+    instructions: classifierInstructions(
+      input.config,
+      input.sourceFindings ?? [],
+      input.activeConnectors,
+      input.nativeCapabilities ?? "",
+      input.businessContext ?? "",
+    ),
     model: input.preferences.model,
     modelSettings: laneModelSettings(
       isXaiModel(input.preferences.model)
@@ -340,7 +577,15 @@ export async function classifyIntent(input: Readonly<{
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
     }, input.conversation, input.message);
   }
-  return coerceRefinementIntent(decision, input.conversation, input.message);
+  return guardOrphanRefinement(
+    coerceRefinementIntent(decision, input.conversation, input.message),
+    input.conversation,
+    input.message,
+  );
 }

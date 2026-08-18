@@ -9,9 +9,11 @@ import type {
   OperatorPipelineStage,
   OperatorRowSample,
 } from "@/services/control-plane/src/operator-repository";
+import ChartDesignStudio from "./ChartDesignStudio";
+import SemanticLayerExplorer from "./SemanticLayerExplorer";
 import styles from "../dash.module.css";
 
-type AdminView = "fleet";
+type AdminView = "fleet" | "semantic" | "charts";
 
 type DetailRow = Readonly<Record<string, unknown>>;
 type CellKind = "text" | "state" | "time" | "number" | "percent" | "bytes" | "boolean" | "code" | "json" | "connector" | "quality";
@@ -538,6 +540,8 @@ function isRecordArchitecture(value: unknown): value is Record<string, unknown> 
 
 const ADMIN_TABS = Object.freeze([
   { key: "fleet" as const, label: "Fleet" },
+  { key: "semantic" as const, label: "Semantic layer" },
+  { key: "charts" as const, label: "Charts" },
 ]);
 
 export default function AdminWorkspace() {
@@ -548,9 +552,11 @@ export default function AdminWorkspace() {
   const [activeStage, setActiveStage] = useState<OperatorPipelineStage>("connections");
   const [loadingScope, setLoadingScope] = useState<"fleet" | "pipeline" | "detail" | null>("fleet");
   const [error, setError] = useState("");
+  const [semanticRefresh, setSemanticRefresh] = useState(0);
+  const [chartDesignRefresh, setChartDesignRefresh] = useState(0);
   const detailRequest = useRef(0);
   const pipelineRequest = useRef(0);
-  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ fleet: null });
+  const tabRefs = useRef<Record<AdminView, HTMLButtonElement | null>>({ fleet: null, semantic: null, charts: null });
   const tabRowRef = useRef<HTMLDivElement | null>(null);
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
 
@@ -680,15 +686,33 @@ export default function AdminWorkspace() {
       void loadPipeline(pipeline.tenant.tenant_id, activeStage);
       return;
     }
+    if (view === "semantic") {
+      setSemanticRefresh((value) => value + 1);
+      return;
+    }
+    if (view === "charts") {
+      setChartDesignRefresh((value) => value + 1);
+      return;
+    }
     void loadFleet();
   };
 
   const currentCopy = STAGE_COPY[activeStage];
   const loading = loadingScope !== null;
-  const title = pipeline ? pipeline.tenant.name : "Albert fleet";
+  const title = pipeline
+    ? pipeline.tenant.name
+    : view === "semantic"
+      ? "Semantic layer"
+      : view === "charts"
+        ? "Chart design"
+        : "Albert fleet";
   const subtitle = pipeline
     ? `Trace ${pipeline.tenant.timezone} operational metadata from source edge to query-ready domains.`
-    : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
+    : view === "semantic"
+      ? "Browse every production Cube view, cube, field definition, relationship and agent instruction by source app."
+      : view === "charts"
+        ? "Publish the default Nivo bar and line design used by every Albert chat chart."
+        : "Cross-tenant health, with blocked and degraded connections sorted to the top.";
 
   return (
     <section className={styles.opsWorkspace} aria-labelledby="admin-workspace-title">
@@ -702,7 +726,11 @@ export default function AdminWorkspace() {
           <p>{subtitle}</p>
           <small>{pipeline
             ? `Pipeline snapshot ${formatTime(pipeline.latest_pipeline_snapshot_at)} · Console refreshed ${formatTime(pipeline.generated_at)}`
-            : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
+            : view === "semantic"
+              ? "Read-only · generated from tracked production model files"
+              : view === "charts"
+                ? "Saved design is the live default on localhost and production"
+                : `Fleet refreshed ${formatTime(fleet?.generated_at)}`}</small>
         </div>
         <div className={styles.opsHeaderActions}>
           {pipeline ? <button type="button" onClick={leavePipeline}>Back to fleet</button> : null}
@@ -734,7 +762,15 @@ export default function AdminWorkspace() {
         </nav>
       ) : null}
 
-      {error ? <div className={styles.opsError} role="alert"><strong>Operations data unavailable</strong><span>{error}</span></div> : null}
+      {error && view !== "semantic" && view !== "charts" ? <div className={styles.opsError} role="alert"><strong>Operations data unavailable</strong><span>{error}</span></div> : null}
+
+      {!pipeline && view === "semantic" ? (
+        <SemanticLayerExplorer refreshToken={semanticRefresh} />
+      ) : null}
+
+      {!pipeline && view === "charts" ? (
+        <ChartDesignStudio refreshToken={chartDesignRefresh} />
+      ) : null}
 
       {!pipeline && view === "fleet" ? (
         <>

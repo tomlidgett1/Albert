@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { createClient } from "@/utils/supabase/server";
 import {
   consumeAlbertRateLimit,
   currentTenantContext,
+  isFivetranConnection,
+  requireUser,
 } from "@/services/control-plane/src/web-repository";
+import { OAuthFlowError, syncFivetranXero } from "@/services/oauth/src/worker-rpc";
 import {
   assertSameOriginMutation,
   readBoundedJsonBody,
@@ -70,7 +72,26 @@ export async function POST(request: Request) {
 
     // Tenant scope is enforced inside the definer against the session, never
     // from this body: a connection id belonging to another tenant reads as absent.
-    const supabase = await createClient();
+    const { supabase, user } = await requireUser();
+    if (await isFivetranConnection(body.data.connectionId, supabase)) {
+      try {
+        const result = await syncFivetranXero({
+          tenantId: tenant.tenant_id,
+          userId: user.id,
+          connectionId: body.data.connectionId,
+        });
+        return Response.json(
+          { accepted: true, syncRunId: result.syncRunId },
+          { status: 202 },
+        );
+      } catch (error) {
+        const status = error instanceof OAuthFlowError ? error.status : 502;
+        return Response.json(
+          { error: "Could not start the sync." },
+          { status: status === 403 || status === 404 || status === 409 ? status : 502 },
+        );
+      }
+    }
     const { data, error } = await supabase.rpc("albert_request_manual_sync", {
       p_connection_id: body.data.connectionId,
     });

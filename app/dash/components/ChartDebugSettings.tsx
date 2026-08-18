@@ -27,7 +27,7 @@ const rawDebugStorageKey = "albert:chat:raw-debugger";
 const chartDebugEventName = "albert:nivo-chart-debug-change";
 
 function storageKey(chartType: NivoChartDebugConfig["chartType"]) {
-  return `albert:nivo-debug:${chartType}:v2`;
+  return `albert:nivo-debug:${chartType}:v3`;
 }
 
 export function useNivoChartDebugConfig(defaults: NivoChartDebugConfig) {
@@ -104,6 +104,7 @@ export function useNivoChartDebugConfig(defaults: NivoChartDebugConfig) {
 
   return {
     enabled,
+    hasOverride: Boolean(override && override.chartType === defaults.chartType),
     config: enabled && override?.chartType === defaults.chartType ? override : defaults,
     update,
     reset,
@@ -365,7 +366,7 @@ export default function ChartDebugSettings({
             <div>
               <span>Live Nivo configuration</span>
               <h2 id={titleId}>{config.chartType === "line" ? "Line chart" : "Bar chart"}</h2>
-              <p>Applies to every {config.chartType} chart in this browser.</p>
+              <p>Local override only. Publish Albert defaults from Admin, Charts.</p>
             </div>
             <button
               type="button"
@@ -446,7 +447,7 @@ export default function ChartDebugSettings({
             <DebugSection title="Config to paste into chat">
               <textarea className={styles.chartDebugJson} value={json} readOnly rows={14} aria-label="Nivo chart configuration JSON" />
               <p className={styles.chartDebugHint}>
-                Data, formatting, tooltips, themes and accessibility remain governed by Albert. See the{" "}
+                Data, formatting, tooltips and accessibility remain governed by Albert. Save product defaults in Admin, Charts. See the{" "}
                 <a href={docsUrl} target="_blank" rel="noreferrer">official Nivo {config.chartType} docs</a>.
               </p>
             </DebugSection>

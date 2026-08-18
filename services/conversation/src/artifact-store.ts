@@ -4,10 +4,15 @@ import {
   type AlbertPreferenceOptionId,
 } from "../../../packages/agent/src/v3-contracts.js";
 import type {
+  PresentedTableDigest,
   ResolvedConversationSubject,
   TraceEvent,
 } from "../../../packages/shared/src/index.js";
 import { ControlPlaneError, requireUser } from "../../control-plane/src/web-repository.js";
+import {
+  priorResultsFromTraceEvents,
+  type PriorTurnResult,
+} from "../../../packages/albert-v3/src/engine/prior-results.js";
 
 const beginResultSchema = z.object({
   conversation_id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
@@ -31,8 +36,21 @@ const modelContextSchema = z.array(z.object({
       kind: z.string().trim().min(1).max(80),
       resolvedQuestion: z.string().trim().min(1).max(2_000),
     }).strict().optional(),
+    // Written by the v3 engine (buildPresentedTableDigest); bounded on every
+    // axis there, re-bounded here so a hand-edited event cannot flood context.
+    presentedTables: z.array(z.object({
+      caption: z.string().trim().min(1).max(160),
+      columns: z.array(z.string().max(60)).max(8),
+      rowCount: z.number().int().nonnegative(),
+      rows: z.array(z.array(z.union([z.string().max(80), z.number(), z.null()])).max(8)).max(60),
+    }).strict()).max(3).optional().catch(undefined),
   }).passthrough().nullable(),
 }));
+
+/** Assistant-side placeholder for a failed turn that produced no answer. */
+export const UNANSWERED_TURN_NOTE =
+  "(No answer was produced for this message: the attempt was interrupted before it finished. "
+  + "There are no figures, tables or charts from it to refine; treat any follow-up as a fresh request built on the message above.)";
 
 function singleton(value: unknown): unknown {
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -67,6 +85,8 @@ export type ConversationModelMessage = Readonly<{
     topic: string;
     queryYaml: string;
   }>[];
+  /** The tables the owner saw with this answer (bounded digest, see engine). */
+  presentedTables?: readonly PresentedTableDigest[];
 }>;
 
 /** Supabase client captured before an SSE response starts streaming. */
@@ -397,8 +417,26 @@ export async function loadConversationModelContext(
         const governed = governedQueriesFromAnswerEvent(event);
         return governed.length > 0 ? { governedQueries: governed } : {};
       })(),
+      ...(event.presentedTables?.length
+        ? {
+            presentedTables: Object.freeze(event.presentedTables.map((table) => Object.freeze({
+              caption: table.caption,
+              columns: Object.freeze([...table.columns]),
+              rowCount: table.rowCount,
+              rows: Object.freeze(table.rows.map((row) => Object.freeze([...row]))),
+            }))),
+          }
+        : {}),
     });
     if (event?.type === "clarification" && event.question) values.push({ role: "assistant", text: event.question });
+    // A turn that failed before answering (the owner typed again while it was
+    // running, a stale lease, an engine fault) keeps the owner's words in
+    // context but says plainly that nothing was answered, so a follow-up such
+    // as "have dates on x axis" can anchor to what was asked without the
+    // model inventing the answer it never saw.
+    if (values.length === 1 && turn.status === "failed") {
+      values.push({ role: "assistant", text: UNANSWERED_TURN_NOTE });
+    }
     return values;
   });
   return Object.freeze(messages.map((message) => Object.freeze(message)));
@@ -453,4 +491,32 @@ export async function failConversationTurn(input: Readonly<{
     p_failure_code: input.failureCode,
   });
   if (error) throw new ControlPlaneError("The failed conversation turn could not be finalized.", 503);
+}
+
+/** How many earlier answered turns contribute reusable results to a new turn. */
+export const PRIOR_RESULT_TURNS = 2;
+
+/**
+ * The governed result sets (table rows + the query behind them) of the last few
+ * answered turns, so the engine can re-present, re-chart or subset them without
+ * re-running the pipeline. Reads the same persisted trace the browser renders;
+ * failures are non-fatal (the caller falls back to an empty list).
+ */
+export async function loadPriorTurnResults(
+  conversationId: string,
+  supabaseClient?: ConversationSupabase,
+): Promise<readonly PriorTurnResult[]> {
+  const supabase = await resolveSupabase(supabaseClient);
+  const { data, error } = await supabase.rpc("albert_conversation_history", {
+    p_conversation_id: conversationId,
+    p_after_sequence: 0,
+  });
+  if (error) throw new ControlPlaneError("Earlier results could not be loaded.", 503);
+  const answered = historyTurns(data)
+    .filter((turn) => Array.isArray(turn.events) && (turn.events as unknown[]).some((event) =>
+      Boolean(event) && typeof event === "object" && (event as { type?: unknown }).type === "answer"))
+    .slice(-PRIOR_RESULT_TURNS);
+  return Object.freeze(priorResultsFromTraceEvents(
+    answered.map((turn, index) => ({ turnsAgo: answered.length - index, events: turn.events as unknown[] })),
+  ));
 }

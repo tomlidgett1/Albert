@@ -15,6 +15,17 @@ const UNGROUNDED_FOLLOW_UPS = [
   "Break this down by product",
 ] as const;
 
+/**
+ * The retry chip re-sends the owner's own question rather than the literal
+ * text "Try the question again" (which, clicked, became a new turn with that
+ * as its message and no anchor to what was actually asked).
+ */
+export function retryFollowUps(originalMessage: string): string[] {
+  const question = originalMessage.replace(/\s+/gu, " ").trim();
+  if (question.length >= 4 && question.length <= 160) return [question];
+  return ["Show sales this month"];
+}
+
 export type UngroundedFinalAnswer = {
   answer: string;
   state: "Unavailable";
@@ -25,6 +36,11 @@ export type UngroundedFinalAnswer = {
 /** Data lanes must execute a query this turn. Explain may rest on prior queries. */
 export function laneRequiresQueryEvidence(lane: Lane): boolean {
   return lane === "quick" || lane === "analytical" || lane === "deep";
+}
+
+/** Lanes whose answer may rest entirely on results retrieved in earlier turns. */
+export function laneMayReusePriorResults(lane: Lane): boolean {
+  return lane === "represent" || lane === "explain" || lane === "meta";
 }
 
 /**
@@ -83,10 +99,13 @@ export function buildTurnProvenance(context: V3TurnContext): TraceProvenance {
     xero: "Cube semantic layer · Xero (accounting)",
     shopify: "Official ShopifyQL live report",
   };
+  const liveXeroStatement = context.executedQueries.some((query) => query.view.startsWith("xero-mcp:"));
   return {
     sources: connectors.map((connector) => ({
       connector,
-      label: connectorLabels[connector] ?? `Cube semantic layer · ${connector}`,
+      label: connector === "xero" && liveXeroStatement
+        ? "Live Xero statement · official Xero MCP"
+        : connectorLabels[connector] ?? `Cube semantic layer · ${connector}`,
       dataThrough: now,
     })),
     timeRange: {
@@ -116,18 +135,27 @@ export function groundedAnswerState(input: Readonly<{
   rowsSeen: number;
   /** An empty result window reached past a connector's sync watermark. */
   freshnessQualified?: boolean;
+  /** Governed result sets from earlier turns this turn re-used as evidence. */
+  reusedResults?: number;
 }>): AnswerState {
   let state = input.requested;
-  if (input.queriesExecuted === 0 && (state === "Verified" || state === "Exploratory")) {
-    state = input.lane === "explain" ? "Exploratory" : "Unavailable";
+  // A prior turn's governed result re-used this turn is evidence: a subset,
+  // re-sort or re-chart of it needs no new query to be grounded.
+  const evidenceSets = input.queriesExecuted + (input.reusedResults ?? 0);
+  if (evidenceSets === 0 && (state === "Verified" || state === "Exploratory")) {
+    state = input.lane === "explain"
+      ? "Exploratory"
+      : input.lane === "represent" || input.lane === "meta"
+        ? state
+        : "Unavailable";
   }
-  if (state === "Verified" && input.rowsSeen === 0) state = "No data";
+  if (state === "Verified" && input.rowsSeen === 0 && !laneMayReusePriorResults(input.lane) && (input.reusedResults ?? 0) === 0) state = "No data";
   // A "verified" emptiness reaching past the sync watermark overstates
   // certainty: the data may simply not have arrived yet.
   if (input.freshnessQualified && (state === "Verified" || state === "No data")) {
     state = "Qualified";
   }
-  if (laneRequiresQueryEvidence(input.lane) && input.queriesExecuted === 0) {
+  if (laneRequiresQueryEvidence(input.lane) && evidenceSets === 0) {
     return "Unavailable";
   }
   return state;
@@ -137,8 +165,9 @@ export function ownerFacingAnswerText(input: Readonly<{
   lane: Lane;
   draft: string;
   queriesExecuted: number;
+  reusedResults?: number;
 }>): string {
-  if (laneRequiresQueryEvidence(input.lane) && input.queriesExecuted === 0) {
+  if (laneRequiresQueryEvidence(input.lane) && input.queriesExecuted + (input.reusedResults ?? 0) === 0) {
     return ungroundedOwnerAnswer();
   }
   return input.draft;

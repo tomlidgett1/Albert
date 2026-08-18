@@ -14,7 +14,7 @@ const connectionSchema = z.object({
   connection_id: z.string(),
   connector_key: z.enum([
     "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
-    "momence", "meta-ads", "google-ads",
+    "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
   ]),
   display_name: z.string(),
   status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
@@ -52,7 +52,7 @@ const workspaceSchema = z.object({
     oauth_session_id: z.string(),
     provider: z.enum([
       "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
-      "momence", "meta-ads", "google-ads",
+      "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
     ]),
     status: z.string(),
     discovered_account_choices: z.array(z.object({
@@ -86,12 +86,33 @@ const providerDefinitions = {
     logo: "/logos/xero.svg",
     connectDetail: "Connect a Xero organisation.",
   },
+  "fivetran-xero": {
+    id: "fivetran-xero",
+    name: "Xero (Fivetran)",
+    description: "Full Xero ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/xero.svg",
+    connectDetail: "Approve Xero once. Albert hands the grant to Fivetran and the full sync — accounting, payroll, reports — starts in the background.",
+  },
   deputy: {
     id: "deputy",
     name: "Deputy",
     description: "Rosters, timesheets, leave, and workforce activity.",
     logo: "/logos/deputy.png",
     connectDetail: "Connect a Deputy installation.",
+  },
+  "fivetran-lightspeed": {
+    id: "fivetran-lightspeed",
+    name: "Lightspeed (Fivetran)",
+    description: "Full Lightspeed Retail R-Series ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/lightspeed.png",
+    connectDetail: "Authorise Lightspeed. Albert finishes Fivetran ingest in the background, into a tenant-isolated native schema.",
+  },
+  "fivetran-deputy": {
+    id: "fivetran-deputy",
+    name: "Deputy (Fivetran)",
+    description: "Full Deputy ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/deputy.png",
+    connectDetail: "Authorise Deputy. Albert hands the grant to Fivetran and ingest starts in the background.",
   },
   square: {
     id: "square",
@@ -136,6 +157,9 @@ const providerDefinitions = {
     connectDetail: "Connect a Google Ads account.",
   },
 } as const;
+
+/** Native ingest cards superseded by Fivetran. Hidden unless a live connection remains. */
+const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set(["lightspeed", "xero", "deputy"]);
 
 const shopifyDeletionContinuityReasons = new Set([
   "shopify_deletion_continuity_unproven",
@@ -374,7 +398,9 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
         : undefined,
       connections,
     };
-  });
+  }).filter((provider) =>
+    !SUPERSEDED_NATIVE_PROVIDER_IDS.has(provider.id) || provider.connections.length > 0
+  );
 
   const allDomains = providers.flatMap(({ connections }) =>
     connections.flatMap(({ domains }) => domains),

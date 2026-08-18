@@ -100,7 +100,9 @@ for (const file of markdownFiles(path.join(agentsDir, "rules"))) {
 }
 if (alwaysRules.length === 0) throw new Error("At least one always rule is required.");
 
-const certifiedQueries: { name: string; userRequest: string; notes: string; query: unknown }[] = [];
+type Recipe = { presentation: "fact" | "list" | "table" | "line" | "bar"; answerHint?: string; dateParameter?: string; matches?: readonly string[] };
+const RECIPE_PRESENTATIONS = new Set(["fact", "list", "table", "line", "bar"]);
+const certifiedQueries: { name: string; userRequest: string; notes: string; query: unknown; recipe?: Recipe }[] = [];
 for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
   const name = path.basename(file, ".md");
   const { frontmatter, body } = parseFrontmatter(readFileSync(file, "utf8"), file);
@@ -110,7 +112,29 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
   if (!jsonMatch) throw new Error(`${file} needs a \`\`\`json Cube query block.`);
   const query = JSON.parse(jsonMatch[1]);
   const notes = body.replace(jsonMatch[0], "").trim();
-  certifiedQueries.push({ name, userRequest, notes, query });
+  // A certified query flagged as a recipe is a complete fast-path answer: the
+  // intent orchestrator may route straight to it (see recipe-lane.ts).
+  let recipe: Recipe | undefined;
+  if (frontmatter.recipe === true) {
+    const presentation = String(frontmatter.presentation ?? "").trim();
+    if (!RECIPE_PRESENTATIONS.has(presentation)) {
+      throw new Error(`${file} is a recipe and needs presentation: fact|list|table|line|bar.`);
+    }
+    const dateParameter = frontmatter.date_parameter ? String(frontmatter.date_parameter).trim() : undefined;
+    if (dateParameter && !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u.test(dateParameter)) {
+      throw new Error(`${file} date_parameter must be a fully qualified member.`);
+    }
+    const matches = Array.isArray(frontmatter.matches)
+      ? frontmatter.matches.map((m) => String(m).trim()).filter(Boolean).slice(0, 12)
+      : undefined;
+    recipe = {
+      presentation: presentation as Recipe["presentation"],
+      ...(frontmatter.answer_hint ? { answerHint: String(frontmatter.answer_hint).trim() } : {}),
+      ...(dateParameter ? { dateParameter } : {}),
+      ...(matches?.length ? { matches } : {}),
+    };
+  }
+  certifiedQueries.push({ name, userRequest, notes, query, ...(recipe ? { recipe } : {}) });
 }
 
 const skills: { name: string; title: string; description: string; body: string }[] = [];

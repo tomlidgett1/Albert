@@ -60,7 +60,10 @@ const derivedExpressionSchema = z.discriminatedUnion("kind", [
   }).strict(),
   z.object({
     kind: z.literal("calculation"),
-    operator: z.enum(["add", "subtract", "multiply", "divide"]),
+    // Mirrors TRACE_DERIVED_CALCULATION_OPERATORS in packages/shared (the
+    // control plane deliberately does not import the runtime package); a
+    // contract test keeps the two lists identical.
+    operator: z.enum(["add", "subtract", "multiply", "divide", "percent_change", "percent_of"]),
     left: derivedNumericOperandSchema,
     right: derivedNumericOperandSchema,
   }).strict(),

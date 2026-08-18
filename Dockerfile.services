@@ -17,8 +17,26 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
+# Official Xero MCP server, vendored into the image so the sync worker never
+# has to `npx` download it at first use (a cold machine took >45s and the
+# web timed out with "The official Xero MCP server could not be reached").
+# packages/xero-mcp/src/session.ts launches .albert-vendor/package/dist/index.js.
+RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked \
+  mkdir -p .albert-vendor \
+  && cd .albert-vendor \
+  && npm pack @xeroapi/xero-mcp-server@0.0.17 --pack-destination . >/dev/null \
+  && tar -xzf xeroapi-xero-mcp-server-0.0.17.tgz \
+  && rm xeroapi-xero-mcp-server-0.0.17.tgz \
+  && cd package \
+  && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+  && npm cache clean --force \
+  && chown -R node:node /app/.albert-vendor
 COPY --from=build --chown=node:node /workspace/.albert-build/services ./services
 COPY --from=build --chown=node:node /workspace/connectors/lightspeed-r/tables.json ./connectors/lightspeed-r/tables.json
+# Connector SDK projects: the sync worker packages and uploads them to
+# Fivetran per tenant (connector.py + generated *_spec.py; tests excluded).
+COPY --from=build --chown=node:node /workspace/connectors/xero-fivetran-sdk/*.py ./connectors/xero-fivetran-sdk/
+COPY --from=build --chown=node:node /workspace/connectors/lightspeed-fivetran-sdk/*.py ./connectors/lightspeed-fivetran-sdk/
 USER node
 
 # Deployments override this command for sync-worker.js,

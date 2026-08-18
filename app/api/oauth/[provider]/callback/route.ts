@@ -1,5 +1,5 @@
 import { consumeAlbertRateLimit, currentTenantContext, requireUser, ControlPlaneError } from "@/services/control-plane/src/web-repository";
-import { finishOAuthFlow, isOAuthWebProvider, OAuthFlowError } from "@/services/oauth/src/web-flow";
+import { finishFivetranOAuthFlow, finishOAuthFlow, isFivetranWebProvider, isOAuthWebProvider, OAuthFlowError } from "@/services/oauth/src/web-flow";
 import { verifyShopifyCallbackHmac } from "@/connectors/shopify/index";
 
 function callbackOrigin(request: Request): string | null {
@@ -70,6 +70,38 @@ export async function GET(
       [vendorError, description].filter(Boolean).join(": ").slice(0, 200),
     );
   }
+  if (isFivetranWebProvider(provider)) {
+    try {
+      const [{ user }, tenant] = await Promise.all([requireUser(), currentTenantContext()]);
+      if (!tenant) return resultRedirect(request, provider, "tenant_missing");
+      const rateLimit = await consumeAlbertRateLimit("oauth.callback");
+      if (!rateLimit.allowed) return resultRedirect(request, provider, "rate_limited");
+      const result = await finishFivetranOAuthFlow({
+        provider,
+        tenantId: tenant.tenant_id,
+        userId: user.id,
+      });
+      return resultRedirect(request, provider, result.status);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      const detail = error instanceof OAuthFlowError && error.detail
+        ? error.detail
+        : message;
+      console.error("Albert Fivetran OAuth callback failed", {
+        provider,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        message,
+        status: error instanceof OAuthFlowError || error instanceof ControlPlaneError ? error.status : 503,
+      });
+      // Fivetran sends the browser back here whenever the Connect Card closes,
+      // including when the owner bailed before "Save & Test". That is not a
+      // failure of anything Albert did — tell them what is left to do.
+      const status = error instanceof OAuthFlowError && error.message === "fivetran_setup_incomplete"
+        ? "setup_incomplete"
+        : "failed";
+      return resultRedirect(request, provider, status, detail);
+    }
+  }
   const state = callback.searchParams.get("state");
   const code = callback.searchParams.get("code");
   if (!state || !code) return resultRedirect(request, provider, "invalid_callback");
@@ -102,6 +134,11 @@ export async function GET(
       domainPrefix,
       returnedScope,
     });
+    // A grant taken on Fivetran's behalf (Deputy) reports as the Fivetran
+    // provider: Fivetran's sync has started, even though no Albert job exists.
+    if (result.provider && result.provider !== provider) {
+      return resultRedirect(request, result.provider, result.status);
+    }
     // A connected result with no enqueued job means the connector's initial
     // backfill is suppressed; report that rather than promising a sync.
     const status = result.status === "connected" && !result.jobRequestId

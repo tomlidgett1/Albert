@@ -21,6 +21,7 @@ stable `source_record_id`.
 from __future__ import annotations
 
 import json
+import traceback
 from datetime import datetime, timedelta, timezone
 
 from fivetran_connector_sdk import Connector, Logging as log, Operations as op
@@ -55,6 +56,25 @@ def _organisation(client: XeroClient) -> dict:
 
 def update(configuration: dict, state: dict):
     state = state or {}
+    try:
+        _update(configuration, state)
+    except Exception as error:  # noqa: BLE001 - re-raised after recording
+        # Fivetran surfaces only "Python Code Throwing Error"; keep the real
+        # traceback in state so it is readable via the connection-state API.
+        state["last_error"] = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "type": type(error).__name__,
+            "message": str(error)[:500],
+            "traceback": traceback.format_exc()[-2500:],
+        }
+        try:
+            op.checkpoint(state=state)
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
+def _update(configuration: dict, state: dict):
     client = XeroClient(configuration)
     log.info("Albert Xero sync starting")
 

@@ -256,6 +256,26 @@ export type TraceConnector =
   | "lightspeed" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe"
   | "momence" | "meta-ads" | "google-ads";
 
+/** One governed member behind a result, with its model-owned meaning. */
+export type TraceProvenanceDefinition = Readonly<{
+  metric: string;
+  label: string;
+  definition: string;
+  /** Semantic view the member belongs to (Cube results). */
+  view?: string;
+  kind?: "measure" | "dimension" | "segment" | "time";
+}>;
+
+/** A filter the query applied, in the model's member vocabulary plus a plain rendering. */
+export type TraceProvenanceFilter = Readonly<{
+  member: string;
+  label: string;
+  operator: string;
+  values: readonly string[];
+  /** Owner-readable rendering, e.g. "Store is Fitzroy" or "Completed at in the last 30 days". */
+  text: string;
+}>;
+
 export type TraceProvenance = Readonly<{
   sources: readonly Readonly<{
     connector: TraceConnector;
@@ -263,11 +283,7 @@ export type TraceProvenance = Readonly<{
     dataThrough: string;
   }>[];
   timeRange: TraceTimeRange;
-  definitions: readonly Readonly<{
-    metric: string;
-    label: string;
-    definition: string;
-  }>[];
+  definitions: readonly TraceProvenanceDefinition[];
   semanticBundleHash: string;
   identityGraph: Readonly<{ version: number; hash: string }>;
   coverage?: readonly Readonly<{
@@ -275,6 +291,12 @@ export type TraceProvenance = Readonly<{
     value: number;
     unit: "percent" | "records";
   }>[];
+  /** The governed view (Cube "topic") the result was read from. */
+  view?: Readonly<{ name: string; label: string; description: string }>;
+  /** Filters and time windows the query applied, so a result's scope is inspectable. */
+  filters?: readonly TraceProvenanceFilter[];
+  /** For composed tables: how each calculated column was derived, in words. */
+  calculations?: readonly Readonly<{ column: string; formula: string }>[];
 }>;
 
 export interface TraceEventBase {
@@ -311,6 +333,14 @@ export interface TraceProgressEvent extends TraceEventBase {
   stage?: TraceProgressStage;
   /** A bounded, user-facing completion estimate from 0 to 1. */
   progress?: number;
+  /**
+   * What a research step actually found, one line each (matched views and
+   * their meaning, matched stored values with their weight, member
+   * definitions read). Bounded; rendered as the step's expandable body so
+   * the owner sees the outcome, not just that a lookup happened. An empty
+   * list on a completed step means "nothing matched" and is worth showing.
+   */
+  findings?: readonly string[];
 }
 
 export interface TraceNarrativeEvent extends TraceEventBase {
@@ -423,10 +453,21 @@ export type TraceDerivedCellExpression =
   | TraceDerivedLiteralCell
   | Readonly<{
       kind: "calculation";
-      operator: "add" | "subtract" | "multiply" | "divide";
+      /**
+       * Binary arithmetic over two operands. `percent_change` is
+       * (left − right) / right × 100 and `percent_of` is left / right × 100,
+       * both on the 0–100 scale Cube percent measures use; either is null
+       * when right is zero.
+       */
+      operator: TraceDerivedCalculationOperator;
       left: TraceDerivedNumericOperand;
       right: TraceDerivedNumericOperand;
     }>;
+
+export const TRACE_DERIVED_CALCULATION_OPERATORS = Object.freeze([
+  "add", "subtract", "multiply", "divide", "percent_change", "percent_of",
+] as const);
+export type TraceDerivedCalculationOperator = (typeof TRACE_DERIVED_CALCULATION_OPERATORS)[number];
 
 /**
  * A bounded, deterministic presentation transform over immutable governed
@@ -479,6 +520,8 @@ export interface TraceChartEvent extends TraceEventBase {
     key: string;
     label: string;
   }>[];
+  /** Bar orientation requested by the turn; the renderer decides when absent. */
+  orientation?: "vertical" | "horizontal";
 }
 
 export interface TraceValidationEvent extends TraceEventBase {
@@ -498,6 +541,17 @@ export type ResolvedConversationSubject = Readonly<{
   resolvedQuestion: string;
 }>;
 
+/** Compact, size-bounded rendering of one owner-visible table for later turns. */
+export type PresentedTableDigest = Readonly<{
+  caption: string;
+  /** Column labels in display order (bounded). */
+  columns: readonly string[];
+  /** Total rows the owner saw; `rows` may be a prefix sample. */
+  rowCount: number;
+  /** Cell values in `columns` order; strings, numbers or null. */
+  rows: readonly (readonly (string | number | null)[])[];
+}>;
+
 export interface TraceAnswerEvent extends TraceEventBase {
   type: "answer";
   state: AnswerState;
@@ -508,6 +562,13 @@ export interface TraceAnswerEvent extends TraceEventBase {
   resolvedSubject?: ResolvedConversationSubject;
   /** Results the lead explicitly selected for owner-visible tabular detail. */
   presentedResultIds?: readonly string[];
+  /**
+   * A bounded digest of the tables the owner saw with this answer (caption,
+   * column labels, the first rows). Persisted so a later turn can resolve
+   * "what subscriptions do we have?" to the Subscriptions line of the P&L it
+   * just showed, instead of treating every follow-up as a fresh question.
+   */
+  presentedTables?: readonly PresentedTableDigest[];
   /** Server-validated cell associations retained in the immutable artefact. */
   claims?: readonly Readonly<{
     statement: string;

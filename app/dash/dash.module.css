@@ -417,8 +417,8 @@
 }
 
 .routeShellComposerPlus {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   border-radius: 999px;
   border: 1px solid var(--dash-border-soft);
@@ -443,14 +443,14 @@
 
 .routeShellComposerChip {
   width: 72px;
-  height: 30px;
+  height: 28px;
   border-radius: 999px;
   background: var(--dash-surface-muted);
 }
 
 .routeShellComposerSend {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--dash-surface-muted);
@@ -4501,6 +4501,34 @@
   gap: 4px;
 }
 
+/*
+ * Guided hand-off shown before the Fivetran Connect Card. Fivetran's Xero
+ * connector can only be authorised inside Fivetran's own hosted page, and
+ * that page shows more than an ordinary Xero user needs, so Albert names the
+ * three actions that matter before sending them across.
+ */
+.connectionsHandoffSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 22px;
+  color: var(--dash-text);
+  font-size: calc(13px * var(--text-scale));
+  letter-spacing: -0.018em;
+  line-height: 1.4;
+}
+
+.connectionsHandoffSteps strong { font-weight: 600; color: var(--dash-text-strong); }
+
+.connectionsHandoffNote {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: calc(12px * var(--text-scale));
+  letter-spacing: -0.018em;
+  line-height: 1.35;
+}
+
 @media (max-width: 700px) {
   .connectionsManageBackdrop { align-items: end; padding: 0; }
   .connectionsManageDialog {
@@ -6163,13 +6191,14 @@
 
 .chatComposerBar {
   display: flex;
+  box-sizing: border-box;
   grid-template-columns: none;
   grid-template-rows: none;
   align-items: center;
-  gap: 8px;
-  min-height: 48px;
+  gap: 6px;
+  min-height: 0;
   border-radius: 999px;
-  padding: 7px;
+  padding: 4px;
 }
 
 .chatComposerBar.chatComposerMultiline {
@@ -6178,8 +6207,9 @@
 
 .chatComposerPlus {
   display: grid;
-  width: 34px;
-  height: 34px;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--dash-border-soft);
@@ -6196,8 +6226,8 @@
 }
 
 .chatComposerPlus svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .chatComposerTrailing {
@@ -6215,10 +6245,22 @@
 .chatComposerBar .chatSendButton,
 .chatComposerBar .composerIconButton {
   position: static;
+  box-sizing: border-box;
   grid-column: auto;
   grid-row: auto;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
+}
+
+.chatComposerBar .composerIconButton svg {
+  width: 15px;
+  height: 15px;
+}
+
+.chatComposerBar .chatSendButton svg,
+.chatComposerBar .chatStopButton svg {
+  width: 14px;
+  height: 14px;
 }
 
 .chatComposerBar:not(.chatComposerHero) .chatSendButton {
@@ -6324,6 +6366,20 @@
   letter-spacing: -0.03em;
   line-height: 20px;
   padding: 7px 2px;
+}
+
+.chatComposer.chatComposerBar:not(.chatComposerHero) textarea {
+  min-height: 28px;
+  height: 28px;
+  padding: 4px 2px;
+}
+
+.chatComposer.chatComposerBar:not(.chatComposerHero) .dictationWave {
+  height: 28px;
+}
+
+.chatComposer.chatComposerBar:not(.chatComposerHero) .modelControlsTrigger {
+  height: 28px;
 }
 
 .chatComposerHero .chatComposerFooter {
@@ -11550,6 +11606,159 @@
   letter-spacing: -0.015em;
 }
 
+/* Fivetran-managed connections: phase, landed totals, and per-table rows. */
+.connectionsCardSync:focus-visible { outline: 2px solid var(--dash-focus); outline-offset: 4px; border-radius: 999px; }
+
+/* Fully synced: a quiet timestamp replaces the progress bar. */
+.fivetranSyncedStamp {
+  display: block;
+  color: var(--dash-text-muted);
+  font-size: calc(12px * var(--text-scale));
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.fivetranSyncHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fivetranSyncHeader small {
+  color: var(--dash-popup-muted);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+
+.fivetranSyncPhase {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--dash-popup-text);
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 580;
+  letter-spacing: -0.025em;
+}
+
+.fivetranSyncPhase i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--dash-popup-muted);
+}
+
+.fivetranSyncPhase[data-state="syncing"] i {
+  background: var(--dash-progress-fill);
+  animation: fivetranPulse 1.6s ease-in-out infinite;
+}
+.fivetranSyncPhase[data-state="ready_complete"] i { background: var(--dash-success-text); }
+.fivetranSyncPhase[data-state="degraded"] i { background: var(--dash-warning-text); }
+.fivetranSyncPhase[data-state="blocked"] i { background: var(--dash-danger-text); }
+
+@keyframes fivetranPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+
+.fivetranSyncStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--dash-popup-border);
+  border-bottom: 1px solid var(--dash-popup-border);
+}
+
+.fivetranSyncStats > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fivetranSyncStats strong {
+  color: var(--dash-popup-text);
+  font-size: calc(17px * var(--text-scale));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.fivetranSyncStats span {
+  color: var(--dash-popup-muted);
+  font-size: calc(10.5px * var(--text-scale));
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fivetranSyncTables {
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0;
+  list-style: none;
+}
+
+.fivetranSyncTables li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fivetranSyncTables li span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dash-popup-text);
+  font-size: calc(12px * var(--text-scale));
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.fivetranSyncTables li em {
+  flex: 0 0 auto;
+  color: var(--dash-popup-muted);
+  font-size: calc(11px * var(--text-scale));
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.fivetranSyncTables li[data-more="true"] span {
+  color: var(--dash-popup-muted);
+  font-size: calc(11px * var(--text-scale));
+  text-transform: none;
+}
+
+.fivetranSyncWarnings {
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--dash-warning-surface, rgba(129, 95, 33, 0.08));
+  color: var(--dash-warning-text);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  list-style: none;
+}
+
 .connectionsProviderIdentity,
 .connectionsReadinessGroupHeader {
   display: flex;
@@ -11630,6 +11839,19 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+
+.connectionsProviderTitleRow .connectionsCardSync {
+  position: relative;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.connectionsProviderTitleRow .connectionsCardSyncBar {
+  width: 72px;
 }
 
 .connectionsProviderTitleRow h3 {
@@ -12418,7 +12640,7 @@
     gap: 10px;
   }
 
-  .connectionsCardSync {
+  .connectionsProviderMain > .connectionsCardSync {
     flex: 1 1 100%;
     order: 3;
     width: 100%;

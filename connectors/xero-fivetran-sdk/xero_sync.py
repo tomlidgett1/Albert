@@ -239,6 +239,7 @@ class XeroSync:
         self.profiles = SPEC["profiles"]
         self.rows_emitted = 0
         self.tables_touched: set[str] = set()
+        self._clauseless_groups: set[str] = set()
         self._parent_cache: dict[str, list] = {}
 
     # -- org / region ------------------------------------------------------
@@ -266,6 +267,7 @@ class XeroSync:
         leader = self.tables[group["leader"]]
         profile = self.profiles[group["api"]]
         passes = group.get("extraPasses") or [{}]
+        strip_clauses = group["key"] in self._clauseless_groups
         headers = {}
         if since and profile["supportsIfModifiedSince"] and group["modifiedField"] and group["pagination"] != "offset":
             headers["if-modified-since"] = http_date(since)
@@ -286,9 +288,32 @@ class XeroSync:
                 if (group["pagination"] != "offset" and profile["supportsWhere"] and group["whereFilterable"]
                         and group["modifiedField"]):
                     params["where"] = f"{group['modifiedField']}<{xero_datetime(scan_start)}"
-                status, body = self.client.get_json(
-                    group["path"], params, headers, tenant_scoped=group["api"] != "identity",
-                )
+                if strip_clauses:
+                    params.pop("order", None)
+                    params.pop("where", None)
+                try:
+                    status, body = self.client.get_json(
+                        group["path"], params, headers, tenant_scoped=group["api"] != "identity",
+                    )
+                except XeroError as error:
+                    # Some endpoints (Quotes) reject an order/where clause other
+                    # walks accept, with ErrorNumber 16 QueryParseException.
+                    # Retry the page without the clauses rather than losing the
+                    # family; ordering only tightens page stability, it is not
+                    # required for correctness because the scan re-walks fully
+                    # until a watermark exists.
+                    if "QueryParseException" not in str(error) or (
+                        "order" not in params and "where" not in params
+                    ):
+                        raise
+                    params.pop("order", None)
+                    params.pop("where", None)
+                    strip_clauses = True
+                    self._clauseless_groups.add(group["key"])
+                    _log(f"{group['path']}: retrying without order/where after QueryParseException", "WARNING")
+                    status, body = self.client.get_json(
+                        group["path"], params, headers, tenant_scoped=group["api"] != "identity",
+                    )
                 if status == 304 or body is None:
                     return
                 records = unwrap_envelope(body, leader)
@@ -472,9 +497,9 @@ class XeroSync:
     # -- orchestration -----------------------------------------------------
 
     def run(self) -> dict:
-        apis = self.enabled_apis()
         summary = {"groups": 0, "fan_outs": 0, "rows": 0, "stopped_early": None}
         try:
+            apis = self.enabled_apis()
             for group in SPEC["groups"]:
                 if group["api"] not in apis:
                     continue

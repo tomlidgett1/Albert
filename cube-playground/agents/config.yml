@@ -328,19 +328,27 @@ accessible_views:
       and credit note lines, overpayments (customer/supplier credit
       balances), batch payments, journal debits/credits, recurring invoice
       templates with their lines, and contact details (email, payment
-      terms). P&L, profit, net income and expense-by-account questions MUST
-      use the pnl_* members (pnl_revenue, pnl_expenses, pnl_net_profit over
-      pnl_date by pnl_account): they union invoice, bank, journal and credit
-      note lines into the P&L ledger. Never build a P&L from invoice lines
-      alone. Wages/super are system-posted and absent from pnl_*: take them
-      from xero_payroll_analytics pay runs, show labour as its own line and
-      say so. GST questions use gst_collected / gst_paid / gst_net over
-      gst_date, but disclose that GST collected only covers directly
-      invoiced sales (register sales post via tax-blind journals) and the
-      authoritative BAS comes from Xero's GST return. NOT AVAILABLE from
-      this Xero connection, say so honestly: live bank balances, balance
-      sheet, budget line values, and Xero's own report PDFs. This business
-      has no quotes, purchase orders, projects or expense claims in Xero.
+      terms). FINANCIAL STATEMENTS come from Xero itself, never from this
+      view: a P&L / profit and loss / income statement, balance sheet, trial
+      balance, or one contact's aged receivables/payables is fetched with the
+      live xero_* statement tools (xero_profit_and_loss, xero_balance_sheet,
+      xero_trial_balance, xero_aged_receivables/payables). Those are Xero's
+      own reports and are complete — wages, superannuation and every posted
+      expense account are already in them; there is nothing to add from
+      payroll or ledger views. Use the pnl_* members here (pnl_revenue,
+      pnl_expenses, pnl_net_profit over pnl_date by pnl_account) only for
+      what a statement cannot show — per-day trends, per-contact or
+      per-line-item detail — or when the live statement tools are
+      unavailable, and in that fallback say that pnl_* lines omit
+      system-posted wages/super (which then come from xero_payroll_analytics
+      pay runs) and never build a P&L from invoice lines alone. GST
+      questions use gst_collected / gst_paid / gst_net over gst_date, but
+      disclose that GST collected only covers directly invoiced sales
+      (register sales post via tax-blind journals) and the authoritative BAS
+      comes from Xero's GST return. NOT AVAILABLE from this connection, say
+      so honestly: live bank balances, budget line values, and Xero's own
+      report PDFs. This business has no quotes, purchase orders, projects
+      or expense claims in Xero.
       "Spend with supplier X" and "who do I buy from" are answered here
       (bills by contact plus bank spend), not from Lightspeed purchase
       orders. For running-cost questions ("how much am I paying in fees")
@@ -575,3 +583,206 @@ lanes:
 defaults:
   timezone: Australia/Melbourne
   currency: AUD
+
+# Data-derived freshness probes: the latest business date each connector's
+# primary activity view holds. The engine runs these (cached per tenant) when
+# the control plane has no ingestion watermark for the connector, so the model
+# knows "Deputy timesheets run to Sunday" rather than treating an empty
+# yesterday as zero. One probe per connector-domain; any connector can add its own.
+freshness_probes:
+  - connector: lightspeed
+    domain: sales
+    member: sales_analytics.completed_at
+  - connector: lightspeed
+    domain: workshop
+    member: workshop_analytics.checked_in_at
+  - connector: deputy
+    domain: timesheets
+    member: workforce_analytics.shift_date
+  - connector: deputy
+    domain: roster
+    member: workforce_analytics.rostered_date
+  - connector: xero
+    domain: bank
+    member: xero_finance_analytics.bank_occurred_on
+  - connector: xero
+    domain: invoices
+    member: xero_finance_analytics.issued_on
+
+# Business-context probes: the small governed queries the context-layer
+# generator runs (once per tenant, refreshed when stale) to learn what THIS
+# business is — revenue streams, locations, headcount, seasonality, tools' data
+# ranges. Each probe is one Cube query on one view; any connector adds its own.
+# `purpose` is what the generator is told the rows mean. Rows are capped by
+# `rows` (default 24). Date ranges are relative so probes never go stale.
+context_probes:
+  # ---- Lightspeed (POS: sales, products, workshop, inventory, customers) ----
+  - connector: lightspeed
+    key: sales_by_month_24m
+    purpose: "Monthly sales (GST-inclusive takings) and transaction counts for the last 24 months — scale, trend and seasonality."
+    rows: 26
+    query:
+      measures: [sales_analytics.gross_takings, sales_analytics.transactions, sales_analytics.average_sale_value]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, granularity: month, dateRange: last 24 months }]
+  - connector: lightspeed
+    key: sales_by_location_12m
+    purpose: "Sales by shop/location, last 12 months — the business's locations and their relative size."
+    rows: 8
+    query:
+      measures: [sales_analytics.gross_takings, sales_analytics.transactions]
+      dimensions: [sales_analytics.shops_name]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { sales_analytics.gross_takings: desc }
+  - connector: lightspeed
+    key: revenue_by_category_12m
+    purpose: "Product-line revenue by top-level category, last 12 months — the revenue streams and their relative importance (service/labour lines appear as categories too)."
+    rows: 20
+    query:
+      measures: [product_sales_analytics.line_revenue, product_sales_analytics.units_sold, product_sales_analytics.line_gross_margin_pct]
+      dimensions: [product_sales_analytics.categories_name]
+      timeDimensions: [{ dimension: product_sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { product_sales_analytics.line_revenue: desc }
+      limit: 20
+  - connector: lightspeed
+    key: top_brands_12m
+    purpose: "Top manufacturers/brands by revenue, last 12 months — what the business sells."
+    rows: 12
+    query:
+      measures: [product_sales_analytics.line_revenue]
+      dimensions: [product_sales_analytics.manufacturers_name]
+      filters: [{ member: product_sales_analytics.manufacturers_name, operator: set }]
+      timeDimensions: [{ dimension: product_sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { product_sales_analytics.line_revenue: desc }
+      limit: 12
+  - connector: lightspeed
+    key: sales_by_year_all_time
+    purpose: "Completed sales per calendar year over the whole history — the first year is when the POS data starts (dataFrom); the last is the latest."
+    rows: 2
+    query:
+      measures: [sales_analytics.transactions]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, granularity: year }]
+  - connector: lightspeed
+    key: workshop_by_month_12m
+    purpose: "Workshop/service jobs checked in per month, labour hours and parts value, last 12 months — whether a service department exists and how busy it is."
+    rows: 14
+    query:
+      measures: [workshop_analytics.workorder_count, workshop_analytics.workorder_lines_labour_hours, workshop_analytics.workorder_items_parts_value]
+      timeDimensions: [{ dimension: workshop_analytics.checked_in_at, granularity: month, dateRange: last 12 months }]
+  - connector: lightspeed
+    key: customers
+    purpose: "Customer base: customers on file, customers with purchases, repeat customers and repeat rate."
+    rows: 1
+    query:
+      measures: [customer_analytics.customer_count, customer_analytics.customers_with_purchases, customer_analytics.repeat_customers, customer_analytics.repeat_purchase_rate_pct]
+  - connector: lightspeed
+    key: catalogue_and_stock
+    purpose: "Catalogue and stock position: distinct items in stock, units on hand, stock value, positions below reorder."
+    rows: 1
+    query:
+      measures: [inventory_analytics.distinct_items_in_stock, inventory_analytics.units_on_hand, inventory_analytics.stock_value, inventory_analytics.positions_below_reorder]
+  - connector: lightspeed
+    key: payment_mix_12m
+    purpose: "Tender mix by payment type, last 12 months — how customers pay (cash, card, account, online)."
+    rows: 10
+    query:
+      measures: [payments_analytics.tender_total, payments_analytics.payment_count]
+      dimensions: [payments_analytics.payment_types_name]
+      timeDimensions: [{ dimension: payments_analytics.completed_at, dateRange: last 12 months }]
+      order: { payments_analytics.tender_total: desc }
+      limit: 10
+  # ---- Deputy (workforce: rosters, timesheets, wages) ----
+  - connector: deputy
+    key: staff_headcount
+    purpose: "Staff on the books and currently active."
+    rows: 1
+    query:
+      measures: [workforce_analytics.staff_count, workforce_analytics.active_staff_count]
+  - connector: deputy
+    key: hours_wages_by_month_12m
+    purpose: "Hours worked and wage cost per month, last 12 months — labour scale and its trend."
+    rows: 14
+    query:
+      measures: [workforce_analytics.hours_worked, workforce_analytics.wage_cost, workforce_analytics.worked_shift_count]
+      timeDimensions: [{ dimension: workforce_analytics.shift_date, granularity: month, dateRange: last 12 months }]
+  - connector: deputy
+    key: areas_12m
+    purpose: "Rostered areas (departments) and hours in each, last 12 months — how the workforce is organised (floor, workshop, office…)."
+    rows: 10
+    query:
+      measures: [workforce_analytics.rostered_hours, workforce_analytics.rostered_shift_count]
+      dimensions: [workforce_analytics.rostered_area]
+      timeDimensions: [{ dimension: workforce_analytics.rostered_date, dateRange: last 12 months }]
+      order: { workforce_analytics.rostered_hours: desc }
+      limit: 10
+  - connector: deputy
+    key: staff_positions
+    purpose: "Staff by position title (active staff)."
+    rows: 20
+    query:
+      measures: [workforce_analytics.staff_count]
+      dimensions: [workforce_analytics.staff_position]
+      filters: [{ member: workforce_analytics.staff_active, operator: equals, values: ["true"] }]
+      order: { workforce_analytics.staff_count: desc }
+      limit: 20
+  # ---- Xero (accounts: organisation, ledger, invoices/bills, bank) ----
+  - connector: xero
+    key: organisation
+    purpose: "The Xero organisation: business and legal name, line of business, country, timezone, financial year end, GST basis and period."
+    rows: 1
+    query:
+      dimensions: [xero_business_analytics.org_business_name, xero_business_analytics.org_legal_name, xero_business_analytics.org_line_of_business, xero_business_analytics.org_country, xero_business_analytics.org_timezone, xero_business_analytics.org_fy_end_day, xero_business_analytics.org_fy_end_month, xero_business_analytics.org_gst_basis, xero_business_analytics.org_gst_period]
+      limit: 1
+  - connector: xero
+    key: invoices_by_year_all_time
+    purpose: "Invoices and bills issued per calendar year over the whole history — the first year is when the accounting data starts (dataFrom)."
+    rows: 12
+    query:
+      measures: [xero_finance_analytics.invoice_count, xero_finance_analytics.total_invoiced]
+      timeDimensions: [{ dimension: xero_finance_analytics.issued_on, granularity: year }]
+  - connector: xero
+    key: pnl_by_account_class_12m
+    purpose: "Ledger revenue and expenses by account class, last 12 months — the shape of income and costs in the accounts."
+    rows: 12
+    query:
+      measures: [xero_finance_analytics.pnl_revenue, xero_finance_analytics.pnl_expenses]
+      dimensions: [xero_finance_analytics.pnl_account_class]
+      timeDimensions: [{ dimension: xero_finance_analytics.pnl_date, dateRange: last 12 months }]
+  - connector: xero
+    key: top_expense_accounts_12m
+    purpose: "Largest expense accounts in the ledger, last 12 months — the main cost lines (rent, wages, purchases…)."
+    rows: 12
+    query:
+      measures: [xero_finance_analytics.pnl_expenses]
+      dimensions: [xero_finance_analytics.pnl_account]
+      timeDimensions: [{ dimension: xero_finance_analytics.pnl_date, dateRange: last 12 months }]
+      order: { xero_finance_analytics.pnl_expenses: desc }
+      limit: 12
+  - connector: xero
+    key: receivables_payables
+    purpose: "Money owed to and by the business right now (outstanding and overdue receivables and payables)."
+    rows: 1
+    query:
+      measures: [xero_finance_analytics.total_receivable_outstanding, xero_finance_analytics.total_receivable_overdue, xero_finance_analytics.total_payable_outstanding, xero_finance_analytics.total_payable_overdue]
+  - connector: xero
+    key: top_suppliers_12m
+    purpose: "Largest suppliers by bills, last 12 months."
+    rows: 10
+    query:
+      measures: [xero_finance_analytics.total_invoiced, xero_finance_analytics.invoice_count]
+      dimensions: [xero_finance_analytics.invoice_contact]
+      filters:
+        - { member: xero_finance_analytics.document_kind, operator: equals, values: ["Bill"] }
+        - { member: xero_finance_analytics.invoice_status, operator: notEquals, values: ["VOIDED"] }
+      timeDimensions: [{ dimension: xero_finance_analytics.issued_on, dateRange: last 12 months }]
+      order: { xero_finance_analytics.total_invoiced: desc }
+      limit: 10
+  - connector: xero
+    key: bank_accounts_12m
+    purpose: "Bank accounts in use and money in/out through each, last 12 months."
+    rows: 8
+    query:
+      measures: [xero_finance_analytics.money_in, xero_finance_analytics.money_out, xero_finance_analytics.bank_transaction_count]
+      dimensions: [xero_finance_analytics.bank_account_name]
+      timeDimensions: [{ dimension: xero_finance_analytics.bank_occurred_on, dateRange: last 12 months }]
+      order: { xero_finance_analytics.money_out: desc }
+      limit: 8

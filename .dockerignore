@@ -20,3 +20,4 @@ npm-debug.log*
 .albert-eval*.jsonl
 .claude
 .vercel
+dlt_xero_test

@@ -155,8 +155,42 @@ test("a pending OAuth session with no discovered accounts keeps connection contr
 
   assert.deepEqual(workspace.oauthSelections, []);
   assert.equal(
-    workspace.providers.find(({ id }) => id === "lightspeed")?.connections.length,
-    0,
+    workspace.providers.find(({ id }) => id === "lightspeed"),
+    undefined,
+  );
+});
+
+test("the connections catalog hides native Deputy, Xero, and Lightspeed R-Series cards", () => {
+  const workspace = toConnectionsWorkspace({
+    tenant_id: "01J00000000000000000000001",
+    tenant_name: "Albert Retail Group",
+    connections: [],
+    dossier: null,
+    identity_review_tasks: [],
+    blocking_answers: {},
+    oauth_sessions: [],
+  }, "Australia/Melbourne");
+  const catalogIds = workspace.providers.map(({ id }) => id);
+
+  assert.equal(catalogIds.includes("lightspeed"), false);
+  assert.equal(catalogIds.includes("xero"), false);
+  assert.equal(catalogIds.includes("deputy"), false);
+  assert.ok(catalogIds.includes("fivetran-xero"));
+  assert.ok(catalogIds.includes("fivetran-lightspeed"));
+  assert.ok(catalogIds.includes("fivetran-deputy"));
+  assert.match(connectionsComponent, /SUPERSEDED_NATIVE_PROVIDER_IDS/u);
+  assert.match(connectionsComponent, /isVisibleConnectionProvider/u);
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "lightspeed" as const/u,
+  );
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "xero" as const/u,
+  );
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "deputy" as const/u,
   );
 });
 

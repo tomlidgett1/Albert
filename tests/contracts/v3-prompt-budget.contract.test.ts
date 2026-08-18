@@ -101,6 +101,7 @@ function context(toolRoute: V3ToolRoute): V3TurnContext {
     commentary: createV3CommentaryState(true),
     executedQueries: [],
     tableResults: new Map(),
+    priorResults: new Map(),
     chartedResultIds: new Set(),
   };
 }
@@ -167,6 +168,10 @@ function laneInput(input: Readonly<{
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
     },
   };
 }
@@ -256,6 +261,10 @@ test("the production intent request is cache-bounded and below 15k tokens", asyn
           assumptions: [],
           clarificationQuestion: null,
           clarificationOptions: [],
+          recipe: null,
+          recipeDateRange: null,
+          recipeEntity: null,
+          nativeCapability: null,
         },
       };
     },

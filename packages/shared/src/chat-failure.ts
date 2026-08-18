@@ -1,6 +1,6 @@
 import { sanitizeTraceText } from "./agent-runtime.js";
 
-export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3";
+export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp";
 
 export type ChatFailureContext = Readonly<{
   runtime?: ChatFailureRuntime;
@@ -27,6 +27,8 @@ const CONFIG_DIAGNOSIS: Readonly<Record<string, string>> = Object.freeze({
   ALBERT_SHOPIFYQL_SIGNING_SECRET: "Fly is not connected (ALBERT_SHOPIFYQL_SIGNING_SECRET is missing).",
   shopifyAdminSigningSecret: "Fly is not connected (ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET is missing).",
   ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "Fly is not connected (ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET is missing).",
+  xeroMcpServiceUrl: "The Xero MCP test service is not connected.",
+  xeroMcpSigningSecret: "The Xero MCP test service is not connected.",
   openaiApiKey: "OpenAI is not configured (OPENAI_API_KEY is missing).",
   OPENAI_API_KEY: "OpenAI is not configured (OPENAI_API_KEY is missing).",
   openaiBaseUrl: "OpenAI is not configured (OPENAI_BASE_URL is missing).",
@@ -101,6 +103,7 @@ function alreadyDiagnostic(text: string): boolean {
 function runtimeLabel(runtime: ChatFailureRuntime | undefined): string {
   if (runtime === "cubecore") return "Cubecore";
   if (runtime === "v3") return "Albert v3 (Cubecore)";
+  if (runtime === "xero_mcp") return "Xero MCP";
   if (runtime === "anthropic") return "New Method (Anthropic)";
   if (runtime === "openai") return "OpenAI / Fly";
   if (runtime === "fixture") return "fixture";

@@ -264,6 +264,8 @@ test("initial-backfill suppression is opt-in, per connector, and fails closed on
 test("sync worker config accepts only exact HTTPS OAuth callbacks in production", () => {
   const config = loadSyncWorkerConfig(valid);
   assert.ok(config.oauthRedirectUris.has("https://albert.example/api/oauth/xero/callback"));
+  assert.ok(config.oauthRedirectUris.has("https://albert.example/api/oauth/fivetran-xero/callback"));
+  assert.equal(config.fivetran, undefined);
   assert.equal(config.xeroDailyRequestLimit, 1000);
   assert.equal(config.workerConcurrency, 8);
   assert.equal(config.queueSlaSeconds, 300);
@@ -341,4 +343,40 @@ test("sync worker loads a bounded, canonical token KEK overlap keyring", () => {
     }),
     /too many keys/,
   );
+});
+
+test("Fivetran Xero config is optional, complete, and uses a Fivetran-legal schema", () => {
+  assert.equal(loadSyncWorkerConfig(valid).fivetran, undefined);
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...valid, FIVETRAN_API_KEY: "key" }),
+    /FIVETRAN_API_KEY, FIVETRAN_API_SECRET, and FIVETRAN_GROUP_ID must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      FIVETRAN_API_KEY: "key",
+      FIVETRAN_API_SECRET: "secret",
+      FIVETRAN_GROUP_ID: "group",
+      FIVETRAN_XERO_SCHEMA: "5XERO",
+    }),
+    /FIVETRAN_XERO_SCHEMA must be a Fivetran-legal destination schema name/u,
+  );
+  const configured = loadSyncWorkerConfig({
+    ...valid,
+    FIVETRAN_API_KEY: "key",
+    FIVETRAN_API_SECRET: "secret",
+    FIVETRAN_GROUP_ID: "group",
+  });
+  assert.equal(configured.fivetran?.destinationSchema, "xero");
+  assert.equal(configured.fivetran?.groupId, "group");
+  assert.equal(configured.fivetran?.sdkProjectDir, "connectors/xero-fivetran-sdk");
+  assert.equal(configured.fivetran?.tokenBrokerOrigin, undefined);
+  const onFly = loadSyncWorkerConfig({
+    ...valid,
+    FIVETRAN_API_KEY: "key",
+    FIVETRAN_API_SECRET: "secret",
+    FIVETRAN_GROUP_ID: "group",
+    FLY_APP_NAME: "albert-sync-worker-dogfood",
+  });
+  assert.equal(onFly.fivetran?.tokenBrokerOrigin, "https://albert-sync-worker-dogfood.fly.dev");
 });

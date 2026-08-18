@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createClient } from "../../../utils/supabase/server.js";
+import { disconnectFivetranXero, OAuthFlowError } from "../../oauth/src/worker-rpc.js";
 import { toConnectionsWorkspace } from "./connections-workspace.js";
 
 const tenantContextSchema = z.object({
@@ -161,6 +162,8 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   // A backfill is expensive and vendor-rate-limited; cap it far below click speed.
   "connection.manual_sync": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
   "connection.start_ingestion": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  // Live Fivetran readout polled by the Connections card while a load runs.
+  "connection.fivetran_status": Object.freeze({ limit: 30, windowSeconds: 60 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;
@@ -255,13 +258,78 @@ export async function bootstrapTenant(input: Readonly<{
   return parsed.data;
 }
 
+function isMissingRpc(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202" || error?.code === "42883";
+}
+
+async function loadFivetranWorkspaceConnections(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<unknown[]> {
+  const { data, error } = await supabase.rpc("albert_fivetran_workspace_connections");
+  if (error) {
+    if (isMissingRpc(error)) return [];
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  if (!Array.isArray(data)) return [];
+  return data.filter((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    return (row as { status?: unknown }).status !== "pending";
+  });
+}
+
+export async function isFivetranConnection(
+  connectionId: string,
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<boolean> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_is_fivetran_connection", {
+    p_connection_id: connectionId,
+  });
+  if (error) {
+    if (isMissingRpc(error)) return false;
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  return data === true;
+}
+
 export async function loadConnectionsWorkspace(): Promise<unknown> {
   const { supabase } = await requireUser();
   const context = await currentTenantContext();
   if (!context) throw new ControlPlaneError("Create your organisation before loading connections.", 409);
   const { data, error } = await supabase.rpc("albert_connections_workspace");
   if (error) throw new ControlPlaneError("Connection status could not be loaded.", 503);
-  return toConnectionsWorkspace(singleton(data), context.timezone);
+  const workspace = singleton(data);
+  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) {
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  const record = workspace as Record<string, unknown>;
+  const existing = Array.isArray(record.connections) ? record.connections : [];
+  const fivetran = await loadFivetranWorkspaceConnections(supabase);
+  // A native connection whose grant Fivetran uses (Deputy) is an
+  // implementation detail of the Fivetran row: show one tile, not two.
+  const heldByFivetran = new Set(
+    fivetran.flatMap((row) => {
+      const metadata = row && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>).account_metadata
+        : undefined;
+      const native = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>).nativeConnectionId
+        : undefined;
+      return typeof native === "string" ? [native] : [];
+    }),
+  );
+  const visible = heldByFivetran.size === 0
+    ? existing
+    : existing.filter((row) => {
+      const id = row && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>).connection_id
+        : undefined;
+      return typeof id !== "string" || !heldByFivetran.has(id);
+    });
+  return toConnectionsWorkspace({
+    ...record,
+    connections: [...visible, ...fivetran],
+  }, context.timezone);
 }
 
 /**
@@ -371,7 +439,38 @@ export async function loadActiveConnectorKeys(
 export async function disconnectConnection(
   connectionId: string,
 ): Promise<z.infer<typeof connectionDisconnectSchema>> {
-  const { supabase } = await requireUser();
+  const { supabase, user } = await requireUser();
+  if (await isFivetranConnection(connectionId, supabase)) {
+    const context = await currentTenantContext();
+    if (!context) throw new ControlPlaneError("Create your organisation before disconnecting.", 409);
+    let nativeConnectionId: string | undefined;
+    try {
+      const result = await disconnectFivetranXero({
+        tenantId: context.tenant_id,
+        userId: user.id,
+        connectionId,
+      });
+      nativeConnectionId = result.nativeConnectionId;
+    } catch (error) {
+      const status = error instanceof OAuthFlowError ? error.status : 503;
+      throw new ControlPlaneError(
+        status === 403
+          ? "Owner or manager access is required."
+          : status === 404
+            ? "The connection was not found."
+            : "The connection could not be disconnected safely.",
+        status === 403 || status === 404 || status === 409 ? status : 503,
+      );
+    }
+    // Deputy via Fivetran: the grant lives on an Albert-native Deputy
+    // connection (ingestion held at manual). Disconnect it through the normal
+    // path so the credential is destroyed and its purge is queued.
+    if (nativeConnectionId && /^[0-9A-HJKMNP-TV-Z]{26}$/u.test(nativeConnectionId)) {
+      await supabase.rpc("albert_disconnect_connection", { p_connection_id: nativeConnectionId })
+        .then(() => undefined, () => undefined);
+    }
+    return { deletionRequestId: connectionId, status: "queued" };
+  }
   const { data, error } = await supabase.rpc("albert_disconnect_connection", {
     p_connection_id: connectionId,
   });

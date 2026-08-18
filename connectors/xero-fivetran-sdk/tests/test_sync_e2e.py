@@ -126,6 +126,14 @@ class MockXero(BaseHTTPRequestHandler):
             self.end_headers()
             return
         params = parse_qs(parsed.query)
+        # Xero's Quotes endpoint rejects order/where clauses other walks accept.
+        if path.endswith("/Quotes") and ("order" in params or "where" in params):
+            payload = json.dumps({"ErrorNumber": 16, "Type": "QueryParseException", "Message": "OrderBy not supported"}).encode()
+            self.send_response(400)
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         page = int(params.get("page", ["1"])[0]) if "page" in params else 1
         if page > 1 or (params.get("offset") and params["offset"][0] != "0"):
             return self._json({"Empty": []})
@@ -191,6 +199,11 @@ class SyncEndToEnd(unittest.TestCase):
         line = emitted["xero_invoice_line_items"][0]
         self.assertEqual(line["invoice_id"], invoice["invoice_id"])
         self.assertEqual(line["line_items_line_amount"], "1362.72730000")
+        # Quotes rejects order/where with QueryParseException; the walk retries
+        # without the clauses instead of losing the family.
+        self.assertIn("xero_quotes", emitted)
+        quote_calls = [c for c in MockXero.calls if c[0].endswith("/Quotes")]
+        self.assertTrue(any("order" not in c[1] and "where" not in c[1] for c in quote_calls))
         # AU payroll enabled from Organisation.Version, UK/NZ not walked.
         self.assertIn("xero_payroll_au_pay_runs", emitted)
         self.assertNotIn("xero_payroll_uk_pay_runs", emitted)

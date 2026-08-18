@@ -3,11 +3,14 @@ import { z } from "zod";
 import { describeChatFailure, isXaiModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
 import { meterOpenAIUsage, toModelUsageRpcPayload } from "@/packages/usage-metering/src";
 import { webBackendLoopbackMessage } from "@/packages/config/src/env";
+import { xeroMcpServiceUrl } from "@/packages/xero-mcp/src/client";
 import {
   ALBERT_V3_RUNTIME,
+  businessContextRefreshDue,
   runAlbertV3Turn,
   type ConversationMessage,
 } from "@/packages/albert-v3/src";
+import { loadBusinessContext, saveBusinessContext } from "@/services/control-plane/src/business-context-repository";
 import {
   correlationIdFromHeader,
   createServiceLogger,
@@ -24,6 +27,7 @@ import {
   beginConversationTurn,
   conversationNeedsTitle,
   loadConversationModelContext,
+  loadPriorTurnResults,
   renewConversationTurnLease,
   failConversationTurn,
 } from "@/services/conversation/src/artifact-store";
@@ -175,8 +179,10 @@ export async function POST(request: Request): Promise<Response> {
   let activeConnectors: readonly string[] | undefined;
   let connectorFreshness: ConnectorRouting["freshness"] | undefined;
   let sourceFindings: TenantSourceFindings | undefined;
+  let priorResults: Awaited<ReturnType<typeof loadPriorTurnResults>> = [];
+  let businessContext: Awaited<ReturnType<typeof loadBusinessContext>> = null;
   try {
-    const [priorMessages, routing, findings] = await Promise.all([
+    const [priorMessages, routing, findings, priorTurnResults, storedContext] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch((error) => {
         // Routing metadata is a cost optimisation, not an authorisation
@@ -199,16 +205,39 @@ export async function POST(request: Request): Promise<Response> {
         }, correlationId);
         return undefined;
       }),
+      // Earlier turns' result sets let follow-ups re-present already-retrieved
+      // data without re-running the pipeline; a read failure only costs speed.
+      loadPriorTurnResults(conversationId, auth.supabase).catch((error) => {
+        logger.warn("v3.prior_results_unavailable", {
+          conversationId,
+          turnId,
+          ...safeErrorEvidence(error),
+        }, correlationId);
+        return [] as const;
+      }),
+      // The business context document grounds every turn; a read failure only
+      // costs grounding, never the turn.
+      loadBusinessContext(auth.supabase).catch((error) => {
+        logger.warn("v3.business_context_unavailable", {
+          conversationId,
+          turnId,
+          ...safeErrorEvidence(error),
+        }, correlationId);
+        return null;
+      }),
     ]);
     activeConnectors = routing?.activeConnectors;
     connectorFreshness = routing?.freshness;
     sourceFindings = findings;
+    priorResults = priorTurnResults;
+    businessContext = storedContext;
     conversation = [
-      ...priorMessages.map(({ role, text, governedQueries, resolvedSubject }) => ({
+      ...priorMessages.map(({ role, text, governedQueries, resolvedSubject, presentedTables }) => ({
         role,
         text,
         ...(governedQueries?.length ? { governedQueries } : {}),
         ...(resolvedSubject ? { resolvedSubject } : {}),
+        ...(presentedTables?.length ? { presentedTables } : {}),
       })),
       { role: "user" as const, text: parsed.message },
     ];
@@ -295,6 +324,34 @@ export async function POST(request: Request): Promise<Response> {
           activeConnectors,
           connectorFreshness,
           sourceFindings,
+          priorResults,
+          businessContext: {
+            ...(businessContext ? { current: businessContext, ownerLocked: businessContext.ownerLocked } : {}),
+            // Only owners/managers may write it; a stale or missing document is
+            // regenerated under this turn's lease and saved before it ends.
+            refresh: {
+              due: (tenant.role === "owner" || tenant.role === "manager") && (activeConnectors?.length ?? 0) > 0 && businessContextRefreshDue({
+                generatedAt: businessContext?.generatedAt ?? null,
+                connectors: businessContext?.connectors ?? [],
+                activeConnectors: activeConnectors ?? [],
+              }),
+              save: async (generated) => {
+                await saveBusinessContext({
+                  document: generated.document,
+                  rendered: generated.rendered,
+                  source: "generated",
+                  facts: generated.facts,
+                  generatorVersion: generated.generatorVersion,
+                  model: generated.model,
+                  dataThrough: generated.dataThrough,
+                  connectors: generated.connectors,
+                }, auth.supabase);
+                logger.info("v3.business_context_refreshed", {
+                  tenantId: tenant.tenant_id, conversationId, turnId, words: generated.words, durationMs: generated.durationMs,
+                }, correlationId);
+              },
+            },
+          },
           recordSourceFinding: async (concept, finding) => {
             await recordSourceFinding(concept, finding, auth.supabase);
           },
@@ -306,6 +363,14 @@ export async function POST(request: Request): Promise<Response> {
           shopifyQLSigningSecret: configuration.shopifyQLSigningSecret!,
           shopifyAdminServiceUrl: configuration.shopifyAdminServiceUrl!,
           shopifyAdminSigningSecret: configuration.shopifyAdminSigningSecret!,
+          // Live Xero statements (P&L, balance sheet, trial balance, aged
+          // reports) via the worker's xero-mcp boundary, signed with the OAuth
+          // worker secret it already verifies. Resolved the same way in every
+          // environment (override → sync worker → local sidecar) so localhost
+          // and Vercel behave alike. Optional: the engine omits the tools when
+          // the secret is absent.
+          xeroMcpServiceUrl: xeroMcpServiceUrl() || undefined,
+          xeroMcpSigningSecret: process.env.ALBERT_OAUTH_WORKER_SIGNING_SECRET || undefined,
           openaiApiKey: configuration.openaiApiKey!,
           openaiBaseUrl: process.env.OPENAI_BASE_URL || undefined,
           xaiApiKey: process.env.XAI_API_KEY || undefined,

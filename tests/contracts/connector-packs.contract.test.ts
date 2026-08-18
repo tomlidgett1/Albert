@@ -42,7 +42,7 @@ import {
   XERO_ACCOUNTING_OPENAPI_REVISION,
   XERO_DOCUMENTED_FIELDS,
 } from "../../connectors/xero/documented-fields";
-import { buildXeroAuthorizationUrl } from "../../connectors/xero/oauth-public";
+import { buildXeroAuthorizationUrl, xeroAuthorizeScopes } from "../../connectors/xero/oauth-public";
 import { xeroSchemas } from "../../connectors/xero/schemas";
 import {
   assertFixtureFieldCoverage,
@@ -426,9 +426,14 @@ test("public OAuth builders contain only public, state-bound values", () => {
   assert.equal(xero.searchParams.get("code_challenge_method"), "S256");
   assert.equal(xero.searchParams.get("state"), "state-xero");
   assert.equal(xero.searchParams.get("scope")?.includes("accounting.transactions"), false);
+  assert.equal(xero.searchParams.get("scope")?.includes("accounting.reports.read"), false);
   assert.equal(xero.searchParams.get("scope")?.includes("accounting.journals.read"), false);
+  assert.equal(xero.searchParams.get("scope")?.includes("accounting.reports.profitandloss.read"), true);
+  assert.equal(xero.searchParams.get("scope")?.includes("accounting.invoices"), true);
   assert.equal(XERO_DEFAULT_SCOPES.includes("accounting.journals.read" as never), false);
   assert.equal(xeroRequestedScopes(true).includes("accounting.journals.read"), true);
+  assert.equal(xeroAuthorizeScopes(["offline_access"]).includes("accounting.reports.profitandloss.read"), true);
+  assert.equal(xeroAuthorizeScopes(["accounting.journals.read"]).includes("accounting.journals.read"), true);
 
   const deputy = new URL(buildDeputyAuthorizationUrl({
     clientId: "public-deputy-id",

@@ -19,6 +19,11 @@ import {
   CredentialVaultFactory,
   EnvelopeCryptography,
 } from "./credential-vault.js";
+import { FivetranDestinationStore } from "./fivetran-destinations.js";
+import { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
+import { FivetranDeputyTokenRelay } from "./fivetran-deputy-relay.js";
+import { FivetranWorkerHttpHandler } from "./fivetran-http.js";
+import { FivetranConnectionStore } from "./fivetran-store.js";
 import { OAuthWorkerHttpHandler } from "./oauth-http.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 import { PgTransactionalDatabase } from "./postgres.js";
@@ -28,6 +33,7 @@ import { ShopifyQLWorkerHttpHandler } from "./shopifyql-http.js";
 import { ShopifyQLRuntimeStore } from "./shopifyql-store.js";
 import { ShopifyAdminWorkerHttpHandler } from "./shopify-admin-http.js";
 import { ShopifyAdminRuntimeStore } from "./shopify-admin-store.js";
+import { XeroMcpWorkerHttpHandler } from "../../../packages/xero-mcp/src/http.js";
 import {
   OAuthTokenKekRotationService,
   PostgresOAuthTokenKekRotationStore,
@@ -197,6 +203,47 @@ export async function runSyncWorker(): Promise<void> {
     }),
     connectors: connectorFactory,
   });
+  const fivetran = config.fivetran
+    ? new FivetranWorkerHttpHandler({
+        oauthWorkerSigningSecret: config.oauthWorkerSigningSecret,
+        allowedRedirectUris: config.oauthRedirectUris,
+        config: config.fivetran,
+        store: new FivetranConnectionStore(controlDb),
+        destinations: new FivetranDestinationStore(analyticalDb),
+        // Deputy via Fivetran reuses Albert's own Deputy grant; only offered
+        // when the Deputy OAuth app is configured on this worker.
+        deputyCredentials: connectorFactory.isConfigured("deputy")
+          ? new DeputyFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connector: () => registry.get("deputy"),
+            })
+          : undefined,
+        // Xero via Fivetran = Albert's SDK connector fed by this worker's token
+        // broker; the grant is the tenant's native Xero connection.
+        xeroCredentials: connectorFactory.isConfigured("xero")
+          ? new NativeFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connectorKey: "xero",
+              connector: () => registry.get("xero"),
+            })
+          : undefined,
+        // Lightspeed R-Series via Fivetran = the same SDK + token-broker shape
+        // over the tenant's native Lightspeed grant.
+        lightspeedCredentials: connectorFactory.isConfigured("lightspeed-r")
+          ? new NativeFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connectorKey: "lightspeed-r",
+              connector: () => registry.get("lightspeed-r"),
+            })
+          : undefined,
+      })
+    : null;
+  const fivetranDeputyRelay = fivetran && connectorFactory.isConfigured("deputy")
+    ? new FivetranDeputyTokenRelay(fivetran)
+    : null;
   const shopifyQLStore = connectorFactory.isConfigured("shopify")
     ? new ShopifyQLRuntimeStore(controlDb)
     : null;
@@ -219,6 +266,14 @@ export async function runSyncWorker(): Promise<void> {
         store: shopifyAdminStore,
         connectors: registry,
         control,
+      })
+    : null;
+  const xeroMcp = connectorFactory.isConfigured("xero")
+    ? new XeroMcpWorkerHttpHandler({
+        signingSecret: config.oauthWorkerSigningSecret,
+        store: controlDb,
+        vault: credentialVaults.reader(),
+        connectors: registry,
       })
     : null;
 
@@ -295,12 +350,20 @@ export async function runSyncWorker(): Promise<void> {
         await writeFetchResponse(await oauth.handle(await toFetchRequest(request)), response);
         return;
       }
+      if (fivetran && pathname.startsWith("/v1/fivetran/")) {
+        await writeFetchResponse(await fivetran.handle(await toFetchRequest(request)), response);
+        return;
+      }
       if (shopifyQL && pathname.startsWith("/v1/shopifyql/")) {
         await writeFetchResponse(await shopifyQL.handle(await toFetchRequest(request)), response);
         return;
       }
       if (shopifyAdmin && pathname.startsWith("/v1/shopify-admin/")) {
         await writeFetchResponse(await shopifyAdmin.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (xeroMcp && pathname.startsWith("/v1/xero-mcp/")) {
+        await writeFetchResponse(await xeroMcp.handle(await toFetchRequest(request)), response);
         return;
       }
       json(response, 404, { error: "not_found" });
@@ -436,6 +499,7 @@ export async function runSyncWorker(): Promise<void> {
         service.run(abort.signal),
         tokenKekRotation.run(abort.signal),
         ...(vendorAttestationRelay ? [vendorAttestationRelay.run(abort.signal)] : []),
+        ...(fivetranDeputyRelay ? [fivetranDeputyRelay.run(abort.signal)] : []),
       ]);
     } finally {
       clearInterval(heartbeatTimer);

@@ -287,7 +287,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "name": "xero_finance_analytics",
         "connector": "xero",
-        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe, average days to pay (avg_days_to_pay), payments received and made, bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). P&L, profit, net income and expense-by-account questions MUST use the pnl_* members (pnl_revenue, pnl_expenses, pnl_net_profit over pnl_date by pnl_account): they union invoice, bank, journal and credit note lines into the P&L ledger. Never build a P&L from invoice lines alone. Wages/super are system-posted and absent from pnl_*: take them from xero_payroll_analytics pay runs, show labour as its own line and say so. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. NOT AVAILABLE from this Xero connection, say so honestly: live bank balances, balance sheet, budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
+        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe, average days to pay (avg_days_to_pay), payments received and made, bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). FINANCIAL STATEMENTS come from Xero itself, never from this view: a P&L / profit and loss / income statement, balance sheet, trial balance, or one contact's aged receivables/payables is fetched with the live xero_* statement tools (xero_profit_and_loss, xero_balance_sheet, xero_trial_balance, xero_aged_receivables/payables). Those are Xero's own reports and are complete — wages, superannuation and every posted expense account are already in them; there is nothing to add from payroll or ledger views. Use the pnl_* members here (pnl_revenue, pnl_expenses, pnl_net_profit over pnl_date by pnl_account) only for what a statement cannot show — per-day trends, per-contact or per-line-item detail — or when the live statement tools are unavailable, and in that fallback say that pnl_* lines omit system-posted wages/super (which then come from xero_payroll_analytics pay runs) and never build a P&L from invoice lines alone. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. NOT AVAILABLE from this connection, say so honestly: live bank balances, budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
       },
       {
         "name": "xero_payroll_analytics",
@@ -468,7 +468,479 @@ export const ALBERT_V3_AGENT_CONFIG = {
     "defaults": {
       "timezone": "Australia/Melbourne",
       "currency": "AUD"
-    }
+    },
+    "freshness_probes": [
+      {
+        "connector": "lightspeed",
+        "domain": "sales",
+        "member": "sales_analytics.completed_at"
+      },
+      {
+        "connector": "lightspeed",
+        "domain": "workshop",
+        "member": "workshop_analytics.checked_in_at"
+      },
+      {
+        "connector": "deputy",
+        "domain": "timesheets",
+        "member": "workforce_analytics.shift_date"
+      },
+      {
+        "connector": "deputy",
+        "domain": "roster",
+        "member": "workforce_analytics.rostered_date"
+      },
+      {
+        "connector": "xero",
+        "domain": "bank",
+        "member": "xero_finance_analytics.bank_occurred_on"
+      },
+      {
+        "connector": "xero",
+        "domain": "invoices",
+        "member": "xero_finance_analytics.issued_on"
+      }
+    ],
+    "context_probes": [
+      {
+        "connector": "lightspeed",
+        "key": "sales_by_month_24m",
+        "purpose": "Monthly sales (GST-inclusive takings) and transaction counts for the last 24 months — scale, trend and seasonality.",
+        "rows": 26,
+        "query": {
+          "measures": [
+            "sales_analytics.gross_takings",
+            "sales_analytics.transactions",
+            "sales_analytics.average_sale_value"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "sales_analytics.completed_at",
+              "granularity": "month",
+              "dateRange": "last 24 months"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "sales_by_location_12m",
+        "purpose": "Sales by shop/location, last 12 months — the business's locations and their relative size.",
+        "rows": 8,
+        "query": {
+          "measures": [
+            "sales_analytics.gross_takings",
+            "sales_analytics.transactions"
+          ],
+          "dimensions": [
+            "sales_analytics.shops_name"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "sales_analytics.completed_at",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "sales_analytics.gross_takings": "desc"
+          }
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "revenue_by_category_12m",
+        "purpose": "Product-line revenue by top-level category, last 12 months — the revenue streams and their relative importance (service/labour lines appear as categories too).",
+        "rows": 20,
+        "query": {
+          "measures": [
+            "product_sales_analytics.line_revenue",
+            "product_sales_analytics.units_sold",
+            "product_sales_analytics.line_gross_margin_pct"
+          ],
+          "dimensions": [
+            "product_sales_analytics.categories_name"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "product_sales_analytics.completed_at",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "product_sales_analytics.line_revenue": "desc"
+          },
+          "limit": 20
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "top_brands_12m",
+        "purpose": "Top manufacturers/brands by revenue, last 12 months — what the business sells.",
+        "rows": 12,
+        "query": {
+          "measures": [
+            "product_sales_analytics.line_revenue"
+          ],
+          "dimensions": [
+            "product_sales_analytics.manufacturers_name"
+          ],
+          "filters": [
+            {
+              "member": "product_sales_analytics.manufacturers_name",
+              "operator": "set"
+            }
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "product_sales_analytics.completed_at",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "product_sales_analytics.line_revenue": "desc"
+          },
+          "limit": 12
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "sales_by_year_all_time",
+        "purpose": "Completed sales per calendar year over the whole history — the first year is when the POS data starts (dataFrom); the last is the latest.",
+        "rows": 2,
+        "query": {
+          "measures": [
+            "sales_analytics.transactions"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "sales_analytics.completed_at",
+              "granularity": "year"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "workshop_by_month_12m",
+        "purpose": "Workshop/service jobs checked in per month, labour hours and parts value, last 12 months — whether a service department exists and how busy it is.",
+        "rows": 14,
+        "query": {
+          "measures": [
+            "workshop_analytics.workorder_count",
+            "workshop_analytics.workorder_lines_labour_hours",
+            "workshop_analytics.workorder_items_parts_value"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "workshop_analytics.checked_in_at",
+              "granularity": "month",
+              "dateRange": "last 12 months"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "customers",
+        "purpose": "Customer base: customers on file, customers with purchases, repeat customers and repeat rate.",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "customer_analytics.customer_count",
+            "customer_analytics.customers_with_purchases",
+            "customer_analytics.repeat_customers",
+            "customer_analytics.repeat_purchase_rate_pct"
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "catalogue_and_stock",
+        "purpose": "Catalogue and stock position: distinct items in stock, units on hand, stock value, positions below reorder.",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "inventory_analytics.distinct_items_in_stock",
+            "inventory_analytics.units_on_hand",
+            "inventory_analytics.stock_value",
+            "inventory_analytics.positions_below_reorder"
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "payment_mix_12m",
+        "purpose": "Tender mix by payment type, last 12 months — how customers pay (cash, card, account, online).",
+        "rows": 10,
+        "query": {
+          "measures": [
+            "payments_analytics.tender_total",
+            "payments_analytics.payment_count"
+          ],
+          "dimensions": [
+            "payments_analytics.payment_types_name"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "payments_analytics.completed_at",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "payments_analytics.tender_total": "desc"
+          },
+          "limit": 10
+        }
+      },
+      {
+        "connector": "deputy",
+        "key": "staff_headcount",
+        "purpose": "Staff on the books and currently active.",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "workforce_analytics.staff_count",
+            "workforce_analytics.active_staff_count"
+          ]
+        }
+      },
+      {
+        "connector": "deputy",
+        "key": "hours_wages_by_month_12m",
+        "purpose": "Hours worked and wage cost per month, last 12 months — labour scale and its trend.",
+        "rows": 14,
+        "query": {
+          "measures": [
+            "workforce_analytics.hours_worked",
+            "workforce_analytics.wage_cost",
+            "workforce_analytics.worked_shift_count"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "workforce_analytics.shift_date",
+              "granularity": "month",
+              "dateRange": "last 12 months"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "deputy",
+        "key": "areas_12m",
+        "purpose": "Rostered areas (departments) and hours in each, last 12 months — how the workforce is organised (floor, workshop, office…).",
+        "rows": 10,
+        "query": {
+          "measures": [
+            "workforce_analytics.rostered_hours",
+            "workforce_analytics.rostered_shift_count"
+          ],
+          "dimensions": [
+            "workforce_analytics.rostered_area"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "workforce_analytics.rostered_date",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "workforce_analytics.rostered_hours": "desc"
+          },
+          "limit": 10
+        }
+      },
+      {
+        "connector": "deputy",
+        "key": "staff_positions",
+        "purpose": "Staff by position title (active staff).",
+        "rows": 20,
+        "query": {
+          "measures": [
+            "workforce_analytics.staff_count"
+          ],
+          "dimensions": [
+            "workforce_analytics.staff_position"
+          ],
+          "filters": [
+            {
+              "member": "workforce_analytics.staff_active",
+              "operator": "equals",
+              "values": [
+                "true"
+              ]
+            }
+          ],
+          "order": {
+            "workforce_analytics.staff_count": "desc"
+          },
+          "limit": 20
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "organisation",
+        "purpose": "The Xero organisation: business and legal name, line of business, country, timezone, financial year end, GST basis and period.",
+        "rows": 1,
+        "query": {
+          "dimensions": [
+            "xero_business_analytics.org_business_name",
+            "xero_business_analytics.org_legal_name",
+            "xero_business_analytics.org_line_of_business",
+            "xero_business_analytics.org_country",
+            "xero_business_analytics.org_timezone",
+            "xero_business_analytics.org_fy_end_day",
+            "xero_business_analytics.org_fy_end_month",
+            "xero_business_analytics.org_gst_basis",
+            "xero_business_analytics.org_gst_period"
+          ],
+          "limit": 1
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "invoices_by_year_all_time",
+        "purpose": "Invoices and bills issued per calendar year over the whole history — the first year is when the accounting data starts (dataFrom).",
+        "rows": 12,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.invoice_count",
+            "xero_finance_analytics.total_invoiced"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "xero_finance_analytics.issued_on",
+              "granularity": "year"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "pnl_by_account_class_12m",
+        "purpose": "Ledger revenue and expenses by account class, last 12 months — the shape of income and costs in the accounts.",
+        "rows": 12,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.pnl_revenue",
+            "xero_finance_analytics.pnl_expenses"
+          ],
+          "dimensions": [
+            "xero_finance_analytics.pnl_account_class"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "xero_finance_analytics.pnl_date",
+              "dateRange": "last 12 months"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "top_expense_accounts_12m",
+        "purpose": "Largest expense accounts in the ledger, last 12 months — the main cost lines (rent, wages, purchases…).",
+        "rows": 12,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.pnl_expenses"
+          ],
+          "dimensions": [
+            "xero_finance_analytics.pnl_account"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "xero_finance_analytics.pnl_date",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "xero_finance_analytics.pnl_expenses": "desc"
+          },
+          "limit": 12
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "receivables_payables",
+        "purpose": "Money owed to and by the business right now (outstanding and overdue receivables and payables).",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.total_receivable_outstanding",
+            "xero_finance_analytics.total_receivable_overdue",
+            "xero_finance_analytics.total_payable_outstanding",
+            "xero_finance_analytics.total_payable_overdue"
+          ]
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "top_suppliers_12m",
+        "purpose": "Largest suppliers by bills, last 12 months.",
+        "rows": 10,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.total_invoiced",
+            "xero_finance_analytics.invoice_count"
+          ],
+          "dimensions": [
+            "xero_finance_analytics.invoice_contact"
+          ],
+          "filters": [
+            {
+              "member": "xero_finance_analytics.document_kind",
+              "operator": "equals",
+              "values": [
+                "Bill"
+              ]
+            },
+            {
+              "member": "xero_finance_analytics.invoice_status",
+              "operator": "notEquals",
+              "values": [
+                "VOIDED"
+              ]
+            }
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "xero_finance_analytics.issued_on",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "xero_finance_analytics.total_invoiced": "desc"
+          },
+          "limit": 10
+        }
+      },
+      {
+        "connector": "xero",
+        "key": "bank_accounts_12m",
+        "purpose": "Bank accounts in use and money in/out through each, last 12 months.",
+        "rows": 8,
+        "query": {
+          "measures": [
+            "xero_finance_analytics.money_in",
+            "xero_finance_analytics.money_out",
+            "xero_finance_analytics.bank_transaction_count"
+          ],
+          "dimensions": [
+            "xero_finance_analytics.bank_account_name"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "xero_finance_analytics.bank_occurred_on",
+              "dateRange": "last 12 months"
+            }
+          ],
+          "order": {
+            "xero_finance_analytics.money_out": "desc"
+          },
+          "limit": 8
+        }
+      }
+    ]
   },
   "alwaysRules": [
     {
@@ -1297,6 +1769,856 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "sales_analytics.gross_profit": "desc"
         },
         "limit": 25
+      }
+    },
+    {
+      "name": "recipe-bank-money-for-period",
+      "userRequest": "How much came into / went out of the bank in a period?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.money_in",
+          "xero_finance_analytics.money_out",
+          "xero_finance_analytics.bank_transaction_count"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_finance_analytics.bank_occurred_on",
+            "dateRange": "last 7 days"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence with the figure asked for; note if the latest bank date is a few days behind.",
+        "dateParameter": "xero_finance_analytics.bank_occurred_on",
+        "matches": [
+          "How much money came into the bank over the last 7 days?",
+          "Bank deposits last week",
+          "How much went out of the bank last month?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-bank-money-in-out-by-month",
+      "userRequest": "Money in and money out of the bank by month (bank activity trend).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.money_in",
+          "xero_finance_analytics.money_out"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_finance_analytics.bank_occurred_on",
+            "granularity": "month",
+            "dateRange": "this year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart with money in and money out as two series (extraYKeys); one sentence on the biggest month.",
+        "dateParameter": "xero_finance_analytics.bank_occurred_on",
+        "matches": [
+          "Show money in and money out of the bank by month this year",
+          "How much money went out of the bank each month this year?",
+          "Bank activity by month"
+        ]
+      }
+    },
+    {
+      "name": "recipe-bills-by-month",
+      "userRequest": "How many bills came in each month and what were they worth (supplier bills by month)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.invoice_count",
+          "xero_finance_analytics.total_invoiced"
+        ],
+        "filters": [
+          {
+            "member": "xero_finance_analytics.document_kind",
+            "operator": "equals",
+            "values": [
+              "Bill"
+            ]
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_finance_analytics.issued_on",
+            "granularity": "month",
+            "dateRange": "this year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of bill value by month (or the single figure if one month was asked).",
+        "dateParameter": "xero_finance_analytics.issued_on",
+        "matches": [
+          "How many bills came in each month this year and what were they worth?",
+          "Show me monthly bills from suppliers this year as a chart",
+          "How many bills did we receive last month?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-customer-count",
+      "userRequest": "How many customers do we have on file / how many have bought from us?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "customer_analytics.customer_count",
+          "customer_analytics.customers_with_purchases",
+          "customer_analytics.repeat_customers"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences: customers on file, how many have purchased, repeat customers.",
+        "matches": [
+          "How many customers do we have?",
+          "How many customers are on file?",
+          "How many repeat customers do we have?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-gst-collected-for-period",
+      "userRequest": "How much GST did we collect in a period (GST on sales at the till)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.tax_collected",
+          "sales_analytics.gross_takings"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: GST collected on sales for the period (from the POS, which is where GST collected lives).",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "How much GST did we collect last month?",
+          "GST collected last quarter",
+          "GST on sales this financial year"
+        ]
+      }
+    },
+    {
+      "name": "recipe-hours-and-wages-total",
+      "userRequest": "Total hours worked and wage cost for a period (what did wages cost, how many hours did staff work).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.hours_worked",
+          "workforce_analytics.wage_cost",
+          "workforce_analytics.worked_shift_count",
+          "workforce_analytics.avg_shift_hours"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.shift_date",
+            "dateRange": "last week"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences with the figure asked for (hours, wage cost, shifts or average shift length).",
+        "dateParameter": "workforce_analytics.shift_date",
+        "matches": [
+          "How many hours did staff work last week?",
+          "What did wages cost last month?",
+          "How many shifts were worked in July?",
+          "Average shift length last month"
+        ]
+      }
+    },
+    {
+      "name": "recipe-hours-worked-by-staff",
+      "userRequest": "Hours worked and wage cost by staff member for a period (who worked the most).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.hours_worked",
+          "workforce_analytics.wage_cost",
+          "workforce_analytics.worked_shift_count"
+        ],
+        "dimensions": [
+          "workforce_analytics.staff_name"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.shift_date",
+            "dateRange": "last month"
+          }
+        ],
+        "order": {
+          "workforce_analytics.hours_worked": "desc"
+        },
+        "limit": 50
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the top person first if 'most' was asked, then the table (person, hours, wage cost).",
+        "dateParameter": "workforce_analytics.shift_date",
+        "matches": [
+          "Who worked the most hours last month?",
+          "How many hours did each staff member work last month?",
+          "Hours by staff this year"
+        ]
+      }
+    },
+    {
+      "name": "recipe-leave-for-period",
+      "userRequest": "Who is on leave in a period (approved leave, leave requests)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.leave_days",
+          "workforce_analytics.leave_hours"
+        ],
+        "dimensions": [
+          "workforce_analytics.leave_staff",
+          "workforce_analytics.leave_type",
+          "workforce_analytics.leave_status",
+          "workforce_analytics.leave_starts",
+          "workforce_analytics.leave_ends"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.leave_starts",
+            "dateRange": "this month"
+          }
+        ],
+        "order": {
+          "workforce_analytics.leave_starts": "asc"
+        },
+        "limit": 100
+      },
+      "recipe": {
+        "presentation": "list",
+        "answerHint": "List approved leave (person, type, dates); mention pending requests separately; ignore declined/cancelled.",
+        "dateParameter": "workforce_analytics.leave_starts",
+        "matches": [
+          "Who's on leave this month?",
+          "Any leave coming up next month?",
+          "Who has leave booked?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-payables-outstanding",
+      "userRequest": "How much do we currently owe suppliers (accounts payable outstanding and overdue)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.total_payable_outstanding",
+          "xero_finance_analytics.total_payable_overdue"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences: total owed and how much of it is overdue.",
+        "matches": [
+          "How much do we currently owe suppliers?",
+          "What do we owe?",
+          "How much is outstanding to suppliers?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-payment-mix-for-period",
+      "userRequest": "How much did we take by card versus cash (payment types / tender mix) for a period?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "payments_analytics.tender_total",
+          "payments_analytics.payment_count"
+        ],
+        "dimensions": [
+          "payments_analytics.payment_types_name"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "payments_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ],
+        "order": {
+          "payments_analytics.tender_total": "desc"
+        },
+        "limit": 12
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Table of payment type, amount, count; one sentence with the card and cash figures.",
+        "dateParameter": "payments_analytics.completed_at",
+        "matches": [
+          "How much did we take by card versus cash last month?",
+          "Payment mix this year",
+          "Cash vs card split"
+        ]
+      }
+    },
+    {
+      "name": "recipe-receivables-outstanding",
+      "userRequest": "How much is owed to us right now (accounts receivable outstanding and overdue)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.total_receivable_outstanding",
+          "xero_finance_analytics.total_receivable_overdue"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences: total owed to us and the overdue part.",
+        "matches": [
+          "How much is owed to us right now?",
+          "How much money is owed to us?",
+          "Outstanding invoices"
+        ]
+      }
+    },
+    {
+      "name": "recipe-refunds-for-period",
+      "userRequest": "How much did we refund in a period? Refund value and count.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.refund_value",
+          "sales_analytics.refund_transactions"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: refund value and count for the period.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "How much did we refund last month?",
+          "Refunds this year",
+          "How many refunds did we give last week?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-roster-for-period",
+      "userRequest": "Who is rostered on today / tomorrow / this week / next week? The roster for a period.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.rostered_hours"
+        ],
+        "dimensions": [
+          "workforce_analytics.rostered_staff",
+          "workforce_analytics.roster_starts_at",
+          "workforce_analytics.roster_ends_at",
+          "workforce_analytics.rostered_area"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "today"
+          }
+        ],
+        "order": {
+          "workforce_analytics.roster_starts_at": "asc"
+        },
+        "limit": 200
+      },
+      "recipe": {
+        "presentation": "list",
+        "answerHint": "A table (person, start, end, hours) grouped by day for multi-day periods; a one-line answer for a single day. Never a chart.",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "Who's rostered on today?",
+          "Who is working tomorrow?",
+          "What does next week's roster look like day by day?",
+          "Who's on this week?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-by-category",
+      "userRequest": "Sales by product category for a period (top categories, category mix, share of revenue by category).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "product_sales_analytics.line_revenue",
+          "product_sales_analytics.units_sold"
+        ],
+        "dimensions": [
+          "product_sales_analytics.categories_name"
+        ],
+        "filters": [
+          {
+            "member": "product_sales_analytics.categories_name",
+            "operator": "set"
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "product_sales_analytics.completed_at",
+            "dateRange": "this year"
+          }
+        ],
+        "order": {
+          "product_sales_analytics.line_revenue": "desc"
+        },
+        "limit": 15
+      },
+      "recipe": {
+        "presentation": "bar",
+        "answerHint": "Bar chart of revenue by category (limit to the top N the owner asked for); one sentence naming the leader and its share. Use compose_table with percent_of when a share is asked.",
+        "dateParameter": "product_sales_analytics.completed_at",
+        "matches": [
+          "What were our top 5 selling categories this year?",
+          "Sales by category this year",
+          "Which categories sell the most?",
+          "Show sales by category as a chart"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-by-day",
+      "userRequest": "Daily sales for the last N days / a recent period.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.gross_takings",
+          "sales_analytics.transactions"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "granularity": "day",
+            "dateRange": "last 30 days"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of daily takings; name the best day.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "Chart daily sales for the last 30 days",
+          "Show me sales per day this month",
+          "Daily takings last fortnight"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-by-month",
+      "userRequest": "Show monthly sales for this year / the last 12 months / the last two years — a sales trend by month.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.gross_takings",
+          "sales_analytics.transactions"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "granularity": "month",
+            "dateRange": "this year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of takings by month; one sentence on the trend and the best/worst month. Say if the last month is partial.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "Show me monthly sales for this year",
+          "Chart our monthly sales for the last two years",
+          "How are sales trending month by month?",
+          "Sales by month"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-by-staff-member",
+      "userRequest": "Sales rung up by each staff member for a period (who sold the most).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.gross_takings",
+          "sales_analytics.transactions",
+          "sales_analytics.average_sale_value"
+        ],
+        "dimensions": [
+          "sales_analytics.employees_full_name"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ],
+        "order": {
+          "sales_analytics.gross_takings": "desc"
+        },
+        "limit": 15
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the top seller first, then the table.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "Which staff member rang up the most sales last month?",
+          "Sales by staff this year",
+          "Who sold the most?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-by-week",
+      "userRequest": "Weekly sales for the last N weeks (Monday-Sunday weeks).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.gross_takings",
+          "sales_analytics.transactions"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "granularity": "week",
+            "dateRange": "last 12 weeks"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of weekly takings; one sentence on the peak week and the latest week.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "Show me weekly sales for the last 12 weeks",
+          "Sales by week this quarter",
+          "How did each week go over the last two months?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-sales-total-for-period",
+      "userRequest": "How much did we sell yesterday / today / last week / last month / this month / on a given date? Total sales for one period.",
+      "notes": "Lightspeed is the canonical sales source. Set the dateRange from the owner's period; the default is yesterday.",
+      "query": {
+        "measures": [
+          "sales_analytics.gross_takings",
+          "sales_analytics.transactions",
+          "sales_analytics.average_sale_value"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "dateRange": "yesterday"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences: the takings for the period (GST inclusive), transactions if useful. No exclusions or source notes.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "What were my sales yesterday?",
+          "How much did we sell last week?",
+          "What were total sales last month?",
+          "Sales so far this month?",
+          "What were sales on 15 August 2026?",
+          "How many sales did we make today?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-staff-count",
+      "userRequest": "How many staff do we have (active vs on file)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.active_staff_count",
+          "workforce_analytics.staff_count"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: active staff, and how many are on file in total.",
+        "matches": [
+          "How many staff do we have?",
+          "How many employees are active?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-stock-position",
+      "userRequest": "Current stock on hand: value, units, and how many lines are below reorder point.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "inventory_analytics.stock_value",
+          "inventory_analytics.units_on_hand",
+          "inventory_analytics.positions_below_reorder",
+          "inventory_analytics.out_of_stock_positions"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences with the figure asked for; the others only if useful.",
+        "matches": [
+          "What's the total value of stock on hand right now?",
+          "How many stock lines are below their reorder point?",
+          "How much stock do we have?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-top-products-by-revenue",
+      "userRequest": "Products that brought in the most revenue for a period (top products by sales dollars).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "product_sales_analytics.line_revenue",
+          "product_sales_analytics.units_sold"
+        ],
+        "dimensions": [
+          "product_sales_analytics.items_name"
+        ],
+        "filters": [
+          {
+            "member": "product_sales_analytics.items_name",
+            "operator": "set"
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "product_sales_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ],
+        "order": {
+          "product_sales_analytics.line_revenue": "desc"
+        },
+        "limit": 10
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the top item first, then the table (item, revenue, units).",
+        "dateParameter": "product_sales_analytics.completed_at",
+        "matches": [
+          "Which product brought in the most revenue in July?",
+          "Top products by revenue this year",
+          "Highest earning products"
+        ]
+      }
+    },
+    {
+      "name": "recipe-top-products-by-units",
+      "userRequest": "Best-selling products by units sold for a period (top 10 products, what sells most).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "product_sales_analytics.units_sold",
+          "product_sales_analytics.line_revenue"
+        ],
+        "dimensions": [
+          "product_sales_analytics.items_name"
+        ],
+        "filters": [
+          {
+            "member": "product_sales_analytics.items_name",
+            "operator": "set"
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "product_sales_analytics.completed_at",
+            "dateRange": "last month"
+          }
+        ],
+        "order": {
+          "product_sales_analytics.units_sold": "desc"
+        },
+        "limit": 10
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the top item first, then the table (item, units, revenue). No commentary on unnamed lines unless it is the top row.",
+        "dateParameter": "product_sales_analytics.completed_at",
+        "matches": [
+          "What was our best-selling product last month by units?",
+          "Top 10 products last month",
+          "What sells most?",
+          "What do we sell most on Saturdays?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-top-suppliers-by-spend",
+      "userRequest": "Which suppliers have we spent the most with (bills by supplier) for a period?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.total_invoiced",
+          "xero_finance_analytics.invoice_count"
+        ],
+        "dimensions": [
+          "xero_finance_analytics.invoice_contact"
+        ],
+        "filters": [
+          {
+            "member": "xero_finance_analytics.document_kind",
+            "operator": "equals",
+            "values": [
+              "Bill"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.invoice_status",
+            "operator": "notEquals",
+            "values": [
+              "VOIDED"
+            ]
+          }
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "xero_finance_analytics.issued_on",
+            "dateRange": "this year"
+          }
+        ],
+        "order": {
+          "xero_finance_analytics.total_invoiced": "desc"
+        },
+        "limit": 10
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the top supplier first, then the table (supplier, spend incl. GST, bills). For one named supplier, filter invoice_contact with contains on the name.",
+        "dateParameter": "xero_finance_analytics.issued_on",
+        "matches": [
+          "Which suppliers have we spent the most with this financial year?",
+          "Top suppliers this year",
+          "How much have we bought from Pon Bike this year?",
+          "What did we spend with our top 5 suppliers last financial year?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-unpaid-bills",
+      "userRequest": "List our unpaid (approved but not yet paid) supplier bills, with due dates and what is overdue.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.total_amount_due"
+        ],
+        "dimensions": [
+          "xero_finance_analytics.invoice_contact",
+          "xero_finance_analytics.invoice_number",
+          "xero_finance_analytics.issued_on",
+          "xero_finance_analytics.due_on",
+          "xero_finance_analytics.days_overdue"
+        ],
+        "filters": [
+          {
+            "member": "xero_finance_analytics.document_kind",
+            "operator": "equals",
+            "values": [
+              "Bill"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.invoice_status",
+            "operator": "equals",
+            "values": [
+              "AUTHORISED"
+            ]
+          }
+        ],
+        "order": {
+          "xero_finance_analytics.due_on": "asc"
+        },
+        "limit": 100
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Lead with what is already overdue (count and total), then the bills due in the asked window; table of supplier, number, due date, amount, days overdue. Flag implausible due dates (e.g. 1954) as data quirks.",
+        "matches": [
+          "How many unpaid bills do we have?",
+          "Which bills are overdue?",
+          "What's the oldest overdue bill?",
+          "List the bills that are due in the next 14 days",
+          "What bills are due in September?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-wage-cost-by-month",
+      "userRequest": "Wage cost (and hours) by month — the labour cost trend.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.wage_cost",
+          "workforce_analytics.hours_worked"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.shift_date",
+            "granularity": "month",
+            "dateRange": "this year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of wage cost by month; one sentence on the trend; note the current month is partial.",
+        "dateParameter": "workforce_analytics.shift_date",
+        "matches": [
+          "How has our monthly wage cost tracked this year?",
+          "Chart the wage cost per month",
+          "Wages by month"
+        ]
+      }
+    },
+    {
+      "name": "recipe-workshop-jobs-by-month",
+      "userRequest": "Workshop jobs checked in per month (workshop volume trend).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workshop_analytics.workorder_count"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workshop_analytics.checked_in_at",
+            "granularity": "month",
+            "dateRange": "this year"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Line chart of jobs per month (or the single figure if one month was asked); note the current month is partial. Do not report job statuses.",
+        "dateParameter": "workshop_analytics.checked_in_at",
+        "matches": [
+          "How many workshop jobs have we taken in each month this year?",
+          "Workshop jobs per month",
+          "How many jobs came into the workshop last month?"
+        ]
       }
     },
     {

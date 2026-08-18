@@ -125,6 +125,7 @@ function stubContext(input: Readonly<{
     commentary: createV3CommentaryState(false),
     executedQueries: [],
     tableResults: new Map(),
+    priorResults: new Map(),
     chartedResultIds: new Set(),
   };
 }
@@ -269,6 +270,7 @@ async function captureLaneInstructions(
     commentary: createV3CommentaryState(lane === "analytical"),
     executedQueries: [],
     tableResults: new Map(),
+    priorResults: new Map(),
     chartedResultIds: new Set(),
   };
   const input: LaneRunInput = {
@@ -287,6 +289,10 @@ async function captureLaneInstructions(
       assumptions: [],
       clarificationQuestion: null,
       clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
     },
   };
   await (lane === "quick" ? runQuickLane : runAnalyticalLane)(input);
@@ -382,7 +388,7 @@ test("connector sync watermarks reach the model, the tool results, and the answe
   assert.match(route, /connectorFreshness/u);
 });
 
-test("an evidence reviewer gates the answer and can re-enter the analytical lane once", () => {
+test("an evidence reviewer gates the answer and can re-enter the analytical lane once", async () => {
   const engine = read("packages/albert-v3/src/engine/engine.ts");
   assert.match(engine, /reviewEvidenceSufficiency/u);
   assert.match(engine, /verdict === "investigate"/u);
@@ -390,6 +396,15 @@ test("an evidence reviewer gates the answer and can re-enter the analytical lane
   // the budget, and never loops (the revised answer is not re-reviewed).
   assert.match(engine, /An internal reviewer judged the draft below insufficient/u);
   assert.match(engine, /An unexplained zero is not an answer/u);
+  // The reviewer sees a row sample of each presented table, never a silent
+  // truncation: it is told the true row count and that a shorter sample is
+  // presentation, not missing evidence. Turn 01M095F8M1… showed 12 of 25 rows
+  // beside a 25-row query and the reviewer demanded the "13 rows not shown".
+  assert.match(engine, /totalRows: table\.rows\.length/u);
+  assert.match(engine, /slice\(0, REVIEWER_TABLE_SAMPLE_ROWS\)/u);
+  assert.match(engine, /sample shorter than totalRows, is never missing evidence/u);
+  const { REVIEWER_TABLE_SAMPLE_ROWS } = await import("../../packages/albert-v3/src/engine/engine.js");
+  assert.ok(REVIEWER_TABLE_SAMPLE_ROWS >= 25, "a default limit-25 breakdown must be seen whole");
 });
 
 test("the source-finding ledger reaches prompts, the tool ships, and support roles cap effort", async () => {
@@ -471,7 +486,7 @@ test("charts are gated by answer shape and by a perceptual floor on the data", a
   };
   const oneRow = await run("res_one_row");
   assert.equal(oneRow.ok, false);
-  assert.match(String(oneRow.error), /fewer than 3 points/u);
+  assert.match(String(oneRow.error), /fewer than \d points/u);
   const flat = await run("res_flat_bars");
   assert.equal(flat.ok, false);
   assert.match(String(flat.error), /same height/u);

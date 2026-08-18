@@ -90,6 +90,7 @@ export async function runDeepLane(input: LaneRunInput): Promise<FinalAnswer | un
     config: input.config,
     catalogue: input.catalogue,
     route: planningRoute,
+    businessContext: input.context.businessContext?.rendered,
   });
 
   await input.context.emit({
@@ -164,6 +165,7 @@ ${knowledge}`,
       config: input.config,
       catalogue: input.catalogue,
       route: branchRoute,
+      businessContext: input.context.businessContext?.rendered,
     });
     // Branches share the turn budget, provenance and result registry, but
     // carry their own label so parallel progress stays legible.
@@ -209,6 +211,7 @@ say so plainly; a null finding is a valid finding.`,
           system(`${renderRequestContext({
             config: input.config,
             question: branch.question,
+            route: input.context.toolRoute,
           })}\n\n# Branch assignment\nBranch: ${branch.title}\nWhy it matters: ${branch.rationale}`),
           user(branch.question),
         ],

@@ -35,6 +35,7 @@ import DictationWaveform from "./components/DictationWaveform";
 import KeyInsightsPanel from "./components/KeyInsightsPanel";
 import { ModelRunControls } from "./components/ModelRunControls";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
+import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
 import RawDebugger from "./components/RawDebugger";
 import {
   createRawDebugRecorder,
@@ -48,6 +49,7 @@ import TenantDeletionWorkspace, {
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
+import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import styles from "./dash.module.css";
 import traceStyles from "./components/insights-trace.module.css";
 
@@ -230,11 +232,14 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp";
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
+  if (profile.runtime === "xero-mcp" || profile.analyticalRuntime === "xero-mcp") {
+    return "xero_mcp";
+  }
   if (profile.runtime === "albert-v3" || profile.analyticalRuntime === "cube-v3") {
     return "v3";
   }
@@ -356,6 +361,9 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
   lightspeed: "Lightspeed",
   "lightspeed-x": "Lightspeed X-Series",
   xero: "Xero",
+  "fivetran-xero": "Xero (Fivetran)",
+  "fivetran-lightspeed": "Lightspeed (Fivetran)",
+  "fivetran-deputy": "Deputy (Fivetran)",
   deputy: "Deputy",
   square: "Square",
   shopify: "Shopify",
@@ -367,7 +375,7 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
 
 function isConnectableProviderId(value: string | null | undefined): value is ConnectableProviderId {
   return typeof value === "string" &&
-    ["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
+    ["lightspeed", "lightspeed-x", "xero", "fivetran-xero", "fivetran-lightspeed", "deputy", "fivetran-deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
       .includes(value);
 }
 
@@ -412,6 +420,18 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
       return { kind: "error", message: "Choose or create an organisation before connecting a source." };
     case "unknown_provider":
       return { kind: "error", message: "That connection provider is not supported." };
+    case "setup_incomplete":
+      return {
+        kind: "info",
+        message: `${provider} was not finished. Choose Connect again, then on the secure connection page click Authorize, sign in to Xero, pick your organisation, and press Save & Test.`,
+        detail,
+      };
+    case "start_failed":
+      return {
+        kind: "error",
+        message: `${provider} could not be started right now. Try again in a moment; if it keeps happening, the connection may not be set up for this workspace yet.`,
+        detail,
+      };
     default:
       return {
         kind: "error",
@@ -671,6 +691,9 @@ export default function DashPage() {
       // Ignore private-mode storage failures.
     }
   }, [chatDetailedMode]);
+  useEffect(() => {
+    void reloadPublishedNivoChartDesign();
+  }, []);
   const [conversationSummaries, setConversationSummaries] = useState<readonly ConversationSummary[]>([]);
   const seenSidebarConversationIdsRef = useRef<Set<string>>(new Set());
   const [computingConversationIds, setComputingConversationIds] = useState<ReadonlySet<string>>(
@@ -804,7 +827,7 @@ export default function DashPage() {
   const resizeComposerTextarea = useCallback(() => {
     const textarea = chatTextareaRef.current;
     if (!textarea) return;
-    const singleLineHeight = 34;
+    const singleLineHeight = showHeroComposer ? 34 : 28;
     const maxHeight = 168;
     textarea.style.height = "0px";
     const contentHeight = textarea.scrollHeight;
@@ -814,7 +837,7 @@ export default function DashPage() {
     // single-line field does not pick up multiline layout metrics.
     const hasNewline = textarea.value.includes("\n");
     setComposerMultiline(hasNewline || contentHeight > singleLineHeight + 4);
-  }, []);
+  }, [showHeroComposer]);
 
   useLayoutEffect(() => {
     resizeComposerTextarea();
@@ -2044,11 +2067,13 @@ export default function DashPage() {
       ? markConversationComputing(trackedConversationId)
       : null;
     const runPreferences = agentPreferencesRef.current;
-    const runRuntime = isXaiModel(runPreferences.model)
-      ? "v3"
-      : (requestConversationId && lastConversationRuntime)
-        ? lastConversationRuntime
-        : activeChatRuntimeRef.current;
+    const runRuntime = activeChatRuntimeRef.current === "xero_mcp"
+      ? "xero_mcp"
+      : isXaiModel(runPreferences.model)
+        ? "v3"
+        : (requestConversationId && lastConversationRuntime)
+          ? lastConversationRuntime
+          : activeChatRuntimeRef.current;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -2185,7 +2210,7 @@ export default function DashPage() {
     try {
       const requestBody = {
         message: text,
-        ...(runRuntime === "openai" || runRuntime === "v3" ? { preferences: runPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
         confirmedOption,
@@ -2194,9 +2219,11 @@ export default function DashPage() {
         ? "/api/anthropic-conversation"
         : runRuntime === "cubecore"
           ? "/api/cube-conversation"
-          : runRuntime === "v3"
-            ? "/api/v3-conversation"
-            : "/api/conversation";
+          : runRuntime === "xero_mcp"
+            ? "/api/xero-mcp-conversation"
+            : runRuntime === "v3"
+              ? "/api/v3-conversation"
+              : "/api/conversation";
       debug.request(endpoint, requestBody);
       const response = await fetch(endpoint, {
         method: "POST",
@@ -2225,9 +2252,11 @@ export default function DashPage() {
           ? "anthropic"
           : runtimeHeader === "cubecore"
             ? "cubecore"
-            : runtimeHeader === "v3"
-              ? "v3"
-              : "openai";
+            : runtimeHeader === "xero_mcp"
+              ? "xero_mcp"
+              : runtimeHeader === "v3"
+                ? "v3"
+                : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
       debug.response(response, {
@@ -2828,9 +2857,8 @@ export default function DashPage() {
     setEditDraft("");
   };
 
-  // Albert v3 (Cube semantic layer) is the only engine offered in the UI.
-  // Older runtimes remain readable when viewing historical conversations.
-  const startNewChat = () => resetChat("v3");
+  // Albert v3 is the default engine. XERO MCP is an explicit live-Xero test mode.
+  const startNewChat = () => resetChat(activeChatRuntimeRef.current === "xero_mcp" ? "xero_mcp" : "v3");
   const startNewChatRef = useRef(startNewChat);
   startNewChatRef.current = startNewChat;
 
@@ -3067,6 +3095,8 @@ export default function DashPage() {
                             <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
                           ) : activeChatRuntime === "cubecore" ? (
                             <span className={styles.chatRuntimeIndicator}>Cubecore</span>
+                          ) : activeChatRuntime === "xero_mcp" ? (
+                            <span className={styles.chatRuntimeIndicator}>Xero MCP</span>
                           ) : (
                             <ModelRunControls
                               value={agentPreferences}
@@ -3585,6 +3615,13 @@ export default function DashPage() {
                   setAccountOpen(false);
                 }}
               ><Icon name="organization" /><span>Organization settings</span></button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveItem("BusinessContext");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="organization" /><span>About your business</span></button>
               <a
                 href="/connector-specs.html"
                 target="_blank"
@@ -3678,6 +3715,18 @@ export default function DashPage() {
                 </motion.h1>
               </AnimatePresence>
               <div className={styles.chatTopActions}>
+                <button
+                  className={`${styles.chatDetailedMode} ${activeChatRuntime === "xero_mcp" ? styles.chatDetailedModeActive : ""}`}
+                  type="button"
+                  aria-pressed={activeChatRuntime === "xero_mcp"}
+                  title="Live test: ask the official Xero MCP about this organisation"
+                  onClick={() => {
+                    if (activeChatRuntime === "xero_mcp") resetChat("v3");
+                    else resetChat("xero_mcp");
+                  }}
+                >
+                  XERO MCP
+                </button>
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatDetailedMode} ${chatDetailedMode ? styles.chatDetailedModeActive : ""}`}
@@ -3799,7 +3848,7 @@ export default function DashPage() {
                       ease: [0.22, 1, 0.36, 1],
                     }}
                   >
-                    Ask me anything
+                    {activeChatRuntime === "xero_mcp" ? "Ask Xero anything" : "Ask me anything"}
                   </motion.h2>
                 ) : null}
               </AnimatePresence>
@@ -3893,10 +3942,10 @@ export default function DashPage() {
               initial={false}
               animate={{
                 borderRadius: composerMultiline ? 20 : 999,
-                paddingTop: showHeroComposer ? 12 : 7,
-                paddingBottom: showHeroComposer ? 12 : 7,
-                paddingLeft: showHeroComposer ? 10 : 7,
-                paddingRight: showHeroComposer ? 10 : 7,
+                paddingTop: showHeroComposer ? 12 : 4,
+                paddingBottom: showHeroComposer ? 12 : 4,
+                paddingLeft: showHeroComposer ? 10 : 4,
+                paddingRight: showHeroComposer ? 10 : 4,
               }}
               transition={{
                 duration: reduceMotion ? 0 : 0.28,
@@ -3932,8 +3981,14 @@ export default function DashPage() {
                 ) : (
                   <textarea
                     ref={chatTextareaRef}
-                    aria-label="Ask me anything"
-                    placeholder={chatMessages.length > 0 ? "Send follow-up" : "Ask anything about your business…"}
+                    aria-label={activeChatRuntime === "xero_mcp" ? "Ask Xero anything" : "Ask me anything"}
+                    placeholder={
+                      chatMessages.length > 0
+                        ? "Send follow-up"
+                        : activeChatRuntime === "xero_mcp"
+                          ? "Ask anything about Xero…"
+                          : "Ask anything about your business…"
+                    }
                     rows={1}
                     value={chatDraft}
                     onFocus={() => {
@@ -3961,6 +4016,8 @@ export default function DashPage() {
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
                   ) : activeChatRuntime === "cubecore" ? (
                     <span className={styles.chatRuntimeIndicator}>Cubecore</span>
+                  ) : activeChatRuntime === "xero_mcp" ? (
+                    <span className={styles.chatRuntimeIndicator}>Xero MCP</span>
                   ) : (
                     <ModelRunControls
                       value={agentPreferences}
@@ -4126,6 +4183,8 @@ export default function DashPage() {
           />
         ) : activeItem === "Admin" && isInternalOperator ? (
           <AdminWorkspace />
+        ) : activeItem === "BusinessContext" ? (
+          <BusinessContextWorkspace />
         ) : activeItem === "Organization" ? (
           <OrganizationWorkspace
             onOrganisationChanged={() => window.location.reload()}

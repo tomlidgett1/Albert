@@ -4,13 +4,18 @@ import { ResponsiveBar, type BarDatum, type BarTooltipProps } from "@nivo/bar";
 import { ResponsiveLine, type LineSeries, type PointTooltipProps } from "@nivo/line";
 import { useReducedMotion } from "framer-motion";
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
-import type {
-  TraceChartEvent,
-  TraceEvent,
-  TraceProvenance,
-  TraceTableEvent,
+import {
+  axisToNivo,
+  barDesignToNivoProps,
+  legendToNivo,
+  lineDesignToNivoProps,
+  type TraceChartEvent,
+  type TraceEvent,
+  type TraceProvenance,
+  type TraceTableEvent,
 } from "@/packages/shared/src";
 import { responseVisibleResultIds } from "../lib/answer-presentation";
+import { usePublishedNivoChartDesign } from "../lib/nivo-chart-design-store";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import styles from "../dash.module.css";
 import {
@@ -439,33 +444,6 @@ const NIVO_CHART_COLOURS: string[] = [
   "var(--dash-chart-4)",
 ];
 
-const nivoChartTheme = {
-  background: "transparent",
-  text: {
-    fill: "var(--dash-text-muted)",
-    fontFamily: "var(--font-geist-sans), sans-serif",
-    fontSize: 11,
-  },
-  axis: {
-    domain: { line: { stroke: "var(--dash-border-soft)", strokeWidth: 1 } },
-    ticks: {
-      line: { stroke: "var(--dash-border-soft)", strokeWidth: 1 },
-      text: { fill: "var(--dash-text-muted)", fontSize: 10 },
-    },
-    legend: { text: { fill: "var(--dash-text-body)", fontSize: 11 } },
-  },
-  grid: { line: { stroke: "var(--dash-chart-grid)", strokeWidth: 1 } },
-  legends: { text: { fill: "var(--dash-text-muted)", fontSize: 10 } },
-  crosshair: { line: { stroke: "var(--dash-text-faint)", strokeWidth: 1 } },
-  tooltip: {
-    container: {
-      background: "transparent",
-      boxShadow: "none",
-      padding: 0,
-    },
-  },
-} as const;
-
 type PreparedChartRow = Readonly<{
   /** Axis / index key. Pre-formatted so Nivo never truncates raw ISO ticks. */
   x: string;
@@ -485,6 +463,7 @@ function chartAxisLabel(
 
 export function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
   const reducedMotion = useReducedMotion();
+  const publishedDesign = usePublishedNivoChartDesign();
   const descriptionId = useId().replaceAll(":", "");
   const xColumn = table?.columns.find((column) => column.key === event.xKey);
   const primaryColumn = table?.columns.find((column) => column.key === event.yKey);
@@ -546,13 +525,16 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
     yTickLabels,
     seriesLabels: series.map((item) => item.label),
   });
-  const horizontalBars = event.chartType === "bar" && (rows.length >= 8 || longestXLabel > 14);
+  const horizontalBars = event.chartType === "bar" && (
+    event.orientation === "horizontal"
+    || (event.orientation !== "vertical" && (rows.length >= 8 || longestXLabel > 14))
+  );
   const hasLegend = series.length > 1;
   const defaultChartHeight = event.chartType === "line"
-    ? 340
+    ? publishedDesign.line.height
     : horizontalBars
       ? Math.max(280, Math.min(620, rows.length * 34 + (hasLegend ? 108 : 72)))
-      : hasLegend ? 340 : 300;
+      : publishedDesign.bar.height;
   const lineDebugDefaults = useMemo(() => createLineChartDebugConfig({
     height: defaultChartHeight,
     margin: {
@@ -588,12 +570,27 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
   const chartDebug = useNivoChartDebugConfig(chartDebugDefaults);
   const lineConfig = chartDebug.config.chartType === "line" ? chartDebug.config : lineDebugDefaults;
   const barConfig = chartDebug.config.chartType === "bar" ? chartDebug.config : barDebugDefaults;
-  const barIsHorizontal = barConfig.layout === "horizontal";
-  const chartHeight = event.chartType === "line" ? lineConfig.height : barConfig.height;
+  const publishedBar = publishedDesign.bar;
+  const publishedLine = publishedDesign.line;
+  const barUsesManualLayout = publishedBar.layoutMode === "manual" || chartDebug.hasOverride;
+  const lineUsesManualLayout = publishedLine.layoutMode === "manual" || chartDebug.hasOverride;
+  const barIsHorizontal = (barUsesManualLayout ? (chartDebug.hasOverride ? barConfig.layout : publishedBar.layout) : (horizontalBars ? "horizontal" : "vertical")) === "horizontal";
+  const chartHeight = event.chartType === "line"
+    ? (lineUsesManualLayout ? (chartDebug.hasOverride ? lineConfig.height : publishedLine.height) : defaultChartHeight)
+    : (barUsesManualLayout ? (chartDebug.hasOverride ? barConfig.height : publishedBar.height) : defaultChartHeight);
+  const barMargin = barUsesManualLayout
+    ? (chartDebug.hasOverride ? barConfig.margin : publishedBar.margin)
+    : barDebugDefaults.margin;
+  const lineMargin = lineUsesManualLayout
+    ? (chartDebug.hasOverride ? lineConfig.margin : publishedLine.margin)
+    : lineDebugDefaults.margin;
+  const maxXTicks = chartDebug.hasOverride ? lineConfig.maxXTicks : publishedLine.maxXTicks;
+  const publishedBarProps = barDesignToNivoProps(publishedDesign);
+  const publishedLineProps = lineDesignToNivoProps(publishedDesign);
   const rawValue = (x: string | number, key: string) => rawRows.get(String(x))?.[key] ?? null;
   const lineTickValues = useMemo(() => {
-    if (rows.length <= lineConfig.maxXTicks) return rows.map(({ x }) => x);
-    const interval = Math.ceil(rows.length / lineConfig.maxXTicks);
+    if (rows.length <= maxXTicks) return rows.map(({ x }) => x);
+    const interval = Math.ceil(rows.length / maxXTicks);
     const sampled = rows.flatMap(({ x }, index) => index % interval === 0
       ? [{ x, index }]
       : []);
@@ -608,7 +605,7 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
       }
     }
     return sampled.map(({ x }) => x);
-  }, [lineConfig.maxXTicks, rows]);
+  }, [maxXTicks, rows]);
 
   const BarTooltip = ({ id, indexValue, color }: BarTooltipProps<BarDatum>) => {
     const key = String(id);
@@ -650,30 +647,32 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
     })),
   })), [rows, series]);
 
-  const legends = barConfig.legend.enabled ? [{
-    anchor: barConfig.legend.anchor,
-    direction: barConfig.legend.direction,
-    translateX: barConfig.legend.translateX,
-    translateY: barConfig.legend.translateY,
-    itemWidth: barConfig.legend.itemWidth,
-    itemHeight: barConfig.legend.itemHeight,
-    itemsSpacing: barConfig.legend.itemsSpacing,
-    symbolSize: barConfig.legend.symbolSize,
-    symbolShape: "circle" as const,
-    itemTextColor: "var(--dash-text-muted)",
-  }] : [];
-  const lineLegends = lineConfig.legend.enabled ? [{
-    anchor: lineConfig.legend.anchor,
-    direction: lineConfig.legend.direction,
-    translateX: lineConfig.legend.translateX,
-    translateY: lineConfig.legend.translateY,
-    itemWidth: lineConfig.legend.itemWidth,
-    itemHeight: lineConfig.legend.itemHeight,
-    itemsSpacing: lineConfig.legend.itemsSpacing,
-    symbolSize: lineConfig.legend.symbolSize,
-    symbolShape: "circle" as const,
-    itemTextColor: "var(--dash-text-muted)",
-  }] : [];
+  const barLegend = chartDebug.hasOverride
+    ? (barConfig.legend.enabled ? [{
+      ...legendToNivo(publishedBar.legend, "keys"),
+      anchor: barConfig.legend.anchor,
+      direction: barConfig.legend.direction,
+      translateX: barConfig.legend.translateX,
+      translateY: barConfig.legend.translateY,
+      itemWidth: barConfig.legend.itemWidth,
+      itemHeight: barConfig.legend.itemHeight,
+      itemsSpacing: barConfig.legend.itemsSpacing,
+      symbolSize: barConfig.legend.symbolSize,
+    }] : [])
+    : (publishedBar.legend.enabled ? [legendToNivo(publishedBar.legend, "keys")] : []);
+  const lineLegend = chartDebug.hasOverride
+    ? (lineConfig.legend.enabled ? [{
+      ...legendToNivo(publishedLine.legend),
+      anchor: lineConfig.legend.anchor,
+      direction: lineConfig.legend.direction,
+      translateX: lineConfig.legend.translateX,
+      translateY: lineConfig.legend.translateY,
+      itemWidth: lineConfig.legend.itemWidth,
+      itemHeight: lineConfig.legend.itemHeight,
+      itemsSpacing: lineConfig.legend.itemsSpacing,
+      symbolSize: lineConfig.legend.symbolSize,
+    }] : [])
+    : (publishedLine.legend.enabled ? [legendToNivo(publishedLine.legend)] : []);
   const minimumPoints = event.chartType === "line" ? 2 : 1;
   const hasChart = Boolean(table && rows.length >= minimumPoints && series.length && primaryColumn);
   const tableCaption = table?.caption?.trim() ?? "";
@@ -717,115 +716,97 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
             </p>
             {event.chartType === "bar" ? (
               <ResponsiveBar
+                {...(publishedBarProps as object)}
                 data={barData}
                 keys={series.map(({ key }) => key)}
                 indexBy="__albert_x"
-                layout={barConfig.layout}
-                groupMode={barConfig.groupMode}
-                margin={barConfig.margin}
-                padding={barConfig.padding}
-                innerPadding={barConfig.innerPadding}
-                valueScale={{ type: "linear" }}
-                indexScale={{ type: "band", round: true }}
-                colors={NIVO_CHART_COLOURS}
-                colorBy="id"
-                borderRadius={barConfig.borderRadius}
-                borderWidth={barConfig.borderWidth}
-                borderColor={{ from: "color", modifiers: [["darker", 0.35]] }}
-                enableGridX={barConfig.enableGridX}
-                enableGridY={barConfig.enableGridY}
-                enableLabel={barConfig.enableLabel}
+                layout={barIsHorizontal ? "horizontal" : "vertical"}
+                groupMode={chartDebug.hasOverride ? barConfig.groupMode : publishedBar.groupMode}
+                margin={barMargin}
+                padding={chartDebug.hasOverride ? barConfig.padding : publishedBar.padding}
+                innerPadding={chartDebug.hasOverride ? barConfig.innerPadding : publishedBar.innerPadding}
+                colors={publishedBarProps.colors ?? NIVO_CHART_COLOURS}
+                borderRadius={chartDebug.hasOverride ? barConfig.borderRadius : publishedBar.borderRadius}
+                borderWidth={chartDebug.hasOverride ? barConfig.borderWidth : publishedBar.borderWidth}
+                enableGridX={chartDebug.hasOverride ? barConfig.enableGridX : publishedBar.enableGridX}
+                enableGridY={chartDebug.hasOverride ? barConfig.enableGridY : publishedBar.enableGridY}
+                enableLabel={chartDebug.hasOverride ? barConfig.enableLabel : publishedBar.enableLabel}
                 label={(datum) => formatY(datum.value ?? 0)}
-                labelSkipWidth={barConfig.labelSkipWidth}
-                labelSkipHeight={barConfig.labelSkipHeight}
-                labelTextColor="var(--dash-chart-label-on-fill)"
-                axisBottom={{
-                  tickSize: barConfig.axisBottom.tickSize,
-                  tickPadding: barConfig.axisBottom.tickPadding,
-                  tickRotation: barConfig.axisBottom.tickRotation,
-                  truncateTickAt: barConfig.axisBottom.truncateTickAt || undefined,
-                  format: barIsHorizontal ? (value) => formatY(Number(value)) : formatX,
-                  legend: barConfig.axisBottom.showLegend
-                    ? barIsHorizontal ? yAxisLegend : xAxisLegend
-                    : undefined,
-                  legendOffset: barConfig.axisBottom.legendOffset,
-                }}
-                axisLeft={{
-                  tickSize: barConfig.axisLeft.tickSize,
-                  tickPadding: barConfig.axisLeft.tickPadding,
-                  tickRotation: barConfig.axisLeft.tickRotation,
-                  truncateTickAt: barConfig.axisLeft.truncateTickAt || undefined,
-                  format: barIsHorizontal ? formatX : (value) => formatY(Number(value)),
-                  legend: barConfig.axisLeft.showLegend
-                    ? barIsHorizontal ? xAxisLegend : yAxisLegend
-                    : undefined,
-                  legendOffset: barConfig.axisLeft.legendOffset,
-                }}
-                legends={legends.map((legend) => ({ ...legend, dataFrom: "keys" as const }))}
+                labelSkipWidth={chartDebug.hasOverride ? barConfig.labelSkipWidth : publishedBar.labelSkipWidth}
+                labelSkipHeight={chartDebug.hasOverride ? barConfig.labelSkipHeight : publishedBar.labelSkipHeight}
+                axisTop={axisToNivo(publishedBar.axisTop, barIsHorizontal ? yAxisLegend : xAxisLegend)}
+                axisRight={axisToNivo(publishedBar.axisRight, barIsHorizontal ? xAxisLegend : yAxisLegend)}
+                axisBottom={axisToNivo(
+                  chartDebug.hasOverride
+                    ? { ...publishedBar.axisBottom, ...barConfig.axisBottom, enabled: publishedBar.axisBottom.enabled }
+                    : publishedBar.axisBottom,
+                  barIsHorizontal ? yAxisLegend : xAxisLegend,
+                  barIsHorizontal ? (value) => formatY(Number(value)) : formatX,
+                )}
+                axisLeft={axisToNivo(
+                  chartDebug.hasOverride
+                    ? { ...publishedBar.axisLeft, ...barConfig.axisLeft, enabled: publishedBar.axisLeft.enabled }
+                    : publishedBar.axisLeft,
+                  barIsHorizontal ? xAxisLegend : yAxisLegend,
+                  barIsHorizontal ? formatX : (value) => formatY(Number(value)),
+                )}
+                legends={barLegend}
                 legendLabel={(datum) => seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}
                 tooltip={BarTooltip}
-                theme={nivoChartTheme}
-                role="img"
                 ariaLabel={event.caption}
                 ariaDescribedBy={descriptionId}
-                isFocusable
                 barAriaLabel={(datum) => `${seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}, ${formatY(datum.value ?? 0)}, ${formatX(datum.indexValue)}`}
-                animate={!reducedMotion}
-                animateOnMount={!reducedMotion}
-                motionConfig={{ mass: 1, tension: 210, friction: 28, clamp: true }}
+                animate={!reducedMotion && publishedBar.animate}
+                animateOnMount={!reducedMotion && publishedBar.animateOnMount}
               />
             ) : (
-              // Albert's response-wide line treatment follows the owner-approved
-              // Nivo style while retaining governed, data-derived axis labels.
               <ResponsiveLine
+                {...(publishedLineProps as object)}
                 data={lineData}
-                margin={lineConfig.margin}
+                margin={lineMargin}
                 xScale={{ type: "point" }}
-                yScale={{ type: "linear", ...lineConfig.yScale }}
-                curve={lineConfig.curve}
-                colors={NIVO_CHART_COLOURS}
-                lineWidth={lineConfig.lineWidth}
-                enableArea={lineConfig.enableArea}
-                enableGridX={lineConfig.enableGridX}
-                enableGridY={lineConfig.enableGridY}
-                enablePoints={lineConfig.enablePoints}
-                pointSize={lineConfig.pointSize}
-                pointColor={{ theme: "background" }}
-                pointBorderWidth={lineConfig.pointBorderWidth}
-                pointBorderColor={{ from: "seriesColor" }}
-                pointLabelYOffset={-12}
-                areaOpacity={lineConfig.areaOpacity}
-                enableTouchCrosshair={lineConfig.enableTouchCrosshair}
-                axisBottom={{
-                  tickValues: lineTickValues,
-                  tickSize: lineConfig.axisBottom.tickSize,
-                  tickPadding: lineConfig.axisBottom.tickPadding,
-                  tickRotation: lineConfig.axisBottom.tickRotation,
-                  truncateTickAt: lineConfig.axisBottom.truncateTickAt || undefined,
-                  format: formatX,
-                  legend: lineConfig.axisBottom.showLegend ? xAxisLegend : undefined,
-                  legendOffset: lineConfig.axisBottom.legendOffset,
+                yScale={{
+                  type: publishedLine.yScale.type,
+                  min: chartDebug.hasOverride ? lineConfig.yScale.min : publishedLine.yScale.min,
+                  max: publishedLine.yScale.max,
+                  stacked: chartDebug.hasOverride ? lineConfig.yScale.stacked : publishedLine.yScale.stacked,
+                  reverse: chartDebug.hasOverride ? lineConfig.yScale.reverse : publishedLine.yScale.reverse,
                 }}
-                axisLeft={{
-                  tickSize: lineConfig.axisLeft.tickSize,
-                  tickPadding: lineConfig.axisLeft.tickPadding,
-                  tickRotation: lineConfig.axisLeft.tickRotation,
-                  truncateTickAt: lineConfig.axisLeft.truncateTickAt || undefined,
-                  format: (value) => formatY(Number(value)),
-                  legend: lineConfig.axisLeft.showLegend ? yAxisLegend : undefined,
-                  legendOffset: lineConfig.axisLeft.legendOffset,
-                }}
-                legends={lineLegends}
-                useMesh={lineConfig.useMesh}
+                curve={chartDebug.hasOverride ? lineConfig.curve : publishedLine.curve}
+                colors={publishedLineProps.colors ?? NIVO_CHART_COLOURS}
+                lineWidth={chartDebug.hasOverride ? lineConfig.lineWidth : publishedLine.lineWidth}
+                enableArea={chartDebug.hasOverride ? lineConfig.enableArea : publishedLine.enableArea}
+                enableGridX={chartDebug.hasOverride ? lineConfig.enableGridX : publishedLine.enableGridX}
+                enableGridY={chartDebug.hasOverride ? lineConfig.enableGridY : publishedLine.enableGridY}
+                enablePoints={chartDebug.hasOverride ? lineConfig.enablePoints : publishedLine.enablePoints}
+                pointSize={chartDebug.hasOverride ? lineConfig.pointSize : publishedLine.pointSize}
+                pointBorderWidth={chartDebug.hasOverride ? lineConfig.pointBorderWidth : publishedLine.pointBorderWidth}
+                areaOpacity={chartDebug.hasOverride ? lineConfig.areaOpacity : publishedLine.areaOpacity}
+                enableTouchCrosshair={chartDebug.hasOverride ? lineConfig.enableTouchCrosshair : publishedLine.enableTouchCrosshair}
+                useMesh={chartDebug.hasOverride ? lineConfig.useMesh : publishedLine.useMesh}
+                axisTop={axisToNivo(publishedLine.axisTop, xAxisLegend)}
+                axisRight={axisToNivo(publishedLine.axisRight, yAxisLegend)}
+                axisBottom={axisToNivo(
+                  chartDebug.hasOverride
+                    ? { ...publishedLine.axisBottom, ...lineConfig.axisBottom, enabled: publishedLine.axisBottom.enabled }
+                    : publishedLine.axisBottom,
+                  xAxisLegend,
+                  formatX,
+                  lineTickValues,
+                )}
+                axisLeft={axisToNivo(
+                  chartDebug.hasOverride
+                    ? { ...publishedLine.axisLeft, ...lineConfig.axisLeft, enabled: publishedLine.axisLeft.enabled }
+                    : publishedLine.axisLeft,
+                  yAxisLegend,
+                  (value) => formatY(Number(value)),
+                )}
+                legends={lineLegend}
                 tooltip={LineTooltip}
-                theme={nivoChartTheme}
-                role="img"
                 ariaLabel={event.caption}
                 ariaDescribedBy={descriptionId}
-                isFocusable
                 pointAriaLabel={(point) => `${String(point.seriesId)}, ${formatX(String(point.data.x))}, ${formatY(Number(point.data.y))}`}
-                animate={!reducedMotion}
-                motionConfig={{ mass: 1, tension: 210, friction: 28, clamp: true }}
+                animate={!reducedMotion && publishedLine.animate}
               />
             )}
           </div>

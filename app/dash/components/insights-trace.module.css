@@ -8,7 +8,7 @@
 /* Cursor-style text shimmer: full base with a narrow highlight sweep */
 .runningShimmer,
 .agentTrailVerbLive,
-.agentTrailStatusLive {
+.agentTrailStatusCopy {
   background-image: linear-gradient(
     90deg,
     light-dark(#737373, #a8abb4) 0%,
@@ -22,12 +22,14 @@
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: insightsAgentShimmer 2s linear infinite;
+  animation: insightsAgentShimmer var(--insights-shimmer-duration, 2.6s) ease-in-out infinite;
 }
 
 @keyframes insightsAgentShimmer {
-  0% { background-position: -100% center; }
-  100% { background-position: 200% center; }
+  0% { background-position: 200% center; }
+  18% { background-position: 200% center; }
+  82% { background-position: -100% center; }
+  100% { background-position: -100% center; }
 }
 
 @keyframes insightsRowIn {
@@ -95,6 +97,10 @@
 
 .expandPanel[data-duration="300"] {
   transition-duration: 300ms;
+}
+
+.expandPanel[data-duration="640"] {
+  transition-duration: 640ms;
 }
 
 .expandInner {
@@ -294,27 +300,60 @@
   overflow: hidden;
 }
 
-.agentTrailStatusMeasure {
-  display: block;
+.agentTrailStatusMeasure,
+.agentTrailStatusLive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
-  visibility: hidden;
   font-size: 12.5px;
   font-weight: 500;
   line-height: 18px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agentTrailStatusMeasure {
+  visibility: hidden;
 }
 
 .agentTrailStatusLive {
   position: absolute;
   inset: 0;
-  display: block;
+}
+
+.agentTrailStatusCopy {
+  min-width: 0;
   overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 18px;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.agentTrailStatusTools {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.agentTrailStatusTool {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-left: -4px;
+  border: 1px solid light-dark(#efefef, #2d3036);
+  border-radius: 6px;
+  background: light-dark(#ffffff, #212327);
+  overflow: hidden;
+}
+
+.agentTrailStatusTools .agentTrailStatusTool:first-child {
+  margin-left: 0;
+}
+
+.agentTrailStatusTool :global(img) {
+  width: 11px;
+  height: 11px;
+  object-fit: contain;
 }
 
 .agentTrailSteps {
@@ -1820,7 +1859,7 @@
 @media (prefers-reduced-motion: reduce) {
   .runningShimmer,
   .agentTrailVerbLive,
-  .agentTrailStatusLive,
+  .agentTrailStatusCopy,
   .spinner,
   .spinnerSm,
   .spinnerLg,
@@ -1835,13 +1874,14 @@
   }
 
   .agentTrailVerbLive,
-  .agentTrailStatusLive {
+  .agentTrailStatusCopy {
     background: none;
     color: light-dark(#737373, #a8abb4);
     -webkit-text-fill-color: unset;
   }
 
-  .selectionToolbar {
+  .selectionToolbar,
+  .expandPanel {
     transition: none !important;
   }
 
@@ -1863,7 +1903,8 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin: 6px 0 2px;
+  /* Match .compactResultTable / .answerBlock so the card lines up with query tables. */
+  margin: 6px 12px 2px 10px;
   padding: 8px 10px;
   border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1));
   border-radius: 10px;
@@ -1888,7 +1929,7 @@
 
 .planStep {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   min-height: 20px;
 }
@@ -1896,8 +1937,10 @@
 .planStepIcon {
   display: inline-flex;
   width: 14px;
+  height: 16px;
   justify-content: center;
   align-items: center;
+  margin-top: 1px;
   color: light-dark(#16a34a, #4ade80);
   flex: none;
 }
@@ -1910,10 +1953,15 @@
 }
 
 .planStepLabel {
+  min-width: 0;
+  flex: 1;
   color: light-dark(#404040, #d5d8df);
   font-size: 12.5px;
   font-weight: 450;
   letter-spacing: -0.02em;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .planStep[data-status="done"] .planStepLabel {
@@ -1924,4 +1972,158 @@
 
 .planStep[data-status="active"] .planStepLabel {
   font-weight: 550;
+}
+
+/* Research step outcomes: what a catalogue search / value lookup found. */
+.researchFindings {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.researchToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: light-dark(#8a8a8a, #8f939c);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.researchToggle:hover,
+.researchToggle:focus-visible {
+  color: light-dark(#404040, #d5d8df);
+}
+
+.researchMiss {
+  color: light-dark(#a3a3a3, #8a8d96);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.researchList {
+  margin: 2px 0 4px;
+  padding: 6px 10px;
+  border-left: 2px solid light-dark(#e5e5e5, #2d3036);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.researchHead {
+  color: light-dark(#404040, #d5d8df);
+  font-weight: 500;
+}
+
+.researchMeaning {
+  color: light-dark(#737373, #a8abb4);
+}
+
+/* Structured query details behind the result card's info button. */
+.queryDetails {
+  border-bottom: 1px solid light-dark(#e5e5e5, #2d3036);
+  background: light-dark(#fafafa, #17181b);
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.queryDetailsTopic {
+  display: grid;
+  gap: 2px;
+}
+
+.queryDetailsEyebrow {
+  color: light-dark(#8a8a8a, #8f939c);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.queryDetailsTitle {
+  color: light-dark(#262626, #e6e8ee);
+  font-weight: 600;
+}
+
+.queryDetailsMuted {
+  color: light-dark(#737373, #a8abb4);
+}
+
+.queryDetailsSection {
+  display: grid;
+  gap: 4px;
+}
+
+.queryDetailsList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+}
+
+.queryDetailsField {
+  display: grid;
+  gap: 1px;
+}
+
+.queryDetailsFieldHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.queryDetailsFieldLabel {
+  color: light-dark(#262626, #e6e8ee);
+  font-weight: 550;
+}
+
+.queryDetailsKind {
+  color: light-dark(#a3a3a3, #8a8d96);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.queryDetailsMember {
+  color: light-dark(#a3a3a3, #8a8d96);
+  font-family: var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+}
+
+.queryDetailsFormula {
+  font-family: var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: light-dark(#404040, #c4c7cf);
+}
+
+.queryDetailsYamlToggle {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: light-dark(#8a8a8a, #8f939c);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.queryDetailsYamlToggle:hover,
+.queryDetailsYamlToggle:focus-visible {
+  color: light-dark(#404040, #d5d8df);
 }

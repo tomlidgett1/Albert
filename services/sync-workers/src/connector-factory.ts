@@ -200,6 +200,28 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
     });
   }
 
+  /**
+   * The public OAuth client id the browser needs to build a provider's
+   * authorize URL. Returned to the web by /v1/oauth/start so the authorize
+   * request and the worker's token exchange can never use different apps —
+   * a split there makes every code unredeemable and the sync silently expires.
+   */
+  publicClientId(provider: Provider): string | undefined {
+    switch (provider) {
+      case "lightspeed-r": return this.config.lightspeedClientId?.trim() || undefined;
+      case "lightspeed-x": return this.config.lightspeedXClientId?.trim() || undefined;
+      case "xero": return this.config.xeroClientId?.trim() || undefined;
+      case "square": return this.config.squareClientId?.trim() || undefined;
+      case "shopify": return this.config.shopifyClientId?.trim() || undefined;
+      case "stripe": return this.config.stripeClientId?.trim() || undefined;
+      case "momence": return this.config.momenceClientId?.trim() || undefined;
+      case "meta-ads": return this.config.metaAdsClientId?.trim() || undefined;
+      case "google-ads": return this.config.googleAdsClientId?.trim() || undefined;
+      case "deputy": return this.config.deputyClientId?.trim() || undefined;
+      default: return undefined;
+    }
+  }
+
   scopes(provider: Provider): readonly string[] {
     if (provider === "lightspeed-r") return LIGHTSPEED_R_DEFAULT_SCOPES;
     if (provider === "lightspeed-x") return LIGHTSPEED_X_DEFAULT_SCOPES;

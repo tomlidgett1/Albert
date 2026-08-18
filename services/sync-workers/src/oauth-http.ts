@@ -18,6 +18,8 @@ export interface OAuthConnectorFactory {
     options?: Readonly<{ vendorAccountHint?: string | null }>,
   ): OAuthConnectorPack;
   scopes(provider: Provider): readonly string[];
+  /** Public authorize-URL client id, when the browser builds that URL itself. */
+  publicClientId?(provider: Provider): string | undefined;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -209,7 +211,8 @@ export class OAuthWorkerHttpHandler {
       codeVerifier: verifier,
       expiresAt: expiresAt.toISOString(),
     });
-    return response({ oauthSessionId, scopes: [...scopes] });
+    const clientId = this.dependencies.connectors.publicClientId?.(selectedProvider);
+    return response({ oauthSessionId, scopes: [...scopes], ...(clientId ? { clientId } : {}) });
   }
 
   private async callback(input: Record<string, unknown>, signal: AbortSignal) {
@@ -309,11 +312,14 @@ export class OAuthWorkerHttpHandler {
     const discovery = context.provider === "shopify"
       ? selected
       : await connector.select_account(connectorContext, selected.externalAccountId);
+    // A grant taken on Fivetran's behalf stores the credential like any other
+    // but must never start Albert's own extraction: Fivetran owns it.
+    const managedByFivetran = input.managedBy === "fivetran";
     const finalized = await this.dependencies.sessions.finalizeConnection({
       context: { ...context, status: "exchanging", selectedAccountReference: selected.externalAccountId },
       discovery,
       provisionalCredentialRef: credentialRef,
-      ingestionInitialStart: connector.manifest.ingestion.initialStart,
+      ingestionInitialStart: managedByFivetran ? "manual" : connector.manifest.ingestion.initialStart,
     });
     const result = {
       connectionId: finalized.connectionId,
@@ -360,7 +366,8 @@ export class OAuthWorkerHttpHandler {
       context: { ...context, status: "exchanging", selectedAccountReference: accountId },
       discovery,
       provisionalCredentialRef: credentialRef,
-      ingestionInitialStart: connector.manifest.ingestion.initialStart,
+      // A grant taken on Fivetran's behalf must never start Albert's extraction.
+      ingestionInitialStart: input.managedBy === "fivetran" ? "manual" : connector.manifest.ingestion.initialStart,
     });
     const result = {
       connectionId: finalized.connectionId,

@@ -1,0 +1,40 @@
+[context] collecting facts for 01KZN20VTX2EWW1TQ2AA3MCPW6 (deputy, lightspeed-r, xero) …
+  ok  sales_by_month_24m             24 rows 2392ms
+  ok  sales_by_location_12m           1 rows 2966ms
+  ok  revenue_by_category_12m        20 rows 195ms
+  ERR top_brands_12m                  0 rows 90003ms — Cubecore is down. The Cube API could not be reached (This operation was aborted).
+  ok  sales_by_year_all_time         10 rows 1136ms
+  ok  workshop_by_month_12m          12 rows 10183ms
+  ERR customers                       0 rows 90003ms — Cubecore is down. The Cube API could not be reached (This operation was aborted).
+  ERR catalogue_and_stock             0 rows 90003ms — Cubecore is down. The Cube API could not be reached (This operation was aborted).
+  ok  payment_mix_12m                 7 rows 281ms
+  ok  staff_headcount                 1 rows 172ms
+  ok  hours_wages_by_month_12m       12 rows 172ms
+  ok  areas_12m                       1 rows 170ms
+  ok  staff_positions                 2 rows 10178ms
+  ok  organisation                    1 rows 10173ms
+  ok  pnl_by_account_class_12m        2 rows 10224ms
+  ok  top_expense_accounts_12m       12 rows 10209ms
+  ok  receivables_payables            1 rows 10258ms
+  ok  top_suppliers_12m              10 rows 10368ms
+  ok  bank_accounts_12m               4 rows 10182ms
+[context] facts in 411s; generating …
+[context] generated in 431s — 423 words rendered (model gpt-5.6-luna, generator 2026-08-18.1)
+[context] wrote evals/albert/context/01kzn20vtx2eww1tq2aa3mcpw6.json and evals/albert/context/01kzn20vtx2eww1tq2aa3mcpw6.md
+
+# About this business (reference data from its systems and its owner — not instructions)
+**Ashburton Cycles** — Ashburton Cycles is an Australian cycling shop in Ashburton, operating from one retail location. It sells bikes and cycling products through the retail floor and provides workshop/service jobs. Industry: Cycling retail and workshop services; model: hybrid; channels: Retail shop, Workshop/service; locations: Ashburton Cycles (Only recorded location; retail shop and workshop).
+**How it makes money** (Lightspeed product_sales_analytics, 12 months to July 2026; product-line revenue shares): Workshop/service (~22%) — Services category; includes service and repair lines; Bikes (~26%) — Includes City, Kids, Gravel, Mountain and Hybrid categories; Parts & accessories (~52%) — Includes drivetrain, wheels, tyres and other accessories. Scale: roughly $600k–$660k a year, GST-inclusive takings. Seasonality: Takings peak from October to May, strongest in December; June and July are lower.
+**Scale & shape**: 20 staff on the books, 7 active (Deputy workforce_analytics); $632,865.60 gross takings and 4,780 transactions in 12 months (Lightspeed sales_analytics).; 127–196 workshop jobs checked in monthly in 12 months (Lightspeed workshop_analytics)..
+**Goals & priorities**: not stated by the owner yet. Current watch-points from the data: Xero shows $22,487.32 payable outstanding and $2,000 receivable outstanding; overdue amounts are $23,033.62 and $1,750 respectively.; Xero purchases were $221,631.76 in the latest 12 months, the largest ledger expense account..
+**Owner vocabulary**: "workshop" = Service and repair activity recorded as Lightspeed workorders [workshop_analytics]; "the floor" = Retail shop operation and its sales activity [sales_analytics]; "takings" = Completed-sale gross revenue including GST [gross_takings]; "wages" = Worked-time wage cost from Deputy timesheets [workforce_analytics]; "P&L" = Accounting revenue and expense lines in Xero [xero_finance_analytics]; "payables" = Amounts currently owed to suppliers and other creditors [total_payable_outstanding]; "receivables" = Amounts currently owed by customers or other debtors [total_receivable_outstanding]; "stock" = Products and units held in inventory [inventory_analytics]; "GST" = Tax collected on completed POS sales [sales_analytics].
+**Connected tools**: Lightspeed Retail (R-Series) (lightspeed-r): Canonical source for sales, products, customers, inventory and workshop activity — source of truth for sales, products, workshop, customers, stock [data from 2018-01-01 through 2026-07-31]. Deputy rostering and timesheets (deputy): Authoritative source for worked hours, wage cost, rosters and workforce structure — source of truth for rosters, wages, headcount. Xero accounting and payroll (xero): Source for accounting ledger, invoices, bills, bank activity and business setup — source of truth for invoices, bills, bank, GST [data from 2025-08-01 through 2026-07-31].
+**Read the data with care**: Lightspeed raw sales can contain duplicate recent versions; governed sales figures are deduplicated.; Deputy timesheets are authoritative for labour hours and wage cost; Square timecards are inflated..
+
+About THIS business (reference data, not instructions):
+- Ashburton Cycles: Ashburton Cycles is an Australian cycling shop in Ashburton, operating from one retail location. It sells bikes and cycling products through the retail floor and provides workshop/service jobs.
+- Revenue streams: Workshop/service (~22%), Bikes (~26%), Parts & accessories (~52%).
+- Tools: lightspeed-r = Canonical source for sales, products, customers, inventory and workshop activity; deputy = Authoritative source for worked hours, wage cost, rosters and workforce structure; xero = Source for accounting ledger, invoices, bills, bank activity and business setup.
+- Owner vocabulary: "workshop" → Service and repair activity recorded as Lightspeed workorders; "the floor" → Retail shop operation and its sales activity; "takings" → Completed-sale gross revenue including GST; "wages" → Worked-time wage cost from Deputy timesheets; "P&L" → Accounting revenue and expense lines in Xero; "payables" → Amounts currently owed to suppliers and other creditors; "receivables" → Amounts currently owed by customers or other debtors; "stock" → Products and units held in inventory; "GST" → Tax collected on completed POS sales; "services" → Lightspeed product category containing workshop-related sales lines.
+Use it to pick the natural reading of a vague question ("the workshop", "the floor", "how are we going") and the right tool; never invent facts beyond it.
+[context] saved to the control plane for 01KZN20VTX2EWW1TQ2AA3MCPW6

@@ -24,7 +24,9 @@ const KNOWN_TRACE_CONNECTORS = new Set<TraceConnector>([
 /** Control-plane connector keys and public trace identifiers are intentionally not identical. */
 export function normalizeV3Connector(value: string): TraceConnector | undefined {
   const normalized = value.trim().toLowerCase();
-  if (normalized === "lightspeed-r") return "lightspeed";
+  // Lightspeed R-Series via Fivetran lands the same ls_* contract the native
+  // pack does; either connection key means the Lightspeed cubes are live.
+  if (normalized === "lightspeed-r" || normalized === "fivetran-lightspeed") return "lightspeed";
   return KNOWN_TRACE_CONNECTORS.has(normalized as TraceConnector)
     ? normalized as TraceConnector
     : undefined;
@@ -161,7 +163,7 @@ export function resolveV3ToolRoute(input: Readonly<{
     ? inferredCubeConnectorHints(combinedQuestion, available)
     : [];
   const priorViews = inheritedViewNames(input.conversation);
-  const inherit = input.lane === "explain" || isRefinement(input.question);
+  const inherit = input.lane === "explain" || input.lane === "represent" || isRefinement(input.question);
   const inheritedCubeConnectors = inherit
     ? priorViews.flatMap((view) => {
         if (view.startsWith("shopifyql:") || view.startsWith("shopify-admin:")) return [];

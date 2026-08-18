@@ -81,16 +81,12 @@ connection ID (without surprising the user by revoking unrelated tenants) and
 then destroys Albert's local credential.
 
 Xero introduced granular Accounting API scopes in March 2026. Albert requests
-every read scope the app is entitled to plus `offline_access`, and no write
-scope at any tier — the pack contains no source write method, so a write grant
-could only exceed what the code can use. The set is deliberately wider than V1
-extraction (payroll, files, assets, projects, budgets, attachments and 1099
-reports have no declared stream yet) so that widening ingestion later never
-forces customers back through a re-consent. Verified against the live authorize
-endpoint on 2026-08-06: Xero refuses `accounting.transactions[.read]`,
-`bankfeeds` and `finance.*` for granular-scope apps, so requesting any of them
-would fail the whole authorization. `accounting.reports.read` is refused on the
-same Advanced-tier basis as Journals and is omitted until Xero grants it.
+every granular accounting, report, payroll, files, assets and projects scope
+the app can put on a PKCE grant, including write variants the official MCP
+needs, plus `offline_access`. Bundled scopes Xero can refuse for granular-scope
+apps stay out: `accounting.transactions[.read]`, `accounting.reports.read`,
+`bankfeeds` and `finance.*`. Existing connections keep the previous grant until
+the organisation re-consents.
 
 The general-ledger Journals endpoint is
 an Advanced-tier feature requiring initial and annual security assessment plus

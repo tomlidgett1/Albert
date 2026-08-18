@@ -31,11 +31,29 @@ export type AlwaysRule = Readonly<{
   body: string;
 }>;
 
+/**
+ * A certified query flagged as a recipe is a complete fast-path answer for a
+ * recognised question shape (the head of the question distribution): the
+ * intent orchestrator may route straight to it, the engine executes it and
+ * composes the answer without the agentic lane. Recipes are declared per view
+ * in the agent config; the mechanism is connector-agnostic.
+ */
+export type CertifiedQueryRecipe = Readonly<{
+  presentation: "fact" | "list" | "table" | "line" | "bar";
+  /** One or two sentences of guidance for composing the answer. */
+  answerHint?: string;
+  /** Time member whose dateRange the orchestrator may set from the question. */
+  dateParameter?: string;
+  /** Extra phrasings that should match this recipe (shown to the orchestrator). */
+  matches?: readonly string[];
+}>;
+
 export type CertifiedQuery = Readonly<{
   name: string;
   userRequest: string;
   notes: string;
   query: unknown;
+  recipe?: CertifiedQueryRecipe;
 }>;
 
 export type SkillDefinition = Readonly<{
@@ -45,7 +63,31 @@ export type SkillDefinition = Readonly<{
   body: string;
 }>;
 
+/** A tiny query that reveals how far a connector's data actually runs (see freshness.ts). */
+export type FreshnessProbe = Readonly<{
+  connector: string;
+  domain: string;
+  /** Fully qualified time dimension, e.g. sales_analytics.completed_at. */
+  member: string;
+}>;
+
+/**
+ * A small governed query the business-context generator runs to learn what a
+ * business is (see context-layer/). Declared per connector in config.yml.
+ */
+export type ContextProbe = Readonly<{
+  connector: string;
+  key: string;
+  purpose: string;
+  /** Cube query JSON (measures/dimensions/timeDimensions/filters/order/limit). */
+  query: Readonly<Record<string, unknown>>;
+  /** Rows kept for the generator (default 24). */
+  rows: number;
+}>;
+
 export type AlbertV3AgentConfig = Readonly<{
+  freshnessProbes: readonly FreshnessProbe[];
+  contextProbes: readonly ContextProbe[];
   accessibleViews: readonly AccessibleView[];
   lanes: Readonly<Record<"quick" | "analytical" | "deep", LaneBudget>>;
   timezone: string;
@@ -120,8 +162,33 @@ export function loadAgentConfig(): AlbertV3AgentConfig {
 
   const lanesRaw = isRecord(config.lanes) ? config.lanes : {};
   const defaults = isRecord(config.defaults) ? config.defaults : {};
+  const freshnessProbes: FreshnessProbe[] = (Array.isArray(config.freshness_probes) ? config.freshness_probes : [])
+    .flatMap((raw: unknown) => {
+      if (!isRecord(raw)) return [];
+      const connector = typeof raw.connector === "string" ? raw.connector : "";
+      const domain = typeof raw.domain === "string" ? raw.domain : "";
+      const member = typeof raw.member === "string" ? raw.member : "";
+      if (!connector || !domain || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u.test(member)) return [];
+      return [Object.freeze({ connector, domain, member })];
+    });
+
+  const contextProbes: ContextProbe[] = (Array.isArray(config.context_probes) ? config.context_probes : [])
+    .flatMap((raw: unknown) => {
+      if (!isRecord(raw)) return [];
+      const connector = typeof raw.connector === "string" ? raw.connector : "";
+      const key = typeof raw.key === "string" ? raw.key : "";
+      const purpose = typeof raw.purpose === "string" ? raw.purpose.trim() : "";
+      if (!connector || !/^[a-z][a-z0-9_]{1,60}$/u.test(key) || !purpose || !isRecord(raw.query)) return [];
+      const rows = typeof raw.rows === "number" && raw.rows >= 1 && raw.rows <= 60 ? Math.floor(raw.rows) : 24;
+      return [Object.freeze({ connector, key, purpose, query: Object.freeze({ ...raw.query }), rows })];
+    });
+  if (new Set(contextProbes.map((probe) => probe.key)).size !== contextProbes.length) {
+    throw new Error("The Albert v3 agent config declares duplicate context probe keys.");
+  }
 
   cached = Object.freeze({
+    freshnessProbes: Object.freeze(freshnessProbes),
+    contextProbes: Object.freeze(contextProbes),
     accessibleViews: Object.freeze(accessibleViews),
     lanes: Object.freeze({
       quick: laneBudget(lanesRaw.quick, { reasoningEffort: "low", maxQueries: 3 }),
@@ -138,6 +205,7 @@ export function loadAgentConfig(): AlbertV3AgentConfig {
       userRequest: query.userRequest,
       notes: query.notes,
       query: query.query,
+      ...("recipe" in query && query.recipe ? { recipe: Object.freeze({ ...(query.recipe as CertifiedQueryRecipe) }) } : {}),
     }))),
     skills: Object.freeze(skills.map((skill) => Object.freeze({ ...skill }))),
   });
@@ -174,13 +242,51 @@ function overlapScore(question: Set<string>, candidate: string): number {
  * rule's description, exactly the progressive-disclosure contract Cube uses:
  * the body only enters the prompt when the description matches.
  */
+const VIEW_MENTION = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:analytics|explorer))\b/gu;
+
+/** Connectors behind every semantic view a piece of text names; empty when it names none. */
+export function connectorsMentionedIn(text: string, config: AlbertV3AgentConfig): ReadonlySet<string> {
+  const byView = new Map(config.accessibleViews.map((view) => [view.name, view.connector]));
+  const found = new Set<string>();
+  for (const match of text.matchAll(VIEW_MENTION)) {
+    const connector = byView.get(match[1]!);
+    if (connector) found.add(connector);
+  }
+  return found;
+}
+
+/** Connectors a certified query executes against, derived from its member prefixes. */
+export function certifiedQueryConnectors(
+  query: CertifiedQuery,
+  config: AlbertV3AgentConfig,
+): ReadonlySet<string> {
+  return connectorsMentionedIn(JSON.stringify(query.query), config);
+}
+
+/**
+ * True when text bound to particular connectors is usable on this route: it
+ * names no connector at all, or every connector it names is connected. A
+ * certified X-Series query must never be offered as a "trusted starting
+ * point" to a tenant that only runs R-Series.
+ */
+function usableOnRoute(
+  mentioned: ReadonlySet<string>,
+  allowedConnectors: readonly string[] | undefined,
+): boolean {
+  if (!allowedConnectors || mentioned.size === 0) return true;
+  const allowed = new Set(allowedConnectors);
+  return [...mentioned].every((connector) => allowed.has(connector));
+}
+
 export function matchAgentRequestedRules(
   question: string,
   config: AlbertV3AgentConfig,
   limit = 2,
+  allowedConnectors?: readonly string[],
 ): readonly AgentRequestedRule[] {
   const questionTokens = tokens(question);
   return config.agentRequestedRules
+    .filter((rule) => usableOnRoute(connectorsMentionedIn(rule.body, config), allowedConnectors))
     .map((rule) => ({ rule, score: overlapScore(questionTokens, `${rule.name} ${rule.description}`) }))
     .filter(({ score }) => score >= 0.55)
     .sort((a, b) => b.score - a.score)
@@ -193,14 +299,31 @@ export function matchCertifiedQueries(
   question: string,
   config: AlbertV3AgentConfig,
   limit = 3,
+  allowedConnectors?: readonly string[],
 ): readonly CertifiedQuery[] {
   const questionTokens = tokens(question);
   return config.certifiedQueries
+    .filter((query) => usableOnRoute(certifiedQueryConnectors(query, config), allowedConnectors))
     .map((query) => ({ query, score: overlapScore(questionTokens, `${query.name} ${query.userRequest}`) }))
     .filter(({ score }) => score >= 0.4)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map(({ query }) => query);
+}
+
+/** Certified recipes usable on this route (every connector they touch is connected). */
+export function recipesForRoute(
+  config: AlbertV3AgentConfig,
+  allowedConnectors?: readonly string[],
+): readonly CertifiedQuery[] {
+  return config.certifiedQueries
+    .filter((query) => query.recipe)
+    .filter((query) => usableOnRoute(certifiedQueryConnectors(query, config), allowedConnectors));
+}
+
+export function findCertifiedQuery(name: string, config: AlbertV3AgentConfig): CertifiedQuery | undefined {
+  const wanted = name.trim().toLowerCase();
+  return config.certifiedQueries.find((query) => query.name.toLowerCase() === wanted);
 }
 
 /** The compact skills catalogue the agent sees before any skill is loaded. */

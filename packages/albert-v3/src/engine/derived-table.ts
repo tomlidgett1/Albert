@@ -87,6 +87,9 @@ function expressionValue(
     case "subtract": return left - right;
     case "multiply": return left * right;
     case "divide": return right === 0 ? null : left / right;
+    // 0-100 scale, matching Cube percent measures and the percent column type.
+    case "percent_change": return right === 0 ? null : ((left - right) / right) * 100;
+    case "percent_of": return right === 0 ? null : (left / right) * 100;
   }
 }
 

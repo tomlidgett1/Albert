@@ -95,6 +95,11 @@ test("v3 runtime and compact UI preserve the substantial-commentary contract", (
   assert.match(trace, /aria-live="polite"/u);
   assert.match(trace, /streaming && runtime === "v3"/u);
   assert.match(trace, /Routine query\/tool events never enter here/u);
+  assert.match(trace, /nextProgressShimmerDelayMs/u);
+  assert.match(trace, /pickNextProgressShimmerLine/u);
+  assert.match(trace, /liveProgressShimmerLine/u);
+  assert.match(trace, /formatCheckingTools/u);
   assert.match(styles, /\.liveCommentaryItem\[data-latest="true"\]/u);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/u);
+  assert.match(styles, /--insights-shimmer-duration/u);
 });

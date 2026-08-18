@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -14,7 +14,7 @@ import type {
   TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
-import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
+import { CONNECTOR_LOGOS, CONNECTOR_NAMES, type TraceConnectorId } from "./connectors";
 import { formatTraceCell } from "./analytical-values";
 import {
   parseSafeAnswerLineage,
@@ -54,7 +54,7 @@ type InsightsStyleTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   detailedMode?: boolean;
-  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3";
+  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onAddToChat?: (text: string) => void;
@@ -77,6 +77,8 @@ type TrailStep = Readonly<{
   stage?: TraceProgressStage;
   title: string;
   detail?: string;
+  /** What a research step found (matched views, stored values, definitions read). */
+  findings?: readonly string[];
   status: TrailStepStatus;
   rowCount?: number;
   warnings?: readonly string[];
@@ -244,8 +246,8 @@ function cleanOwnerTheme(value: string): string {
 }
 
 /**
- * Main header shimmer: question-contextual, not stage-generic.
- * Prefers the sticky analysis-plan theme for the whole turn; step rows stay specific.
+ * Latest owner-facing header line. Prefers the newest clean progress copy so
+ * the shimmer can move with the work; the plan theme is the fallback.
  */
 export function highLevelProgressTheme(input: {
   theme?: string;
@@ -257,22 +259,285 @@ export function highLevelProgressTheme(input: {
   if (/Waiting for one detail/iu.test(label)) return "Needs one detail";
   if (/Stopped|Albert can retry|Analysis stopped/iu.test(label)) return label;
 
-  if (input.theme) return input.theme;
-
-  // Before a plan summary lands, keep whatever clean contextual label we have.
   const fromLabel = cleanOwnerTheme(label);
   if (fromLabel) return fromLabel;
 
   const fromDetail = cleanOwnerTheme(input.detail ?? "");
   if (fromDetail) return fromDetail;
 
+  if (input.theme) return input.theme;
+
   return "Working on it";
+}
+
+const SHIMMER_FILLERS = [
+  "Working through this",
+  "Checking the figures",
+  "Looking through your data",
+  "Narrowing this down",
+  "Cross-checking the numbers",
+  "Following the strongest signal",
+  "Making sense of the movement",
+  "Pulling the latest figures",
+  "Seeing what stands out",
+  "Checking another angle",
+] as const;
+
+const CONNECTOR_HINTS: readonly Readonly<{
+  connector: TraceConnectorId;
+  pattern: RegExp;
+}>[] = [
+  { connector: "lightspeed-x", pattern: /\blightspeed[\s_-]*x(?:[\s_-]*series)?\b|\bx-series\b|\blightspeed_x\b/iu },
+  { connector: "lightspeed", pattern: /\blightspeed\b/iu },
+  { connector: "meta-ads", pattern: /\bmeta(?:[\s_-]*ads)?\b/iu },
+  { connector: "google-ads", pattern: /\bgoogle[\s_-]*ads\b/iu },
+  { connector: "shopify", pattern: /\bshopify\b/iu },
+  { connector: "xero", pattern: /\bxero\b/iu },
+  { connector: "deputy", pattern: /\bdeputy\b/iu },
+  { connector: "square", pattern: /\bsquare\b/iu },
+  { connector: "stripe", pattern: /\bstripe\b/iu },
+  { connector: "momence", pattern: /\bmomence\b/iu },
+];
+
+const VIEW_PREFIXES: readonly (readonly [string, TraceConnectorId])[] = [
+  ["lightspeed_x_", "lightspeed-x"],
+  ["lightspeed_r_", "lightspeed"],
+  ["lightspeed_", "lightspeed"],
+  ["xero_", "xero"],
+  ["shopify_", "shopify"],
+  ["square_", "square"],
+  ["deputy_", "deputy"],
+  ["stripe_", "stripe"],
+  ["momence_", "momence"],
+  ["meta_ads_", "meta-ads"],
+  ["google_ads_", "google-ads"],
+];
+
+export type ProgressShimmerActivity = "query" | "catalogue" | "planning";
+
+export type ProgressShimmerLine = Readonly<{
+  id: string;
+  text: string;
+  connectors: readonly TraceConnectorId[];
+}>;
+
+const SHIMMER_HOLD_MS: Readonly<Record<ProgressShimmerActivity, readonly [number, number]>> = {
+  query: [1000, 1700],
+  catalogue: [1800, 2500],
+  planning: [2600, 3400],
+};
+
+/** Keep rotation candidates short and owner-facing, including soft working lines. */
+function acceptShimmerPhrase(value: string): string {
+  const trimmed = value.trim().replace(/\.+$/u, "");
+  if (!trimmed || trimmed.length > 72) return "";
+  if (/SQL|governed|allowlisted|tenant|staging|schema|CTE|GROUP BY/iu.test(trimmed)) return "";
+  if (/^Answer ready$|^Waiting for one detail$|^Stopped$|^Loaded \d+/iu.test(trimmed)) return "";
+  if (/^Running (?:SQL|an exploratory)/iu.test(trimmed)) return "";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+export function pickShimmerFillers(count = 3, random = Math.random): string[] {
+  const pool = [...SHIMMER_FILLERS];
+  for (let index = pool.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    const current = pool[index]!;
+    pool[index] = pool[swap]!;
+    pool[swap] = current;
+  }
+  return pool.slice(0, Math.max(1, Math.min(count, pool.length)));
+}
+
+export function inferConnectorsFromText(value: string): TraceConnectorId[] {
+  const found: TraceConnectorId[] = [];
+  const add = (connector: TraceConnectorId) => {
+    if (!found.includes(connector)) found.push(connector);
+  };
+  const text = value.trim();
+  if (!text) return found;
+  const lower = text.toLocaleLowerCase("en-AU");
+  for (const [prefix, connector] of VIEW_PREFIXES) {
+    if (lower.includes(prefix)) add(connector);
+  }
+  for (const hint of CONNECTOR_HINTS) {
+    if (hint.connector === "lightspeed" && found.includes("lightspeed-x")) continue;
+    if (hint.pattern.test(text)) add(hint.connector);
+  }
+  return found;
+}
+
+export function formatToolNames(connectors: readonly TraceConnectorId[]): string {
+  const names = connectors.map((connector) => CONNECTOR_NAMES[connector]);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+export function formatCheckingTools(connectors: readonly TraceConnectorId[]): string {
+  const names = formatToolNames(connectors);
+  return names ? `Checking ${names}` : "Checking your tools";
+}
+
+function textShimmerLine(text: string): ProgressShimmerLine | null {
+  const phrase = acceptShimmerPhrase(text);
+  if (!phrase) return null;
+  return { id: `text:${phrase.toLocaleLowerCase("en-AU")}`, text: phrase, connectors: [] };
+}
+
+function toolsShimmerLine(connectors: readonly TraceConnectorId[]): ProgressShimmerLine | null {
+  if (connectors.length === 0) return null;
+  return {
+    id: `tools:${connectors.join(",")}`,
+    text: formatCheckingTools(connectors),
+    connectors,
+  };
+}
+
+export function collectShimmerConnectors(input: {
+  status: string;
+  statusDetail?: string;
+  sources?: readonly TrailSource[];
+  steps: readonly Pick<TrailStep, "title" | "detail" | "status" | "governed">[];
+}): TraceConnectorId[] {
+  const found: TraceConnectorId[] = [];
+  const add = (connector: TraceConnectorId | undefined) => {
+    if (!connector || found.includes(connector)) return;
+    found.push(connector);
+  };
+  for (const source of input.sources ?? []) add(source.connector);
+  for (const step of input.steps) {
+    add(step.governed?.connector);
+    for (const connector of inferConnectorsFromText(
+      `${step.title} ${step.detail ?? ""} ${step.governed?.view ?? ""} ${(step.governed?.cubes ?? []).join(" ")}`,
+    )) {
+      add(connector);
+    }
+  }
+  for (const connector of inferConnectorsFromText(`${input.status} ${input.statusDetail ?? ""}`)) {
+    add(connector);
+  }
+  return found;
+}
+
+export function shimmerActivityFor(input: {
+  statusStage?: TraceProgressStage;
+  steps: readonly Pick<TrailStep, "status" | "stage" | "kind">[];
+}): ProgressShimmerActivity {
+  const running = input.steps.filter((step) => step.status === "running");
+  if (running.some((step) => step.kind === "sql" || step.stage === "query" || step.stage === "source_query")) {
+    return "query";
+  }
+  if (input.statusStage === "query" || input.statusStage === "source_query") return "query";
+  if (input.statusStage === "catalogue" || input.statusStage === "definition") return "catalogue";
+  if (running.length > 0) return "catalogue";
+  return "planning";
+}
+
+/** Hold time follows the work: lookups stay short, thinking can sit for ~3s. */
+export function nextProgressShimmerDelayMs(
+  activity: ProgressShimmerActivity = "planning",
+  random = Math.random,
+): number {
+  const [min, max] = SHIMMER_HOLD_MS[activity];
+  return Math.round(min + random() * (max - min));
+}
+
+export function pickNextProgressShimmerLine(
+  pool: readonly ProgressShimmerLine[],
+  currentId: string,
+  random = Math.random,
+): ProgressShimmerLine {
+  const options = pool.filter((line) => line.id !== currentId);
+  if (options.length === 0) {
+    return pool[0] ?? { id: "text:working on it", text: "Working on it", connectors: [] };
+  }
+  return options[Math.floor(random() * options.length)] ?? options[0]!;
+}
+
+export function liveProgressShimmerLine(input: {
+  status: string;
+  statusDetail?: string;
+  statusStage?: TraceProgressStage;
+  sources?: readonly TrailSource[];
+  steps: readonly Pick<TrailStep, "title" | "detail" | "status" | "stage" | "kind" | "governed">[];
+}): ProgressShimmerLine {
+  const running = input.steps.filter((step) => step.status === "running");
+  const runningConnectors = collectShimmerConnectors({
+    status: input.status,
+    statusDetail: input.statusDetail,
+    sources: input.sources,
+    steps: running,
+  });
+  const tools = toolsShimmerLine(runningConnectors);
+  if (tools) return tools;
+
+  const allConnectors = collectShimmerConnectors(input);
+  if (
+    allConnectors.length > 0
+    && (input.statusStage === "query" || input.statusStage === "source_query")
+  ) {
+    return toolsShimmerLine(allConnectors) ?? textShimmerLine(input.status) ?? {
+      id: "text:working on it",
+      text: "Working on it",
+      connectors: [],
+    };
+  }
+
+  return textShimmerLine(input.status) ?? {
+    id: "text:working on it",
+    text: "Working on it",
+    connectors: [],
+  };
+}
+
+export function collectProgressShimmerLines(input: {
+  theme?: string;
+  status: string;
+  statusDetail?: string;
+  statusStage?: TraceProgressStage;
+  sources?: readonly TrailSource[];
+  steps: readonly Pick<TrailStep, "title" | "detail" | "status" | "stage" | "kind" | "governed">[];
+  commentary: readonly string[];
+  planLabels?: readonly string[];
+  fillers?: readonly string[];
+}): ProgressShimmerLine[] {
+  const lines: ProgressShimmerLine[] = [];
+  const seen = new Set<string>();
+  const push = (line: ProgressShimmerLine | null) => {
+    if (!line || seen.has(line.id)) return;
+    seen.add(line.id);
+    lines.push(line);
+  };
+
+  push(liveProgressShimmerLine(input));
+  push(toolsShimmerLine(collectShimmerConnectors(input)));
+  push(textShimmerLine(input.status));
+  push(textShimmerLine(input.statusDetail ?? ""));
+  push(textShimmerLine(input.theme ?? ""));
+  for (const step of input.steps.slice(-5)) {
+    push(textShimmerLine(laymanProgressStatus(step.title, step.detail ?? "")));
+    push(textShimmerLine(step.title));
+    push(textShimmerLine(step.detail ?? ""));
+  }
+  for (const text of input.commentary.slice(-3)) {
+    push(textShimmerLine(conciseReasoningSummary(text)));
+  }
+  for (const label of (input.planLabels ?? []).slice(-4)) {
+    push(textShimmerLine(label));
+  }
+  if (lines.length < 3) {
+    for (const filler of input.fillers ?? []) {
+      push(textShimmerLine(filler));
+    }
+  }
+  return lines;
 }
 
 export function buildTrailModel(
   events: readonly TraceEvent[],
   streaming: boolean,
-  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3",
+  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp",
 ): TrailModel {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
   const visibleResultIds = responseVisibleResultIds(ordered);
@@ -349,6 +614,7 @@ export function buildTrailModel(
           ...open,
           title: event.label,
           detail: event.detail ?? open.detail,
+          ...(event.findings ? { findings: event.findings } : {}),
           status: nextStatus,
         };
         continue;
@@ -359,6 +625,7 @@ export function buildTrailModel(
         stage: event.stage,
         title: event.label,
         ...(event.detail ? { detail: event.detail } : {}),
+        ...(event.findings ? { findings: event.findings } : {}),
         status: nextStatus,
       });
       continue;
@@ -631,7 +898,9 @@ export function buildTrailModel(
             ? "Cubecore"
             : runtime === "v3"
               ? "Albert v3"
-              : "OpenAI",
+              : runtime === "xero_mcp"
+                ? "Xero MCP"
+                : "OpenAI",
     },
     commentaryUpdates,
     plan,
@@ -645,26 +914,53 @@ export function buildTrailModel(
 }
 
 /** Codex-style visible plan: short steps that tick off as work completes. */
-function PlanChecklist({ plan }: { plan: TracePlanEvent }) {
+function PlanChecklist({
+  plan,
+  animateIn = false,
+  reduceMotion = false,
+}: {
+  plan: TracePlanEvent;
+  animateIn?: boolean;
+  reduceMotion?: boolean;
+}) {
+  const [open, setOpen] = useState(() => reduceMotion || !animateIn);
   const done = plan.steps.filter((step) => step.status === "done").length;
+
+  useLayoutEffect(() => {
+    if (open) return;
+    const frame = window.requestAnimationFrame(() => setOpen(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
   return (
-    <div className={styles.planCard} aria-label="Plan">
-      <div className={styles.planHeader}>
-        Plan
-        <span className={styles.planCount}>{done}/{plan.steps.length}</span>
-      </div>
-      {plan.steps.map((step, index) => (
-        <div key={index} className={styles.planStep} data-status={step.status}>
-          <span className={styles.planStepIcon}>
-            {step.status === "done"
-              ? <CheckIcon size={12} />
-              : step.status === "active"
-                ? <span className={styles.spinner} />
-                : <span className={styles.planStepDot} />}
-          </span>
-          <span className={styles.planStepLabel}>{step.label}</span>
+    <div
+      className={styles.expandPanel}
+      style={{
+        gridTemplateRows: open ? "1fr" : "0fr",
+        opacity: open ? 1 : 0,
+      }}
+      data-duration="640"
+    >
+      <div className={styles.expandInner}>
+        <div className={styles.planCard} aria-label="Plan">
+          <div className={styles.planHeader}>
+            Plan
+            <span className={styles.planCount}>{done}/{plan.steps.length}</span>
+          </div>
+          {plan.steps.map((step, index) => (
+            <div key={index} className={styles.planStep} data-status={step.status}>
+              <span className={styles.planStepIcon}>
+                {step.status === "done"
+                  ? <CheckIcon size={12} />
+                  : step.status === "active"
+                    ? <span className={styles.spinner} />
+                    : <span className={styles.planStepDot} />}
+              </span>
+              <span className={styles.planStepLabel}>{step.label}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
     </div>
   );
 }
@@ -720,6 +1016,24 @@ function SparklesIcon({ size = 12 }: { size?: number }) {
       <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
       <path d="M19 13l.8 2.2L22 16l-2.2.8L19 19l-.8-2.2L16 16l2.2-.8L19 13z" />
     </svg>
+  );
+}
+
+/**
+ * A governed table "contains data" when at least one row carries a real value.
+ * Empty result sets and all-null / all-zero aggregate rows (e.g. a payroll
+ * total over a period with no pay runs) render as blank tables, so the
+ * compact query list hides them rather than showing "No data" cards.
+ */
+function tableHasData(table: TraceTableEvent | undefined): boolean {
+  if (!table || table.rows.length === 0) return false;
+  return table.rows.some((row) =>
+    Object.values(row).some((cell) => {
+      if (cell === null || cell === undefined) return false;
+      if (typeof cell === "string") return cell.trim().length > 0;
+      if (typeof cell === "number") return cell !== 0 && Number.isFinite(cell);
+      return true;
+    }),
   );
 }
 
@@ -788,6 +1102,153 @@ function CompactQueries({
       </AnimatePresence>
     </div>
   );
+}
+
+/**
+ * The outcome of a research step (catalogue search, definitions read, stored
+ * value lookup) as an expandable list under the step: what matched, with its
+ * meaning or weight. An empty list on a finished step is shown as a miss —
+ * "nothing matched" explains why the next step happened.
+ */
+function ResearchFindings({ step }: { step: TrailStep }) {
+  const findings = step.findings ?? [];
+  const isMiss = findings.length === 0 && step.status !== "running";
+  const [open, setOpen] = useState(false);
+  const bodyId = `research-findings-${step.id}`;
+  return (
+    <span className={styles.researchFindings}>
+      {isMiss ? (
+        <span className={styles.researchMiss}>Nothing matched — trying another way.</span>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={styles.researchToggle}
+            aria-expanded={open}
+            aria-controls={bodyId}
+            onClick={() => setOpen((current) => !current)}
+          >
+            <Chevron open={open} />
+            <span>{findings.length} {step.stage === "field_values" ? (findings.length === 1 ? "value" : "values") : step.stage === "definition" ? "definitions" : findings.length === 1 ? "match" : "matches"}</span>
+          </button>
+          {open ? (
+            <ul id={bodyId} className={styles.researchList}>
+              {findings.map((line, index) => {
+                const [head, ...rest] = line.split(" — ");
+                return (
+                  <li key={`${step.id}_${index}`}>
+                    <span className={styles.researchHead}>{head}</span>
+                    {rest.length > 0 ? <span className={styles.researchMeaning}> — {rest.join(" — ")}</span> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Structured "how this was worked out" panel behind a result's info button:
+ * the governed view (topic) and its meaning, every field with the semantic
+ * model's own description, the filters and time window applied, calculated
+ * columns' formulas, and the sources' data-through watermarks. The exact
+ * query YAML stays available behind a toggle for people who want it.
+ */
+function QueryDetails({ id, table, queryYaml }: { id: string; table: TraceTableEvent; queryYaml: string }) {
+  const [showYaml, setShowYaml] = useState(false);
+  const provenance = table.provenance;
+  const definitions = provenance.definitions.filter((definition) => !definition.metric.includes(":"));
+  const measures = definitions.filter((definition) => definition.kind === "measure");
+  const others = definitions.filter((definition) => definition.kind !== "measure");
+  const filters = provenance.filters ?? [];
+  const calculations = provenance.calculations ?? [];
+  const kindLabel = (kind?: string) => kind === "measure" ? "metric" : kind === "time" ? "time" : kind === "segment" ? "segment" : "field";
+  const renderField = (definition: TraceProvenance["definitions"][number]) => (
+    <li key={definition.metric} className={styles.queryDetailsField}>
+      <span className={styles.queryDetailsFieldHead}>
+        <span className={styles.queryDetailsFieldLabel}>{definition.label}</span>
+        <span className={styles.queryDetailsKind}>{kindLabel(definition.kind)}</span>
+        <span className={styles.queryDetailsMember}>{definition.metric.split(".").at(-1)}</span>
+      </span>
+      {definition.definition && !/^Governed member of the /u.test(definition.definition) ? (
+        <span className={styles.queryDetailsMuted}>{definition.definition}</span>
+      ) : null}
+    </li>
+  );
+  return (
+    <div id={id} className={styles.queryDetails}>
+      {provenance.view ? (
+        <div className={styles.queryDetailsTopic}>
+          <span className={styles.queryDetailsEyebrow}>Topic</span>
+          <span className={styles.queryDetailsTitle}>{provenance.view.label}</span>
+          {provenance.view.description ? <span className={styles.queryDetailsMuted}>{provenance.view.description}</span> : null}
+        </div>
+      ) : null}
+      {measures.length > 0 ? (
+        <div className={styles.queryDetailsSection}>
+          <span className={styles.queryDetailsEyebrow}>Metrics</span>
+          <ul className={styles.queryDetailsList}>{measures.map(renderField)}</ul>
+        </div>
+      ) : null}
+      {others.length > 0 ? (
+        <div className={styles.queryDetailsSection}>
+          <span className={styles.queryDetailsEyebrow}>Grouped by</span>
+          <ul className={styles.queryDetailsList}>{others.map(renderField)}</ul>
+        </div>
+      ) : null}
+      {filters.length > 0 ? (
+        <div className={styles.queryDetailsSection}>
+          <span className={styles.queryDetailsEyebrow}>Filters</span>
+          <ul className={styles.queryDetailsList}>
+            {filters.map((filter, index) => <li key={`${filter.member}_${index}`}>{filter.text}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {calculations.length > 0 ? (
+        <div className={styles.queryDetailsSection}>
+          <span className={styles.queryDetailsEyebrow}>Calculations</span>
+          <ul className={styles.queryDetailsList}>
+            {calculations.map((calc) => (
+              <li key={calc.column} className={styles.queryDetailsField}>
+                <span className={styles.queryDetailsFieldLabel}>{calc.column}</span>
+                <span className={styles.queryDetailsFormula}>= {calc.formula}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {provenance.sources.length > 0 ? (
+        <div className={styles.queryDetailsSection}>
+          <span className={styles.queryDetailsEyebrow}>Source</span>
+          <ul className={styles.queryDetailsList}>
+            {provenance.sources.map((source) => (
+              <li key={`${source.connector}_${source.label}`} className={styles.queryDetailsMuted}>
+                {CONNECTOR_NAMES[source.connector]}
+                {source.dataThrough && source.dataThrough !== "unknown" ? ` · data through ${formatDataThrough(source.dataThrough)}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {queryYaml ? (
+        <>
+          <button type="button" className={styles.queryDetailsYamlToggle} aria-expanded={showYaml} onClick={() => setShowYaml((current) => !current)}>
+            {showYaml ? "Hide the exact query" : "Show the exact query"}
+          </button>
+          {showYaml ? <pre className={styles.resultQueryYamlCode}>{queryYaml}</pre> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function formatDataThrough(value: string): string {
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.getTime())) return value;
+  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(instant);
 }
 
 function ResultTable({
@@ -864,7 +1325,7 @@ function ResultTable({
           ) : null}
         </button>
         <div className={styles.resultQueryActions}>
-          {queryYaml ? (
+          {queryYaml || table.provenance.definitions.length > 0 ? (
             <span className={styles.tablePinTooltipWrap}>
               <button
                 className={styles.tablePinButton}
@@ -884,7 +1345,7 @@ function ResultTable({
                 </svg>
               </button>
               <span className={styles.tablePinTooltip} id={`result-yaml-tip-${table.id}`} role="tooltip">
-                {yamlOpen ? "Hide query YAML" : "Show query YAML"}
+                {yamlOpen ? "Hide query details" : "How this was worked out"}
               </span>
             </span>
           ) : null}
@@ -949,10 +1410,8 @@ function ResultTable({
               ease: [0.04, 0.62, 0.23, 0.98],
             }}
           >
-            {yamlOpen && queryYaml ? (
-              <div id={`result-yaml-${table.id}`} className={styles.resultQueryYaml}>
-                <pre className={styles.resultQueryYamlCode}>{queryYaml}</pre>
-              </div>
+            {yamlOpen ? (
+              <QueryDetails id={`result-yaml-${table.id}`} table={table} queryYaml={queryYaml} />
             ) : null}
 
             <div className={styles.resultTableWrap} style={{ maxHeight }}>
@@ -1105,6 +1564,43 @@ function GovernedQuerySummary({
   );
 }
 
+function ShimmerStatusContent({
+  line,
+  verb,
+}: {
+  line: ProgressShimmerLine;
+  verb: string;
+}) {
+  if (line.connectors.length === 0) {
+    return <span className={styles.agentTrailStatusCopy}>{line.text || verb}</span>;
+  }
+
+  const names = formatToolNames(line.connectors);
+  return (
+    <>
+      <span className={styles.agentTrailStatusCopy}>Checking</span>
+      <span className={styles.agentTrailStatusTools}>
+        {line.connectors.map((connector) => (
+          <span
+            key={connector}
+            className={styles.agentTrailStatusTool}
+            title={CONNECTOR_NAMES[connector]}
+          >
+            <Image
+              src={CONNECTOR_LOGOS[connector]}
+              alt=""
+              width={12}
+              height={12}
+              unoptimized
+            />
+          </span>
+        ))}
+      </span>
+      <span className={styles.agentTrailStatusCopy}>{names}</span>
+    </>
+  );
+}
+
 /**
  * Codex-style agent progress:
  * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
@@ -1123,23 +1619,85 @@ function ThinkingTrail({
   const [open, setOpen] = useState(false);
   const [mountedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
+  const [fillers] = useState(() => pickShimmerFillers(3));
+  const [shimmerDurationMs] = useState(() => Math.round(2400 + Math.random() * 600));
   const hasTrail = model.steps.length > 0 || model.reasoning.trim().length > 0 || streaming;
-  // Header stays question-contextual; expanded steps keep the specific work.
-  const status = highLevelProgressTheme({
+  const liveStatus = highLevelProgressTheme({
     theme: model.statusTheme,
     stage: model.statusStage,
     label: model.status || "Working",
     detail: model.statusDetail,
   });
+  const liveLine = useMemo(
+    () => liveProgressShimmerLine({
+      status: liveStatus,
+      statusDetail: model.statusDetail,
+      statusStage: model.statusStage,
+      sources: model.sources,
+      steps: model.steps,
+    }),
+    [liveStatus, model.statusDetail, model.statusStage, model.sources, model.steps],
+  );
+  const shimmerActivity = useMemo(
+    () => shimmerActivityFor({ statusStage: model.statusStage, steps: model.steps }),
+    [model.statusStage, model.steps],
+  );
+  const shimmerLines = useMemo(
+    () => collectProgressShimmerLines({
+      theme: model.statusTheme,
+      status: liveStatus,
+      statusDetail: model.statusDetail,
+      statusStage: model.statusStage,
+      sources: model.sources,
+      steps: model.steps,
+      commentary: model.commentaryUpdates.map((update) => update.text),
+      planLabels: model.plan?.steps.map((step) => step.label) ?? [],
+      fillers,
+    }),
+    [
+      fillers,
+      liveStatus,
+      model.commentaryUpdates,
+      model.plan,
+      model.sources,
+      model.statusDetail,
+      model.statusStage,
+      model.statusTheme,
+      model.steps,
+    ],
+  );
+  const [line, setLine] = useState(liveLine);
   const lineTransition = reduceMotion
     ? { duration: 0 }
-    : { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const };
+    : { duration: 0.72, ease: [0.22, 1, 0.36, 1] as const };
+
+  useEffect(() => {
+    setLine(liveLine);
+  }, [liveLine]);
 
   useEffect(() => {
     if (!streaming) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [streaming]);
+
+  useEffect(() => {
+    if (!streaming || reduceMotion || shimmerLines.length < 2) return;
+    let cancelled = false;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        setLine((current) => pickNextProgressShimmerLine(shimmerLines, current.id));
+        schedule();
+      }, nextProgressShimmerDelayMs(shimmerActivity));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [reduceMotion, shimmerActivity, shimmerLines, streaming]);
 
   if (!hasTrail) return null;
 
@@ -1159,7 +1717,7 @@ function ThinkingTrail({
   const canExpand = model.steps.length > 0 || Boolean(reasoning) || model.governedQueries.length > 0;
   const sourceLabel = model.sources.map((source) => source.label).join(", ");
   const headerLabel = streaming
-    ? `${verb}. ${status}`
+    ? `${verb}. ${line.text}`
     : `${verb}${durationLabel ? ` ${durationLabel}` : ""}${sourceLabel ? `. Sources: ${sourceLabel}` : ""}`;
 
   return (
@@ -1186,17 +1744,20 @@ function ThinkingTrail({
         <span className={styles.agentTrailVerbGroup}>
           {streaming ? (
             <span className={styles.agentTrailStatus}>
-              <span className={styles.agentTrailStatusMeasure} aria-hidden>{status || verb}</span>
-              <AnimatePresence>
+              <span className={styles.agentTrailStatusMeasure} aria-hidden>
+                <ShimmerStatusContent line={line} verb={verb} />
+              </span>
+              <AnimatePresence initial={false}>
                 <motion.span
-                  key={status || verb}
+                  key={line.id}
                   initial={reduceMotion ? false : { y: "110%", opacity: 0 }}
                   animate={{ y: "0%", opacity: 1 }}
                   exit={reduceMotion ? undefined : { y: "-110%", opacity: 0 }}
                   transition={lineTransition}
                   className={styles.agentTrailStatusLive}
+                  style={{ "--insights-shimmer-duration": `${shimmerDurationMs}ms` } as CSSProperties}
                 >
-                  {status || verb}
+                  <ShimmerStatusContent line={line} verb={verb} />
                 </motion.span>
               </AnimatePresence>
             </span>
@@ -1275,13 +1836,14 @@ function ThinkingTrail({
                             />
                           </span>
                         ) : null}
-                        {laymanProgressStatus(step.title, step.detail ?? "")}
+                        {step.findings ? step.title : laymanProgressStatus(step.title, step.detail ?? "")}
                       </span>
                       {typeof step.rowCount === "number" ? (
                         <span className={styles.stepMeta}>
                           {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
                         </span>
                       ) : null}
+                      {step.findings ? <ResearchFindings step={step} /> : null}
                     </span>
                   </div>
                 ))}
@@ -1900,7 +2462,13 @@ export default function InsightsStyleTrace({
       ) : (
         <>
           <ThinkingTrail model={model} streaming={streaming} reduceMotion={reduceMotion} />
-          {model.plan ? <PlanChecklist plan={model.plan} /> : null}
+          {model.plan ? (
+            <PlanChecklist
+              plan={model.plan}
+              animateIn={animateAnswerReveal}
+              reduceMotion={reduceMotion}
+            />
+          ) : null}
           <AnimatePresence initial={false}>
             {streaming && runtime === "v3" && model.commentaryUpdates.length > 0 ? (
               <LiveCommentary
@@ -1912,11 +2480,17 @@ export default function InsightsStyleTrace({
           </AnimatePresence>
         </>
       )}
-      {detailedMode && model.plan ? <PlanChecklist plan={model.plan} /> : null}
+      {detailedMode && model.plan ? (
+        <PlanChecklist
+          plan={model.plan}
+          animateIn={animateAnswerReveal}
+          reduceMotion={reduceMotion}
+        />
+      ) : null}
 
       {!detailedMode ? (
         <CompactQueries
-          tables={model.steps.filter((step) => step.table?.dashboardReplay)}
+          tables={model.steps.filter((step) => step.table?.dashboardReplay && tableHasData(step.table))}
           collapsedByDefault={Boolean(!streaming && model.answer)}
           reduceMotion={reduceMotion}
           onAddToDashboard={onAddToDashboard}
@@ -1953,7 +2527,7 @@ export default function InsightsStyleTrace({
               <span>Answer</span>
             </div>
           ) : null}
-          {detailedMode ? (
+          {detailedMode && !(model.answer.state === "Verified" && model.sources.length === 0) ? (
             <div className={styles.answerState} title={answerStateDescriptions[model.answer.state]}>
               {answerStateLabels[model.answer.state]}
             </div>

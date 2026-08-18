@@ -5,6 +5,8 @@ import {
 } from "../../../packages/storage/src/s3.js";
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
+import { isFivetranDestinationSchema } from "../../../packages/fivetran/src/index.js";
+import type { FivetranWorkerConfig } from "./fivetran-http.js";
 
 const CONNECTOR_PROVIDERS = ["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const;
 export type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
@@ -82,6 +84,7 @@ export type SyncWorkerConfig = Readonly<{
   serviceVersion: string;
   port: number;
   metricsPort: number;
+  fivetran?: FivetranWorkerConfig;
 }>;
 
 function optionalSecret(source: Readonly<Record<string, string | undefined>>, key: string): string {
@@ -148,7 +151,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   ) {
     throw new Error("ALBERT_PUBLIC_ORIGIN must be a clean public origin.");
   }
-  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "lightspeed-x"].map((provider) =>
+  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "lightspeed-x", "fivetran-xero", "fivetran-lightspeed"].map((provider) =>
     new URL(`/api/oauth/${provider}/callback`, publicOrigin).toString()
   );
   const port = Number(source.PORT ?? "8080");
@@ -273,6 +276,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
       "MOMENCE_CLIENT_ID and MOMENCE_CLIENT_SECRET must be configured together.",
     );
   }
+  const fivetran = loadFivetranWorkerConfig(source);
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
     analyticalDatabaseUrl: analytical,
@@ -328,5 +332,54 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     serviceVersion: source.ALBERT_SERVICE_VERSION?.trim() || "development",
     port,
     metricsPort,
+    ...(fivetran ? { fivetran } : {}),
+  });
+}
+
+function loadFivetranWorkerConfig(
+  source: NodeJS.ProcessEnv,
+): FivetranWorkerConfig | undefined {
+  const apiKey = optionalSecret(source, "FIVETRAN_API_KEY");
+  const apiSecret = optionalSecret(source, "FIVETRAN_API_SECRET");
+  const groupId = optionalSecret(source, "FIVETRAN_GROUP_ID");
+  const present = [apiKey, apiSecret, groupId].filter(Boolean).length;
+  if (present === 0) return undefined;
+  if (present !== 3) {
+    throw new Error(
+      "FIVETRAN_API_KEY, FIVETRAN_API_SECRET, and FIVETRAN_GROUP_ID must be configured together.",
+    );
+  }
+  const destinationSchema = source.FIVETRAN_XERO_SCHEMA?.trim() || "xero";
+  if (!isFivetranDestinationSchema(destinationSchema)) {
+    throw new Error("FIVETRAN_XERO_SCHEMA must be a Fivetran-legal destination schema name.");
+  }
+  const destinationRole = optionalSecret(source, "FIVETRAN_DESTINATION_ROLE");
+  if (destinationRole && !/^[a-z_][a-z0-9_]{0,62}$/.test(destinationRole)) {
+    throw new Error("FIVETRAN_DESTINATION_ROLE must be a PostgreSQL role name.");
+  }
+  // The SDK connectors (Xero, Lightspeed R-Series) call back to this worker
+  // for tokens; they need the worker's public HTTPS origin. Fly exposes the app name, so derive it there.
+  const flyApp = source.FLY_APP_NAME?.trim();
+  const tokenBrokerOrigin = source.FIVETRAN_TOKEN_BROKER_ORIGIN?.trim()
+    || (flyApp ? `https://${flyApp}.fly.dev` : undefined);
+  if (tokenBrokerOrigin && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/u.test(tokenBrokerOrigin)) {
+    throw new Error("FIVETRAN_TOKEN_BROKER_ORIGIN must be a bare https origin.");
+  }
+  const sdkProjectDir = source.FIVETRAN_XERO_SDK_DIR?.trim() || "connectors/xero-fivetran-sdk";
+  const lightspeedSdkProjectDir = source.FIVETRAN_LIGHTSPEED_SDK_DIR?.trim() || "connectors/lightspeed-fivetran-sdk";
+  const sdkPythonVersion = source.FIVETRAN_SDK_PYTHON_VERSION?.trim();
+  if (sdkPythonVersion && !/^3\.\d{1,2}$/u.test(sdkPythonVersion)) {
+    throw new Error("FIVETRAN_SDK_PYTHON_VERSION must look like 3.12.");
+  }
+  return Object.freeze({
+    apiKey,
+    apiSecret,
+    groupId,
+    destinationSchema,
+    sdkProjectDir,
+    lightspeedSdkProjectDir,
+    ...(sdkPythonVersion ? { sdkPythonVersion } : {}),
+    ...(tokenBrokerOrigin ? { tokenBrokerOrigin } : {}),
+    ...(destinationRole ? { destinationRole } : {}),
   });
 }

@@ -111,7 +111,7 @@ export function buildItemResolveSql(phrase: string, limit = 12): string {
   return `
 WITH pack AS (
   SELECT mapping_version AS mv
-  FROM source_lightspeed.ls_sales
+  FROM source_lightspeed_official.ls_sales
   GROUP BY 1 ORDER BY max(ingested_at) DESC LIMIT 1
 )
 SELECT
@@ -125,18 +125,18 @@ SELECT
     ELSE 0
   END), 0) AS units_this_month,
   COALESCE(SUM(CASE WHEN s.sale_id IS NOT NULL THEN sl.unit_quantity::numeric ELSE 0 END), 0) AS units_all_time
-FROM source_lightspeed.ls_items AS i
-LEFT JOIN source_lightspeed.ls_sale_lines AS sl
+FROM source_lightspeed_official.ls_items AS i
+LEFT JOIN source_lightspeed_official.ls_sale_lines AS sl
   ON sl.item_id = i.item_id
  AND sl.tombstone = false
  AND sl.mapping_version = (SELECT mv FROM pack)
-LEFT JOIN source_lightspeed.ls_sales AS s
+LEFT JOIN source_lightspeed_official.ls_sales AS s
   ON s.sale_id = sl.sale_id
  AND s.tombstone = false
  AND s.mapping_version = (SELECT mv FROM pack)
  AND s.completed = true
  AND s.voided = false
-LEFT JOIN source_lightspeed.ls_shops AS sh
+LEFT JOIN source_lightspeed_official.ls_shops AS sh
   ON sh.shop_id = s.shop_id
  AND sh.tombstone = false
  AND sh.mapping_version = (SELECT mv FROM pack)
@@ -230,7 +230,7 @@ export function chooseNamedEntityAssumption(
       reason: "No catalogue items matched that wording.",
       candidates: [],
       nextStep:
-        "Try source_lightspeed.ls_categories (name / full_path_name) or a broader ILIKE on ls_items.description, "
+        "Try source_lightspeed_official.ls_categories (name / full_path_name) or a broader ILIKE on ls_items.description, "
         + "or ask which product they mean.",
     };
   }
@@ -258,7 +258,7 @@ export function chooseNamedEntityAssumption(
       candidates: ranked.slice(0, 8),
       nextStep:
         `Do not count only the top item_id. Decide from the owner's question: `
-        + `(1) product type/family → join ls_items.category_id to source_lightspeed.ls_categories `
+        + `(1) product type/family → join ls_items.category_id to source_lightspeed_official.ls_categories `
         + `(name / full_path_name live there, not on the item row), and/or aggregate completed sales `
         + `across all matching item descriptions; (2) one specific product → pick the best SKU and disclose it. `
         + `Categories first when the wording is a type of goods (glasses, tyres, helmets, etc.).`,

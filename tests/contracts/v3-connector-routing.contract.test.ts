@@ -57,6 +57,15 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
   assert.equal(result.shopifyAdmin, false);
   assert.deepEqual(result.preferredCubeConnectors, ["xero"]);
   assert.deepEqual(toolNames(result), [
+    // Live Xero statements ride alongside Cube on every answer route; each tool
+    // refuses at call time when the turn has no xero-mcp client.
+    "xero_profit_and_loss",
+    "xero_balance_sheet",
+    "xero_trial_balance",
+    "xero_find_contact",
+    "xero_aged_receivables",
+    "xero_aged_payables",
+    "xero_organisation_details",
     "search_semantic_catalogue",
     "get_view_schema",
     "run_cube_query",
@@ -66,7 +75,9 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
     "make_chart",
     "record_source_finding",
     "load_skill",
+    "present_result",
     "compose_table",
+    "aggregate_result",
   ]);
 });
 
@@ -106,7 +117,9 @@ test("Shopify-native reporting exposes ShopifyQL without unrelated Cube tools", 
     "make_chart",
     "record_source_finding",
     "load_skill",
+    "present_result",
     "compose_table",
+    "aggregate_result",
   ]);
 });
 
@@ -124,7 +137,9 @@ test("Shopify long-tail object metadata exposes the Admin read plane only", () =
     "make_chart",
     "record_source_finding",
     "load_skill",
+    "present_result",
     "compose_table",
+    "aggregate_result",
   ]);
 });
 
