@@ -8,12 +8,9 @@ cubes:
     meta:
       ai_context: '"Store", "location", "shop" and "branch" all mean shops.name.'
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_shops t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_shops GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_shops t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_shops ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -93,12 +90,9 @@ cubes:
       One row per POS register (till) within a store. Sales and payments join
       here for by-register breakdowns.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_registers t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_registers GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_registers t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_registers ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: shops
@@ -161,12 +155,9 @@ cubes:
     meta:
       ai_context: '"Staff", "salesperson", "employee" mean employees.full_name. The employee on a sale is the seller of record.'
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_employees t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_employees GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_employees t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_employees ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -263,12 +254,9 @@ cubes:
         is_tax_inclusive tells you whether displayed prices include tax. Rates
         are fractions (0.1 = 10% GST).
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_tax_categories t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_tax_categories GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_tax_categories t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_categories ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -321,12 +309,9 @@ cubes:
       Item-level tax classes (for example "Standard goods", "Labor"). Items and
       sale lines join here.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_tax_classes t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_tax_classes GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_tax_classes t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_classes ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -364,12 +349,9 @@ cubes:
       Rate matrix linking tax categories to tax classes: the effective tax1/tax2
       rate for each class within each category.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_tax_category_classes t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_tax_category_classes GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_tax_category_classes t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_category_classes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: tax_categories

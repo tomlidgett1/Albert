@@ -14,12 +14,9 @@ cubes:
         both are per-unit and ex tax. For margin on actual sales, use the sale_lines
         cost measures (line totals), not these catalogue costs.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_items t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_items GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_items t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_items ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: categories
@@ -289,12 +286,9 @@ cubes:
         items.categories.full_path_name (or name for the leaf only). The hierarchy
         is parent_id-based; full_path_name is the easiest rollup label.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_categories t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_categories GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_categories t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_categories ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -351,12 +345,9 @@ cubes:
     meta:
       ai_context: '"Brand" means manufacturers.name. Group sale_lines measures by it for sales-by-brand.'
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_manufacturers t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_manufacturers GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_manufacturers t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_manufacturers ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -398,12 +389,9 @@ cubes:
       Season labels merchants assign to items (for example "Winter 2025").
       Items join here for seasonal assortment analysis.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_seasons t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_seasons GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_seasons t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_seasons ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -441,12 +429,9 @@ cubes:
         There is no join between tags and items in this model; if asked for sales
         by tag, say the tag-to-item link is not available in the ingested data.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_tags t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_tags GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_tags t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tags ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -478,12 +463,9 @@ cubes:
     public: false
     description: Groupings of item tags. Reference list only, like tags.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_tag_groups t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_tag_groups GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_tag_groups t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tag_groups ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key

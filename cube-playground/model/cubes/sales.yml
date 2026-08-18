@@ -20,12 +20,9 @@ cubes:
         has no operating expenses, so answers must say "gross profit/margin".
         Never mix tax-inclusive calc_total with ex-tax calc_subtotal in one ratio.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_sales t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_sales GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_sales t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sales ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers

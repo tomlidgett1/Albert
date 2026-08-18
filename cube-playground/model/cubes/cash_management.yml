@@ -15,13 +15,11 @@ cubes:
         over/short lives in register_count_amounts (variance members).
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_register_counts
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_counts ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_register_counts t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_register_counts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers
@@ -99,13 +97,11 @@ cubes:
         by register_counts members for the session and date.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_register_count_amounts
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_count_amounts ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_register_count_amounts t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_register_count_amounts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: register_counts
@@ -215,13 +211,11 @@ cubes:
         joined is who made the withdrawal.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_register_withdraws
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_withdraws ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_register_withdraws t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_register_withdraws t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers
@@ -309,13 +303,11 @@ cubes:
         register count members instead.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_register_calculated
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_calculated ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_register_calculated t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_register_calculated t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers

@@ -19,16 +19,16 @@ views:
         owe (debtors, creditors), overdue amounts and ageing bands, payments
         received or made, bank account spending by category, GST on
         documents, credit notes, journal debits/credits, and recurring
-        invoices. P&L / PROFIT QUESTIONS: for "P&L", "profit and loss",
-        "net profit", "revenue vs expenses", or "expenses by account",
-        ALWAYS use the pnl_* members (pnl_revenue, pnl_expenses,
+        invoices. FINANCIAL STATEMENTS (P&L, balance sheet, trial balance,
+        aged receivables/payables) come from Xero's own live report tools,
+        not from this view; those reports already include system-posted
+        wages/super. Use the pnl_* members (pnl_revenue, pnl_expenses,
         pnl_net_profit over pnl_date, grouped by pnl_account or
-        pnl_account_type). Never assemble a P&L from invoice lines alone:
-        most trading revenue is posted via journals and bank transactions.
-        Wages/super are posted by system payroll journals this API access
-        cannot see, so they are absent from pnl_* lines: fetch them from
-        xero_payroll_analytics pay runs, present labour as its own line and
-        say so. Sales invoices = document_kind 'Sales invoice'; bills =
+        pnl_account_type) only for per-day, per-contact or per-line detail a
+        statement cannot show, or when the live tools are unavailable — and
+        then say that pnl_* lines omit system-posted wages/super (which come
+        from xero_payroll_analytics pay runs) and never assemble a P&L from
+        invoice lines alone. Sales invoices = document_kind 'Sales invoice'; bills =
         'Bill'. Use the financially_real segment (AUTHORISED/PAID) for
         financial totals. issued_on is the invoice business date;
         payment_paid_on for payments; bank_occurred_on for bank activity;
@@ -43,8 +43,8 @@ views:
         gives debtor or creditor days (filter invoice_type ACCREC for debtors,
         ACCPAY for creditors). credit_line_*, batch_*, recurring_line_* and
         contact_email / contact terms are available. NOT AVAILABLE from this
-        connection, say so honestly: live bank balances, balance sheet,
-        budget line values; and this business has no quotes, purchase
+        connection, say so honestly: live bank balances, budget line
+        values; and this business has no quotes, purchase
         orders, projects or expense claims in Xero. Till/POS revenue lives
         in sales_analytics (Lightspeed): Xero invoices are the accounting
         ledger, not the register. Wages by employee live in

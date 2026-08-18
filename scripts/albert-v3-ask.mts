@@ -56,7 +56,8 @@ function snippet(text: string, max = 500): string {
 }
 
 const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(new Error("timeout")), 300_000);
+// Deep investigations under max reasoning can outlast five minutes; override per run.
+const timer = setTimeout(() => controller.abort(new Error("timeout")), Number(process.env.ASK_TIMEOUT_MS ?? 300_000));
 const started = Date.now();
 let sequence = 0;
 
@@ -78,20 +79,32 @@ const result = await runAlbertV3Turn({
     switch (event.type) {
       case "progress":
         console.log(`[${at}] progress · ${event.label}${event.detail ? ` · ${snippet(event.detail, 160)}` : ""}`);
+        for (const line of event.findings ?? []) console.log(`      ↳ ${snippet(line, 200)}`);
+        if (event.findings && event.findings.length === 0 && event.status === "complete") console.log("      ↳ (nothing matched)");
         break;
       case "query":
         console.log(`[${at}] query · ${event.topic} · rows=${event.rowCount ?? "?"} ms=${event.executionMs ?? "?"}`);
         break;
       case "table":
         console.log(`[${at}] table · ${event.caption} (${event.rows.length} rows)`);
+        if (event.provenance.view) console.log(`      topic: ${event.provenance.view.label} — ${snippet(event.provenance.view.description, 120)}`);
+        for (const definition of event.provenance.definitions.slice(0, 6)) console.log(`      ${definition.kind ?? "field"} · ${definition.label} — ${snippet(definition.definition, 110)}`);
+        for (const filter of event.provenance.filters ?? []) console.log(`      filter · ${filter.text}`);
+        for (const calc of event.provenance.calculations ?? []) console.log(`      calc · ${calc.column} = ${calc.formula}`);
         for (const row of event.rows.slice(0, 6)) console.log(`   ${JSON.stringify(row)}`);
         break;
       case "clarification":
         console.log(`[${at}] clarification · ${event.question}`);
         break;
+      case "plan":
+        console.log(`[${at}] plan · ${event.steps.map((step) => `[${step.status}] ${step.label}`).join(" · ")}`);
+        break;
+      case "narrative":
+        console.log(`[${at}] narrative · ${snippet(event.text, 300)}`);
+        break;
       case "answer":
         console.log(`[${at}] answer · state=${event.state}`);
-        console.log(`ANSWER: ${snippet(event.text, 1200)}`);
+        console.log(`ANSWER:\n${event.text}`);
         break;
       case "error":
         console.log(`[${at}] ERROR · ${event.message}`);

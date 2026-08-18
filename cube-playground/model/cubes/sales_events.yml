@@ -10,12 +10,9 @@ cubes:
         Answers "who voided sales", "why were sales voided" and void-rate questions.
         Join to sales for the voided sale's value and to employees for the person.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_sale_voids t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_sale_voids GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_sale_voids t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sale_voids ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -89,12 +86,9 @@ cubes:
         payment touched. Balances live on credit_accounts; charge/payment values
         live on the linked sale line or payment.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_sale_accounts t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_sale_accounts GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_sale_accounts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sale_accounts ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: credit_accounts
@@ -167,12 +161,9 @@ cubes:
         Quote conversion rate = converted_quotes / quote_count. Join to sales via
         sale_id for the value of converted quotes; join to employees for who issued.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_quotes t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_quotes GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_quotes t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_quotes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -259,12 +250,9 @@ cubes:
         exactness matters. Dollar discount impact lives on sales.discounts_given
         and sale_lines.line_discounts, not here.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_discounts t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_discounts GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_discounts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_discounts ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -329,12 +317,9 @@ cubes:
         card amounts. The processing cost of card acceptance lives in
         processing_fees, not here.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_cc_charges t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_cc_charges GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_cc_charges t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_cc_charges ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -467,12 +452,9 @@ cubes:
         total_fees). The amount column is the payment amount the fee applies to,
         NOT the fee itself; never sum amount to answer a fee question.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_processing_fees t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_processing_fees GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_processing_fees t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_processing_fees ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sale_payments

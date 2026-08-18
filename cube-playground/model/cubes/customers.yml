@@ -15,12 +15,9 @@ cubes:
         sales have no customer row, so customer-based analyses cover attributed
         sales only and answers should say so when relevant.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_customers t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_customers GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_customers t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customers ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customer_types
@@ -242,12 +239,9 @@ cubes:
     meta:
       ai_context: 'Group customers or their sales by customer_types.name for segment questions like "wholesale vs retail".'
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_customer_types t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_customer_types GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_customer_types t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_types ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -296,12 +290,9 @@ cubes:
         these address dimensions. no_email/no_mail/no_phone are opt-out flags to
         respect in any marketing-list answer.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_contacts t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_contacts GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_contacts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contacts ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -411,12 +402,9 @@ cubes:
     public: false
     description: One row per email address attached to a contact.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_contact_emails t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_contact_emails GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_contact_emails t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_emails ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -469,12 +457,9 @@ cubes:
     public: false
     description: One row per phone number attached to a contact.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_contact_phones t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_contact_phones GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_contact_phones t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_phones ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -527,12 +512,9 @@ cubes:
     public: false
     description: One row per website URL attached to a contact.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_contact_websites t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_contact_websites GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_contact_websites t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_websites ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -584,12 +566,9 @@ cubes:
         Balance sign follows Lightspeed: a positive balance is money owed on the
         account.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_credit_accounts t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_credit_accounts GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_credit_accounts t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_credit_accounts ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -689,12 +668,9 @@ cubes:
       One row per shipping destination attached to a sale: recipient name,
       shipped flag and note. The address itself lives on the linked contact.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_ship_tos t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_ship_tos GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_ship_tos t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_ship_tos ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -779,12 +755,9 @@ cubes:
       Merchant-defined custom field definitions for customers (name, data type,
       unit). Values live in customer_custom_field_values.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_custom_fields t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_custom_fields GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_custom_fields t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_custom_fields ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -828,12 +801,9 @@ cubes:
     public: false
     description: Selectable options for choice-type custom fields.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_custom_field_choices t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_custom_field_choices GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_custom_field_choices t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_custom_field_choices ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: custom_fields
@@ -886,12 +856,9 @@ cubes:
         about merchant-specific customer attributes. value_text is the JSON value
         rendered as text.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_customer_custom_field_values t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_customer_custom_field_values GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_customer_custom_field_values t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_custom_field_values ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers
@@ -973,12 +940,9 @@ cubes:
       Free-text notes staff attach to customer profiles, with counts and recency
       for engagement questions.
     sql: >
-      SELECT t.* FROM source_lightspeed.ls_customer_notes t
-      JOIN (
-        SELECT tenant_id, (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS latest_pack
-        FROM source_lightspeed.ls_customer_notes GROUP BY tenant_id
-      ) lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_customer_notes t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_notes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers

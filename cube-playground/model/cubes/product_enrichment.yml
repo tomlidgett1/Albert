@@ -13,13 +13,11 @@ cubes:
         the question is about other price types or comparing price types.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_item_prices
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_prices ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_item_prices t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_item_prices t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -80,13 +78,11 @@ cubes:
       at source.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_price_levels
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_price_levels ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_price_levels t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_price_levels t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     dimensions:
       - name: row_key
@@ -135,13 +131,11 @@ cubes:
         product.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_item_components
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_components ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_item_components t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_item_components t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -196,13 +190,11 @@ cubes:
       value. Reference list. Tombstoned rows are excluded at source.
     sql: >
       WITH lv AS MATERIALIZED (
-        SELECT DISTINCT ON (tenant_id) tenant_id, mapping_version AS latest_pack
-        FROM source_lightspeed.ls_item_fees
-        ORDER BY tenant_id, ingested_at DESC
+        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_fees ORDER BY ingested_at DESC LIMIT 1
       )
-      SELECT t.* FROM source_lightspeed.ls_item_fees t
-      JOIN lv ON lv.tenant_id = t.tenant_id AND t.mapping_version = lv.latest_pack
+      SELECT t.* FROM source_lightspeed_official.ls_item_fees t
       WHERE NOT t.tombstone
+        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     dimensions:
       - name: row_key
