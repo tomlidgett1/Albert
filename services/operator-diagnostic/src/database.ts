@@ -1,4 +1,7 @@
 import {
+  fivetranMyDataCatalogueSchema,
+  fivetranMyDataGrantSchema,
+  fivetranMyDataTableSchema,
   operatorDiagnosticGrantSchema,
   operatorDiagnosticSampleSchema,
   protectedDogfoodOnboardingReceiptRequestSchema,
@@ -6,6 +9,10 @@ import {
   shopifyPrivacyArtifactSchema,
   shopifyPrivacyExportGrantSchema,
   targetMatchesStage,
+  type FivetranMyDataCatalogue,
+  type FivetranMyDataGrant,
+  type FivetranMyDataResult,
+  type FivetranMyDataTable,
   type OperatorDiagnosticGrant,
   type OperatorDiagnosticSample,
   type ProtectedDogfoodOnboardingReceipt,
@@ -31,6 +38,8 @@ const SENSITIVE_COLUMN = /(?:^|_)(?:access|refresh|oauth|auth|authorization|bear
 const EXCLUDED_TYPES = new Set(["json", "jsonb", "bytea"]);
 const MAX_COLUMNS = 32;
 const CELL_CHARACTER_LIMIT = 500;
+const MY_DATA_MAX_COLUMNS = 64;
+const FIVETRAN_SYSTEM_TABLE = /^(?:_?fivetran_|albert_)/u;
 export const SHOPIFY_PRIVACY_MAX_RECORDS = 50_000;
 export const SHOPIFY_PRIVACY_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
@@ -49,6 +58,12 @@ function databaseErrorCode(error: unknown): string {
 
 function diagnosticFailure(code: string, message: string): Error {
   return Object.assign(new Error(message), { diagnosticCode: code });
+}
+
+function safeNonnegativeInteger(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? ""));
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(parsed));
 }
 
 export function assertShopifyPrivacyExportBounds(
@@ -104,6 +119,30 @@ export class PostgresOperatorDiagnosticControlStore {
       await client.query(
         "SELECT control_plane.complete_operator_diagnostic_reveal($1,$2,$3,$4)",
         [input.revealId, input.status, input.rowCount, input.errorCode ?? null],
+      );
+    });
+  }
+
+  async claimFivetranMyData(requestId: string): Promise<FivetranMyDataGrant> {
+    return this.inRole(async (client) => {
+      const result = await client.query(
+        "SELECT control_plane.claim_fivetran_my_data_request($1) AS grant",
+        [requestId],
+      );
+      return fivetranMyDataGrantSchema.parse(result.rows[0]?.grant);
+    });
+  }
+
+  async completeFivetranMyData(input: Readonly<{
+    requestId: string;
+    status: "completed" | "failed";
+    resultCount: number;
+    errorCode?: string;
+  }>): Promise<void> {
+    await this.inRole(async (client) => {
+      await client.query(
+        "SELECT control_plane.complete_fivetran_my_data_request($1,$2,$3,$4)",
+        [input.requestId, input.status, input.resultCount, input.errorCode ?? null],
       );
     });
   }
@@ -169,6 +208,10 @@ export class PostgresOperatorDiagnosticControlStore {
                AND to_regprocedure('control_plane.claim_shopify_privacy_export(text)') IS NOT NULL
                AND to_regprocedure(
                  'control_plane.complete_shopify_privacy_export(text,text,text,integer,text)'
+               ) IS NOT NULL
+               AND to_regprocedure('control_plane.claim_fivetran_my_data_request(text)') IS NOT NULL
+               AND to_regprocedure(
+                 'control_plane.complete_fivetran_my_data_request(text,text,integer,text)'
                ) IS NOT NULL AS ready`,
         );
         return result.rows[0]?.ready === true;
@@ -272,6 +315,264 @@ export class PostgresOperatorDiagnosticReadStore {
     } finally {
       client.release();
     }
+  }
+
+  async browseFivetranMyData(untrustedGrant: FivetranMyDataGrant): Promise<FivetranMyDataResult> {
+    const grant = fivetranMyDataGrantSchema.parse(untrustedGrant);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await this.assertRuntimeIdentity(client);
+      await client.query("SET LOCAL ROLE diagnostic_ro");
+      await client.query(
+        "SELECT set_config('albert.tenant_capability',$1,true)",
+        [grant.analytical_capability],
+      );
+      await client.query("SELECT set_config('statement_timeout','5000ms',true)");
+      await client.query("SELECT set_config('lock_timeout','500ms',true)");
+      await client.query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('deletion:'||$1,0))",
+        [grant.tenant_id],
+      );
+
+      const schemas = grant.sources.map((source) => source.destination_schema);
+      const bindings = schemas.length === 0
+        ? { rows: [] as readonly Row[] }
+        : await client.query(
+          `SELECT destination_schema,connection_id
+             FROM ingestion.fivetran_destination_bindings
+            WHERE tenant_id=$1 AND destination_schema=ANY($2::text[])
+            ORDER BY destination_schema`,
+          [grant.tenant_id, schemas],
+        );
+      const expectedBindings = grant.sources
+        .map((source) => `${source.destination_schema}\u0000${source.connection_id}`)
+        .sort();
+      const actualBindings = bindings.rows
+        .map((row) => `${String(row.destination_schema ?? "")}\u0000${String(row.connection_id ?? "")}`)
+        .sort();
+      if (actualBindings.length !== expectedBindings.length ||
+          actualBindings.some((value, index) => value !== expectedBindings[index])) {
+        throw diagnosticFailure(
+          "FIVETRAN_MY_DATA_BINDING_MISMATCH",
+          "Fivetran destination binding does not match the control-plane grant.",
+        );
+      }
+
+      const result = grant.request_kind === "catalogue"
+        ? await this.fivetranCatalogue(client, grant)
+        : await this.fivetranRows(client, grant);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* keep original failure */ }
+      const wrapped = new Error("Fivetran My Data read failed.");
+      Object.assign(wrapped, { diagnosticCode: databaseErrorCode(error) });
+      throw wrapped;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async fivetranCatalogue(
+    client: DiagnosticPgClient,
+    grant: FivetranMyDataGrant,
+  ): Promise<Readonly<{ kind: "catalogue"; catalogue: FivetranMyDataCatalogue }>> {
+    const schemas = grant.sources.map((source) => source.destination_schema);
+    const metadata = schemas.length === 0
+      ? { rows: [] as readonly Row[] }
+      : await client.query(
+        `SELECT namespace.nspname AS schema_name,
+                class.relname AS table_name,
+                coalesce(stat.n_live_tup,0)::text AS approximate_rows,
+                count(attribute.attnum) FILTER (
+                  WHERE attribute.attnum>0 AND NOT attribute.attisdropped
+                )::integer AS column_count,
+                bool_or(attribute.attname='tenant_id' AND NOT attribute.attisdropped) AS tenant_scoped,
+                class.relrowsecurity AS row_security,
+                pg_catalog.has_schema_privilege('diagnostic_ro',namespace.oid,'USAGE') AS schema_readable,
+                pg_catalog.has_table_privilege('diagnostic_ro',class.oid,'SELECT') AS table_readable
+           FROM pg_catalog.pg_namespace AS namespace
+           JOIN pg_catalog.pg_class AS class ON class.relnamespace=namespace.oid
+           LEFT JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid=class.oid
+           LEFT JOIN pg_catalog.pg_stat_all_tables AS stat ON stat.relid=class.oid
+          WHERE namespace.nspname=ANY($1::text[])
+            AND class.relkind IN ('r','p')
+            AND class.relname !~ '^(fivetran_|_fivetran_|albert_)'
+          GROUP BY namespace.nspname,class.oid,class.relname,class.relrowsecurity,
+                   stat.n_live_tup,namespace.oid
+          ORDER BY namespace.nspname,class.relname
+          LIMIT 1000`,
+        [schemas],
+      );
+    const tablesBySchema = new Map<string, Array<{
+      name: string;
+      approximateRows: number;
+      columnCount: number;
+      available: boolean;
+    }>>();
+    for (const row of metadata.rows) {
+      const schemaName = String(row.schema_name ?? "");
+      const tableName = String(row.table_name ?? "");
+      if (!schemas.includes(schemaName) || !SAFE_IDENTIFIER.test(tableName) ||
+          FIVETRAN_SYSTEM_TABLE.test(tableName)) continue;
+      const tables = tablesBySchema.get(schemaName) ?? [];
+      tables.push({
+        name: tableName,
+        approximateRows: safeNonnegativeInteger(row.approximate_rows),
+        columnCount: safeNonnegativeInteger(row.column_count),
+        available: row.tenant_scoped === true && row.row_security === true &&
+          row.schema_readable === true && row.table_readable === true,
+      });
+      tablesBySchema.set(schemaName, tables);
+    }
+    const sources = grant.sources.map((source) => ({
+      connectionId: source.connection_id,
+      schemaName: source.destination_schema,
+      service: source.service,
+      displayName: source.display_name,
+      status: source.status,
+      lastSyncState: source.last_sync_state,
+      updatedAt: source.updated_at,
+      tables: tablesBySchema.get(source.destination_schema) ?? [],
+    }));
+    return {
+      kind: "catalogue",
+      catalogue: fivetranMyDataCatalogueSchema.parse({
+        requestId: grant.request_id,
+        checkedAt: new Date().toISOString(),
+        totalRows: Math.min(Number.MAX_SAFE_INTEGER, sources.reduce(
+          (total, source) => total + source.tables.reduce(
+            (sourceTotal, table) => sourceTotal + table.approximateRows,
+            0,
+          ),
+          0,
+        )),
+        sources,
+      }),
+    };
+  }
+
+  private async fivetranRows(
+    client: DiagnosticPgClient,
+    grant: FivetranMyDataGrant,
+  ): Promise<Readonly<{ kind: "rows"; table: FivetranMyDataTable }>> {
+    const schema = grant.schema_name;
+    const table = grant.table_name;
+    if (!schema || !table || FIVETRAN_SYSTEM_TABLE.test(table)) {
+      throw diagnosticFailure("FIVETRAN_MY_DATA_TARGET_INVALID", "Fivetran table target is invalid.");
+    }
+    const schemaName = identifier(schema);
+    const tableName = identifier(table);
+    const target = await client.query(
+      `SELECT class.relrowsecurity AS row_security,
+              pg_catalog.has_schema_privilege('diagnostic_ro',namespace.oid,'USAGE') AS schema_readable,
+              pg_catalog.has_table_privilege('diagnostic_ro',class.oid,'SELECT') AS table_readable,
+              coalesce(stat.n_live_tup,0)::text AS approximate_rows
+         FROM pg_catalog.pg_namespace AS namespace
+         JOIN pg_catalog.pg_class AS class ON class.relnamespace=namespace.oid
+         LEFT JOIN pg_catalog.pg_stat_all_tables AS stat ON stat.relid=class.oid
+        WHERE namespace.nspname=$1 AND class.relname=$2 AND class.relkind IN ('r','p')`,
+      [schema, table],
+    );
+    const targetRow = target.rows[0];
+    if (!targetRow || targetRow.row_security !== true || targetRow.schema_readable !== true ||
+        targetRow.table_readable !== true) {
+      throw diagnosticFailure(
+        "FIVETRAN_MY_DATA_TABLE_NOT_READY",
+        "Fivetran table has not completed its tenant-safety stamp.",
+      );
+    }
+
+    const metadata = await client.query(
+      `SELECT column_name,data_type
+         FROM information_schema.columns
+        WHERE table_schema=$1 AND table_name=$2
+        ORDER BY ordinal_position`,
+      [schema, table],
+    );
+    if (!metadata.rows.some((row) => row.column_name === "tenant_id")) {
+      throw diagnosticFailure(
+        "FIVETRAN_MY_DATA_TENANT_COLUMN_MISSING",
+        "Fivetran table is not tenant scoped.",
+      );
+    }
+    const candidates = metadata.rows.filter((row) => {
+      const column = typeof row.column_name === "string" ? row.column_name : "";
+      const dataType = typeof row.data_type === "string" ? row.data_type : "";
+      return column !== "tenant_id" && SAFE_IDENTIFIER.test(column) &&
+        !SENSITIVE_COLUMN.test(column) && !EXCLUDED_TYPES.has(dataType);
+    });
+    const selected = candidates.slice(0, MY_DATA_MAX_COLUMNS).map((row) => ({
+      name: String(row.column_name),
+      dataType: String(row.data_type),
+    }));
+    if (selected.length === 0) {
+      throw diagnosticFailure(
+        "FIVETRAN_MY_DATA_NO_SAFE_COLUMNS",
+        "Fivetran table has no browse-safe scalar columns.",
+      );
+    }
+    const projection = selected.map(({ name }) => {
+      const quoted = identifier(name);
+      return `CASE WHEN ${quoted} IS NULL THEN NULL ELSE left(${quoted}::text,${CELL_CHARACTER_LIMIT}) END AS ${quoted}`;
+    }).join(",");
+    const selectedNames = new Set(selected.map(({ name }) => name));
+    const preferredOrder = ["_fivetran_synced", "updated_at", "modified_at", "created_at", "id"]
+      .find((column) => selectedNames.has(column)) ?? selected[0]!.name;
+    const primaryKey = await client.query(
+      `SELECT attribute.attname AS column_name
+         FROM pg_catalog.pg_namespace AS namespace
+         JOIN pg_catalog.pg_class AS class ON class.relnamespace=namespace.oid
+         JOIN pg_catalog.pg_index AS index ON index.indrelid=class.oid AND index.indisprimary
+         JOIN LATERAL unnest(index.indkey) WITH ORDINALITY AS key(attnum,position) ON true
+         JOIN pg_catalog.pg_attribute AS attribute
+           ON attribute.attrelid=class.oid AND attribute.attnum=key.attnum
+        WHERE namespace.nspname=$1 AND class.relname=$2
+        ORDER BY key.position`,
+      [schema, table],
+    );
+    const primaryOrder = primaryKey.rows
+      .map((row) => String(row.column_name ?? ""))
+      .filter((column) => SAFE_IDENTIFIER.test(column));
+    const orderColumns = primaryOrder.length > 0 ? primaryOrder : [preferredOrder];
+    const orderDirection = primaryOrder.length > 0 || preferredOrder === "id" ||
+      preferredOrder === selected[0]!.name ? "ASC" : "DESC";
+    const orderSql = orderColumns
+      .map((column) => `${identifier(column)} ${orderDirection} NULLS LAST`)
+      .join(",");
+    const page = await client.query(
+      `SELECT ${projection}
+         FROM ${schemaName}.${tableName}
+        WHERE tenant_id=$1
+        ORDER BY ${orderSql}
+        LIMIT $2 OFFSET $3`,
+      [grant.tenant_id, grant.row_limit + 1, grant.row_offset],
+    );
+    const hasMore = page.rows.length > grant.row_limit;
+    const visibleRows = page.rows.slice(0, grant.row_limit).map((row) =>
+      Object.fromEntries(selected.map(({ name }) => {
+        const value = row[name];
+        return [name, value === null || value === undefined ? null : String(value)];
+      })),
+    );
+    return {
+      kind: "rows",
+      table: fivetranMyDataTableSchema.parse({
+        requestId: grant.request_id,
+        schemaName: schema,
+        tableName: table,
+        columns: selected,
+        rows: visibleRows,
+        offset: grant.row_offset,
+        limit: grant.row_limit,
+        hasMore,
+        approximateRows: safeNonnegativeInteger(targetRow.approximate_rows),
+        excludedColumnCount: metadata.rows.length - 1 - candidates.length,
+        additionalColumnCount: Math.max(0, candidates.length - selected.length),
+        cellCharacterLimit: CELL_CHARACTER_LIMIT,
+      }),
+    };
   }
 
   async exportShopifyPrivacy(
@@ -642,7 +943,12 @@ export class PostgresOperatorDiagnosticReadStore {
   }
 
   async ready(): Promise<boolean> {
-    const client = await this.pool.connect();
+    let client: DiagnosticPgClient;
+    try {
+      client = await this.pool.connect();
+    } catch {
+      return false;
+    }
     try {
       await client.query("BEGIN TRANSACTION READ ONLY");
       await this.assertRuntimeIdentity(client);
@@ -650,10 +956,7 @@ export class PostgresOperatorDiagnosticReadStore {
       const result = await client.query(
         `SELECT current_role='diagnostic_ro'
              AND capability_internal.assert_verifier_ready()
-             AND to_regclass('source_shopify.shopify_customers') IS NOT NULL
-             AND to_regclass('source_shopify.shopify_orders') IS NOT NULL
-             AND to_regclass('source_shopify.shopify_metafield_values') IS NOT NULL
-             AND to_regclass('source_shopify.shopify_fields') IS NOT NULL
+             AND to_regclass('ingestion.fivetran_destination_bindings') IS NOT NULL
              AND to_regclass('ingestion.source_records') IS NOT NULL AS ready`,
       );
       await client.query("COMMIT");

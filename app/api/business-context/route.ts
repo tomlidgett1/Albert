@@ -12,7 +12,7 @@
  */
 import { ulid } from "ulid";
 import { z } from "zod";
-import { normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
+import { isAnthropicModel, isXaiModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
 import { ALBERT_V3_RUNTIME, businessContextDocumentSchema, BUSINESS_CONTEXT_SECTIONS, businessContextRefreshDue, runStandaloneBusinessContextRefresh } from "@/packages/albert-v3/src";
 import { emptyTurnProvenance } from "@/packages/albert-v3/src/engine/grounding";
 import { correlationIdFromHeader, createServiceLogger, safeErrorEvidence } from "@/packages/observability/src";
@@ -113,6 +113,22 @@ export async function POST(request: Request): Promise<Response> {
     const openaiApiKey = process.env.OPENAI_API_KEY;
     if (!cubeApiUrl || !cubeApiSecret || !openaiApiKey) return jsonError("The analytics backend is not configured.", 503, correlationId);
     const preferences = normalizeAgentPreferences(parsed.preferences);
+    if (isXaiModel(preferences.model) && !process.env.XAI_API_KEY?.trim()) {
+      return jsonError("Grok is not configured (XAI_API_KEY is missing).", 503, correlationId);
+    }
+    if (isAnthropicModel(preferences.model) && !process.env.ANTHROPIC_API_KEY?.trim()) {
+      return jsonError("Claude Haiku is not configured (ANTHROPIC_API_KEY is missing).", 503, correlationId);
+    }
+    if (
+      isAnthropicModel(preferences.model)
+      && process.env.NODE_ENV === "production"
+      && (
+        process.env.ALBERT_ANTHROPIC_APP8_APPROVED !== "true"
+        || process.env.ALBERT_ANTHROPIC_ZDR_APPROVED !== "true"
+      )
+    ) {
+      return jsonError("Claude Haiku is not approved for production data on this Albert environment.", 503, correlationId);
+    }
     const [existing, routing, findings] = await Promise.all([
       loadBusinessContext(auth.supabase),
       loadConnectorRouting(auth.supabase),
@@ -152,6 +168,10 @@ export async function POST(request: Request): Promise<Response> {
         cubeApiSecret,
         openaiApiKey,
         openaiBaseUrl: process.env.OPENAI_BASE_URL || undefined,
+        xaiApiKey: process.env.XAI_API_KEY || undefined,
+        xaiBaseUrl: process.env.XAI_BASE_URL || undefined,
+        anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
+        anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || undefined,
         preferences,
         connectorKeys: routing.activeConnectors,
         freshness: routing.freshness,

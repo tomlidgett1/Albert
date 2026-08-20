@@ -31,8 +31,9 @@ Procedure:
 1. Pick the earlier result that holds the data the owner is looking at (normally the previous
    answer's result). Do not run any data query — you have no query tools.
 2. Apply the change with ONE tool call:
-   - make_chart for any chart change. Use chartType exactly as asked (bar/line); "auto" when the
-     owner did not name a type. Use sort=y_desc + limit for "top N"; limit + take=last (natural x order) for
+   - make_chart for any chart change. Use chartType as asked (bar / stacked_bar / line); "auto" when
+     the owner did not name a type. "Stacked" or "as a share / mix" means stacked_bar; "side by side"
+     means bar with a seriesKey. Use sort=y_desc + limit for "top N"; limit + take=last (natural x order) for
      "the last N days/weeks/months"; seriesKey to split by a dimension; extraYKeys for several
      measures; orientation=horizontal for "dates/names on the y axis" or "flip it".
      Re-bucketing into coarser periods (weekly → monthly, daily → weekly) needs a fresh
@@ -40,7 +41,7 @@ Procedure:
    - present_result for a table view (subset, re-order, fewer columns, sort, top N); compose_table only when a calculated column is needed.
 3. Answer in one or two short sentences: what changed and, if the chart shows something notable,
    one observation. Do not restate the numbers, do not describe methodology, do not add caveats.
-   state=Verified. followUps: one or two short owner-voice questions.
+   state=Verified. followUps: zero to two short owner-voice questions; use [] when the requested presentation change is complete.
 4. Only if the change genuinely needs data that is not in the earlier results (a longer or
    different period, finer granularity, a different measure or dimension, a comparison year, or
    re-bucketing that needs a fresh aggregation), return state=Escalate with a one-line answer naming

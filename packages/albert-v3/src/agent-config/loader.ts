@@ -46,6 +46,12 @@ export type CertifiedQueryRecipe = Readonly<{
   dateParameter?: string;
   /** Extra phrasings that should match this recipe (shown to the orchestrator). */
   matches?: readonly string[];
+  /**
+   * What an empty result MEANS for this question ("no open shifts", "nobody
+   * on leave"). When set, zero rows is a complete answer and the recipe lane
+   * composes it directly instead of escalating to the diagnostic lanes.
+   */
+  emptyAnswer?: string;
 }>;
 
 export type CertifiedQuery = Readonly<{

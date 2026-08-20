@@ -11,6 +11,7 @@ export const answerArtifactMeteringSchema = z
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "grok-4.6",
+      "claude-haiku-4-5-20251001",
       "claude-opus-5",
       "claude-sonnet-5",
     ]),

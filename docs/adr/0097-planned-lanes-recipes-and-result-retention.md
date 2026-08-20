@@ -119,6 +119,9 @@ plots exactly what the model verified. The tool is exposed whenever the answer
 shape allows a chart *or* the owner asked for one *or* prior results exist; the
 perceptual floor is 3 points for a line, 2 for bars. `TraceChartEvent` carries
 `series` (already supported by the renderer) and a new `orientation`.
+Superseded in part by ADR 0101: series caps are now 4 for lines / 8 for stacks,
+`stacked_bar` and `where` were added, and in the deep lane the chart decision
+moved from the investigators to a dedicated visualiser agent.
 
 ### 4b. Deterministic re-aggregation and cheap presentation (`engine/aggregate-layer.ts`, `present_result`)
 

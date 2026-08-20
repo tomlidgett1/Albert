@@ -129,23 +129,29 @@ test("native capabilities: registry detects statement questions by wording and i
   assert.equal(detectNativeCapability("How much do we owe suppliers?", withXero, ["xero"]), undefined);
   assert.equal(detectNativeCapability("What was our net profit last year?", { xeroMcp: undefined }, ["xero"]), undefined, "no client, no delegation");
   assert.equal(detectNativeCapability("What was our net profit last year?", withXero, ["deputy"]), undefined, "not connected, no delegation");
-  assert.equal(resolveNativeCapability("xero.statement:profit_and_loss", withXero, ["xero"]), undefined);
+  // Explicit statement wording fetches Xero's full P&L; figure wording stays governed (ADR 0108).
+  assert.equal(detectNativeCapability("Show me the P&L for this financial year", withXero, ["xero"])?.kind, "profit_and_loss");
+  assert.equal(detectNativeCapability("Can I see the income statement?", withXero, ["xero"])?.kind, "profit_and_loss");
+  assert.equal(resolveNativeCapability("xero.statement:profit_and_loss", withXero, ["xero"])?.kind, "profit_and_loss");
   assert.equal(resolveNativeCapability("xero.statement:nope", withXero, ["xero"]), undefined);
   assert.match(renderNativeCapabilitiesForClassifier(["xero"]), /xero\.statement:balance_sheet/u);
-  assert.doesNotMatch(renderNativeCapabilitiesForClassifier(["xero"]), /profit_and_loss/u);
+  assert.match(renderNativeCapabilitiesForClassifier(["xero"]), /xero\.statement:profit_and_loss/u);
   assert.equal(renderNativeCapabilitiesForClassifier(["deputy"]), "");
   // Grain the statement lacks keeps the general path.
   assert.equal(detectXeroStatementRequest("P&L by product category for July"), undefined);
 });
 
-test("routing surface: represent and meta lanes exist, reuse prior results, and the intent schema carries the fast-path fields", () => {
+test("routing surface: represent, meta and conceptual lanes exist, with the correct evidence contracts", () => {
   assert.ok((LANES as readonly string[]).includes("represent"));
   assert.ok((LANES as readonly string[]).includes("meta"));
+  assert.ok((LANES as readonly string[]).includes("conceptual"));
   assert.ok(intentSchema.shape.recipe && intentSchema.shape.recipeDateRange && intentSchema.shape.recipeEntity && intentSchema.shape.nativeCapability);
   assert.equal(laneMayReusePriorResults("represent"), true);
   assert.equal(laneMayReusePriorResults("quick"), false);
   // A represent answer built purely from prior results ships Verified, not "No data".
   assert.equal(groundedAnswerState({ lane: "represent", requested: "Verified", queriesExecuted: 0, rowsSeen: 0 }), "Verified");
+  assert.equal(groundedAnswerState({ lane: "conceptual", requested: "Verified", queriesExecuted: 0, rowsSeen: 0, definitionEvidenceCount: 1 }), "Verified");
+  assert.equal(groundedAnswerState({ lane: "conceptual", requested: "Verified", queriesExecuted: 0, rowsSeen: 0, definitionEvidenceCount: 0 }), "Unavailable");
   assert.equal(groundedAnswerState({ lane: "quick", requested: "Verified", queriesExecuted: 0, rowsSeen: 0 }), "Unavailable");
 });
 

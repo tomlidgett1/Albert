@@ -15,7 +15,24 @@ views:
       ai_context: >
         Use for invoices/bills, AR/AP, payments, bank activity, GST on source
         documents, credit notes, manual-journal inspection and recurring
-        templates. NEVER use pnl_* for Profit and Loss, Net/Gross Profit,
+        templates. HEADLINE BALANCES (what Xero's dashboard shows): "what do we
+        owe suppliers" / "bills to pay" = payable_outstanding with
+        payable_overdue and payable_open_count / payable_overdue_count
+        (approved bills awaiting payment; mention draft_bills_total /
+        draft_bill_count separately if non-zero, they are not yet payable);
+        "what is owed to us" / "invoices owed" = receivable_outstanding with
+        receivable_overdue and the counts. These come from the invoice
+        documents and need no filters. Do NOT total the contact_* balance
+        snapshots for headline AR/AP: they only refresh when the contact
+        record changes and go stale after payments. CASH IN AND OUT: "how
+        much came in / went out of the bank", "cash in vs cash out", "money in
+        and out", "bank activity for a period" = cash_in, cash_out,
+        net_cash_movement over cash_date (group by cash_bank_account or
+        cash_source when asked). This reproduces Xero's dashboard "Cash in and
+        out" exactly (bank transactions plus invoice and bill payments;
+        transfers between own accounts excluded). money_in/money_out cover
+        only direct bank transactions and payments_received/payments_made only
+        invoice payments - never add them together, use cash_*. NEVER use pnl_* for Profit and Loss, Net/Gross Profit,
         income, total expense or margins: those backward-compatible members
         omit Xero system payroll and depreciation journals. Use
         xero_profit_and_loss_analytics for headline Xero statement figures and
@@ -35,8 +52,10 @@ views:
         SPEND-OVERPAYMENT = we hold credit with a supplier. avg_days_to_pay
         gives debtor or creditor days (filter invoice_type ACCREC for debtors,
         ACCPAY for creditors). credit_line_*, batch_*, recurring_line_* and
-        contact_email / contact terms are available. NOT AVAILABLE from this
-        connection, say so honestly: live bank balances, budget line
+        contact_email / contact terms are available. Bank balances in Xero
+        live in xero_bank_balances_analytics (latest month closing balance)
+        or the live balance sheet tool. NOT AVAILABLE from this
+        connection, say so honestly: budget line
         values; and this business has no quotes, purchase
         orders, projects or expense claims in Xero. Till/POS revenue lives
         in sales_analytics (Lightspeed): Xero invoices are the accounting
@@ -121,10 +140,19 @@ views:
           - contact_count
           - customer_count
           - supplier_count
-          - total_receivable_outstanding
-          - total_receivable_overdue
-          - total_payable_outstanding
-          - total_payable_overdue
+          # Contact-level balance snapshots only refresh when the CONTACT
+          # record changes in Xero, so their totals go stale after payments.
+          # Headline AR/AP totals come from the invoice grain below
+          # (receivable_outstanding / payable_outstanding); these stay for
+          # per-contact ranking only and are hidden from the model.
+          - name: total_receivable_outstanding
+            meta: { ai_hidden: true }
+          - name: total_receivable_overdue
+            meta: { ai_hidden: true }
+          - name: total_payable_outstanding
+            meta: { ai_hidden: true }
+          - name: total_payable_overdue
+            meta: { ai_hidden: true }
           - customers
           - suppliers
 
@@ -159,6 +187,23 @@ views:
           - overdue_amount
           - overdue_invoice_count
           - avg_invoice_value
+          # Headline balances, as Xero's dashboard tiles show them.
+          - receivable_outstanding
+          - receivable_overdue
+          - receivable_open_count
+          - receivable_overdue_count
+          - payable_outstanding
+          - payable_overdue
+          - payable_open_count
+          - payable_overdue_count
+          - draft_bills_total
+          - draft_bill_count
+          - submitted_bills_total
+          - submitted_bill_count
+          - draft_sales_invoices_total
+          - draft_sales_invoice_count
+          - submitted_sales_invoices_total
+          - submitted_sales_invoice_count
           - sales_invoices
           - bills
           - financially_real
@@ -262,6 +307,34 @@ views:
             alias: unreconciled_bank_count
           - money_in_transactions
           - money_out_transactions
+
+      # Cash in / cash out exactly as Xero's dashboard and Bank Summary count
+      # it: bank transactions + invoice/bill payments, transfers excluded.
+      - join_path: xero_cash_movements
+        includes:
+          - name: occurred_on
+            alias: cash_date
+          - name: direction
+            alias: cash_direction
+          - name: source_kind
+            alias: cash_source
+          - name: movement_type
+            alias: cash_movement_type
+          - name: bank_account_name
+            alias: cash_bank_account
+          - name: contact_name
+            alias: cash_contact
+          - name: reference
+            alias: cash_reference
+          - name: is_reconciled
+            alias: cash_reconciled
+          - name: movement_count
+            alias: cash_movement_count
+          - cash_in
+          - cash_out
+          - net_cash_movement
+          - cash_in_movements
+          - cash_out_movements
 
       # Bank activity by GL category.
       - join_path: xero_bank_transaction_line_items
@@ -450,6 +523,36 @@ views:
             alias: recurring_line_total
 
     folders:
+      - name: Headline balances (dashboard)
+        includes:
+          - receivable_outstanding
+          - receivable_overdue
+          - receivable_open_count
+          - receivable_overdue_count
+          - payable_outstanding
+          - payable_overdue
+          - payable_open_count
+          - payable_overdue_count
+          - draft_bills_total
+          - draft_bill_count
+          - submitted_bills_total
+          - submitted_bill_count
+          - draft_sales_invoices_total
+          - draft_sales_invoice_count
+      - name: Cash in and out
+        includes:
+          - cash_in
+          - cash_out
+          - net_cash_movement
+          - cash_movement_count
+          - cash_date
+          - cash_direction
+          - cash_source
+          - cash_movement_type
+          - cash_bank_account
+          - cash_contact
+          - cash_reference
+          - cash_reconciled
       - name: Invoices and bills
         includes:
           - invoice_count

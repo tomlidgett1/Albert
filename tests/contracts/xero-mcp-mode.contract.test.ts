@@ -15,7 +15,7 @@ test("dash exposes a XERO MCP mode that talks to the official Xero MCP route", a
   const session = await readFile(new URL("../../packages/xero-mcp/src/session.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../../services/sync-workers/src/main.ts", import.meta.url), "utf8");
 
-  assert.match(page, /XERO MCP/);
+  assert.doesNotMatch(page, /Live test: ask the official Xero MCP/u);
   assert.match(page, /resetChat\("xero_mcp"\)/);
   assert.match(page, /\/api\/xero-mcp-conversation/);
   assert.match(page, /Ask Xero anything/);

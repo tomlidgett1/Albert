@@ -95,7 +95,7 @@ function looksLikeGrok(text: string): boolean {
 }
 
 function alreadyDiagnostic(text: string): boolean {
-  return /^(Cubecore is down|Cubecore is not configured|Fly is not connected|OpenAI is not connected|OpenAI is not configured|Grok is not connected|Grok is not configured|Supabase is not connected|Anthropic analytics is not connected|The Albert chat API could not be reached|Live analytics is not configured)/iu.test(text)
+  return /^(Cubecore is down|Cubecore is not configured|Fly is not connected|OpenAI is not connected|OpenAI is not configured|Grok is not connected|Grok is not configured|Claude Haiku is not configured|Claude Haiku is not approved|Supabase is not connected|Anthropic analytics is not connected|The Albert chat API could not be reached|Live analytics is not configured)/iu.test(text)
     || / is not connected/iu.test(text)
     || / is not configured/iu.test(text);
 }

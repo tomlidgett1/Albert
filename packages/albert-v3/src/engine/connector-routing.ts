@@ -32,6 +32,10 @@ export function normalizeV3Connector(value: string): TraceConnector | undefined 
     : undefined;
 }
 
+const LIGHTSPEED_FAMILY: readonly string[] = ["lightspeed", "lightspeed-x"];
+/** The owner named a specific Lightspeed product (X-Series/Vend or R-Series). */
+const LIGHTSPEED_SERIES_NAMED = /\b(?:x series|xseries|vend|r series|rseries)\b/u;
+
 function compact(value: string): string {
   return value.toLowerCase().replace(/[’']/gu, "").replace(/[^a-z0-9]+/gu, " ").trim();
 }
@@ -157,8 +161,17 @@ export function resolveV3ToolRoute(input: Readonly<{
   // substituting another source's figures for a named source is a truthfulness
   // failure; the model is required to disclose the gap instead.
   const mentionedAnywhere = explicitConnectorHints(combinedQuestion, configured);
+  // Bare "Lightspeed" widens to both series above so search covers whichever
+  // is live. That widening must not become a false "X-Series is not connected"
+  // disclosure for an R-Series tenant (or vice versa): when the owner did not
+  // name a series and one is connected, they meant the connected one.
+  const lightspeedSeriesNamed = LIGHTSPEED_SERIES_NAMED.test(compact(combinedQuestion));
+  const anyLightspeedConnected = LIGHTSPEED_FAMILY.some((connector) => available.has(connector));
   const unavailableRequestedConnectors = mentionedAnywhere
-    .filter((connector) => !available.has(connector));
+    .filter((connector) => !available.has(connector))
+    .filter((connector) => !(
+      LIGHTSPEED_FAMILY.includes(connector) && !lightspeedSeriesNamed && anyLightspeedConnected
+    ));
   const inferred = explicit.length === 0
     ? inferredCubeConnectorHints(combinedQuestion, available)
     : [];
@@ -185,8 +198,9 @@ export function resolveV3ToolRoute(input: Readonly<{
   const inheritedQL = inherit && priorViews.some((view) => view.startsWith("shopifyql:"));
   const inheritedAdmin = inherit && priorViews.some((view) => view.startsWith("shopify-admin:"));
   const deepShopifyReview = input.lane === "deep" && /\bshopify\b/iu.test(combinedQuestion);
-  const shopifyQL = input.shopifyQLAvailable && shopifyConnected && (qlIntent || inheritedQL || deepShopifyReview);
-  const shopifyAdmin = input.shopifyAdminAvailable && shopifyConnected && (adminIntent || inheritedAdmin);
+  const definitionOnly = input.lane === "conceptual";
+  const shopifyQL = !definitionOnly && input.shopifyQLAvailable && shopifyConnected && (qlIntent || inheritedQL || deepShopifyReview);
+  const shopifyAdmin = !definitionOnly && input.shopifyAdminAvailable && shopifyConnected && (adminIntent || inheritedAdmin);
 
   const hasNonShopifyPreferred = preferredCubeConnectors.some((connector) => connector !== "shopify");
   const mixedCommerce = (hasNonShopifyPreferred && (shopifyQL || shopifyAdmin))
@@ -207,7 +221,7 @@ export function resolveV3ToolRoute(input: Readonly<{
   const purelyNativeLive = (shopifyQL || shopifyAdmin)
     && !mixedCommerce
     && !ORDINARY_COMMERCE.test(nativeRemainder);
-  const cube = input.cubeAvailable && !purelyNativeLive;
+  const cube = input.cubeAvailable && (definitionOnly || !purelyNativeLive);
 
   const reasons: string[] = [];
   if (explicit.length > 0) reasons.push(`explicit connectors: ${explicit.join(", ")}`);
@@ -215,6 +229,7 @@ export function resolveV3ToolRoute(input: Readonly<{
   if (inheritedCubeConnectors.length > 0 || inheritedQL || inheritedAdmin) reasons.push("prior governed query");
   if (qlIntent) reasons.push("Shopify-native reporting intent");
   if (adminIntent) reasons.push("Shopify Admin object/field intent");
+  if (definitionOnly) reasons.push("published semantic definition only");
   if (unavailableRequestedConnectors.length > 0) {
     reasons.push(`referenced but not connected: ${unavailableRequestedConnectors.join(", ")}`);
   }

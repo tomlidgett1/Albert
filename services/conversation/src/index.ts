@@ -8,6 +8,7 @@ export * from "./prompt-routing.js";
 export * from "./claims.js";
 export * from "./usage-lifecycle.js";
 export * from "./conversation-title.js";
+export * from "./initial-acknowledgement.js";
 
 /** Ready-to-mount fixture handler for an authenticated development route. */
 export function createFixtureConversationSseResponse(

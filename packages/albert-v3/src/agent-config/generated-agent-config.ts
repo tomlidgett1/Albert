@@ -308,9 +308,43 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "guidance": "Xero P&L leaf account rows at monthly accrual grain. Use statement_amount grouped by account_name/type/category for expense or income rankings and wage/super drill-down. Official report codes, not names, identify wages. It excludes statement subtotal/formula rows to prevent double counting. Never derive Net Profit by summing this view; headline profit and margins live in xero_profit_and_loss_analytics.\n"
       },
       {
+        "name": "xero_balance_sheet_analytics",
+        "connector": "xero",
+        "routing_terms": [
+          "balance sheet",
+          "net assets and equity",
+          "total assets and liabilities",
+          "inventory value on the balance sheet",
+          "loan balance",
+          "GST balance owed",
+          "accounts payable balance at month end"
+        ],
+        "guidance": "Xero's own standard-layout Balance Sheet at month-end grain (trailing 24 month ends, current month rendered through the last refresh): total assets, total liabilities, net assets / equity, bank total, accounts receivable and payable balances, GST control balance, inventory, current year earnings, plus every statement line (line_* members) for loan, owner-loan, PAYG/super payable, fixed-asset and equity accounts. Pick ONE as_at date (newest = latest month end); never sum across dates or mix account lines with Xero total lines. The live xero_balance_sheet tool is more current for \"as at today\"; fall back here (and say the date) when it is unavailable. Dashboard-style \"bills to pay\" / \"invoices owed\" come from xero_finance_analytics payable_outstanding / receivable_outstanding.\n"
+      },
+      {
+        "name": "xero_bank_balances_analytics",
+        "connector": "xero",
+        "routing_terms": [
+          "bank account balances",
+          "how much is in the bank",
+          "balance of each bank account",
+          "bank summary by month"
+        ],
+        "guidance": "Xero's Bank Summary at monthly grain (trailing 12 months): each bank and credit-card account's opening balance, cash received, cash spent and closing balance IN XERO per calendar month, plus Xero's Total row. The latest month's closing balance is the account's current \"Balance in Xero\" through the last refresh. Always pick one month and filter is_account_line = true to list accounts; closing balances are point-in-time, never sum across months. For whole-business cash in and out over a period use xero_finance_analytics cash_in / cash_out. The live xero_balance_sheet tool gives today's balances when Xero's API allowance permits.\n"
+      },
+      {
+        "name": "xero_trial_balance_analytics",
+        "connector": "xero",
+        "routing_terms": [
+          "trial balance",
+          "ledger account balance"
+        ],
+        "guidance": "Xero's Trial Balance per as-at date (last three month ends and the financial-year end): every ledger account with period and YTD debit / credit; net_balance = debit - credit. Choose one as_at and filter is_account_line = true. Balance sheet headlines live in xero_balance_sheet_analytics, P&L in xero_profit_and_loss_analytics.\n"
+      },
+      {
         "name": "xero_finance_analytics",
         "connector": "xero",
-        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe, average days to pay (avg_days_to_pay), payments received and made, bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). NEVER use legacy pnl_* members for Profit and Loss, Net/Gross Profit, income, total expenses or margins: they omit system payroll and depreciation journals. Use xero_profit_and_loss_analytics for headline statement figures and xero_profit_and_loss_account_analytics for account breakdowns. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. NOT AVAILABLE from this connection, say so honestly: live bank balances, budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
+        "guidance": "The accounting ledger (Xero). Invoices and bills with amounts due and ageing bands, who owes me / who I owe (headline payable_outstanding / receivable_outstanding with overdue parts and counts, exactly as Xero's dashboard tiles), average days to pay (avg_days_to_pay), payments received and made, cash in and out of the bank for a period (cash_in / cash_out / net_cash_movement, matching Xero's dashboard), bank account spending and income by GL category, GST position (gst_* members), credit notes and credit note lines, overpayments (customer/supplier credit balances), batch payments, journal debits/credits, recurring invoice templates with their lines, and contact details (email, payment terms). NEVER use legacy pnl_* members for Profit and Loss, Net/Gross Profit, income, total expenses or margins: they omit system payroll and depreciation journals. Use xero_profit_and_loss_analytics for headline statement figures and xero_profit_and_loss_account_analytics for account breakdowns. GST questions use gst_collected / gst_paid / gst_net over gst_date, but disclose that GST collected only covers directly invoiced sales (register sales post via tax-blind journals) and the authoritative BAS comes from Xero's GST return. Bank balances in Xero live in xero_bank_balances_analytics (month-end / latest) or the live xero_balance_sheet tool. NOT AVAILABLE from this connection, say so honestly: budget line values, and Xero's own report PDFs. This business has no quotes, purchase orders, projects or expense claims in Xero. \"Spend with supplier X\" and \"who do I buy from\" are answered here (bills by contact plus bank spend), not from Lightspeed purchase orders. For running-cost questions (\"how much am I paying in fees\") use recent COMPLETE months, not the current partial month: coding lags mean the current month is usually empty. POS register revenue stays in sales_analytics (Lightspeed); Xero is the books. For cross-tool questions query each view separately and combine narratively.\n"
       },
       {
         "name": "xero_payroll_analytics",
@@ -1827,44 +1861,47 @@ export const ALBERT_V3_AGENT_CONFIG = {
     },
     {
       "name": "recipe-bank-money-for-period",
-      "userRequest": "How much came into / went out of the bank in a period?",
+      "userRequest": "How much cash came into / went out of the bank in a period (cash in and out)?",
       "notes": "",
       "query": {
         "measures": [
-          "xero_finance_analytics.money_in",
-          "xero_finance_analytics.money_out",
-          "xero_finance_analytics.bank_transaction_count"
+          "xero_finance_analytics.cash_in",
+          "xero_finance_analytics.cash_out",
+          "xero_finance_analytics.net_cash_movement"
         ],
         "timeDimensions": [
           {
-            "dimension": "xero_finance_analytics.bank_occurred_on",
+            "dimension": "xero_finance_analytics.cash_date",
             "dateRange": "last 7 days"
           }
         ]
       },
       "recipe": {
         "presentation": "fact",
-        "answerHint": "One sentence with the figure asked for; note if the latest bank date is a few days behind.",
-        "dateParameter": "xero_finance_analytics.bank_occurred_on",
+        "answerHint": "One sentence with cash in, cash out and the difference for the period (these match Xero's \"Cash in and out\" dashboard tile: bank transactions plus invoice and bill payments, transfers between own accounts excluded); note if the latest bank date is a few days behind.",
+        "dateParameter": "xero_finance_analytics.cash_date",
         "matches": [
           "How much money came into the bank over the last 7 days?",
           "Bank deposits last week",
-          "How much went out of the bank last month?"
+          "How much went out of the bank last month?",
+          "How much cash came in and went out over the last 6 months?",
+          "Cash in and out this month",
+          "What was our cash flow last month?"
         ]
       }
     },
     {
       "name": "recipe-bank-money-in-out-by-month",
-      "userRequest": "Money in and money out of the bank by month (bank activity trend).",
+      "userRequest": "Cash in and cash out of the bank by month (bank activity trend).",
       "notes": "",
       "query": {
         "measures": [
-          "xero_finance_analytics.money_in",
-          "xero_finance_analytics.money_out"
+          "xero_finance_analytics.cash_in",
+          "xero_finance_analytics.cash_out"
         ],
         "timeDimensions": [
           {
-            "dimension": "xero_finance_analytics.bank_occurred_on",
+            "dimension": "xero_finance_analytics.cash_date",
             "granularity": "month",
             "dateRange": "this year"
           }
@@ -1872,12 +1909,13 @@ export const ALBERT_V3_AGENT_CONFIG = {
       },
       "recipe": {
         "presentation": "line",
-        "answerHint": "Line chart with money in and money out as two series (extraYKeys); one sentence on the biggest month.",
-        "dateParameter": "xero_finance_analytics.bank_occurred_on",
+        "answerHint": "Line chart with cash in and cash out as two series (extraYKeys); one sentence on the biggest month and the overall difference. Figures match Xero's \"Cash in and out\" tile (transfers excluded).",
+        "dateParameter": "xero_finance_analytics.cash_date",
         "matches": [
           "Show money in and money out of the bank by month this year",
           "How much money went out of the bank each month this year?",
-          "Bank activity by month"
+          "Bank activity by month",
+          "Cash in and out by month for the last 6 months"
         ]
       }
     },
@@ -1975,6 +2013,39 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
+      "name": "recipe-hours-and-wages-by-week",
+      "userRequest": "Hours worked and wage cost week by week (the weekly labour trend, last week vs the week before).",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.hours_worked",
+          "workforce_analytics.wage_cost",
+          "workforce_analytics.worked_shift_count"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.shift_date",
+            "granularity": "week",
+            "dateRange": "last 8 weeks"
+          }
+        ],
+        "order": {
+          "workforce_analytics.shift_date": "asc"
+        }
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Table of week starting, hours, wage cost, shifts; if the owner asked to compare last week with the week before, state both weeks' hours and the change (percent_change). Note the current week is partial.",
+        "dateParameter": "workforce_analytics.shift_date",
+        "matches": [
+          "How did hours worked last week compare with the week before?",
+          "Hours worked by week for the last two months",
+          "Weekly wage cost trend",
+          "Are our hours going up or down week to week?"
+        ]
+      }
+    },
+    {
       "name": "recipe-hours-and-wages-total",
       "userRequest": "Total hours worked and wage cost for a period (what did wages cost, how many hours did staff work).",
       "notes": "",
@@ -2040,60 +2111,301 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
-      "name": "recipe-leave-for-period",
-      "userRequest": "Who is on leave in a period (approved leave, leave requests)?",
+      "name": "recipe-hours-worked-by-weekday",
+      "userRequest": "Hours worked (and wage cost) by day of the week over a period - which weekday costs the most labour.",
       "notes": "",
       "query": {
         "measures": [
-          "workforce_analytics.leave_days",
-          "workforce_analytics.leave_hours"
+          "workforce_analytics.hours_worked",
+          "workforce_analytics.wage_cost"
         ],
         "dimensions": [
-          "workforce_analytics.leave_staff",
-          "workforce_analytics.leave_type",
-          "workforce_analytics.leave_status",
-          "workforce_analytics.leave_starts",
-          "workforce_analytics.leave_ends"
+          "workforce_analytics.shift_weekday",
+          "workforce_analytics.shift_weekday_number"
         ],
         "timeDimensions": [
           {
-            "dimension": "workforce_analytics.leave_starts",
-            "dateRange": "this month"
+            "dimension": "workforce_analytics.shift_date",
+            "dateRange": "last 12 months"
           }
         ],
         "order": {
-          "workforce_analytics.leave_starts": "asc"
+          "workforce_analytics.shift_weekday_number": "asc"
+        }
+      },
+      "recipe": {
+        "presentation": "bar",
+        "answerHint": "Name the weekday with the most hours / wage cost; bar chart Monday to Sunday (order by the weekday number).",
+        "dateParameter": "workforce_analytics.shift_date",
+        "matches": [
+          "Which day of the week do staff work the most hours?",
+          "Hours worked by day of week",
+          "Which day costs us the most in wages?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-leave-by-type-for-period",
+      "userRequest": "How much leave was taken by type in a period (sick leave days, annual leave days, leave by person)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.approved_leave_days_taken",
+          "workforce_analytics.approved_leave_day_count",
+          "workforce_analytics.approved_leave_hours_taken"
+        ],
+        "dimensions": [
+          "workforce_analytics.leave_day_type",
+          "workforce_analytics.leave_day_staff"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.leave_day",
+            "dateRange": "this year"
+          }
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.leave_day_status",
+            "operator": "equals",
+            "values": [
+              "Approved"
+            ]
+          }
+        ],
+        "order": {
+          "workforce_analytics.approved_leave_days_taken": "desc"
+        },
+        "limit": 100
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Answer the type asked (e.g. sick leave): approved leave days and person-days; if that type has no rows say zero were recorded. Table: leave type, staff member, approved days, person-days. Declined/cancelled requests are excluded.",
+        "matches": [
+          "How many sick days have been taken this year?",
+          "How much annual leave has been taken this financial year?",
+          "Leave taken by type this year",
+          "Who has taken the most leave this year?",
+          "How many days of leave did Jack take last month?"
+        ],
+        "emptyAnswer": "no approved leave of any type was recorded in that period, so the answer for the type asked is zero"
+      }
+    },
+    {
+      "name": "recipe-leave-for-period",
+      "userRequest": "Who is on leave (away) in a period - approved leave and pending requests, by person and day range?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.leave_day_count"
+        ],
+        "dimensions": [
+          "workforce_analytics.leave_day_staff",
+          "workforce_analytics.leave_day_type",
+          "workforce_analytics.leave_day_status",
+          "workforce_analytics.leave_day_request_starts",
+          "workforce_analytics.leave_day_request_ends"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.leave_day",
+            "dateRange": "this month"
+          }
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.leave_day_status",
+            "operator": "notEquals",
+            "values": [
+              "Declined",
+              "Cancelled"
+            ]
+          }
+        ],
+        "order": {
+          "workforce_analytics.leave_day_request_starts": "asc"
+        },
+        "limit": 200
+      },
+      "recipe": {
+        "presentation": "list",
+        "answerHint": "Name who is away and on which dates (collapse consecutive days into a range per person); list approved leave first, mention 'Awaiting approval' requests separately, ignore declined/cancelled. If no rows, say nobody has leave in that period. A request that started before the period still counts if it covers days in it.",
+        "dateParameter": "workforce_analytics.leave_day",
+        "matches": [
+          "Who's on leave this month?",
+          "Any leave coming up next month?",
+          "Who has leave booked?",
+          "Who is away this week?",
+          "Is anyone on holiday next week?",
+          "Who's on leave today?"
+        ],
+        "emptyAnswer": "nobody has leave (approved or pending) covering that period"
+      }
+    },
+    {
+      "name": "recipe-on-shift-now",
+      "userRequest": "Who is on shift right now (today's roster with each shift's timing: on now, finished, upcoming)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.rostered_hours"
+        ],
+        "dimensions": [
+          "workforce_analytics.rostered_staff",
+          "workforce_analytics.roster_shift_timing",
+          "workforce_analytics.roster_starts_at",
+          "workforce_analytics.roster_ends_at",
+          "workforce_analytics.rostered_area"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "today"
+          }
+        ],
+        "order": {
+          "workforce_analytics.roster_starts_at": "asc"
         },
         "limit": 100
       },
       "recipe": {
         "presentation": "list",
-        "answerHint": "List approved leave (person, type, dates); mention pending requests separately; ignore declined/cancelled.",
-        "dateParameter": "workforce_analytics.leave_starts",
+        "answerHint": "Lead with the people whose shift timing is 'On now' (name, area, shift end); then say who is still to come today ('Upcoming') and who has finished. If nobody is 'On now', say no one is rostered on at the moment and name the next shift today. Never a chart.",
         "matches": [
-          "Who's on leave this month?",
-          "Any leave coming up next month?",
-          "Who has leave booked?"
+          "Who's on shift right now?",
+          "Who is working right now?",
+          "Is anyone on at the moment?",
+          "Who's in the shop now?",
+          "Who is on the floor right now?"
+        ],
+        "emptyAnswer": "nobody is rostered today at all, so no one is on shift right now"
+      }
+    },
+    {
+      "name": "recipe-open-shifts-for-period",
+      "userRequest": "Open (unassigned / unfilled) rostered shifts in a period.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.open_shift_count",
+          "workforce_analytics.rostered_hours"
+        ],
+        "dimensions": [
+          "workforce_analytics.rostered_date",
+          "workforce_analytics.roster_starts_at",
+          "workforce_analytics.roster_ends_at",
+          "workforce_analytics.rostered_area"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "this week"
+          }
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.roster_open_shift",
+            "operator": "equals",
+            "values": [
+              "true"
+            ]
+          }
+        ],
+        "order": {
+          "workforce_analytics.roster_starts_at": "asc"
+        },
+        "limit": 200
+      },
+      "recipe": {
+        "presentation": "list",
+        "answerHint": "If rows exist: how many open shifts, their dates/times/areas and total hours; if none, say there are no open shifts in that period.",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "Are there any open shifts this week?",
+          "Any unfilled shifts next week?",
+          "Which shifts still need someone?",
+          "Do we have any unassigned shifts?"
+        ],
+        "emptyAnswer": "there are no open (unassigned) shifts on the roster for that period - every rostered shift has someone assigned"
+      }
+    },
+    {
+      "name": "recipe-payables-by-supplier",
+      "userRequest": "Who do we owe money to - approved unpaid bills grouped by supplier, with the overdue part?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.total_amount_due",
+          "xero_finance_analytics.overdue_amount",
+          "xero_finance_analytics.invoice_count"
+        ],
+        "dimensions": [
+          "xero_finance_analytics.invoice_contact"
+        ],
+        "filters": [
+          {
+            "member": "xero_finance_analytics.document_kind",
+            "operator": "equals",
+            "values": [
+              "Bill"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.invoice_status",
+            "operator": "equals",
+            "values": [
+              "AUTHORISED"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.total_amount_due",
+            "operator": "gt",
+            "values": [
+              "0"
+            ]
+          }
+        ],
+        "order": {
+          "xero_finance_analytics.total_amount_due": "desc"
+        },
+        "limit": 100
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Lead with the total owed and how much is overdue, then name the largest suppliers; the table lists each supplier with amount owing, overdue amount and bill count, largest first.",
+        "matches": [
+          "Who do we owe money to?",
+          "Which suppliers do we owe?",
+          "Who are our creditors?",
+          "What do we owe each supplier?",
+          "Accounts payable by supplier"
         ]
       }
     },
     {
       "name": "recipe-payables-outstanding",
-      "userRequest": "How much do we currently owe suppliers (accounts payable outstanding and overdue)?",
+      "userRequest": "How much do we currently owe suppliers (bills awaiting payment, and how much of that is overdue)?",
       "notes": "",
       "query": {
         "measures": [
-          "xero_finance_analytics.total_payable_outstanding",
-          "xero_finance_analytics.total_payable_overdue"
+          "xero_finance_analytics.payable_outstanding",
+          "xero_finance_analytics.payable_open_count",
+          "xero_finance_analytics.payable_overdue",
+          "xero_finance_analytics.payable_overdue_count",
+          "xero_finance_analytics.draft_bills_total",
+          "xero_finance_analytics.draft_bill_count"
         ]
       },
       "recipe": {
         "presentation": "fact",
-        "answerHint": "One or two sentences: total owed and how much of it is overdue.",
+        "answerHint": "One or two sentences that ALWAYS state the dollar figures: \"we owe $X across N approved bills awaiting payment; $Y (M bills) is overdue\"; add the draft bills value only if non-zero, as \"not yet approved\". Never give counts without the amounts.",
         "matches": [
           "How much do we currently owe suppliers?",
-          "What do we owe?",
-          "How much is outstanding to suppliers?"
+          "What do we owe in total?",
+          "How much is outstanding to suppliers?",
+          "What do we owe to suppliers right now?",
+          "Bills to pay",
+          "How much do we have in unpaid bills?"
         ]
       }
     },
@@ -2132,23 +2444,118 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
-      "name": "recipe-receivables-outstanding",
-      "userRequest": "How much is owed to us right now (accounts receivable outstanding and overdue)?",
+      "name": "recipe-receivables-by-customer",
+      "userRequest": "Who owes us money - approved unpaid sales invoices grouped by customer, with the overdue part?",
       "notes": "",
       "query": {
         "measures": [
-          "xero_finance_analytics.total_receivable_outstanding",
-          "xero_finance_analytics.total_receivable_overdue"
+          "xero_finance_analytics.total_amount_due",
+          "xero_finance_analytics.overdue_amount",
+          "xero_finance_analytics.invoice_count"
+        ],
+        "dimensions": [
+          "xero_finance_analytics.invoice_contact"
+        ],
+        "filters": [
+          {
+            "member": "xero_finance_analytics.document_kind",
+            "operator": "equals",
+            "values": [
+              "Sales invoice"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.invoice_status",
+            "operator": "equals",
+            "values": [
+              "AUTHORISED"
+            ]
+          },
+          {
+            "member": "xero_finance_analytics.total_amount_due",
+            "operator": "gt",
+            "values": [
+              "0"
+            ]
+          }
+        ],
+        "order": {
+          "xero_finance_analytics.total_amount_due": "desc"
+        },
+        "limit": 100
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Lead with the total owed to us and the overdue part, then name the customers; the table lists each customer with amount owing, overdue amount and invoice count, largest first.",
+        "matches": [
+          "Who owes us money?",
+          "Which customers owe us?",
+          "Who are our debtors?",
+          "Which customer owes us money and is it overdue?",
+          "Accounts receivable by customer"
+        ]
+      }
+    },
+    {
+      "name": "recipe-receivables-outstanding",
+      "userRequest": "How much is owed to us right now (sales invoices awaiting payment, and how much of that is overdue)?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_finance_analytics.receivable_outstanding",
+          "xero_finance_analytics.receivable_open_count",
+          "xero_finance_analytics.receivable_overdue",
+          "xero_finance_analytics.receivable_overdue_count"
         ]
       },
       "recipe": {
         "presentation": "fact",
-        "answerHint": "One or two sentences: total owed to us and the overdue part.",
+        "answerHint": "One or two sentences that ALWAYS state the dollar figures: \"$X is owed to us across N approved invoices; $Y (M invoices) is overdue\". Never give counts without the amounts.",
         "matches": [
           "How much is owed to us right now?",
           "How much money is owed to us?",
-          "Outstanding invoices"
+          "Outstanding invoices",
+          "How much is owed to us by customers?",
+          "Invoices owed to us",
+          "What are our receivables?"
         ]
+      }
+    },
+    {
+      "name": "recipe-recent-pay-runs",
+      "userRequest": "The most recent pay runs (last N payroll runs) with periods, payment dates, status and totals.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "xero_payroll_analytics.pay_run_wages",
+          "xero_payroll_analytics.pay_run_tax",
+          "xero_payroll_analytics.pay_run_super",
+          "xero_payroll_analytics.pay_run_net_pay",
+          "xero_payroll_analytics.pay_run_payroll_cost"
+        ],
+        "dimensions": [
+          "xero_payroll_analytics.pay_run_period_start",
+          "xero_payroll_analytics.pay_run_period_end",
+          "xero_payroll_analytics.pay_run_paid_on",
+          "xero_payroll_analytics.pay_run_state"
+        ],
+        "order": {
+          "xero_payroll_analytics.pay_run_paid_on": "desc"
+        },
+        "limit": 10
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Table of the most recent pay runs (period start/end, payment date, state, gross wages, tax, super, net pay), newest first, limited to the N asked for (default 10); one sentence naming the latest run and its net pay. DRAFT runs are not yet finalised - say so if any appear.",
+        "dateParameter": "xero_payroll_analytics.pay_run_paid_on",
+        "matches": [
+          "Give me the last 10 payruns",
+          "Show me recent pay runs",
+          "When was the last pay run?",
+          "List the payroll runs this year",
+          "What did the last pay run cost?"
+        ],
+        "emptyAnswer": "no pay runs are recorded in the payroll data yet"
       }
     },
     {
@@ -2175,6 +2582,37 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much did we refund last month?",
           "Refunds this year",
           "How many refunds did we give last week?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-roster-cost-for-period",
+      "userRequest": "Rostered (planned) hours, shifts and wage cost for a period - what will the roster cost.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.rostered_cost",
+          "workforce_analytics.rostered_hours",
+          "workforce_analytics.rostered_shift_count",
+          "workforce_analytics.open_shift_count"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "next week"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One or two sentences: planned wage cost, rostered hours and shift count for the period; mention open (unassigned) shifts if any.",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "What will next week's roster cost us in wages?",
+          "How many hours are rostered next week?",
+          "Planned labour cost this week",
+          "How many shifts are rostered this week?",
+          "What is the rostered wage cost for this month?"
         ]
       }
     },
@@ -2212,6 +2650,76 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Who is working tomorrow?",
           "What does next week's roster look like day by day?",
           "Who's on this week?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-rostered-hours-by-staff",
+      "userRequest": "Rostered hours (and planned cost) by staff member for a period - who is scheduled for how many hours.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.rostered_hours",
+          "workforce_analytics.rostered_shift_count",
+          "workforce_analytics.rostered_cost"
+        ],
+        "dimensions": [
+          "workforce_analytics.rostered_staff"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "next week"
+          }
+        ],
+        "order": {
+          "workforce_analytics.rostered_hours": "desc"
+        },
+        "limit": 50
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Name the person with the most rostered hours, then the table (person, rostered hours, shifts, planned cost); mention unassigned open shifts if present (blank staff).",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "How many hours is each person rostered for next week?",
+          "Who is rostered the most this week?",
+          "Rostered hours by staff member this month",
+          "How many shifts does Leigh have next week?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-rostered-hours-by-weekday",
+      "userRequest": "Rostered hours by day of the week over a period - which weekday we roster the most.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.rostered_hours",
+          "workforce_analytics.rostered_shift_count"
+        ],
+        "dimensions": [
+          "workforce_analytics.rostered_weekday",
+          "workforce_analytics.rostered_weekday_number"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "last 12 months"
+          }
+        ],
+        "order": {
+          "workforce_analytics.rostered_weekday_number": "asc"
+        }
+      },
+      "recipe": {
+        "presentation": "bar",
+        "answerHint": "Name the busiest and quietest weekday by rostered hours; bar chart Monday to Sunday (order by the weekday number).",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "Which day of the week do we roster the most hours?",
+          "Rostered hours by day of week",
+          "What's our busiest day for staffing?"
         ]
       }
     },
@@ -2582,6 +3090,61 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
+      "name": "recipe-unapproved-timesheets",
+      "userRequest": "Timesheets waiting for approval - which worked shifts still need time approval.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.unapproved_shift_count",
+          "workforce_analytics.hours_worked"
+        ],
+        "dimensions": [
+          "workforce_analytics.worked_by",
+          "workforce_analytics.shift_date",
+          "workforce_analytics.started_at",
+          "workforce_analytics.ended_at"
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.time_approved",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          },
+          {
+            "member": "workforce_analytics.in_progress",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          },
+          {
+            "member": "workforce_analytics.is_leave",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          }
+        ],
+        "order": {
+          "workforce_analytics.shift_date": "desc"
+        },
+        "limit": 200
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Say how many timesheets are unapproved and across how many people (count distinct names), then the table (person, shift date, start, end, hours). If none, say all timesheets are approved.",
+        "matches": [
+          "Are there any timesheets waiting for approval?",
+          "How many timesheets need approving?",
+          "Which shifts haven't been approved yet?",
+          "Unapproved timesheets"
+        ],
+        "emptyAnswer": "every worked timesheet is already approved - nothing is waiting for approval"
+      }
+    },
+    {
       "name": "recipe-unpaid-bills",
       "userRequest": "List our unpaid (approved but not yet paid) supplier bills, with due dates and what is overdue.",
       "notes": "",
@@ -2626,7 +3189,8 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "What's the oldest overdue bill?",
           "List the bills that are due in the next 14 days",
           "What bills are due in September?"
-        ]
+        ],
+        "emptyAnswer": "there are no approved bills awaiting payment - nothing is unpaid or overdue"
       }
     },
     {

@@ -249,6 +249,16 @@ cubes:
         type: string
         title: Workplace
         description: The workplace (location) of the shift.
+      - name: shift_weekday
+        sql: "to_char({CUBE}.shift_date, 'FMDay')"
+        type: string
+        title: Day of week
+        description: Weekday name of the shift date (Monday ... Sunday). Group by this for "which day do we work the most hours".
+      - name: shift_weekday_number
+        sql: "EXTRACT(ISODOW FROM {CUBE}.shift_date)"
+        type: number
+        title: Day of week (1 = Monday)
+        description: ISO weekday number, for ordering weekday breakdowns Monday to Sunday.
 
     measures:
       - name: hours_worked
@@ -408,6 +418,29 @@ cubes:
         sql: company_name
         type: string
         title: Workplace
+      - name: rostered_weekday
+        sql: "to_char({CUBE}.shift_date, 'FMDay')"
+        type: string
+        title: Day of week
+        description: Weekday name of the rostered date (Monday ... Sunday). Group by this for "which day do we roster the most hours".
+      - name: rostered_weekday_number
+        sql: "EXTRACT(ISODOW FROM {CUBE}.shift_date)"
+        type: number
+        title: Day of week (1 = Monday)
+        description: ISO weekday number, for ordering weekday breakdowns Monday to Sunday.
+      - name: shift_timing
+        sql: >
+          CASE
+            WHEN {CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW() THEN 'On now'
+            WHEN COALESCE({CUBE}.ends_at, {CUBE}.starts_at) < NOW() THEN 'Finished'
+            ELSE 'Upcoming'
+          END
+        type: string
+        title: Shift timing
+        description: >
+          Relative to the current moment: 'On now' (the rostered shift covers
+          right now), 'Finished' or 'Upcoming'. "Who is on shift right now" =
+          today's roster with shift_timing 'On now'.
 
     measures:
       - name: rostered_shift_count
@@ -431,6 +464,20 @@ cubes:
         description: Scheduled shifts not yet assigned to anyone.
         filters:
           - sql: "COALESCE({CUBE}.open_shift, false)"
+      - name: on_now_count
+        type: count
+        title: Rostered on right now
+        description: Rostered shifts whose scheduled span covers the current moment.
+        filters:
+          - sql: "{CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW()"
+
+    segments:
+      - name: open_shifts
+        sql: "COALESCE({CUBE}.open_shift, false)"
+        description: Unassigned shifts offered for pickup.
+      - name: on_now
+        sql: "{CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW()"
+        description: Rostered shifts covering the current moment.
 
   - name: deputy_leave
     title: Leave requests (Deputy)
@@ -530,6 +577,129 @@ cubes:
       - name: pending_leave
         sql: "{CUBE}.status = 'Awaiting approval'"
         description: Leave requests still awaiting approval.
+
+  - name: deputy_leave_days
+    title: Leave days (Deputy, one row per person per day on leave)
+    public: false
+    description: >
+      Every calendar day covered by a Deputy leave request (local dates), one
+      row per request per day, with the request's status and leave type. This
+      is the grain for "who is on leave in <period>" - a request that starts
+      in July and ends in August is on leave in both months.
+    meta:
+      ai_context: >
+        Use for who is on leave / away on a day, in a week or month, upcoming
+        leave, days of leave by type (sick, annual) in a period: filter
+        leave_day to the period and status = 'Approved' (approved_* measures
+        do that for you). leave_day is the business date. For request-level
+        detail (days requested, comments) use deputy_leave.
+    sql: SELECT * FROM source_deputy.dp_leave_days
+
+    joins:
+      - name: deputy_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_employees}.tenant_id
+          AND {CUBE}.employee_id = {deputy_employees}.employee_id
+      - name: deputy_leave_rules
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_leave_rules}.tenant_id
+          AND {CUBE}.leave_rule_id = {deputy_leave_rules}.leave_rule_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: leave_id
+        sql: leave_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: employee_name
+        sql: employee_name
+        type: string
+        title: Staff member
+      - name: leave_day
+        sql: leave_day
+        type: time
+        title: Day on leave
+        description: A calendar day (local) covered by the leave request.
+      - name: starts_on_local
+        sql: starts_on_local
+        type: time
+        title: Leave starts
+      - name: ends_on_local
+        sql: ends_on_local
+        type: time
+        title: Leave ends
+      - name: status
+        sql: status
+        type: string
+        title: Approval status
+        description: "Awaiting approval, Approved, Declined, Cancelled, Date approved or Pay approved."
+      - name: span_days
+        sql: span_days
+        type: number
+        title: Calendar days in request
+        public: false
+
+    measures:
+      - name: leave_day_count
+        type: count
+        title: Person-days on leave
+        description: Rows = people x days covered by leave requests in the selection (any status).
+      - name: approved_leave_day_count
+        type: count
+        title: Approved person-days on leave
+        description: People x calendar days covered by APPROVED leave in the selection.
+        filters:
+          - sql: "{CUBE}.status = 'Approved'"
+      - name: people_on_leave
+        type: count_distinct
+        sql: employee_id
+        title: People on leave
+        description: Distinct staff with leave (any status) covering the selected days.
+      - name: approved_people_on_leave
+        type: count_distinct
+        sql: employee_id
+        title: People on approved leave
+        filters:
+          - sql: "{CUBE}.status = 'Approved'"
+      - name: approved_leave_days_taken
+        type: sum
+        sql: days_per_day
+        title: Approved leave days
+        description: Leave days (Deputy's requested days, spread evenly across the request's span) on approved requests within the selected days.
+        filters:
+          - sql: "{CUBE}.status = 'Approved'"
+      - name: approved_leave_hours_taken
+        type: sum
+        sql: hours_per_day
+        title: Approved leave hours
+        description: Leave hours (spread evenly across the request's span) on approved requests within the selected days.
+        filters:
+          - sql: "{CUBE}.status = 'Approved'"
+      - name: pending_leave_day_count
+        type: count
+        title: Person-days awaiting approval
+        filters:
+          - sql: "{CUBE}.status = 'Awaiting approval'"
+
+    segments:
+      - name: approved
+        sql: "{CUBE}.status = 'Approved'"
+      - name: pending
+        sql: "{CUBE}.status = 'Awaiting approval'"
 
   - name: deputy_leave_rules
     title: Leave types (Deputy)

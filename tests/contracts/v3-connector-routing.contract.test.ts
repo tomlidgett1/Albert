@@ -57,8 +57,10 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
   assert.equal(result.shopifyAdmin, false);
   assert.deepEqual(result.preferredCubeConnectors, ["xero"]);
   assert.deepEqual(toolNames(result), [
-    // Native reports not yet qualified in Fivetran ride alongside Cube. Xero
-    // P&L is deliberately absent: it is a governed CubeCore view.
+    // Native reports ride alongside Cube. The governed CubeCore views stay
+    // the authority for P&L FIGURES; the live P&L tool presents the full
+    // statement when the owner asks to see it (ADR 0099 + 0108).
+    "xero_profit_and_loss",
     "xero_balance_sheet",
     "xero_trial_balance",
     "xero_find_contact",
@@ -247,4 +249,38 @@ test("an unavailable live plane degrades to the governed Cube surface", () => {
   assert.equal(result.cube, true);
   assert.equal(result.shopifyQL, false);
   assert.equal(result.shopifyAdmin, false);
+});
+
+test("bare 'Lightspeed' resolves to the connected series and is never disclosed as unconnected", () => {
+  // R-Series only tenant (the common Fivetran path). Bare "Lightspeed" must not
+  // produce a "lightspeed-x is not connected" disclosure.
+  const rOnly = route("Labour efficiency using Deputy and Lightspeed data", {
+    activeConnectors: ["fivetran-lightspeed", "xero", "deputy"],
+  });
+  assert.deepEqual(rOnly.unavailableRequestedConnectors, []);
+  assert.deepEqual(rOnly.preferredCubeConnectors, ["deputy", "lightspeed"]);
+  assert.ok(!rOnly.reasons.some((reason) => reason.includes("not connected")));
+
+  // X-Series only tenant, mirror case.
+  const xOnly = route("Sales from Lightspeed last week", {
+    activeConnectors: ["lightspeed-x"],
+  });
+  assert.deepEqual(xOnly.unavailableRequestedConnectors, []);
+  assert.deepEqual(xOnly.preferredCubeConnectors, ["lightspeed-x"]);
+
+  // Naming the series explicitly still discloses a genuinely unconnected product.
+  const namedX = route("Show me Lightspeed X-Series sales", {
+    activeConnectors: ["lightspeed-r", "xero"],
+  });
+  assert.deepEqual(namedX.unavailableRequestedConnectors, ["lightspeed-x"]);
+  const namedVend = route("What did Vend record yesterday?", {
+    activeConnectors: ["lightspeed-r"],
+  });
+  assert.deepEqual(namedVend.unavailableRequestedConnectors, ["lightspeed-x"]);
+
+  // No Lightspeed at all: bare mention is a real gap and is disclosed.
+  const none = route("Sales from Lightspeed last week", {
+    activeConnectors: ["xero", "deputy"],
+  });
+  assert.deepEqual(none.unavailableRequestedConnectors, ["lightspeed", "lightspeed-x"]);
 });

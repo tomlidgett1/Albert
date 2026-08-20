@@ -25,10 +25,83 @@
  */
 
 const PostgresDriver = require('@cubejs-backend/postgres-driver');
+const { CubejsServerCore } = require('@cubejs-backend/server-core');
 const { Pool } = require('pg');
 const { parse: parseConnectionString } = require('pg-connection-string');
 
 const CAPABILITY_REFRESH_MS = 45_000;
+
+/**
+ * Orchestrator creation must be idempotent under concurrent first calls.
+ *
+ * Every Albert turn gets its own orchestrator (see contextToOrchestratorId),
+ * so the first request of a turn always creates one. Cube's own
+ * `CubejsServerCore.getOrchestratorApi` is check-then-set across awaits: two
+ * calls for a *new* orchestrator id that land in the same tick both miss the
+ * storage lookup and each build a full OrchestratorApi (query orchestrator,
+ * cache, queue, driver pool); the second silently overwrites the first.
+ * The API gateway does exactly that for `compareDateRange` (and `total`)
+ * queries: `Promise.all` over the sub-queries, each calling `getAdapterApi`.
+ *
+ * With the in-memory queue driver both queue instances share one state
+ * object (keyed by the queue prefix) but keep independent queue-id counters,
+ * so their processing ids collide. The instance that lost the processing-lock
+ * race believes it holds the lock (same id), frees it on "Skip processing",
+ * and when the real execution finishes Cube drops the rows as an "Orphaned
+ * execution result". The query then sits in `active` until the stalled-query
+ * sweep (~2 min); every poll answers "Continue wait", Albert gives up at 90 s
+ * and the owner sees "Unavailable". Reproduced on 2026-08-19: a fresh turn
+ * whose first data query is a compareDateRange query never returns; the same
+ * query on a warmed turn returns in ~1 s.
+ *
+ * The guard below serialises creation per orchestrator id: concurrent callers
+ * await the same in-flight promise, and the storage lookup remains the fast
+ * path for warmed turns. It patches the prototype before `cubejs server`
+ * instantiates the core (cube.js is required first), and refuses to start if
+ * the internals it relies on have moved, so a Cube upgrade cannot silently
+ * reintroduce the race. Upstream: cube-js/cube, server-core getOrchestratorApi.
+ */
+function installIdempotentOrchestratorCreation(ServerCore) {
+  const original = ServerCore && ServerCore.prototype && ServerCore.prototype.getOrchestratorApi;
+  if (typeof original !== 'function') {
+    throw new Error('Albert Cube config: CubejsServerCore.prototype.getOrchestratorApi is missing; the orchestrator idempotency guard cannot be installed.');
+  }
+  if (original.albertIdempotent) return;
+  const source = Function.prototype.toString.call(original);
+  if (!source.includes('this.orchestratorStorage') || !source.includes('this.contextToOrchestratorId')) {
+    throw new Error('Albert Cube config: CubejsServerCore.getOrchestratorApi no longer uses orchestratorStorage/contextToOrchestratorId; review the orchestrator idempotency guard before upgrading Cube.');
+  }
+  // One pending-creation map per server core instance.
+  const pendingByCore = new WeakMap();
+  const patched = async function getOrchestratorApi(context) {
+    if (!this.orchestratorStorage || typeof this.contextToOrchestratorId !== 'function') {
+      throw new Error('Albert Cube config: server core lacks orchestratorStorage/contextToOrchestratorId; the orchestrator idempotency guard is unsound.');
+    }
+    const orchestratorId = await this.contextToOrchestratorId(context);
+    if (this.orchestratorStorage.has(orchestratorId)) {
+      return this.orchestratorStorage.get(orchestratorId);
+    }
+    let pending = pendingByCore.get(this);
+    if (!pending) {
+      pending = new Map();
+      pendingByCore.set(this, pending);
+    }
+    let creation = pending.get(orchestratorId);
+    if (!creation) {
+      creation = Promise.resolve()
+        .then(() => original.call(this, context))
+        .finally(() => {
+          if (pending.get(orchestratorId) === creation) pending.delete(orchestratorId);
+        });
+      pending.set(orchestratorId, creation);
+    }
+    return creation;
+  };
+  patched.albertIdempotent = true;
+  ServerCore.prototype.getOrchestratorApi = patched;
+}
+
+installIdempotentOrchestratorCreation(CubejsServerCore);
 
 function requiredEnv(names) {
   for (const name of names) {
@@ -227,6 +300,20 @@ module.exports = {
         ...pgConfigFromUrl(readUrl),
         max: 4,
         application_name: 'albert-cube-v3',
+        // Postgres session time zone for every Cube connection. Cube 1.7.16
+        // converts a view's raw `time` dimension to the query time zone
+        // TWICE: `((col::timestamptz AT TIME ZONE tz)::timestamptz AT TIME
+        // ZONE tz)`. With the default UTC session the inner naive local time
+        // is re-read as UTC, so 10:00 Melbourne came out as 20:00 (a roster
+        // shift read as "8 pm to 4 am", an invoice due date as 8 pm) and
+        // DATE columns as T20:00. Pinning the session to the business time
+        // zone makes the second conversion idempotent: naive local ->
+        // timestamptz in the same zone -> the same local time. Granularity
+        // time dimensions, date-range parameters (sent as UTC instants) and
+        // measures are unaffected; CURRENT_DATE becomes the local date, which
+        // is what "overdue" should mean. Revisit when Cube fixes view
+        // conversion or tenants span time zones.
+        storeTimezone: process.env.ALBERT_CUBE_SESSION_TIMEZONE || 'Australia/Melbourne',
       },
       albertContextFrom(securityContext),
     );

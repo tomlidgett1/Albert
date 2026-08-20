@@ -1,11 +1,14 @@
 .git
 .github
 .albert-build
+.albert-vendor
+.anthropic-runtime
 .next
 .vinext
 .wrangler
 coverage
 dist
+evals
 node_modules
 outputs
 work

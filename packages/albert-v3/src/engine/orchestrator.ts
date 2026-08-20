@@ -1,6 +1,6 @@
 import { Agent, type AgentInputItem, type Runner, assistant, user } from "@openai/agents";
 import { z } from "zod";
-import { isXaiModel, type AgentRunPreferences, type PresentedTableDigest } from "../../../shared/src/index.js";
+import { isAnthropicModel, isXaiModel, type AgentRunPreferences, type PresentedTableDigest } from "../../../shared/src/index.js";
 import { recipesForRoute, type AlbertV3AgentConfig } from "../agent-config/loader.js";
 import type { TenantSourceFinding } from "./context.js";
 import { normalizeV3Connector } from "./connector-routing.js";
@@ -11,7 +11,7 @@ import {
   withV3PromptCacheBoundary,
 } from "./lanes.js";
 
-export const LANES = ["quick", "analytical", "deep", "explain", "represent", "meta", "social", "clarification", "off_topic"] as const;
+export const LANES = ["quick", "analytical", "deep", "explain", "represent", "meta", "conceptual", "social", "clarification", "off_topic"] as const;
 export type Lane = (typeof LANES)[number];
 
 export const intentSchema = z.object({
@@ -250,6 +250,85 @@ export function guardOrphanRefinement(
   };
 }
 
+const STRONG_DEFINITION_ONLY = /\b(?:define|explain|(?:can|could|would) you explain|definition of|meaning of|what does .{1,160}? mean|how (?:is|are|do|does) .{1,160}? (?:calculated|defined|work)|formula for|difference between|does .{1,160}? (?:include|exclude))\b/iu;
+const WEAK_WHAT_IS = /^\s*(?:what (?:is|are)|what['’]s) .{2,120}\??\s*$/iu;
+const COMMON_GOVERNED_CONCEPT = /\b(?:margin|profit|revenue|sales?|takings?|turnover|cogs|cost of goods|average order value|aov|refund rate|return on investment|roi|return on ad spend|roas|repeat purchase|retention|customer acquisition|cac|cash flow|payables?|receivables?|labour cost|wages?|inventory|stock|sell.?through|gross|net|gst|tax|ebitda)\b/iu;
+const POSSESSIVE_BUSINESS_VALUE = /\b(?:my|our|we|us|this business(?:'s)?)\b/iu;
+const NAMED_MONTH = /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/iu;
+const ACTUAL_DATA_ACTION = /\b(?:show(?: me)?|give me|look up|pull|run|compare|versus|vs\.?|trend|rank|top|bottom|highest|lowest|break(?: it| that)? down|up|down|increase|decrease|how much|how many|what (?:is|was|are|were) (?:my|our)|calculate (?:my|our|the business))\b/iu;
+const ACTUAL_TIME_SCOPE = /\b(?:today|yesterday|tomorrow|this (?:week|month|quarter|year|financial year)|last (?:week|month|quarter|year|financial year)|next (?:week|month|quarter|year)|current|actual|mtd|qtd|ytd|fytd|20\d{2}|\d{4}-\d{2}(?:-\d{2})?)\b/iu;
+const ACTUAL_BREAKDOWN = /\bby (?:store|location|product|category|customer|employee|staff|supplier|channel|month|week|day)\b/iu;
+
+function hasActualScope(message: string): boolean {
+  if (ACTUAL_DATA_ACTION.test(message) || ACTUAL_TIME_SCOPE.test(message) || NAMED_MONTH.test(message) || ACTUAL_BREAKDOWN.test(message)) return true;
+  // Entity scopes are data requests, but "return on investment/ad spend" are
+  // concept names. Preserve those phrases and generic "for a retailer" while
+  // catching concrete "at Fitzroy" / "on Trek Marlin" scopes.
+  const withoutConceptPhrases = message
+    .replace(/\breturn on (?:investment|ad spend)\b/giu, "")
+    .replace(/\b(?:formula|definition|meaning|calculation)\s+for\b/giu, "");
+  return /\b(?:at|on)\s+[A-Z][\w&'’-]*/u.test(withoutConceptPhrases);
+}
+
+/** High-precision definition intent used before any live-data capability runs. */
+export function isDefinitionOnlyQuestion(message: string): boolean {
+  const text = message.replace(/\s+/gu, " ").trim();
+  if (!text) return false;
+  if (hasActualScope(text)) return false;
+  if (STRONG_DEFINITION_ONLY.test(text)) return true;
+  return WEAK_WHAT_IS.test(text)
+    && !POSSESSIVE_BUSINESS_VALUE.test(text)
+    && COMMON_GOVERNED_CONCEPT.test(text);
+}
+
+/**
+ * Keeps abstract definitions load-free while refusing to let a classifier send
+ * a request for the owner's actual value down the no-query conceptual lane.
+ */
+export function normaliseConceptualIntent(
+  decision: IntentDecision,
+  message: string,
+  hasPriorAnswer = false,
+): IntentDecision {
+  if (decision.lane === "conceptual") {
+    const actualValue = hasActualScope(message)
+      || (WEAK_WHAT_IS.test(message) && POSSESSIVE_BUSINESS_VALUE.test(message));
+    if (!actualValue) return decision;
+    const analytical = decision.answerShape === "comparison"
+      || decision.answerShape === "trend"
+      || decision.answerShape === "diagnosis";
+    return {
+      ...decision,
+      lane: analytical ? "analytical" : "quick",
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
+    };
+  }
+  const definitionOnly = isDefinitionOnlyQuestion(message);
+  if (definitionOnly) {
+    const eligible = ["quick", "analytical", "deep"].includes(decision.lane)
+      || (decision.lane === "explain" && !hasPriorAnswer);
+    if (!eligible) return decision;
+    return {
+      ...decision,
+      lane: "conceptual",
+      answerShape: "fact",
+      ownerGoal: null,
+      answerMustCover: [],
+      assumptions: [],
+      clarificationQuestion: null,
+      clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
+    };
+  }
+  return decision;
+}
+
 export function buildConversationInput(
   messages: readonly ConversationMessage[],
   currentMessage: string,
@@ -338,11 +417,15 @@ ${connectedTools}`;
 Certified recipes — complete, pre-built answers for common questions (fast path). Each line
 is name [presentation]: what it answers (other phrasings). When the owner's question IS one of
 these — one period, no comparison with another period, no extra filter or breakdown the recipe
-lacks, no join with another tool — set recipe to its exact name and lane to quick. Set
+lacks, no join with another tool — set recipe to its exact name and lane to quick. Exception: a
+comparison of CONSECUTIVE periods (last week vs the week before, this month vs last month) IS a
+recipe when a "by week" / "by month" trend recipe exists — use it with recipeDateRange null so its
+default span covers both periods. Set
 recipeDateRange to the period the owner named as one of: today, yesterday, tomorrow, this week,
 last week, next week, this month, last month, this quarter, last quarter, this year, last year,
 "last N days/weeks/months", a month name ("July", "July 2025"), or an explicit
-YYYY-MM-DD,YYYY-MM-DD pair; null keeps the recipe's default period. Australian financial year:
+YYYY-MM-DD,YYYY-MM-DD pair; null keeps the recipe's default period (always null for a
+by-week / by-month trend recipe unless the owner named a longer span). Australian financial year:
 "this financial year" = 1 July of the current FY to today as an explicit pair. Set recipeEntity
 only when the owner named one specific supplier, person, product or category to narrow to; else
 null. Otherwise recipe=null. A recipe is never used for a message that re-presents an earlier
@@ -418,6 +501,13 @@ Routing lanes:
   comes from the conversation and the recorded governed queries behind the earlier
   answer. NEVER route these to clarification: the user is asking Albert to explain
   Albert's own choice, so asking them to pick a definition is backwards.
+- conceptual: the user asks for the abstract meaning, formula, inclusion rules or
+  difference between governed business concepts ("How does gross margin work?",
+  "What is gross margin?", "Does gross margin include wages?"). This lane reads
+  published semantic definitions and never queries business rows. A request for
+  the owner's actual value ("What is my gross margin?", any named period, comparison,
+  trend, ranking or breakdown) is NOT conceptual: route quick/analytical/deep. A
+  question about a term Albert used in a previous answer remains explain.
 - represent: the owner asks to change how the PREVIOUS answer is shown, not what it
   shows: bar instead of line (or the reverse), flip the axes / put dates on the y axis,
   sort it, show only the top N or the last N points, show it as a table instead of a
@@ -547,7 +637,9 @@ export async function classifyIntent(input: Readonly<{
     ),
     model: input.preferences.model,
     modelSettings: laneModelSettings(
-      isXaiModel(input.preferences.model)
+      isAnthropicModel(input.preferences.model)
+        ? { ...input.preferences, reasoningEffort: "none" }
+        : isXaiModel(input.preferences.model)
         ? { ...input.preferences, reasoningEffort: "low" }
         : input.preferences,
       // Goal inference needs real thought; routing alone was fine at low.
@@ -574,7 +666,7 @@ export async function classifyIntent(input: Readonly<{
   if (!decision) {
     // A failed classification must not kill the turn; the analytical lane can
     // handle anything the quick lane could.
-    return coerceRefinementIntent({
+    return normaliseConceptualIntent(coerceRefinementIntent({
       lane: "analytical",
       resolvedQuestion: input.message,
       ownerGoal: null,
@@ -587,11 +679,11 @@ export async function classifyIntent(input: Readonly<{
       recipeDateRange: null,
       recipeEntity: null,
       nativeCapability: null,
-    }, input.conversation, input.message);
+    }, input.conversation, input.message), input.message, input.conversation.some(({ role }) => role === "assistant"));
   }
-  return guardOrphanRefinement(
+  return normaliseConceptualIntent(guardOrphanRefinement(
     coerceRefinementIntent(decision, input.conversation, input.message),
     input.conversation,
     input.message,
-  );
+  ), input.message, input.conversation.some(({ role }) => role === "assistant"));
 }

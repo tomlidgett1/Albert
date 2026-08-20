@@ -6,7 +6,7 @@
  */
 import { Runner } from "@openai/agents";
 import { resolveAlbertModelTransport, type AgentRunPreferences } from "../../../shared/src/index.js";
-import { createAlbertResponsesProvider } from "../../../agent/src/responses-provider.js";
+import { createAlbertModelProvider } from "../../../agent/src/responses-provider.js";
 import { CubeClient } from "../cube/client.js";
 import { loadAgentConfig } from "../agent-config/loader.js";
 import { trackRunnerUsage } from "../engine/usage-accounting.js";
@@ -28,6 +28,8 @@ export async function runStandaloneBusinessContextRefresh(input: Readonly<{
   openaiBaseUrl?: string;
   xaiApiKey?: string;
   xaiBaseUrl?: string;
+  anthropicApiKey?: string;
+  anthropicBaseUrl?: string;
   preferences: AgentRunPreferences;
   connectorKeys: readonly string[];
   freshness?: readonly ConnectorDomainFreshness[];
@@ -41,12 +43,14 @@ export async function runStandaloneBusinessContextRefresh(input: Readonly<{
     apiSecret: input.cubeApiSecret,
     securityContext: { tenant_id: input.tenantId, conversation_id: input.conversationId, turn_id: input.turnId },
   });
-  const provider = createAlbertResponsesProvider(resolveAlbertModelTransport({
+  const provider = createAlbertModelProvider(resolveAlbertModelTransport({
     model: input.preferences.model,
     openaiApiKey: input.openaiApiKey,
     openaiBaseUrl: input.openaiBaseUrl,
     xaiApiKey: input.xaiApiKey,
     xaiBaseUrl: input.xaiBaseUrl,
+    anthropicApiKey: input.anthropicApiKey,
+    anthropicBaseUrl: input.anthropicBaseUrl,
   }));
   const accounting = trackRunnerUsage(new Runner({
     modelProvider: provider,

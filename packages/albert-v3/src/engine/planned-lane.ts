@@ -43,10 +43,17 @@ import {
   type FinalAnswer,
   type LaneRunInput,
 } from "./lanes.js";
-import { createComposeTableTool, createPresentResultTool, cubeQueryInputSchema, executeGovernedCubeQuery, type CubeQueryToolInput } from "./tools.js";
+import { createComposeTableTool, createPresentResultTool, cubeQueryInputSchema, entityMatchVariants, executeGovernedCubeQuery, type CubeQueryToolInput } from "./tools.js";
 import { createMakeChartTool } from "./chart-layer.js";
+import { profileResult, renderResultShape } from "./result-shape.js";
+import { isDerivedChartTable } from "./visualise-lane.js";
 import { createAggregateResultTool } from "./aggregate-layer.js";
-import { renderPriorResultsForPrompt } from "./prior-results.js";
+import { renderPriorResultsForPrompt, resolveTableResult } from "./prior-results.js";
+import {
+  applyPlannedEvidenceBindings,
+  planCoverageError,
+  type PlannedEvidenceBinding,
+} from "./initial-plan.js";
 
 /**
  * A step whose filter or date window is a value only an earlier step produces
@@ -71,6 +78,8 @@ export type StepBinding = z.infer<typeof stepBindingSchema>;
 const plannedStepSchema = cubeQueryInputSchema.extend({
   /** null for an independent query. */
   bind: stepBindingSchema.nullable(),
+  /** Stable visible-plan obligations this exact query is intended to support. */
+  coversPlanStepIds: z.array(z.string().regex(/^[a-z][a-z0-9_-]{2,47}$/u)).max(4).nullable().optional(),
 }).strict();
 
 export type PlannedStep = z.infer<typeof plannedStepSchema>;
@@ -80,6 +89,11 @@ export const queryPlanSchema = z.object({
   plan: z.string().min(1).max(500),
   /** The governed queries, each within one view, exact members only. */
   steps: z.array(plannedStepSchema).min(1).max(6),
+  /** Earlier governed results that satisfy a visible obligation without a new query. */
+  reusedEvidence: z.array(z.object({
+    resultId: z.string().min(8).max(80),
+    coversPlanStepIds: z.array(z.string().regex(/^[a-z][a-z0-9_-]{2,47}$/u)).min(1).max(4),
+  }).strict()).max(8).nullable().optional(),
   presentation: z.object({
     shape: z.enum(["fact", "list", "table", "trend", "comparison", "breakdown", "diagnosis"]),
     /** Which step (0-based) a chart should plot, and how; null when no chart fits. */
@@ -101,6 +115,146 @@ const CANDIDATE_VIEWS = 8;
 const HYDRATED_VIEWS = 3;
 const MAX_HYDRATED_VIEWS = 4;
 const MAX_MEMBER_LINES_PER_VIEW = 140;
+/** A support-role plan must never hold the whole turn hostage. */
+export const PLANNER_DEADLINE_MS = 60_000;
+const RESEARCH_VALUE_VALIDATION_LIMIT = 4;
+const RESEARCH_VALUE_TIMEOUT_MS = 10_000;
+
+export type PlannerDeadlineResult<T> =
+  | Readonly<{ timedOut: false; value: T }>
+  | Readonly<{ timedOut: true }>;
+
+/** Provider-neutral deadline that preserves the selected reasoning effort. */
+export async function runWithPlannerDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  turnSignal?: AbortSignal,
+  deadlineMs = PLANNER_DEADLINE_MS,
+): Promise<PlannerDeadlineResult<T>> {
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = turnSignal ? AbortSignal.any([turnSignal, deadline]) : deadline;
+  try {
+    return { timedOut: false, value: await work(signal) };
+  } catch (error) {
+    if (deadline.aborted && !turnSignal?.aborted) return { timedOut: true };
+    throw error;
+  }
+}
+
+type PlannedValueValidation = Readonly<{
+  ok: boolean;
+  steps: readonly PlannedStep[];
+  findings: readonly string[];
+  error?: string;
+}>;
+
+function filterValidationKey(member: string, values: readonly string[]): string {
+  return `${member}\u0000${values.join("\u0000")}`;
+}
+
+/**
+ * Resolves model-proposed string filters to exact values that actually exist in
+ * the tenant's semantic view. These are research lookups, not answer evidence.
+ */
+export async function validatePlannedFilterValues(input: Readonly<{
+  context: V3TurnContext;
+  catalogue: LaneRunInput["catalogue"];
+  steps: readonly PlannedStep[];
+}>): Promise<PlannedValueValidation> {
+  const members = new Map(input.catalogue.views.flatMap((view) => view.members.map((member) => [member.name, member] as const)));
+  const candidates = new Map<string, { member: string; values: readonly string[] }>();
+  for (const step of input.steps) {
+    for (const filter of step.filters ?? []) {
+      if (!(filter.operator === "equals" || filter.operator === "contains" || filter.operator === "startsWith")) continue;
+      if (!filter.values?.length) continue;
+      const member = members.get(filter.member);
+      if (!member || member.kind !== "dimension" || (member.type && member.type !== "string")) continue;
+      const values = [...new Set(filter.values.map((value) => value.trim()).filter(Boolean))];
+      if (values.length === 0) continue;
+      candidates.set(filterValidationKey(filter.member, values), { member: filter.member, values });
+    }
+  }
+  if (candidates.size === 0) {
+    return { ok: true, steps: input.steps, findings: ["No named filter values needed validation."] };
+  }
+  if (candidates.size > RESEARCH_VALUE_VALIDATION_LIMIT) {
+    return {
+      ok: false,
+      steps: input.steps,
+      findings: [],
+      error: `The plan proposed ${candidates.size} distinct value lookups; the research limit is ${RESEARCH_VALUE_VALIDATION_LIMIT}.`,
+    };
+  }
+
+  const validations = await Promise.all([...candidates.entries()].map(async ([key, candidate]) => {
+    const deadline = AbortSignal.timeout(RESEARCH_VALUE_TIMEOUT_MS);
+    const signal = input.context.signal
+      ? AbortSignal.any([input.context.signal, deadline])
+      : deadline;
+    const load = async (operator: "equals" | "contains") => input.context.cube.loadQuery({
+      dimensions: [candidate.member],
+      filters: [{
+        member: candidate.member,
+        operator,
+        values: operator === "contains"
+          ? [...new Set(candidate.values.flatMap((value) => entityMatchVariants(value)))]
+          : candidate.values,
+      }],
+      order: { [candidate.member]: "asc" },
+      // One sentinel row detects a broad match that cannot be rewritten safely
+      // into the tool schema's 50-value exact filter.
+      limit: 51,
+    }, { signal });
+    try {
+      let loaded = await load("equals");
+      if (!loaded.result.ok || loaded.result.rows.length === 0) loaded = await load("contains");
+      if (!loaded.result.ok) return { key, candidate, values: [] as string[], error: loaded.result.error };
+      const values = [...new Set(loaded.result.rows.flatMap((row) => {
+        const value = row[candidate.member];
+        return typeof value === "string" && value.trim() ? [value.trim()] : [];
+      }))];
+      if (values.length > 50) {
+        return { key, candidate, values: [] as string[], error: "The stored-value match is broader than 50 exact values." };
+      }
+      return { key, candidate, values };
+    } catch (error) {
+      if (input.context.signal?.aborted) throw error;
+      return {
+        key,
+        candidate,
+        values: [] as string[],
+        error: error instanceof Error ? error.message : "Stored values could not be validated.",
+      };
+    }
+  }));
+
+  const failed = validations.find(({ values, error }) => values.length === 0 || error);
+  if (failed) {
+    return {
+      ok: false,
+      steps: input.steps,
+      findings: [],
+      error: `No validated stored value was found for ${failed.candidate.member}: ${failed.candidate.values.join(", ")}.`,
+    };
+  }
+  const replacements = new Map(validations.map(({ key, values }) => [key, values]));
+  const steps = input.steps.map((step): PlannedStep => ({
+    ...step,
+    ...(step.filters
+      ? {
+          filters: step.filters.map((filter) => {
+            const values = filter.values?.map((value) => value.trim()).filter(Boolean) ?? [];
+            const exact = replacements.get(filterValidationKey(filter.member, values));
+            return exact ? { ...filter, operator: "equals" as const, values: exact } : filter;
+          }),
+        }
+      : {}),
+  }));
+  const findings = validations.map(({ candidate, values }) => {
+    const label = candidate.member.split(".").at(-1)?.replace(/_/gu, " ") ?? "value";
+    return sanitizeTraceText(`Validated ${values.length} stored ${label} ${values.length === 1 ? "value" : "values"}.`, 180);
+  });
+  return { ok: true, steps, findings };
+}
 
 function renderSchemaForPlanner(view: SemanticCatalogueViewSchema): string {
   const lines: string[] = [`## ${view.name} [${view.connector}] — ${view.title}`];
@@ -146,12 +300,16 @@ async function retrieveSchemas(input: LaneRunInput): Promise<{ schemas: string; 
   // connector that still scored respectably.
   const topScore = matches[0]?.score ?? 0;
   const represented = new Set(matches.slice(0, HYDRATED_VIEWS).map((match) => match.connector));
-  for (const match of matches.slice(HYDRATED_VIEWS)) {
-    if (viewNames.length >= MAX_HYDRATED_VIEWS) break;
-    if (represented.has(match.connector)) continue;
-    if (match.score < topScore * 0.35) continue;
-    viewNames.push(match.name);
-    represented.add(match.connector);
+  const explicitlyCrossConnector = input.context.toolRoute.preferredCubeConnectors.length > 1
+    || /\b(?:compare|reconcile|versus|vs\.?|against|across (?:systems|tools|sources))\b/iu.test(input.intent.resolvedQuestion);
+  if (explicitlyCrossConnector) {
+    for (const match of matches.slice(HYDRATED_VIEWS)) {
+      if (viewNames.length >= MAX_HYDRATED_VIEWS) break;
+      if (represented.has(match.connector)) continue;
+      if (match.score < topScore * 0.35) continue;
+      viewNames.push(match.name);
+      represented.add(match.connector);
+    }
   }
   if (viewNames.length === 0) return { schemas: "", viewNames: [] };
   const hydrated = hydrateViewSchemas(input.catalogue, viewNames, input.config.accessibleViews);
@@ -174,6 +332,10 @@ Rules for the plan:
   measure), never a single period.
 - Cover every point a useful answer must cover (see request context) — usually 1–3 queries; up to 6
   for a genuine multi-angle question. Cross-tool questions take one query per tool.
+- When the request context contains a visible plan, set coversPlanStepIds on every query to the
+  exact stable plan-step id(s) that query supports. Several queries may support one step and one
+  query may support several steps. Use [] only when no visible plan is present. Completion is
+  applied by trusted code only after every mapped query for that step succeeds.
 - dateRange: a simple relative expression (today, yesterday, last week, last month, this quarter,
   this year, last 12 weeks, last 30 days), a named month ("July", "July 2025"), or an explicit
   "YYYY-MM-DD,YYYY-MM-DD" pair. Australian financial year runs 1 July–30 June — write FY windows as
@@ -192,7 +354,9 @@ Rules for the plan:
   with aggregate_result (which can also keep only Saturdays / only mornings before grouping).
   Never one query per weekday, and never a filter that tries to express "every Saturday".
 - Results already retrieved in earlier turns (listed in the request context) do not need a query
-  unless the owner asked for a different period, granularity, measure or dimension.
+  unless the owner asked for a different period, granularity, measure or dimension. When one of
+  those results satisfies a visible plan obligation, list its exact resultId and plan-step ids in
+  reusedEvidence so trusted code can re-emit and bind it before composition.
 - Dependent steps: when a query needs a value only an earlier step produces (the biggest day, the
   top customer, the leading product, the busiest store), never guess it — give that step a bind:
   {fromStep, fromColumn (the exact result column key of the source step, e.g. view.customer_name,
@@ -248,7 +412,9 @@ function collectPlanErrors(results: ReadonlyArray<Record<string, unknown>>, step
 const PLAN_PARALLELISM = 3;
 
 function stripBinding(step: PlannedStep): CubeQueryToolInput {
-  const { bind: _bind, ...query } = step;
+  const { bind: _bind, coversPlanStepIds: _coversPlanStepIds, ...query } = step;
+  void _bind;
+  void _coversPlanStepIds;
   // Fine-grained time series planned for re-aggregation must not be cut by the
   // default row limit: an hourly or daily series over a window is small in
   // bytes but long in rows.
@@ -350,8 +516,33 @@ export async function runPlannedLane(
 ): Promise<FinalAnswer | undefined> {
   const context = input.context;
   const budgetEffort = options.mode === "quick" ? input.config.lanes.quick.reasoningEffort : input.config.lanes.analytical.reasoningEffort;
+  const finishResearch = async (input: Readonly<{ label: string; detail: string; findings?: readonly string[] }>) => {
+    await context.emit({
+      type: "progress",
+      status: "complete",
+      stage: "research",
+      label: input.label,
+      detail: sanitizeTraceText(input.detail, 300),
+      ...(input.findings ? { findings: input.findings.map((finding) => sanitizeTraceText(finding, 180)) } : {}),
+      progress: 0.22,
+    });
+  };
+  await context.emit({
+    type: "progress",
+    status: "running",
+    stage: "research",
+    label: "Researching the semantic catalogue",
+    detail: sanitizeTraceText(input.intent.resolvedQuestion, 300),
+    progress: 0.14,
+  });
   const retrieved = await retrieveSchemas(input);
-  if (!retrieved.schemas) return undefined;
+  if (!retrieved.schemas) {
+    await finishResearch({
+      label: "Research needs a broader pass",
+      detail: "No suitable semantic definition was found in the fast research pass.",
+    });
+    return undefined;
+  }
   const certified = matchCertifiedQueries(input.intent.resolvedQuestion, input.config, 4, context.toolRoute.activeCubeConnectors)
     .filter((query) => !query.recipe || retrieved.viewNames.some((view) => JSON.stringify(query.query).includes(`"${view}.`)));
   const examples = certified.length > 0
@@ -371,15 +562,6 @@ export async function runPlannedLane(
     route: context.toolRoute,
   });
 
-  await context.emit({
-    type: "progress",
-    status: "running",
-    stage: "planning",
-    label: "Planning the queries",
-    detail: sanitizeTraceText(`Reading ${retrieved.viewNames.join(", ")}`, 300),
-    progress: 0.15,
-  });
-
   const planner = new Agent<unknown, typeof queryPlanSchema>({
     name: "Albert v3 query planner",
     instructions: `${PLANNER_INSTRUCTIONS}\n\n${knowledge}`,
@@ -390,34 +572,120 @@ export async function runPlannedLane(
     outputType: queryPlanSchema,
   });
   let plan: QueryPlan | undefined;
+  const turnSignal = input.signal ?? context.signal;
   try {
-    const run = await input.runner.run(planner, withV3PromptCacheBoundary(input.preferences.model, [
-      system(`${requestContext}\n\n# Schemas of the candidate views\n${retrieved.schemas}\n\n${examples}`),
-      ...input.conversation,
-    ]), { maxTurns: 2, signal: input.signal ?? context.signal });
-    plan = run.finalOutput;
+    const attempt = await runWithPlannerDeadline(
+      (signal) => input.runner.run(planner, withV3PromptCacheBoundary(input.preferences.model, [
+        system(`${requestContext}\n\n# Schemas of the candidate views\n${retrieved.schemas}\n\n${examples}`),
+        ...input.conversation,
+      ]), { maxTurns: 2, signal }),
+      turnSignal,
+    );
+    if (attempt.timedOut) {
+      await context.emit({
+        type: "progress",
+        status: "complete",
+        stage: "research",
+        label: "Switching to an adaptive investigation",
+        detail: "The one-shot query plan did not finish quickly enough.",
+        progress: 0.18,
+      });
+      return undefined;
+    }
+    plan = attempt.value.finalOutput;
   } catch (error) {
-    if (error instanceof Error && /max turns/iu.test(error.message)) return undefined;
+    if (error instanceof Error && /max turns/iu.test(error.message)) {
+      await finishResearch({
+        label: "Switching to an adaptive investigation",
+        detail: "The one-shot research plan did not finish within its turn allowance.",
+      });
+      return undefined;
+    }
     throw error;
   }
-  if (!plan) return undefined;
-  if (process.env.ALBERT_V3_DEBUG_PLAN) console.error(`[planned-lane] plan: ${JSON.stringify(plan)}`);
-
-  if (context.commentary.enabled && !context.commentary.planEmitted) {
-    context.commentary.planEmitted = true;
-    await context.emit({ type: "narrative", text: sanitizeTraceText(plan.plan, 420) });
+  if (!plan) {
+    await finishResearch({
+      label: "Switching to an adaptive investigation",
+      detail: "The one-shot research pass did not produce a usable plan.",
+    });
+    return undefined;
   }
+  if (process.env.ALBERT_V3_DEBUG_PLAN) console.error(`[planned-lane] plan: ${JSON.stringify(plan)}`);
+  const invalidCoverage = planCoverageError(
+    context.visiblePlan,
+    [
+      ...plan.steps.map(({ coversPlanStepIds }) => coversPlanStepIds),
+      ...(plan.reusedEvidence ?? []).map(({ coversPlanStepIds }) => coversPlanStepIds),
+    ],
+  );
+  if (invalidCoverage) {
+    if (process.env.ALBERT_V3_DEBUG_PLAN) console.error(`[planned-lane] ${invalidCoverage}`);
+    await finishResearch({
+      label: "Switching to an adaptive investigation",
+      detail: invalidCoverage,
+    });
+    return undefined;
+  }
+  const reusedBindings: PlannedEvidenceBinding[] = [];
+  for (const reused of plan.reusedEvidence ?? []) {
+    const table = await resolveTableResult(context, reused.resultId);
+    if (!table) {
+      await finishResearch({
+        label: "Switching to an adaptive investigation",
+        detail: "An earlier result named by the research plan is no longer available.",
+      });
+      return undefined;
+    }
+    reusedBindings.push({
+      coversPlanStepIds: reused.coversPlanStepIds,
+      ok: true,
+      resultIds: [table.resultId],
+    });
+  }
+  const valueValidation = await validatePlannedFilterValues({
+    context,
+    catalogue: input.catalogue,
+    steps: plan.steps,
+  });
+  if (!valueValidation.ok) {
+    await finishResearch({
+      label: "Switching to an adaptive investigation",
+      detail: valueValidation.error ?? "The proposed filter values could not be validated.",
+    });
+    return undefined;
+  }
+  const areaLabels = retrieved.viewNames.map((name) => (
+    input.catalogue.views.find((view) => view.name === name)?.title ?? name.replace(/_/gu, " ")
+  ));
+  const researchFindings = [
+    `Matched ${areaLabels.length} semantic ${areaLabels.length === 1 ? "area" : "areas"}: ${areaLabels.join(", ")}`,
+    ...valueValidation.findings,
+  ];
+  await finishResearch({
+    label: "Research complete",
+    detail: "The relevant definitions and stored filter values are ready.",
+    findings: researchFindings,
+  });
+  await context.emit({
+    type: "narrative",
+    text: sanitizeTraceText(
+      valueValidation.findings[0] === "No named filter values needed validation."
+        ? `Research complete: I found the ${retrieved.viewNames.length} relevant data ${retrieved.viewNames.length === 1 ? "area" : "areas"}; no named filter values needed checking.`
+        : `Research complete: I found the relevant data areas and validated ${valueValidation.findings.length} stored-value ${valueValidation.findings.length === 1 ? "filter" : "filters"}.`,
+      300,
+    ),
+  });
+  const steps: PlannedStep[] = valueValidation.steps.map((step) => ({ ...step }));
   await context.emit({
     type: "progress",
     status: "running",
     stage: "query",
-    label: `Running ${plan.steps.length} ${plan.steps.length === 1 ? "query" : "queries in parallel"}${plan.steps.some((step) => step.bind) ? ` (${plan.steps.filter((step) => step.bind).length} dependent)` : ""}`,
-    detail: sanitizeTraceText(plan.steps.map((step) => step.topic).join(" · "), 300),
+    label: `Running ${steps.length} ${steps.length === 1 ? "query" : "queries in parallel"}${steps.some((step) => step.bind) ? ` (${steps.filter((step) => step.bind).length} dependent)` : ""}`,
+    detail: sanitizeTraceText(steps.map((step) => step.topic).join(" · "), 300),
     progress: 0.3,
   });
 
-  let steps: PlannedStep[] = plan.steps.map((step) => ({ ...step }));
-  let results = await executePlan(context, steps);
+  const results = await executePlan(context, steps);
   const errors = collectPlanErrors(results, steps);
   if (errors.length > 0) {
     // One bounded repair: hydrate the views the failed steps named (the model
@@ -445,7 +713,13 @@ export async function runPlannedLane(
       ]), { maxTurns: 2, signal: input.signal ?? context.signal });
       const repaired = run.finalOutput;
       if (repaired) {
-        const fixes: PlannedStep[] = repaired.steps.slice(0, errors.length).map((fix, i) => ({ ...fix, bind: fix.bind ?? errors[i]?.step.bind ?? null }));
+        const fixes: PlannedStep[] = repaired.steps.slice(0, errors.length).map((fix, i) => ({
+          ...fix,
+          bind: fix.bind ?? errors[i]?.step.bind ?? null,
+          // Repair may correct members, never redirect which owner obligation
+          // the original planned query was intended to support.
+          coversPlanStepIds: errors[i]?.step.coversPlanStepIds ?? [],
+        }));
         const fixResults = await executePlan(context, fixes);
         fixes.forEach((fix, i) => {
           const original = errors[i];
@@ -458,6 +732,17 @@ export async function runPlannedLane(
       if (!(error instanceof Error && /max turns/iu.test(error.message))) throw error;
     }
   }
+  await applyPlannedEvidenceBindings(context, [
+    ...reusedBindings,
+    ...steps.map((step, index) => {
+      const result = results[index];
+      return {
+        coversPlanStepIds: step.coversPlanStepIds ?? [],
+        ok: result?.ok === true,
+        resultIds: typeof result?.resultId === "string" ? [result.resultId] : [],
+      };
+    }),
+  ]);
   const succeeded = results.filter((r) => r.ok === true).length;
   if (succeeded === 0) {
     // Every planned query timed out at the source: say so quickly instead of
@@ -486,6 +771,11 @@ export async function runPlannedLane(
     if (result.freshnessWarning) parts.push(`  freshness: ${JSON.stringify(result.freshnessWarning).slice(0, 400)}`);
     return parts.join("\n");
   }).join("\n");
+  const shapeHints = [...context.tableResults.values()]
+    .filter((table) => table.presentation === "evidence" && !isDerivedChartTable(table))
+    .slice(-8)
+    .map((table) => renderResultShape(profileResult(table)))
+    .join("\n");
   const chartHint = plan.presentation.chart
     ? `The plan nominated a chart: step ${plan.presentation.chart.stepIndex} (${steps[plan.presentation.chart.stepIndex]?.topic ?? "?"}), ${plan.presentation.chart.chartType}, x=${plan.presentation.chart.xKey}, y=${plan.presentation.chart.yKey}${plan.presentation.chart.seriesKey ? `, series by ${plan.presentation.chart.seriesKey}` : ""}. Attach it with make_chart unless the result turned out unsuitable (fewer than 3 points). If that step was re-aggregated with aggregate_result, chart the aggregated result instead (x = its group_ column).`
     : "The plan did not nominate a chart; add one when the owner asked for one, or when the answer is a trend (line) or a comparison/ranking of three or more values (bar) — a weekday or hour-of-day breakdown always gets a bar chart of the aggregated result (x = its group_ column). Lists of people or documents and single figures never do.";
@@ -508,6 +798,8 @@ Question: ${input.intent.resolvedQuestion}
 ${input.intent.ownerGoal ? `Owner's practical goal: ${input.intent.ownerGoal}` : ""}
 ${input.intent.answerMustCover.length > 0 ? `A useful answer must cover:\n${input.intent.answerMustCover.map((point) => `- ${point}`).join("\n")}` : ""}
 Answer shape planned: ${plan.presentation.shape}. Table planned: ${plan.presentation.table ? "yes" : "no"}. ${chartHint}
+Result shapes and best-guess chart forms (start from the best guess; a line needs a time axis and ≤4 series, rankings are sorted horizontal bars, composition is stacked_bar, a period comparison uses the period column as series so years overlay on the same months, or where=one period):
+${shapeHints}
 
 ${renderPriorResultsForPrompt([...(context.priorResults?.values() ?? [])])}
 

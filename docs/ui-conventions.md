@@ -71,10 +71,15 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
   findings, and numbered priority actions. Keep simple answers unsectioned.
   Historical bare report labels may be promoted only when they are standalone,
   familiar section cues; ordinary business names remain prose.
-- Render governed bar and line events with Nivo's responsive SVG components.
-  Bars compare or rank distinct categories; lines require an ordered time or
-  numeric axis. Keep the referenced exact-value table before its chart in the
-  detailed trace and available from the compact response trace.
+- Render governed bar and line events with Flint (Vega-Lite in the browser).
+  Bars compare or rank distinct categories; grouped bars sit like-for-like
+  series beside each other; stacked bars show composition; lines require an
+  ordered time axis, show a dot on each reading, and print the value beside
+  that dot (thinning only when the labels would collide). Year-on-year lines
+  overlay on a shared month axis, never two calendar years end to end. A small
+  Table control in the chart header toggles the governed rows used to draw it.
+  Keep the referenced exact-value table before its chart in
+  the detailed trace and available from the compact response trace.
 - Reuse the existing trace rail, dashboard table, chart, drawer, and status patterns.
 - A completed answer displays one of: Verified, Qualified, Exploratory, Clarification, or Unavailable.
 - Numerical artefacts display source, time range, definition, freshness, result identifier, and validation outcome. “Explain this number” opens lineage and semantic metadata; it never exposes hidden reasoning or creates an agent-facing SQL surface.
@@ -108,6 +113,26 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 - Dashboard motion uses the existing slider easing and is removed under
   `prefers-reduced-motion: reduce`.
 
+## My Data browser
+
+- My Data is a dense Fivetran catalogue and row-inspection workspace, not a
+  semantic-layer editor, query builder, or conversation-derived pinboard.
+- Use a master-detail layout: a compact schema/table rail and one full-width
+  native data table with sticky headers and contained horizontal scrolling.
+- Catalogue search uses the standard `36px` / `10px` field; schema and table
+  rows use the standard `8px` navigation treatment and `aria-current`.
+- Show source, schema, approximate row count, column count, availability, and
+  last catalogue check truthfully. Label planner row estimates with `≈`.
+- Fetch only one bounded page at a time. Previous/next actions are `36px`
+  rectangular controls; page-size choices use a native labelled select.
+- Distinguish no Fivetran connection, not-yet-stamped table, empty table,
+  loading, access denial, and retryable service failure without colour alone.
+- State that tenant, system, credential-bearing, binary, and structured fields
+  are hidden. Never imply that values are absent from the source when policy
+  merely prevents their display.
+- At the mobile breakpoint, stack the catalogue above the data pane and keep
+  wide columns scrollable inside their labelled table viewport.
+
 ## Responsive behaviour
 
 - Keep provider rows and analytical artefacts readable down to narrow mobile widths.
@@ -123,3 +148,17 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 - Known progress uses `aria-valuenow`; indeterminate progress is labelled as such.
 - Modal and popover focus is restored on close.
 - No model-authored number is rendered as governed data.
+
+
+## Financial statements (P&L, balance sheet, trial balance)
+
+A governed table event with `layout: "financial_statement"` (or the
+statement shape: `section`, `line`, then one currency column per period) is
+rendered by `FinancialStatementView`, not the data grid: section headings,
+indented account lines, ruled `Total ...` subtotals, double-ruled grand
+totals (Gross Profit, Net Profit, Total Assets/Liabilities, Net Assets),
+right-aligned figures with bracketed negatives and no currency-code prefix.
+The engine sets the flag on every live Xero statement table
+(`packages/albert-v3/src/engine/tools.ts`); a fallback statement composed
+from governed views gets the same treatment when it uses `section`/`line`
+column keys.

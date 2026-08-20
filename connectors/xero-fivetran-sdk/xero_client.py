@@ -7,10 +7,14 @@ its vault; the connector asks Albert's sync worker for a short-lived access
 token through a per-connection bearer secret (the "token broker"). A static
 `xero_access_token` is accepted only for local debugging.
 
-Xero limits: 60 calls/min and 5,000 calls/day per tenant, plus a
-10,000/min app-wide ceiling. Minute limits are absorbed by pacing + honouring
+Xero limits: 60 calls/min and 5,000 calls/day per tenant for certified apps —
+but only 1,000/day for an uncertified app such as Albert's (observed: the
+X-DayLimit-Remaining header). Minute limits are absorbed by pacing + honouring
 Retry-After; hitting the daily limit raises DailyLimitReached so the sync can
-checkpoint and end cleanly (Fivetran resumes on the next schedule).
+checkpoint and end cleanly (Fivetran resumes on the next schedule). The client
+also tracks the remaining daily allowance from every response so the sync can
+stop BEFORE the budget is gone: the same allowance serves Albert's live Xero
+report calls (balance sheet, bank balances), which must keep headroom.
 """
 from __future__ import annotations
 
@@ -25,6 +29,11 @@ XERO_ORIGIN = "https://api.xero.com"
 CONNECTIONS_PATH = "/connections"  # cheap identity probe; not tenant-scoped
 MIN_INTERVAL_SECONDS = 1.05  # ~57 calls/min, under Xero's 60/min per tenant
 MAX_ATTEMPTS = 6
+# A 5xx/timeout endpoint is retried this many times, not MAX_ATTEMPTS: the
+# Payroll AU endpoints answered 5xx on every hourly sync and the 6-attempt
+# loop alone burned ~70 of the 1,000 daily calls every hour.
+SERVER_ERROR_ATTEMPTS = 3
+DAY_LIMIT_HEADERS = ("X-DayLimit-Remaining", "X-DailyLimit-Remaining")
 
 
 class XeroError(Exception):
@@ -39,6 +48,11 @@ class NotAvailable(XeroError):
 
 class DailyLimitReached(XeroError):
     """Xero's per-tenant daily limit is exhausted; try again on the next sync."""
+
+
+class BudgetReserveReached(DailyLimitReached):
+    """The remaining daily allowance fell to the reserve kept for live use.
+    Stops a walk exactly like the hard daily limit (checkpoint, end cleanly)."""
 
 
 class TokenBrokerError(XeroError):
@@ -135,12 +149,18 @@ def _parse_iso(value) -> datetime | None:
 
 
 class XeroClient:
-    def __init__(self, configuration: dict, tokens: TokenSupply | None = None, origin: str | None = None):
+    def __init__(self, configuration: dict, tokens: TokenSupply | None = None, origin: str | None = None,
+                 daily_reserve: int | None = None):
         # `xero_origin` exists for local debugging against a mock only.
         self.origin = (origin or (configuration.get("xero_origin") or "").strip() or XERO_ORIGIN).rstrip("/")
         self.tokens = tokens or TokenSupply(configuration)
         self._last_call = 0.0
         self.calls = 0
+        # Remaining daily allowance as last reported by Xero (None until a
+        # response carried the header). daily_reserve is how much of it the
+        # sync must leave untouched for Albert's live report calls.
+        self.day_remaining: int | None = None
+        self.daily_reserve = int(daily_reserve or 0)
 
     @property
     def xero_tenant_id(self) -> str | None:
@@ -180,6 +200,7 @@ class XeroClient:
         when If-Modified-Since produced Not Modified. Raises NotAvailable on
         403/404 and DailyLimitReached when Xero's daily budget is exhausted.
         """
+        self.check_reserve(path)
         query = urllib.parse.urlencode(params or {}, quote_via=urllib.parse.quote)
         url = f"{self.origin}{path}" + (f"?{query}" if query else "")
         force_refresh = False
@@ -200,6 +221,7 @@ class XeroClient:
             request = urllib.request.Request(url, headers=request_headers, method="GET")
             try:
                 with urllib.request.urlopen(request, timeout=90) as response:
+                    self._observe_day_limit(response.headers)
                     raw = response.read()
                     if not raw:
                         return response.status, {}
@@ -207,6 +229,7 @@ class XeroClient:
             except urllib.error.HTTPError as error:
                 status = error.code
                 body = error.read().decode("utf-8", "replace")
+                self._observe_day_limit(error.headers)
                 if status == 304:
                     return 304, None
                 if status == 401:
@@ -225,9 +248,10 @@ class XeroClient:
                     raise NotAvailable(f"{status} for {path}: {body[:160]}")
                 if status == 429:
                     retry_after = _retry_after(error.headers.get("Retry-After"))
-                    daily_remaining = error.headers.get("X-DailyLimit-Remaining")
+                    daily_remaining = _first_header(error.headers, DAY_LIMIT_HEADERS)
                     problem = (error.headers.get("X-Rate-Limit-Problem") or "").strip().lower()
                     if problem == "day" or (daily_remaining is not None and daily_remaining.strip() == "0") or retry_after > 900:
+                        self.day_remaining = 0
                         raise DailyLimitReached(
                             f"Xero daily limit reached on {path} (problem={problem or '?'}, remaining={daily_remaining}, retry after {retry_after}s)"
                         )
@@ -235,14 +259,48 @@ class XeroClient:
                     time.sleep(retry_after)
                     continue
                 if status >= 500 or status == 408:
+                    if attempt + 1 >= SERVER_ERROR_ATTEMPTS:
+                        raise XeroError(f"Xero {status} for {path} after {attempt + 1} attempts: {body[:160]}")
                     time.sleep(min(60, 2 ** attempt))
                     continue
                 raise XeroError(f"Xero {status} for {path}: {body[:200]}")
             except (urllib.error.URLError, TimeoutError) as error:
-                time.sleep(min(60, 2 ** attempt))
-                if attempt == MAX_ATTEMPTS - 1:
+                if attempt + 1 >= SERVER_ERROR_ATTEMPTS:
                     raise XeroError(f"Xero unreachable for {path}: {error}")
+                time.sleep(min(60, 2 ** attempt))
         raise XeroError(f"Xero gave up after {MAX_ATTEMPTS} attempts for {path}")
+
+    def _observe_day_limit(self, headers) -> None:
+        value = _first_header(headers, DAY_LIMIT_HEADERS)
+        if value is None:
+            return
+        try:
+            self.day_remaining = max(0, int(str(value).strip()))
+        except (TypeError, ValueError):
+            return
+
+    def reserve_exhausted(self) -> bool:
+        """True once Xero reports less daily allowance than the live-use reserve."""
+        return self.day_remaining is not None and self.daily_reserve > 0 and self.day_remaining <= self.daily_reserve
+
+    def check_reserve(self, path: str) -> None:
+        if self.reserve_exhausted():
+            raise BudgetReserveReached(
+                f"Xero daily allowance down to {self.day_remaining} (reserve {self.daily_reserve}) before {path}; leaving the rest for live Xero reports"
+            )
+
+
+def _first_header(headers, names) -> str | None:
+    if headers is None:
+        return None
+    for name in names:
+        try:
+            value = headers.get(name)
+        except AttributeError:
+            value = None
+        if value is not None:
+            return value
+    return None
 
 
 def _retry_after(value) -> int:

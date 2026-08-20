@@ -1,12 +1,14 @@
+import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import { z } from "zod";
-import { describeChatFailure, isXaiModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
+import { describeChatFailure, isAnthropicModel, isXaiModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
 import { meterOpenAIUsage, toModelUsageRpcPayload } from "@/packages/usage-metering/src";
 import { webBackendLoopbackMessage } from "@/packages/config/src/env";
 import { xeroMcpServiceUrl } from "@/packages/xero-mcp/src/client";
 import {
   ALBERT_V3_RUNTIME,
   businessContextRefreshDue,
+  detectSocialMessage,
   runAlbertV3Turn,
   type ConversationMessage,
 } from "@/packages/albert-v3/src";
@@ -20,6 +22,10 @@ import {
   createLiveTraceSseResponse,
   createTraceEmitter,
   generateConversationTitle,
+  generateInitialAcknowledgement,
+  INITIAL_ACKNOWLEDGEMENT_MODEL,
+  INITIAL_ACKNOWLEDGEMENT_REASONING_EFFORT,
+  INITIAL_ACKNOWLEDGEMENT_SERVICE_TIER,
 } from "@/services/conversation/src";
 import {
   appendConversationEvent,
@@ -114,6 +120,21 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(loopbackBackends, 503, correlationId);
   }
   const grokSelected = isXaiModel(preferences.model);
+  const haikuSelected = isAnthropicModel(preferences.model);
+  if (
+    haikuSelected
+    && process.env.NODE_ENV === "production"
+    && (
+      process.env.ALBERT_ANTHROPIC_APP8_APPROVED !== "true"
+      || process.env.ALBERT_ANTHROPIC_ZDR_APPROVED !== "true"
+    )
+  ) {
+    return jsonError(
+      "Claude Haiku is not approved for production data on this Albert environment.",
+      503,
+      correlationId,
+    );
+  }
   const configuration = {
     cubeApiUrl: process.env.CUBE_API_URL,
     cubeApiSecret: process.env.CUBEJS_API_SECRET,
@@ -123,6 +144,7 @@ export async function POST(request: Request): Promise<Response> {
     shopifyAdminSigningSecret: process.env.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET,
     openaiApiKey: process.env.OPENAI_API_KEY,
     ...(grokSelected ? { xaiApiKey: process.env.XAI_API_KEY } : {}),
+    ...(haikuSelected ? { anthropicApiKey: process.env.ANTHROPIC_API_KEY } : {}),
   };
   const missing = Object.entries(configuration)
     .filter(([, value]) => !value?.trim())
@@ -131,6 +153,9 @@ export async function POST(request: Request): Promise<Response> {
     logger.error("v3.configuration_missing", { missing }, correlationId);
     if (grokSelected && missing.includes("xaiApiKey")) {
       return jsonError("Grok is not configured (XAI_API_KEY is missing).", 503, correlationId);
+    }
+    if (haikuSelected && missing.includes("anthropicApiKey")) {
+      return jsonError("Claude Haiku is not configured (ANTHROPIC_API_KEY is missing).", 503, correlationId);
     }
     return jsonError(
       describeChatFailure(undefined, { missingConfig: missing, phase: "config" }),
@@ -174,6 +199,31 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const conversationId = begun.conversationId;
+  const shouldGenerateInitialAcknowledgement = detectSocialMessage(parsed.message) === null;
+  const initialAcknowledgementStartedAt = shouldGenerateInitialAcknowledgement ? Date.now() : null;
+  // Start the small Luna request before the independent context reads. By the
+  // time SSE is mounted it is normally already complete, while any failure is
+  // isolated from the analytical turn.
+  const initialAcknowledgement = shouldGenerateInitialAcknowledgement
+    ? generateInitialAcknowledgement({
+        question: parsed.message,
+        apiKey: configuration.openaiApiKey!,
+        baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+        safetyIdentifier: createHash("sha256")
+          .update(`${tenant.tenant_id}:${auth.user.id}`)
+          .digest("hex"),
+        signal: request.signal,
+      }).catch((error) => {
+        if (!request.signal.aborted) {
+          logger.warn("v3.initial_acknowledgement_failed", {
+            conversationId,
+            turnId,
+            ...safeErrorEvidence(error),
+          }, correlationId);
+        }
+        return null;
+      })
+    : Promise.resolve(null);
 
   let conversation: readonly ConversationMessage[];
   let activeConnectors: readonly string[] | undefined;
@@ -314,6 +364,38 @@ export async function POST(request: Request): Promise<Response> {
       });
 
       try {
+        const acknowledgement = await initialAcknowledgement;
+        if (acknowledgement && !streamSignal.aborted) {
+          await emit({
+            type: "narrative",
+            purpose: "acknowledgement",
+            text: acknowledgement.text,
+          });
+          logger.info("v3.initial_acknowledgement_completed", {
+            tenantId: tenant.tenant_id,
+            conversationId,
+            turnId,
+            model: INITIAL_ACKNOWLEDGEMENT_MODEL,
+            reasoningEffort: INITIAL_ACKNOWLEDGEMENT_REASONING_EFFORT,
+            requestedServiceTier: INITIAL_ACKNOWLEDGEMENT_SERVICE_TIER,
+            actualServiceTier: acknowledgement.actualServiceTier,
+            durationMs: initialAcknowledgementStartedAt === null
+              ? null
+              : Date.now() - initialAcknowledgementStartedAt,
+            inputTokens: acknowledgement.usage?.inputTokens,
+            outputTokens: acknowledgement.usage?.outputTokens,
+            providerResponseId: acknowledgement.providerResponseId,
+          }, correlationId);
+        } else if (shouldGenerateInitialAcknowledgement && !streamSignal.aborted) {
+          logger.warn("v3.initial_acknowledgement_invalid", {
+            conversationId,
+            turnId,
+            durationMs: initialAcknowledgementStartedAt === null
+              ? null
+              : Date.now() - initialAcknowledgementStartedAt,
+          }, correlationId);
+        }
+
         const result = await runAlbertV3Turn({
           message: parsed.message,
           conversation,
@@ -375,6 +457,8 @@ export async function POST(request: Request): Promise<Response> {
           openaiBaseUrl: process.env.OPENAI_BASE_URL || undefined,
           xaiApiKey: process.env.XAI_API_KEY || undefined,
           xaiBaseUrl: process.env.XAI_BASE_URL || undefined,
+          anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
+          anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || undefined,
           openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
           signal: streamSignal,
           emit,

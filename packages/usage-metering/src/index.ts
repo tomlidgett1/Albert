@@ -57,6 +57,36 @@ export const XAI_GROK_4_6_RATE_CARD = Object.freeze({
   regionalProcessingDenominator: 1n,
 } as const);
 
+/**
+ * First-party Claude API rates for the pinned Haiku 4.5 snapshot. Albert uses
+ * the default five-minute prompt-cache write tier and standard processing.
+ * Manual thinking tokens are included in `output_tokens` by Anthropic.
+ */
+export const ANTHROPIC_HAIKU_4_5_RATE_CARD = Object.freeze({
+  id: "anthropic-claude-haiku-4.5-2026-08-19",
+  effectiveAt: "2026-08-19T00:00:00.000Z",
+  source: "https://platform.claude.com/docs/en/about-claude/pricing",
+  dataResidencyRegion: "global",
+  longContextThresholdInputTokens: Number.MAX_SAFE_INTEGER,
+  models: Object.freeze({
+    "claude-haiku-4-5-20251001": Object.freeze({
+      input: 1_000n,
+      cachedInput: 100n,
+      output: 5_000n,
+    }),
+  }),
+  cacheWriteInputNumerator: 5n,
+  cacheWriteInputDenominator: 4n,
+  fastModeNumerator: 1n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 1n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 1n,
+  longContextOutputDenominator: 1n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
 export type ProviderRequestUsage = Readonly<{
   inputTokens: number;
   outputTokens: number;
@@ -143,11 +173,15 @@ function multiplyRatio(value: bigint, numerator: bigint, denominator: bigint): b
 
 function rateCardFor(model: AlbertModelId) {
   if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD;
+  if (model === "claude-haiku-4-5-20251001") return ANTHROPIC_HAIKU_4_5_RATE_CARD;
   return OPENAI_GPT_5_6_RATE_CARD;
 }
 
 function tokenRatesFor(model: AlbertModelId) {
   if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD.models["grok-4.6"];
+  if (model === "claude-haiku-4-5-20251001") {
+    return ANTHROPIC_HAIKU_4_5_RATE_CARD.models["claude-haiku-4-5-20251001"];
+  }
   if (model === "gpt-5.6-sol" || model === "gpt-5.6-terra" || model === "gpt-5.6-luna") {
     return OPENAI_GPT_5_6_RATE_CARD.models[model];
   }

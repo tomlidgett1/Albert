@@ -12,6 +12,11 @@ kill_timeout = 30
   CUBEJS_DEV_MODE = "false"
   CUBEJS_CACHE_AND_QUEUE_DRIVER = "memory"
   CUBEJS_DB_TYPE = "postgres"
+  # A single stuck query must not wedge the (concurrency-2) in-memory queue for
+  # every other turn: Cube's default 10-minute database timeout did exactly
+  # that on 2026-08-19 when a malformed compareDateRange ran unbounded. The
+  # engine gives up on a query after 90 s, so nothing legitimate runs longer.
+  CUBEJS_DB_QUERY_TIMEOUT = "2m"
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
   NODE_ENV = "production"

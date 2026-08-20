@@ -100,7 +100,7 @@ for (const file of markdownFiles(path.join(agentsDir, "rules"))) {
 }
 if (alwaysRules.length === 0) throw new Error("At least one always rule is required.");
 
-type Recipe = { presentation: "fact" | "list" | "table" | "line" | "bar"; answerHint?: string; dateParameter?: string; matches?: readonly string[] };
+type Recipe = { presentation: "fact" | "list" | "table" | "line" | "bar"; answerHint?: string; dateParameter?: string; matches?: readonly string[]; emptyAnswer?: string };
 const RECIPE_PRESENTATIONS = new Set(["fact", "list", "table", "line", "bar"]);
 const certifiedQueries: { name: string; userRequest: string; notes: string; query: unknown; recipe?: Recipe }[] = [];
 for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
@@ -132,6 +132,10 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
       ...(frontmatter.answer_hint ? { answerHint: String(frontmatter.answer_hint).trim() } : {}),
       ...(dateParameter ? { dateParameter } : {}),
       ...(matches?.length ? { matches } : {}),
+      // empty_answer: when set, zero rows IS the answer (no open shifts, no
+      // leave, nothing overdue) and the recipe lane answers directly instead
+      // of handing an "empty period" to the diagnostic lanes.
+      ...(frontmatter.empty_answer ? { emptyAnswer: String(frontmatter.empty_answer).trim() } : {}),
     };
   }
   certifiedQueries.push({ name, userRequest, notes, query, ...(recipe ? { recipe } : {}) });

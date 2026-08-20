@@ -5,7 +5,10 @@ Date: 2026-08-09
 ## Status
 
 Accepted. Refines ADR 0001's constrained chart event and the conversational
-analytics conventions in `docs/ui-conventions.md`.
+analytics conventions in `docs/ui-conventions.md`. Series/point limits, chart
+type resolution and who decides the chart are superseded by ADR 0101 (the
+visualisation agent). The renderer is now Flint (Vega-Lite in the browser),
+not Nivo; the grounding contract here still stands.
 
 ## Context
 
@@ -51,18 +54,21 @@ the public or immutable trace. Series labels and captions are derived from
 trusted result metadata rather than accepted as numerical evidence from the
 model.
 
-The dash renders valid specs with Nivo's SVG `ResponsiveBar` and
-`ResponsiveLine`. The governed table remains the exact-value and provenance
-source (shown before the chart in the detailed trace and available from the
-compact trace); conversion of exact decimals to binary numbers is only for
-plotting. Tooltips read the original table cells so their display uses Albert's
-exact currency/percent formatting. Bar orientation, canvas dimensions and
-label density adapt to the number and length of the actual categories without
-changing the trace contract.
+Trusted code compiles the validated request into a closed Flint spec
+(Line / Bar / Grouped Bar / Stacked Bar) with semantic types taken from the
+governed columns. The public chart event still references `dataRef` and never
+carries invented rows. The dash assembles that spec in the browser with
+`vega-embed` and `ast: true` (Vinext's worker cannot load Vega).
 
-Nivo receives only dash theme tokens. Charts support light, dark, green and
-system themes, keyboard-focusable SVG semantics, a text alternative pointing
-to the exact table, and disabled motion under `prefers-reduced-motion`.
+The governed table remains the exact-value and provenance source (shown before
+the chart in the detailed trace and available from the compact trace). Flint
+formats measures from semantic types (Price, Percentage, Quantity). Bar
+orientation and canvas height adapt to the actual categories without changing
+the trace contract.
+
+Flint receives Albert dash tokens for canvas, ink and the four chart colours.
+Charts support light, dark, beige, green and system themes, a text alternative
+pointing to the exact table, and CSP-safe drawing.
 
 ## Consequences
 

@@ -1,21 +1,20 @@
 "use client";
 
-import { ResponsiveBar, type BarDatum, type BarTooltipProps } from "@nivo/bar";
-import { ResponsiveLine, type LineSeries, type PointTooltipProps } from "@nivo/line";
-import { useReducedMotion } from "framer-motion";
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import {
-  axisToNivo,
-  barDesignToNivoProps,
-  legendToNivo,
-  lineDesignToNivoProps,
+  groundedFlintPlanForChart,
   type TraceChartEvent,
   type TraceEvent,
   type TraceProvenance,
   type TraceTableEvent,
 } from "@/packages/shared/src";
 import { responseVisibleResultIds } from "../lib/answer-presentation";
-import { usePublishedNivoChartDesign } from "../lib/nivo-chart-design-store";
+import {
+  getServerThemePreference,
+  getThemePreference,
+  subscribeToThemePreference,
+} from "@/app/theme-preference";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import styles from "../dash.module.css";
 import {
@@ -24,18 +23,14 @@ import {
   type TurnLineageReference,
 } from "./answer-lineage";
 import {
-  formatChartDateLabel,
-  formatCompactTraceCell,
   formatTraceCell,
   isExplainableTraceCell,
-  traceCellNumber,
 } from "./analytical-values";
-import ChartDebugSettings, { useNivoChartDebugConfig } from "./ChartDebugSettings";
-import {
-  createBarChartDebugConfig,
-  createLineChartDebugConfig,
-} from "./chart-debug-config";
-import { computeLineChartLayout } from "./line-chart-layout";
+import { GovernedResultGrid } from "./GovernedResultGrid";
+
+const FlintChartView = dynamic(() => import("./FlintChartView"), {
+  ssr: false,
+});
 
 type AnalyticalTraceProps = {
   events: readonly TraceEvent[];
@@ -59,7 +54,7 @@ type LineageState =
   | Readonly<{ kind: "error"; key: string; message: string }>;
 
 const answerStateDescriptions = {
-  Verified: "Checked against your connected data",
+  Verified: "Checked against governed evidence",
   Derived: "Calculated deterministically from governed results",
   Qualified: "Useful answer, with a limitation noted below",
   Exploratory: "From your live Lightspeed or Xero data",
@@ -90,16 +85,40 @@ function formatChartDate(value: string) {
   ).format(date);
 }
 
+function isPlaceholderChartRange(value: string) {
+  return /^(requested period|unknown|x)$/iu.test(value.trim());
+}
+
 function formatChartDateRange(range: Readonly<{ start: string; end: string; label: string }> | undefined) {
   if (!range) return "";
   const start = range.start.trim();
   const end = range.end.trim();
-  if (start && end) {
+  if (start && end && !isPlaceholderChartRange(start) && !isPlaceholderChartRange(end)) {
     const startLabel = formatChartDate(start);
     const endLabel = formatChartDate(end);
+    if (isPlaceholderChartRange(startLabel) || isPlaceholderChartRange(endLabel)) return "";
     return startLabel === endLabel ? startLabel : `${startLabel} – ${endLabel}`;
   }
-  return range.label.trim();
+  const label = range.label.trim();
+  return isPlaceholderChartRange(label) ? "" : label;
+}
+
+function ChartTableIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <path d="M3.5 10h17M10 10v9" />
+    </svg>
+  );
+}
+
+function ChartViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19V5M4 19h16" />
+      <path d="M8 15v-3M12 15V8M16 15v-6" />
+    </svg>
+  );
 }
 
 function formatFinalizedAt(value: string) {
@@ -437,247 +456,36 @@ function ResultTable({
   );
 }
 
-const NIVO_CHART_COLOURS: string[] = [
-  "var(--dash-chart-1)",
-  "var(--dash-chart-2)",
-  "var(--dash-chart-3)",
-  "var(--dash-chart-4)",
-];
-
-type PreparedChartRow = Readonly<{
-  /** Axis / index key. Pre-formatted so Nivo never truncates raw ISO ticks. */
-  x: string;
-  source: TraceTableEvent["rows"][number];
-}>;
-
-function chartAxisLabel(
-  raw: TraceTableEvent["rows"][number][string],
-  xKey: string,
-  xColumn: TraceTableEvent["columns"][number] | undefined,
-): string {
-  const dateLabel = formatChartDateLabel(raw, xKey);
-  if (dateLabel) return dateLabel;
-  if (xColumn) return formatTraceCell(raw, xColumn);
-  return String(raw ?? "");
-}
-
 export function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
-  const reducedMotion = useReducedMotion();
-  const publishedDesign = usePublishedNivoChartDesign();
+  const theme = useSyncExternalStore(subscribeToThemePreference, getThemePreference, getServerThemePreference);
+  const appearance = theme === "dark"
+    || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    ? "dark"
+    : "light";
   const descriptionId = useId().replaceAll(":", "");
-  const xColumn = table?.columns.find((column) => column.key === event.xKey);
-  const primaryColumn = table?.columns.find((column) => column.key === event.yKey);
-  const series = useMemo(() => {
-    if (!table) return [];
-    const requested = event.series?.length
-      ? event.series
-      : [{ key: event.yKey, label: primaryColumn?.label ?? event.yKey.replaceAll("_", " ") }];
-    return requested.flatMap((item) => {
-      const column = table.columns.find((candidate) => candidate.key === item.key);
-      return column ? [{ ...item, column }] : [];
-    });
-  }, [event.series, event.yKey, primaryColumn?.label, table]);
-  const rows = useMemo<PreparedChartRow[]>(() => {
-    if (!table || !series.length) return [];
-    const usedLabels = new Map<string, number>();
-    return table.rows.flatMap((row) => {
-      const rawX = row[event.xKey];
-      if (rawX === null || rawX === undefined) return [];
-      const hasValue = series.some(({ key }) => traceCellNumber(row[key]) !== null);
-      if (!hasValue) return [];
-      // Format before the chart sees the value. Nivo's truncateTickAt cuts the
-      // raw tick string *before* axis format runs, which turned ISO dates into
-      // "2026-06-01T00:00:0..." and bypassed date formatting.
-      let label = chartAxisLabel(rawX, event.xKey, xColumn);
-      const seen = usedLabels.get(label) ?? 0;
-      usedLabels.set(label, seen + 1);
-      if (seen > 0) label = `${label} (${seen + 1})`;
-      return [{ x: label, source: row }];
-    });
-  }, [event.xKey, series, table, xColumn]);
-
-  const rawRows = useMemo(() => new Map(rows.map((row) => [row.x, row.source])), [rows]);
-  const seriesByKey = useMemo(() => new Map(series.map((item) => [item.key, item])), [series]);
-  const seriesKeyByLabel = useMemo(() => new Map(series.map((item) => [item.label, item.key])), [series]);
-  const formatX = (value: string | number) => {
-    const key = String(value);
-    // Rows already carry display labels; still re-format if a raw ISO leaks in.
-    const raw = rawRows.get(key)?.[event.xKey];
-    if (raw !== undefined && raw !== null) {
-      return chartAxisLabel(raw, event.xKey, xColumn);
-    }
-    return formatChartDateLabel(key, event.xKey) ?? key;
-  };
-  const formatY = (value: number) => primaryColumn
-    ? formatCompactTraceCell(value, primaryColumn)
-    : new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 }).format(value);
-  const xAxisLegend = xColumn?.label ?? event.xKey.replaceAll("_", " ");
-  const yAxisLegend = primaryColumn?.label ?? event.yKey.replaceAll("_", " ");
-  const longestXLabel = rows.reduce((longest, row) => Math.max(longest, formatX(row.x).length), 0);
-  const yTickLabels = rows.flatMap((row) => series.flatMap((item) => {
-    const value = traceCellNumber(row.source[item.key]);
-    return value === null ? [] : [formatY(value)];
-  }));
-  // Nivo positions axis titles and legends inside their respective margins.
-  // Size those margins from the real display strings so currency prefixes and
-  // business metric names never collide with ticks or the SVG boundary.
-  const lineLayout = computeLineChartLayout({
-    yTickLabels,
-    seriesLabels: series.map((item) => item.label),
-  });
-  const horizontalBars = event.chartType === "bar" && (
-    event.orientation === "horizontal"
-    || (event.orientation !== "vertical" && (rows.length >= 8 || longestXLabel > 14))
-  );
-  const hasLegend = series.length > 1;
-  const defaultChartHeight = event.chartType === "line"
-    ? publishedDesign.line.height
-    : horizontalBars
-      ? Math.max(280, Math.min(620, rows.length * 34 + (hasLegend ? 108 : 72)))
-      : publishedDesign.bar.height;
-  const lineDebugDefaults = useMemo(() => createLineChartDebugConfig({
-    height: defaultChartHeight,
-    margin: {
-      top: 50,
-      right: lineLayout.rightMargin,
-      bottom: lineLayout.bottomMargin,
-      left: lineLayout.leftMargin,
-    },
-    yAxisLegendOffset: lineLayout.yAxisLegendOffset,
-    legendTranslateX: lineLayout.legendTranslateX,
-    legendTranslateY: lineLayout.legendTranslateY,
-    legendItemWidth: lineLayout.legendItemWidth,
-  }), [
-    defaultChartHeight,
-    lineLayout.bottomMargin,
-    lineLayout.legendItemWidth,
-    lineLayout.legendTranslateX,
-    lineLayout.legendTranslateY,
-    lineLayout.leftMargin,
-    lineLayout.rightMargin,
-    lineLayout.yAxisLegendOffset,
-  ]);
-  const barDebugDefaults = useMemo(() => createBarChartDebugConfig({
-    height: defaultChartHeight,
-    horizontal: horizontalBars,
-    hasLegend,
-    longestXLabel,
-    rowCount: rows.length,
-  }), [defaultChartHeight, hasLegend, horizontalBars, longestXLabel, rows.length]);
-  const chartDebugDefaults = useMemo(() => event.chartType === "line"
-    ? lineDebugDefaults
-    : barDebugDefaults, [barDebugDefaults, event.chartType, lineDebugDefaults]);
-  const chartDebug = useNivoChartDebugConfig(chartDebugDefaults);
-  const lineConfig = chartDebug.config.chartType === "line" ? chartDebug.config : lineDebugDefaults;
-  const barConfig = chartDebug.config.chartType === "bar" ? chartDebug.config : barDebugDefaults;
-  const publishedBar = publishedDesign.bar;
-  const publishedLine = publishedDesign.line;
-  const barUsesManualLayout = publishedBar.layoutMode === "manual" || chartDebug.hasOverride;
-  const lineUsesManualLayout = publishedLine.layoutMode === "manual" || chartDebug.hasOverride;
-  const barIsHorizontal = (barUsesManualLayout ? (chartDebug.hasOverride ? barConfig.layout : publishedBar.layout) : (horizontalBars ? "horizontal" : "vertical")) === "horizontal";
-  const chartHeight = event.chartType === "line"
-    ? (lineUsesManualLayout ? (chartDebug.hasOverride ? lineConfig.height : publishedLine.height) : defaultChartHeight)
-    : (barUsesManualLayout ? (chartDebug.hasOverride ? barConfig.height : publishedBar.height) : defaultChartHeight);
-  const barMargin = barUsesManualLayout
-    ? (chartDebug.hasOverride ? barConfig.margin : publishedBar.margin)
-    : barDebugDefaults.margin;
-  const lineMargin = lineUsesManualLayout
-    ? (chartDebug.hasOverride ? lineConfig.margin : publishedLine.margin)
-    : lineDebugDefaults.margin;
-  const maxXTicks = chartDebug.hasOverride ? lineConfig.maxXTicks : publishedLine.maxXTicks;
-  const publishedBarProps = barDesignToNivoProps(publishedDesign);
-  const publishedLineProps = lineDesignToNivoProps(publishedDesign);
-  const rawValue = (x: string | number, key: string) => rawRows.get(String(x))?.[key] ?? null;
-  const lineTickValues = useMemo(() => {
-    if (rows.length <= maxXTicks) return rows.map(({ x }) => x);
-    const interval = Math.ceil(rows.length / maxXTicks);
-    const sampled = rows.flatMap(({ x }, index) => index % interval === 0
-      ? [{ x, index }]
-      : []);
-    const lastIndex = rows.length - 1;
-    const last = rows[lastIndex]!;
-    const previous = sampled.at(-1);
-    if (!previous || previous.index !== lastIndex) {
-      if (previous && lastIndex - previous.index <= Math.ceil(interval / 2)) {
-        sampled[sampled.length - 1] = { x: last.x, index: lastIndex };
-      } else {
-        sampled.push({ x: last.x, index: lastIndex });
-      }
-    }
-    return sampled.map(({ x }) => x);
-  }, [maxXTicks, rows]);
-
-  const BarTooltip = ({ id, indexValue, color }: BarTooltipProps<BarDatum>) => {
-    const key = String(id);
-    const item = seriesByKey.get(key);
-    const value = rawValue(indexValue, key);
-    return (
-      <div className={styles.traceChartTooltip}>
-        <span><i style={{ backgroundColor: color }} />{formatX(indexValue)}</span>
-        <strong>{item?.label ?? key}: {item ? formatTraceCell(value, item.column) : String(value ?? "—")}</strong>
-      </div>
-    );
-  };
-
-  const LineTooltip = ({ point }: PointTooltipProps<LineSeries>) => {
-    const label = String(point.seriesId);
-    const key = seriesKeyByLabel.get(label) ?? label;
-    const item = seriesByKey.get(key);
-    const value = rawValue(String(point.data.x), key);
-    return (
-      <div className={styles.traceChartTooltip}>
-        <span><i style={{ backgroundColor: point.seriesColor }} />{formatX(String(point.data.x))}</span>
-        <strong>{item?.label ?? label}: {item ? formatTraceCell(value, item.column) : String(value ?? "—")}</strong>
-      </div>
-    );
-  };
-
-  const barData = useMemo<BarDatum[]>(() => rows.map((row) => ({
-    __albert_x: row.x,
-    ...Object.fromEntries(series.flatMap(({ key }) => {
-      const value = traceCellNumber(row.source[key]);
-      return value === null ? [] : [[key, value]];
-    })),
-  })), [rows, series]);
-  const lineData = useMemo<LineSeries[]>(() => series.map((item) => ({
-    id: item.label,
-    data: rows.map((row) => ({
-      x: row.x,
-      y: traceCellNumber(row.source[item.key]),
-    })),
-  })), [rows, series]);
-
-  const barLegend = chartDebug.hasOverride
-    ? (barConfig.legend.enabled ? [{
-      ...legendToNivo(publishedBar.legend, "keys"),
-      anchor: barConfig.legend.anchor,
-      direction: barConfig.legend.direction,
-      translateX: barConfig.legend.translateX,
-      translateY: barConfig.legend.translateY,
-      itemWidth: barConfig.legend.itemWidth,
-      itemHeight: barConfig.legend.itemHeight,
-      itemsSpacing: barConfig.legend.itemsSpacing,
-      symbolSize: barConfig.legend.symbolSize,
-    }] : [])
-    : (publishedBar.legend.enabled ? [legendToNivo(publishedBar.legend, "keys")] : []);
-  const lineLegend = chartDebug.hasOverride
-    ? (lineConfig.legend.enabled ? [{
-      ...legendToNivo(publishedLine.legend),
-      anchor: lineConfig.legend.anchor,
-      direction: lineConfig.legend.direction,
-      translateX: lineConfig.legend.translateX,
-      translateY: lineConfig.legend.translateY,
-      itemWidth: lineConfig.legend.itemWidth,
-      itemHeight: lineConfig.legend.itemHeight,
-      itemsSpacing: lineConfig.legend.itemsSpacing,
-      symbolSize: lineConfig.legend.symbolSize,
-    }] : [])
-    : (publishedLine.legend.enabled ? [legendToNivo(publishedLine.legend)] : []);
-  const minimumPoints = event.chartType === "line" ? 2 : 1;
-  const hasChart = Boolean(table && rows.length >= minimumPoints && series.length && primaryColumn);
+  const [view, setView] = useState<"chart" | "table">("chart");
+  const plan = useMemo(() => table ? groundedFlintPlanForChart(event, table) : null, [event, table]);
+  const minimumPoints = event.chartType === "line" ? 3 : 2;
+  const hasChart = Boolean(table && plan && plan.data.length >= minimumPoints);
   const tableCaption = table?.caption?.trim() ?? "";
   const exploratory = /^Exploratory(?:\s*·\s*|$)/iu.test(tableCaption);
   const dateRangeLabel = formatChartDateRange(table?.provenance.timeRange);
+  const showTable = view === "table" && Boolean(table);
+  const categoryCount = plan
+    ? new Set(plan.data.map((row) => String(row[event.xKey] ?? ""))).size
+    : 0;
+  const horizontal = Boolean(
+    plan
+    && plan.chart_spec.chartType !== "Line Chart"
+    && plan.chart_spec.encodings.y
+    && "field" in plan.chart_spec.encodings.y
+    && plan.chart_spec.encodings.y.field === event.xKey,
+  );
+  const chartHeight = horizontal
+    ? Math.max(280, Math.min(620, categoryCount * 34 + 96))
+    : 400;
+
+  if (!table) return null;
 
   return (
     <figure className={styles.traceChartFigure}>
@@ -685,7 +493,7 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
         <figcaption>
           <strong>{event.caption}</strong>
         </figcaption>
-        {exploratory || dateRangeLabel || chartDebug.enabled ? (
+        {exploratory || dateRangeLabel || table ? (
           <div className={styles.traceChartMeta}>
             {exploratory ? (
               <span className={styles.traceChartPill}>Exploratory</span>
@@ -695,125 +503,40 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
                 {dateRangeLabel}
               </span>
             ) : null}
-            {chartDebug.enabled ? (
-              <ChartDebugSettings
-                config={chartDebug.config}
-                onChange={chartDebug.update}
-                onReset={chartDebug.reset}
-              />
+            {table ? (
+              <button
+                className={styles.traceChartViewToggle}
+                type="button"
+                aria-pressed={showTable}
+                aria-label={showTable ? "Show the chart" : "Show the table behind this chart"}
+                title={showTable ? "Show the chart" : "Show the table behind this chart"}
+                onClick={() => setView((current) => (current === "chart" ? "table" : "chart"))}
+              >
+                {showTable ? <ChartViewIcon /> : <ChartTableIcon />}
+              </button>
             ) : null}
           </div>
         ) : null}
       </div>
-      {hasChart ? (
-        <div className={styles.traceChartScroll} aria-label="Responsive chart area">
-          <div
-            className={styles.traceChartCanvas}
-            style={{ height: chartHeight }}
-          >
+      {showTable && table ? (
+        <GovernedResultGrid table={table} ariaLabel="Chart data" />
+      ) : hasChart && plan ? (
+        <div className={styles.traceChartScroll} aria-label="Chart">
+          <div className={styles.traceChartCanvas}>
             <p className="sr-only" id={descriptionId}>
-              {event.caption}. {rows.length} points across {series.length} {series.length === 1 ? "series" : "series"}. Exact values are available in the governed source table.
+              {event.caption}. {plan.data.length} points as a {plan.chart_spec.chartType}. Exact values are available in the governed source table.
             </p>
-            {event.chartType === "bar" ? (
-              <ResponsiveBar
-                {...(publishedBarProps as object)}
-                data={barData}
-                keys={series.map(({ key }) => key)}
-                indexBy="__albert_x"
-                layout={barIsHorizontal ? "horizontal" : "vertical"}
-                groupMode={chartDebug.hasOverride ? barConfig.groupMode : publishedBar.groupMode}
-                margin={barMargin}
-                padding={chartDebug.hasOverride ? barConfig.padding : publishedBar.padding}
-                innerPadding={chartDebug.hasOverride ? barConfig.innerPadding : publishedBar.innerPadding}
-                colors={publishedBarProps.colors ?? NIVO_CHART_COLOURS}
-                borderRadius={chartDebug.hasOverride ? barConfig.borderRadius : publishedBar.borderRadius}
-                borderWidth={chartDebug.hasOverride ? barConfig.borderWidth : publishedBar.borderWidth}
-                enableGridX={chartDebug.hasOverride ? barConfig.enableGridX : publishedBar.enableGridX}
-                enableGridY={chartDebug.hasOverride ? barConfig.enableGridY : publishedBar.enableGridY}
-                enableLabel={chartDebug.hasOverride ? barConfig.enableLabel : publishedBar.enableLabel}
-                label={(datum) => formatY(datum.value ?? 0)}
-                labelSkipWidth={chartDebug.hasOverride ? barConfig.labelSkipWidth : publishedBar.labelSkipWidth}
-                labelSkipHeight={chartDebug.hasOverride ? barConfig.labelSkipHeight : publishedBar.labelSkipHeight}
-                axisTop={axisToNivo(publishedBar.axisTop, barIsHorizontal ? yAxisLegend : xAxisLegend)}
-                axisRight={axisToNivo(publishedBar.axisRight, barIsHorizontal ? xAxisLegend : yAxisLegend)}
-                axisBottom={axisToNivo(
-                  chartDebug.hasOverride
-                    ? { ...publishedBar.axisBottom, ...barConfig.axisBottom, enabled: publishedBar.axisBottom.enabled }
-                    : publishedBar.axisBottom,
-                  barIsHorizontal ? yAxisLegend : xAxisLegend,
-                  barIsHorizontal ? (value) => formatY(Number(value)) : formatX,
-                )}
-                axisLeft={axisToNivo(
-                  chartDebug.hasOverride
-                    ? { ...publishedBar.axisLeft, ...barConfig.axisLeft, enabled: publishedBar.axisLeft.enabled }
-                    : publishedBar.axisLeft,
-                  barIsHorizontal ? xAxisLegend : yAxisLegend,
-                  barIsHorizontal ? formatX : (value) => formatY(Number(value)),
-                )}
-                legends={barLegend}
-                legendLabel={(datum) => seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}
-                tooltip={BarTooltip}
-                ariaLabel={event.caption}
-                ariaDescribedBy={descriptionId}
-                barAriaLabel={(datum) => `${seriesByKey.get(String(datum.id))?.label ?? String(datum.id)}, ${formatY(datum.value ?? 0)}, ${formatX(datum.indexValue)}`}
-                animate={!reducedMotion && publishedBar.animate}
-                animateOnMount={!reducedMotion && publishedBar.animateOnMount}
-              />
-            ) : (
-              <ResponsiveLine
-                {...(publishedLineProps as object)}
-                data={lineData}
-                margin={lineMargin}
-                xScale={{ type: "point" }}
-                yScale={{
-                  type: publishedLine.yScale.type,
-                  min: chartDebug.hasOverride ? lineConfig.yScale.min : publishedLine.yScale.min,
-                  max: publishedLine.yScale.max,
-                  stacked: chartDebug.hasOverride ? lineConfig.yScale.stacked : publishedLine.yScale.stacked,
-                  reverse: chartDebug.hasOverride ? lineConfig.yScale.reverse : publishedLine.yScale.reverse,
-                }}
-                curve={chartDebug.hasOverride ? lineConfig.curve : publishedLine.curve}
-                colors={publishedLineProps.colors ?? NIVO_CHART_COLOURS}
-                lineWidth={chartDebug.hasOverride ? lineConfig.lineWidth : publishedLine.lineWidth}
-                enableArea={chartDebug.hasOverride ? lineConfig.enableArea : publishedLine.enableArea}
-                enableGridX={chartDebug.hasOverride ? lineConfig.enableGridX : publishedLine.enableGridX}
-                enableGridY={chartDebug.hasOverride ? lineConfig.enableGridY : publishedLine.enableGridY}
-                enablePoints={chartDebug.hasOverride ? lineConfig.enablePoints : publishedLine.enablePoints}
-                pointSize={chartDebug.hasOverride ? lineConfig.pointSize : publishedLine.pointSize}
-                pointBorderWidth={chartDebug.hasOverride ? lineConfig.pointBorderWidth : publishedLine.pointBorderWidth}
-                areaOpacity={chartDebug.hasOverride ? lineConfig.areaOpacity : publishedLine.areaOpacity}
-                enableTouchCrosshair={chartDebug.hasOverride ? lineConfig.enableTouchCrosshair : publishedLine.enableTouchCrosshair}
-                useMesh={chartDebug.hasOverride ? lineConfig.useMesh : publishedLine.useMesh}
-                axisTop={axisToNivo(publishedLine.axisTop, xAxisLegend)}
-                axisRight={axisToNivo(publishedLine.axisRight, yAxisLegend)}
-                axisBottom={axisToNivo(
-                  chartDebug.hasOverride
-                    ? { ...publishedLine.axisBottom, ...lineConfig.axisBottom, enabled: publishedLine.axisBottom.enabled }
-                    : publishedLine.axisBottom,
-                  xAxisLegend,
-                  formatX,
-                  lineTickValues,
-                )}
-                axisLeft={axisToNivo(
-                  chartDebug.hasOverride
-                    ? { ...publishedLine.axisLeft, ...lineConfig.axisLeft, enabled: publishedLine.axisLeft.enabled }
-                    : publishedLine.axisLeft,
-                  yAxisLegend,
-                  (value) => formatY(Number(value)),
-                )}
-                legends={lineLegend}
-                tooltip={LineTooltip}
-                ariaLabel={event.caption}
-                ariaDescribedBy={descriptionId}
-                pointAriaLabel={(point) => `${String(point.seriesId)}, ${formatX(String(point.data.x))}, ${formatY(Number(point.data.y))}`}
-                animate={!reducedMotion && publishedLine.animate}
-              />
-            )}
+            <FlintChartView
+              plan={plan}
+              appearance={appearance}
+              title={event.caption}
+              height={chartHeight}
+            />
           </div>
         </div>
       ) : (
         <p className={styles.traceChartUnavailable}>
-          {table ? `At least ${minimumPoints} chartable ${minimumPoints === 1 ? "value is" : "values are"} required; the exact result remains available in the governed source table.` : "The governed source table is not available in this trace."}
+          At least {minimumPoints} chartable {minimumPoints === 1 ? "value is" : "values are"} required; the exact result remains available in the governed source table.
         </p>
       )}
     </figure>
@@ -1028,7 +751,9 @@ export default function AnalyticalTrace({
                 ? <ResultTable event={event} onExplain={openExplanation} />
                 : null}
 
-              {event.type === "chart" ? <ResultChart event={event} table={tables.get(event.dataRef)} /> : null}
+              {event.type === "chart" && tables.get(event.dataRef) ? (
+                <ResultChart event={event} table={tables.get(event.dataRef)} />
+              ) : null}
 
               {event.type === "validation" && event.outcome !== "passed" ? (
                 <div className={styles.traceValidation} data-outcome={event.outcome}>
@@ -1048,16 +773,7 @@ export default function AnalyticalTrace({
                     <div className={styles.traceFollowUps} aria-label="Suggested follow-up questions">
                       {event.followUps.map((followUp) => (
                         <button key={followUp} type="button" disabled={!onFollowUp} onClick={() => onFollowUp?.(followUp)}>
-                          <svg className={styles.traceFollowUpIcon} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                            <path
-                              d="M5.5 3.5h7v7M12.5 3.5 3.5 12.5"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                          <span>{followUp}</span>
+                          {followUp}
                         </button>
                       ))}
                     </div>

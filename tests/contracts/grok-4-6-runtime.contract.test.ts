@@ -46,14 +46,13 @@ test("Grok 4.6 stays on the official xAI Responses contract", () => {
     }),
     "fast",
   );
-  assert.match(engine, /createAlbertResponsesProvider/u);
+  assert.match(engine, /createAlbertModelProvider/u);
   assert.match(engine, /xaiApiKey/u);
   assert.match(route, /XAI_API_KEY/u);
   assert.match(route, /providerForModel\(preferences\.model\)/u);
   assert.match(route, /replaceTurnId/u);
   assert.match(read("app/dash/page.tsx"), /isXaiModel\(runPreferences\.model\)/u);
   assert.match(controls, /"grok-4.6"/u);
-  assert.match(read("services/conversation/src/live.ts"), /buildLiveAgentModelSettings/u);
   assert.match(migration, /'grok-4.6'/u);
 
   const transport = resolveAlbertModelTransport({

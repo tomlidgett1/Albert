@@ -17,21 +17,25 @@ import {
 } from "./lanes.js";
 import { MISSING_QUERY_RETRY_MESSAGE } from "./grounding.js";
 import { createComposeTableTool, createV3Tools } from "./tools.js";
+import { runVisualiser } from "./visualise-lane.js";
 import type { V3TurnContext } from "./context.js";
 import {
   clipToSentence,
   createV3CommentaryState,
+  looksLikeFinding,
   prepareV3CommentaryUpdate,
   STEP_SUMMARY_MAX_CHARS,
   type V3CommentaryKind,
 } from "./commentary.js";
 import { resolveV3ToolRoute, type V3ToolRoute } from "./connector-routing.js";
+import { applyPlannedEvidenceBindings, planCoverageError } from "./initial-plan.js";
 
 export const branchPlanSchema = z.object({
   branches: z.array(z.object({
     title: z.string().min(3).max(80),
     question: z.string().min(10).max(400),
     rationale: z.string().max(300),
+    coversPlanStepIds: z.array(z.string().regex(/^[a-z][a-z0-9_-]{2,47}$/u)).max(4),
   })).min(2).max(5),
 });
 
@@ -44,12 +48,6 @@ export const branchFindingsSchema = z.object({
 });
 
 type BranchFindings = z.infer<typeof branchFindingsSchema>;
-
-function naturalList(values: readonly string[]): string {
-  if (values.length <= 1) return values[0] ?? "the available evidence";
-  if (values.length === 2) return `${values[0]} and ${values[1]}`;
-  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
-}
 
 function endSentence(value: string): string {
   const text = value.trim();
@@ -71,6 +69,9 @@ export function branchStepSummary(title: string, findings: BranchFindings): stri
     && !/^(?:not|unknown|n\/a|none|unclear|cannot|insufficient)/iu.test(materiality)
     && !headline.toLocaleLowerCase("en-AU").includes(materiality.toLocaleLowerCase("en-AU").replace(/\.$/u, ""));
   const body = materialityFits ? `${headline} ${materiality}` : headline;
+  // A branch that produced no concrete figure has nothing worth interrupting
+  // the owner with; the commentary gate drops it and the answer carries it.
+  if (!looksLikeFinding(body)) return "";
   return clipToSentence(sanitizeTraceText(`${title}: ${body}`, STEP_SUMMARY_MAX_CHARS), STEP_SUMMARY_MAX_CHARS);
 }
 
@@ -211,10 +212,13 @@ export async function runDeepLane(input: LaneRunInput): Promise<FinalAnswer | un
     instructions: `You decompose an open-ended business question about a small business
 into 2-${budget.maxBranches ?? 5} independent investigation branches. Each branch
 must be answerable from the governed tools listed below (sales, accounting, payroll,
-workforce, customers and official live Shopify reports),
-target a distinct angle (for example: margin structure, discount leakage, refund drag,
-product mix, retention, cost of acceptance), and carry a precise investigable question.
-Do not create branches the data cannot support.
+	workforce, customers and official live Shopify reports),
+	target a distinct angle (for example: margin structure, discount leakage, refund drag,
+	product mix, retention, cost of acceptance), and carry a precise investigable question.
+	When a visible plan is supplied, every branch must list the exact stable plan-step ids it
+	supports in coversPlanStepIds. Use [] only when no visible plan exists. A plan step completes
+	only after all branches mapped to it return reviewed findings backed by successful results.
+	Do not create branches the data cannot support.
 
 ${knowledge}`,
     model: input.preferences.model,
@@ -233,12 +237,14 @@ ${knowledge}`,
   });
   const plan = planRun.finalOutput;
   if (!plan) return undefined;
-
-  await emitDeepCommentary(
-    input.context,
-    "plan",
-    `I’ll examine ${naturalList(plan.branches.map((branch) => branch.title))} in parallel, then cross-check the strongest findings before recommending what to do next.`,
+  const invalidCoverage = planCoverageError(
+    input.context.visiblePlan,
+    plan.branches.map(({ coversPlanStepIds }) => coversPlanStepIds),
   );
+  if (invalidCoverage) {
+    if (process.env.ALBERT_V3_DEBUG_PLAN) console.error(`[deep-lane] ${invalidCoverage}`);
+    return undefined;
+  }
 
   await input.context.emit({
     type: "progress",
@@ -290,10 +296,13 @@ ${branchKnowledge}
 Run at most ${perBranchQueries} queries. Ground every finding in retrieved numbers and
 quantify materiality in dollars where possible. If the data shows nothing noteworthy,
 say so plainly; a null finding is a valid finding.`;
+    // Branches gather evidence; they never present it. Charts are chosen once,
+    // against the finished answer, by the visualiser (visualise-lane.ts).
     const branchTools = [...createV3Tools({
       route: branchRoute,
       lane: "deep",
       purpose: "investigation",
+      chartable: false,
     })];
     const branchConversation = withV3PromptCacheBoundary(
       input.preferences.model,
@@ -354,14 +363,20 @@ say so plainly; a null finding is a valid finding.`;
       // Each finished branch is a completed step: tell the owner what it found
       // in a sentence or three, so the wait is never silent. Commentary is
       // cosmetic — a failure here must never discard the branch's findings.
-      if (findings) {
+      const stepSummary = findings ? branchStepSummary(branch.title, findings) : "";
+      if (stepSummary) {
         try {
-          await emitDeepCommentary(input.context, "step", branchStepSummary(branch.title, findings));
+          await emitDeepCommentary(input.context, "step", stepSummary);
         } catch (error) {
           if (process.env.ALBERT_V3_DEBUG_PLAN) console.error("[deep-lane] step summary failed", error);
         }
       }
-      return { branch, findings };
+      return {
+        branch,
+        findings,
+        resultIds: branchQueries(branchContext, branch.title)
+          .flatMap((query) => query.resultId ? [query.resultId] : []),
+      };
     } catch (error) {
       await input.context.emit({
         type: "progress",
@@ -370,9 +385,15 @@ say so plainly; a null finding is a valid finding.`;
         label: sanitizeTraceText(`${branch.title} could not finish`, 160),
         detail: sanitizeTraceText(error instanceof Error ? error.message : "branch failed", 200),
       });
-      return { branch, findings: undefined };
+      return { branch, findings: undefined, resultIds: [] as string[] };
     }
   }));
+
+  await applyPlannedEvidenceBindings(input.context, branchResults.map(({ branch, findings, resultIds }) => ({
+    coversPlanStepIds: branch.coversPlanStepIds ?? [],
+    ok: Boolean(findings) && resultIds.length > 0,
+    resultIds,
+  })), { emitCommentary: false });
 
   const completed = branchResults.filter((result) => result.findings);
   if (completed.length === 0) return undefined;
@@ -449,5 +470,7 @@ ${renderAlwaysRulesForRoute(input.config, input.context.toolRoute)}`,
     ]),
     { context: input.context, maxTurns: 6, signal: input.context.signal },
   );
-  return synthesis.finalOutput;
+  const answer = synthesis.finalOutput;
+  if (answer) await runVisualiser({ lane: input, answer });
+  return answer;
 }

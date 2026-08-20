@@ -52,5 +52,14 @@ export {
   resolveV3ToolRoute,
   type V3ToolRoute,
 } from "./engine/connector-routing.js";
-export { classifyIntent, type ConversationMessage, type IntentDecision, type Lane } from "./engine/orchestrator.js";
+export {
+  classifyIntent,
+  isDefinitionOnlyQuestion,
+  normaliseConceptualIntent,
+  type ConversationMessage,
+  type IntentDecision,
+  type Lane,
+} from "./engine/orchestrator.js";
+export { conceptualDefinitionCards, runConceptualLane } from "./engine/conceptual-lane.js";
+export { detectSocialMessage } from "./engine/social.js";
 export * from "./context-layer/index.js";

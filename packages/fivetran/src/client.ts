@@ -287,6 +287,8 @@ export class FivetranClient {
     configuration: Readonly<Record<string, string>>;
     pythonVersion?: string;
     syncFrequencyMinutes?: number;
+    /** "HH:00" UTC; only meaningful with syncFrequencyMinutes 1440 (daily). */
+    dailySyncTimeUtc?: string;
     paused?: boolean;
   }>): Promise<FivetranConnection> {
     return this.request("POST", "/v1/connections", {
@@ -295,6 +297,7 @@ export class FivetranClient {
       paused: input.paused ?? true,
       run_setup_tests: true,
       sync_frequency: input.syncFrequencyMinutes ?? 60,
+      ...(input.syncFrequencyMinutes === 1440 && input.dailySyncTimeUtc ? { daily_sync_time: input.dailySyncTimeUtc } : {}),
       schedule_type: "auto",
       destination_schema_names: "FIVETRAN_NAMING",
       config: {

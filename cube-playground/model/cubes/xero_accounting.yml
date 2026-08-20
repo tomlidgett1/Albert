@@ -274,6 +274,120 @@ cubes:
         format: currency
         title: Average document value
 
+      # ---- Headline balances (what Xero's dashboard tiles show) ----------
+      # These are computed from the invoice documents themselves, so they move
+      # the moment an invoice or payment syncs. The xero_contacts
+      # *_outstanding snapshots only refresh when the CONTACT record changes,
+      # so they go stale after payments; never use them for headline totals.
+      - name: receivable_outstanding
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Owed to us (invoices awaiting payment)
+        description: >
+          Amount still owing on approved (AUTHORISED) sales invoices - Xero's
+          "Invoices owed to you" tile. Excludes drafts and invoices awaiting
+          approval.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED'"
+      - name: receivable_overdue
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Overdue owed to us
+        description: Amount due on approved sales invoices past their due date.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: receivable_open_count
+        type: count
+        title: Sales invoices awaiting payment
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0"
+      - name: receivable_overdue_count
+        type: count
+        title: Overdue sales invoices
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: payable_outstanding
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Owed to suppliers (bills awaiting payment)
+        description: >
+          Amount still owing on approved (AUTHORISED) supplier bills - Xero's
+          "Bills to pay" tile. Excludes draft bills and bills awaiting
+          approval (report those separately with draft_bills_total /
+          submitted_bills_total).
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED'"
+      - name: payable_overdue
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Overdue owed to suppliers
+        description: Amount due on approved bills past their due date.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: payable_open_count
+        type: count
+        title: Bills awaiting payment
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0"
+      - name: payable_overdue_count
+        type: count
+        title: Overdue bills
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: draft_bills_total
+        type: sum
+        sql: total
+        format: currency
+        title: Draft bills value
+        description: Value of supplier bills still in DRAFT (not yet approved, not in "bills to pay").
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'DRAFT'"
+      - name: draft_bill_count
+        type: count
+        title: Draft bills
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'DRAFT'"
+      - name: submitted_bills_total
+        type: sum
+        sql: total
+        format: currency
+        title: Bills awaiting approval value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'SUBMITTED'"
+      - name: submitted_bill_count
+        type: count
+        title: Bills awaiting approval
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'SUBMITTED'"
+      - name: draft_sales_invoices_total
+        type: sum
+        sql: total
+        format: currency
+        title: Draft sales invoices value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'DRAFT'"
+      - name: draft_sales_invoice_count
+        type: count
+        title: Draft sales invoices
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'DRAFT'"
+      - name: submitted_sales_invoices_total
+        type: sum
+        sql: total
+        format: currency
+        title: Sales invoices awaiting approval value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'SUBMITTED'"
+      - name: submitted_sales_invoice_count
+        type: count
+        title: Sales invoices awaiting approval
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'SUBMITTED'"
+
     segments:
       - name: sales_invoices
         sql: "{CUBE}.invoice_type = 'ACCREC'"
@@ -1296,6 +1410,207 @@ cubes:
         sql: amount
         format: currency
         title: Amount transferred
+
+  - name: xero_cash_movements
+    title: Cash movements (Xero bank activity)
+    public: false
+    description: >
+      One row per movement of money through the organisation's bank accounts,
+      exactly as Xero's dashboard "Cash in and out" tile and Bank Summary
+      report count it: direct spend/receive-money bank transactions (incl.
+      overpayment and prepayment variants) UNION payments applied to invoices,
+      bills, credit notes and overpayments. Transfers between the business's
+      own bank accounts are excluded, as Xero excludes them. Amounts are in
+      the bank account currency.
+    meta:
+      ai_context: >
+        THE answer for "cash in and out", "money in and out of the bank",
+        "how much came in / went out", "bank activity", "cash flow summary"
+        over a period: cash_in, cash_out and net_cash_movement over
+        occurred_on. This reproduces Xero's dashboard figures to the cent
+        (verified Mar-Aug 2026). It is cash, not accrual P&L: use
+        xero_profit_and_loss_analytics for income and expenses. Direction is
+        fixed per row ('Cash in' / 'Cash out'); source_kind says whether the
+        movement was a direct bank transaction or an invoice/bill payment.
+        Never add bank_* and payment_* members on top of these - they are
+        already combined here.
+    sql: >
+      SELECT bt.tenant_id,
+             'bank:' || bt.row_key AS row_key,
+             'Bank transaction' AS source_kind,
+             bt.transaction_type AS movement_type,
+             CASE WHEN bt.transaction_type LIKE 'RECEIVE%' THEN 'Cash in' ELSE 'Cash out' END AS direction,
+             bt.occurred_on AS occurred_on,
+             bt.contact_id,
+             bt.contact_name,
+             bt.bank_account_id,
+             bt.bank_account_code,
+             bt.bank_account_name,
+             bt.reference,
+             bt.total AS amount,
+             bt.currency_code,
+             bt.is_reconciled
+        FROM source_xero_official.xo_bank_transactions bt
+       WHERE bt.transaction_type NOT LIKE '%TRANSFER%'
+         AND COALESCE(bt.status, '') <> 'DELETED'
+      UNION ALL
+      SELECT p.tenant_id,
+             'payment:' || p.row_key AS row_key,
+             CASE
+               WHEN p.payment_type = 'ACCRECPAYMENT' THEN 'Invoice payment received'
+               WHEN p.payment_type = 'ACCPAYPAYMENT' THEN 'Bill payment made'
+               WHEN p.payment_type LIKE 'AP%' THEN 'Supplier refund received'
+               ELSE 'Customer refund paid'
+             END AS source_kind,
+             p.payment_type AS movement_type,
+             CASE
+               WHEN p.payment_type IN ('ACCRECPAYMENT', 'APCREDITPAYMENT', 'APOVERPAYMENTPAYMENT', 'APPREPAYMENTPAYMENT') THEN 'Cash in'
+               ELSE 'Cash out'
+             END AS direction,
+             p.paid_on AS occurred_on,
+             p.contact_id,
+             p.contact_name,
+             p.account_id AS bank_account_id,
+             p.account_code AS bank_account_code,
+             a.account_name AS bank_account_name,
+             p.reference,
+             COALESCE(p.bank_amount, p.amount) AS amount,
+             a.currency_code,
+             p.is_reconciled
+        FROM source_xero_official.xo_payments p
+        LEFT JOIN source_xero_official.xo_accounts a
+          ON a.tenant_id = p.tenant_id AND a.account_id = p.account_id
+       WHERE COALESCE(p.status, '') <> 'DELETED'
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.bank_account_id = {xero_accounts}.account_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Movement date
+        description: Bank transaction date or payment date (business date).
+      - name: direction
+        sql: direction
+        type: string
+        title: Direction
+        description: "'Cash in' or 'Cash out'."
+      - name: source_kind
+        sql: source_kind
+        type: string
+        title: Movement source
+        description: >
+          Bank transaction, Invoice payment received, Bill payment made,
+          Supplier refund received or Customer refund paid.
+      - name: movement_type
+        sql: movement_type
+        type: string
+        title: Xero type
+        description: Xero's own type code (SPEND, RECEIVE, ACCPAYPAYMENT, ACCRECPAYMENT, ...).
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Payee / payer
+      - name: bank_account_id
+        sql: bank_account_id
+        type: string
+        public: false
+      - name: bank_account_code
+        sql: bank_account_code
+        type: string
+        public: false
+      - name: bank_account_name
+        sql: bank_account_name
+        type: string
+        title: Bank account
+      - name: reference
+        sql: reference
+        type: string
+      - name: amount_value
+        sql: amount
+        type: number
+        title: Amount
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: is_reconciled
+        sql: is_reconciled
+        type: boolean
+        title: Reconciled
+
+    measures:
+      - name: movement_count
+        type: count
+        title: Cash movements
+        description: Number of bank movements (transactions plus payments) in the selection.
+      - name: cash_in
+        type: sum
+        sql: amount
+        format: currency
+        title: Cash in
+        description: >
+          Money received into the bank: receive-money transactions, customer
+          invoice payments and refunds received from suppliers. Matches Xero's
+          dashboard "Cash in" for the period. Transfers between own accounts
+          excluded.
+        filters:
+          - sql: "{CUBE}.direction = 'Cash in'"
+      - name: cash_out
+        type: sum
+        sql: amount
+        format: currency
+        title: Cash out
+        description: >
+          Money paid out of the bank: spend-money transactions, supplier bill
+          payments and refunds paid to customers. Matches Xero's dashboard
+          "Cash out" for the period. Transfers between own accounts excluded.
+        filters:
+          - sql: "{CUBE}.direction = 'Cash out'"
+      - name: net_cash_movement
+        type: number
+        sql: "COALESCE({cash_in}, 0) - COALESCE({cash_out}, 0)"
+        format: currency
+        title: Net cash movement
+        description: Cash in minus cash out for the period (Xero's "Difference").
+      - name: total_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Total movement value
+        description: Unsigned total of the selected movements; use cash_in/cash_out for direction.
+
+    segments:
+      - name: cash_in_movements
+        sql: "{CUBE}.direction = 'Cash in'"
+      - name: cash_out_movements
+        sql: "{CUBE}.direction = 'Cash out'"
 
   - name: xero_batch_payments
     title: Batch payments (Xero)

@@ -42,7 +42,7 @@ import {
   newlyCompletedSteps,
   planStepSummaryNudge,
   publishOwnerPlan,
-  syncVisiblePlanToEvidence,
+  validatePlanUpdate,
 } from "./initial-plan.js";
 import { derivedTableDigest, materializeDerivedTable } from "./derived-table.js";
 import { describeCubeQueryProvenance, describeDerivedCalculations } from "./query-provenance.js";
@@ -131,12 +131,34 @@ const MONTH_NAMES = [
   "july", "august", "september", "october", "november", "december",
 ] as const;
 
-function todayInTimezone(timezone: string): { year: number; month: number } {
+function todayInTimezone(timezone: string): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone, year: "numeric", month: "2-digit",
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date());
   const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
-  return { year: get("year"), month: get("month") };
+  return { year: get("year"), month: get("month"), day: get("day") };
+}
+
+/**
+ * "last N months" means the N calendar months up to and including the current
+ * (partial) month — 1 March to today for "last 6 months" asked on 19 August —
+ * which is how Xero's dashboard ("Cash in and out · Last 6 months", "Total
+ * Sep 2025 to Aug 2026") and the owner count months. Cube's own reading of
+ * the phrase is the N complete months BEFORE the current one, which silently
+ * drops this month and adds one the owner did not ask for, so the phrase is
+ * resolved here to an explicit pair and never reaches Cube.
+ */
+export function resolveLastMonthsRange(expression: string, timezone: string): [string, string] | null {
+  const match = expression.trim().toLowerCase().match(/^(?:last|past|previous)\s+(\d{1,2})\s+months?$/u);
+  if (!match) return null;
+  const count = Number(match[1]);
+  if (!Number.isInteger(count) || count < 1 || count > 60) return null;
+  const now = todayInTimezone(timezone);
+  const startIndex = now.year * 12 + (now.month - 1) - (count - 1);
+  const startYear = Math.floor(startIndex / 12);
+  const startMonth = (startIndex % 12) + 1;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [`${startYear}-${pad(startMonth)}-01`, `${now.year}-${pad(now.month)}-${pad(now.day)}`];
 }
 
 /**
@@ -180,7 +202,38 @@ export function resolveNamedMonthRange(
 function normaliseDateRange(dateRange: string, timezone: string): string | [string, string] {
   const explicit = dateRange.match(/^(\d{4}-\d{2}-\d{2})\s*,\s*(\d{4}-\d{2}-\d{2})$/u);
   if (explicit) return [explicit[1]!, explicit[2]!];
-  return resolveNamedMonthRange(dateRange, timezone) ?? dateRange;
+  return resolveLastMonthsRange(dateRange, timezone) ?? resolveNamedMonthRange(dateRange, timezone) ?? dateRange;
+}
+
+/**
+ * Anything Cube would have to guess at is refused before it leaves the engine.
+ * A relative expression is fine for dateRange (Cube resolves "last month"),
+ * but compareDateRange entries must each resolve to an explicit pair: a
+ * malformed entry (a garbled model string was seen in production) makes Cube
+ * drop the time filter and run an unbounded scan that wedges its query queue
+ * for every other turn until the database timeout frees it.
+ */
+export function timeDimensionProblems(
+  timeDimensions: ReadonlyArray<z.infer<typeof timeDimensionSchema>> | null | undefined,
+  timezone: string,
+): string | null {
+  for (const td of timeDimensions ?? []) {
+    if (td.compareDateRange != null) {
+      for (const range of td.compareDateRange) {
+        const normalised = normaliseDateRange(range, timezone);
+        if (!Array.isArray(normalised)) {
+          return `compareDateRange entry "${range.slice(0, 40)}" is not an explicit "YYYY-MM-DD,YYYY-MM-DD" pair. Give every compared period as an explicit pair.`;
+        }
+      }
+      if (td.dateRange != null) {
+        return "Give either dateRange or compareDateRange on a time dimension, not both: compareDateRange already lists every period to compare.";
+      }
+    }
+    if (td.dateRange != null && !/^[\p{L}\p{N}\s,\-'’]+$/u.test(td.dateRange)) {
+      return `dateRange "${td.dateRange.slice(0, 40)}" is not a date expression. Use a simple relative expression or an explicit "YYYY-MM-DD,YYYY-MM-DD" pair.`;
+    }
+  }
+  return null;
 }
 
 function toCubeFilters(
@@ -419,6 +472,7 @@ async function executeGovernedShopifyQLQuery(
     presentation: "evidence",
   });
   context.executedQueries.push({
+    resultId,
     topic: input.topic,
     view: `shopifyql:${output.schema}`,
     connector: "shopify",
@@ -430,7 +484,6 @@ async function executeGovernedShopifyQLQuery(
     timeRangeLabel: timeRange.label,
     branchLabel: context.branchLabel,
   });
-  await syncVisiblePlanToEvidence(context);
   // No dashboard replay is registered: a live protected-data query is bound
   // to this actor/turn and must be re-authorised, never silently replayed.
   return {
@@ -599,6 +652,7 @@ async function executeGovernedShopifyAdminQuery(
     presentation: "evidence",
   });
   context.executedQueries.push({
+    resultId,
     topic: input.topic,
     view: `shopify-admin:${output.rootField}`,
     connector: "shopify",
@@ -610,7 +664,6 @@ async function executeGovernedShopifyAdminQuery(
     timeRangeLabel: timeRange.label,
     branchLabel: context.branchLabel,
   });
-  await syncVisiblePlanToEvidence(context);
   return {
     ok: true,
     ...planStepSummaryNudge(context),
@@ -905,18 +958,9 @@ export async function executeGovernedCubeQuery(
   }
   const outside = viewsOutsideRoute(context, memberViews(input));
   if (outside.length > 0) return outOfScopeError(context, outside);
-  // The analytical prompt normally reports its plan first. This fallback keeps
-  // the UI informative if a model goes straight to the first query.
-  if (context.commentary.enabled && !context.commentary.planEmitted) {
-    const fallbackPlan = prepareV3CommentaryUpdate({
-      state: context.commentary,
-      kind: "plan",
-      message: `I’ll start by checking “${sanitizeTraceText(input.topic, 120)}”, then follow the strongest movement with a supporting comparison before I answer.`,
-      queryCount: context.executedQueries.length,
-    });
-    if (fallbackPlan.accepted) {
-      await context.emit({ type: "narrative", text: fallbackPlan.text });
-    }
+  const timeProblem = timeDimensionProblems(input.timeDimensions, context.config.timezone);
+  if (timeProblem) {
+    return { ok: false, error: timeProblem, guidance: "Fix the time dimension and run the query again; this attempt did not use the query budget." };
   }
   const query = toCubeQuery(input, context.config.timezone);
   const label = context.branchLabel ? `${context.branchLabel} · ${input.topic}` : input.topic;
@@ -1068,6 +1112,7 @@ export async function executeGovernedCubeQuery(
   });
 
   context.executedQueries.push({
+    resultId,
     topic: input.topic,
     view: validated.view,
     connector,
@@ -1079,7 +1124,6 @@ export async function executeGovernedCubeQuery(
     timeRangeLabel: timeRange.label,
     branchLabel: context.branchLabel,
   });
-  await syncVisiblePlanToEvidence(context);
   context.tableResults.set(resultId, {
     tableEventId: tableEvent.id,
     resultId,
@@ -1795,6 +1839,9 @@ export function createV3Tools(
             resultId,
             provenance,
             presentation: "answer",
+            // Statements render as statements, not data grids (see
+            // TraceTableEvent.layout).
+            layout: "financial_statement",
           });
           context.tableResults.set(resultId, {
             tableEventId: tableEvent.id,
@@ -1810,6 +1857,7 @@ export function createV3Tools(
           });
         }
         context.executedQueries.push({
+          ...(resultId ? { resultId } : {}),
           topic,
           view,
           connector: "xero",
@@ -1822,7 +1870,6 @@ export function createV3Tools(
           branchLabel: context.branchLabel,
         });
         void queryEvent;
-        await syncVisiblePlanToEvidence(context);
         if (parsed && resultId) {
           return {
             ok: true,
@@ -1889,6 +1936,40 @@ export function createV3Tools(
       basis: input.paymentsOnly ? "cash" : "accrual",
     }),
     failure: "Xero balance sheet request failed.",
+    tabular: true,
+  });
+
+  const xeroProfitAndLoss = xeroReportTool({
+    name: "xero_profit_and_loss",
+    description:
+      "Fetch the owner's official Xero Profit and Loss statement live from Xero for a period: every "
+      + "income, cost-of-sales and expense account line in Xero's own layout with Gross Profit and Net "
+      + "Profit totals. ALWAYS use this when the owner asks to SEE the P&L / profit and loss / income "
+      + "statement — the full statement is attached as a table automatically. fromDate and toDate are "
+      + "both required and the window must be 12 months or less (Xero fails longer windows). Use "
+      + "periods+timeframe for month-by-month or comparison columns; paymentsOnly true only for cash "
+      + "basis. For single FIGURES (net profit, total income) the governed monthly P&L view is the "
+      + "authority; this tool is for presenting the statement itself.",
+    parameters: z.object({
+      fromDate: isoDate.describe("Period start, YYYY-MM-DD"),
+      toDate: isoDate.describe("Period end, YYYY-MM-DD; at most 12 months after fromDate"),
+      ...comparisonPeriods,
+      paymentsOnly: z.boolean().nullable().describe("true for cash basis, null/false for accrual"),
+    }).strict(),
+    mcpTool: "list-profit-and-loss",
+    runningLabel: () => "Fetching the Profit and Loss from Xero",
+    detail: (input) => `${input.fromDate} to ${input.toDate}`,
+    toArgs: (input) => withComparison(input, {
+      fromDate: input.fromDate,
+      toDate: input.toDate,
+      ...(input.paymentsOnly ? { paymentsOnly: true } : {}),
+    }),
+    result: (input) => ({
+      report: "profit_and_loss",
+      period: { fromDate: input.fromDate, toDate: input.toDate },
+      basis: input.paymentsOnly ? "cash" : "accrual",
+    }),
+    failure: "Xero profit and loss request failed.",
     tabular: true,
   });
 
@@ -2002,6 +2083,7 @@ export function createV3Tools(
   });
 
   const xeroLiveReportTools: readonly Tool<V3TurnContext>[] = [
+    xeroProfitAndLoss,
     xeroBalanceSheet,
     xeroTrialBalance,
     xeroFindContact,
@@ -2368,15 +2450,21 @@ export function createV3Tools(
   const updatePlan = tool({
     name: "update_plan",
     description:
-      "Tick or revise the short visible plan already on screen, and tell the owner what each completed step found. Do not replace the opening list before any work has landed. Call it with the full list when a step completes (completed steps done, next step active) together with a summary of that step's key findings, or after a query changes the direction of the investigation. Free: it never consumes the query budget.",
+      "Update the short visible plan already on screen. Retain every stable id in order. An evidence step may be done only when evidenceResultIds cites the successful governed resultId values that support that exact step; query count alone never completes work. The final synthesis step is completed by the host. Free: it never consumes the query budget.",
     parameters: z.object({
       steps: z.array(z.object({
+        id: z.string().regex(/^[a-z][a-z0-9_-]{2,47}$/u)
+          .describe("The unchanged stable id shown beside this plan step."),
         label: z.string().trim().min(3).max(200)
           .describe("Owner-readable step, e.g. 'Check overdue bills'. No tool or query jargon."),
         status: z.enum(["pending", "active", "done"]),
+        evidenceResultIds: z.array(z.string().trim().min(8).max(80)).max(24)
+          .describe("Successful governed resultId values supporting this step. Required before an evidence step can be done."),
+        statusDetail: z.string().trim().min(3).max(240).nullable()
+          .describe("Keep null. Plan-card details are reserved for trusted blocked or incomplete reasons."),
       }).strict()).min(2).max(6),
       summary: z.string().trim().min(12).max(320).nullable()
-        .describe("What the step just completed found: one to three short plain sentences (under 50 words) for the business owner, leading with the single most useful figure. No method, period definitions, or lists of numbers. Shown on screen under the plan. Required whenever a step is marked done; null only when no step was completed by this call."),
+        .describe("Required whenever a step is completed: one to three short plain sentences (under 50 words) stating the concrete finding with its figure, or plainly that no matching/material result was found. Never method or intentions. null only when no step is completed by this call."),
     }).strict(),
     strict: true,
     execute: async (input, runContext) => {
@@ -2385,10 +2473,23 @@ export function createV3Tools(
       if (used >= 12) {
         return { ok: false, error: "The plan-update allowance for this turn is spent. Continue the work without further plan updates." };
       }
+      const current = context.visiblePlan;
+      if (!current) {
+        return { ok: false, error: "There is no visible plan to update." };
+      }
+      const validated = validatePlanUpdate({
+        current,
+        proposed: input.steps.map(({ statusDetail, ...step }) => ({
+          ...step,
+          ...(statusDetail ? { statusDetail } : {}),
+        })),
+        availableResultIds: new Set(context.tableResults.keys()),
+      });
+      if (!validated.ok) return { ok: false, error: validated.error };
       if (!canPublishPlanUpdate({
         publishedCount: used,
         queryCount: context.executedQueries.length,
-        steps: input.steps,
+        steps: validated.steps,
       })) {
         return {
           ok: false,
@@ -2396,36 +2497,43 @@ export function createV3Tools(
           guidance: "A plan is already on screen. Do not replace it. Call update_plan when a step is done, or after a query changes the direction of the work.",
         };
       }
-      const completedNow = newlyCompletedSteps(context.visiblePlan, input.steps);
+      const completedNow = newlyCompletedSteps(context.visiblePlan, validated.steps);
       const awaiting = context.planStepsAwaitingSummary ?? [];
-      await publishOwnerPlan(context, input.steps);
-
       const summary = input.summary?.trim() ?? "";
-      if (summary) {
-        try {
-          const update = prepareV3CommentaryUpdate({
-            state: context.commentary,
-            kind: "step",
-            message: summary,
-            queryCount: context.executedQueries.length,
-          });
-          if (update.accepted) {
-            await context.emit({ type: "narrative", text: update.text });
-          }
-        } catch (error) {
-          // Commentary is cosmetic; the plan tick has already landed.
-          if (process.env.ALBERT_V3_DEBUG_PLAN) console.error("[update_plan] step summary failed", error);
+      if (completedNow.length > 0 || awaiting.length > 0) {
+        if (!summary) {
+          const labels = [...new Set([...awaiting, ...completedNow])].map((label) => `“${label}”`).join(" and ");
+          return {
+            ok: false,
+            error: `${labels} cannot be completed without a short commentary stating what the evidence found. Resubmit the same evidence-bound plan with summary filled in.`,
+          };
         }
-        // The summary covers every step ticked so far, by the model or the engine.
+        const update = prepareV3CommentaryUpdate({
+          state: context.commentary,
+          kind: "step",
+          message: summary,
+          queryCount: context.executedQueries.length,
+        });
+        if (!update.accepted) {
+          return {
+            ok: false,
+            error: "The completion commentary must be one short, concrete evidence finding. Resubmit the plan with a more specific summary.",
+          };
+        }
+        await publishOwnerPlan(context, validated.steps);
+        await context.emit({ type: "narrative", text: update.text });
         context.planStepsAwaitingSummary = [];
         return { ok: true };
       }
-      if (completedNow.length > 0 || awaiting.length > 0) {
-        const labels = [...new Set([...awaiting, ...completedNow])].map((label) => `“${label}”`).join(" and ");
-        return {
-          ok: true,
-          guidance: `The plan is updated, but ${labels} was completed without a summary, so the owner sees nothing about what it found. Call update_plan again now with the same steps and a summary of one to three sentences with the key figures.`,
-        };
+      await publishOwnerPlan(context, validated.steps);
+      if (summary) {
+        const update = prepareV3CommentaryUpdate({
+          state: context.commentary,
+          kind: "step",
+          message: summary,
+          queryCount: context.executedQueries.length,
+        });
+        if (update.accepted) await context.emit({ type: "narrative", text: update.text });
       }
       return { ok: true };
     },
@@ -2434,7 +2542,7 @@ export function createV3Tools(
   const reportProgress = tool({
     name: "report_progress",
     description:
-      "Give the user a substantial Codex-style progress update during a longer analysis. Report one short plan before querying, then only a material evidence finding plus what you will check next. Never narrate routine tool or query activity and never expose private reasoning.",
+      "Give the user a substantial progress update during a longer analysis: a material evidence finding, stated as a fact with its figure. Never narrate plans, routine tool or query activity, what the data cannot show, or private reasoning.",
     parameters: z.object({
       kind: z.enum(["plan", "finding"]),
       message: z.string().trim().min(12).max(420)
@@ -2495,9 +2603,10 @@ export function createV3Tools(
   if (options.lane === "statement") {
     return Object.freeze([...xeroLiveReportTools]);
   }
-  // Remaining live Xero reports are offered on every answer route; P&L is
-  // deliberately absent because Fivetran lands Xero's standard report into
-  // the governed xero_profit_and_loss_* Cube views. Each native tool refuses
+  // Remaining live Xero reports are offered on every answer route. The
+  // governed xero_profit_and_loss_* Cube views stay the authority for P&L
+  // FIGURES (ADR 0099); the live P&L tool exists so "show me the P&L"
+  // presents Xero's full statement, every line. Each native tool refuses
   // at call time when the turn context has no xero-mcp client, so exposure is
   // harmless. Xero itself renders these reports — the model never rebuilds
   // them from Cube views.

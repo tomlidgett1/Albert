@@ -133,6 +133,15 @@ test("a structured answer table can sit after the takeaway and before report det
     lead: "Sales were $42 yesterday.",
     detail: "",
   });
+  assert.deepEqual(
+    splitAssistantMarkdownLead(`Leigh Phillips worked the most over 6-19 August, with **66 hours**.
+
+The timesheet data is current through Sunday 16 August, so the final three days of the requested period are not yet included.`),
+    {
+      lead: "Leigh Phillips worked the most over 6-19 August, with **66 hours**.",
+      detail: "The timesheet data is current through Sunday 16 August, so the final three days of the requested period are not yet included.",
+    },
+  );
 
   const traceSurface = readFileSync(resolve("app/dash/components/InsightsStyleTrace.tsx"), "utf8");
   const leadPosition = traceSurface.indexOf("content={answerSections?.lead || model.answer.text}");
@@ -145,6 +154,7 @@ test("a structured answer table can sit after the takeaway and before report det
 test("assistant report spacing wins the chat reset and follows the text scale", () => {
   assert.match(traceStyles, /\.answerBlock \.assistantProse :global\(p\)/u);
   assert.match(traceStyles, /font-size: calc\(16px \* var\(--text-scale\)\)/u);
+  assert.match(traceStyles, /\.assistantProse :global\(p\),\s*\n\.assistantProse :global\(li\) \{\s*\n  font-size: calc\(16px \* var\(--text-scale\)\)/u);
   assert.match(traceStyles, /list-style-type: disc/u);
   assert.match(traceStyles, /list-style-type: decimal/u);
 });

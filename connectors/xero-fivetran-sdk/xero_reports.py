@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable
 
-from xero_client import NotAvailable, XeroClient
+from xero_client import DailyLimitReached, NotAvailable, TokenBrokerError, XeroClient, _log
 from xero_projection import parse_datetime
 
 Emit = Callable[[str, dict], None]
@@ -372,10 +372,25 @@ class XeroReports:
         return candidate
 
     def run(self) -> dict:
-        for step in (self.profit_and_loss, self.balance_sheet, self.trial_balance, self.bank_summary,
+        """Run every report walk. A report that Xero rejects (400 on a window,
+        a parse problem) is logged and the next report still runs; only the
+        daily limit / budget reserve / token failures stop the run, and then
+        the caller records which reports completed so the rest resume next
+        sync."""
+        completed: list[str] = []
+        failed: dict[str, str] = {}
+        for step in (self.profit_and_loss, self.balance_sheet, self.bank_summary, self.trial_balance,
                      self.executive_summary, self.budget_summary):
-            step()
-        return {"rows": self.rows, "calls": self.calls}
+            try:
+                step()
+            except (DailyLimitReached, TokenBrokerError):
+                raise
+            except Exception as error:  # noqa: BLE001 - one report must not block the others
+                failed[step.__name__] = f"{type(error).__name__}: {str(error)[:200]}"
+                _log(f"report {step.__name__} failed: {failed[step.__name__]}", "WARNING")
+                continue
+            completed.append(step.__name__)
+        return {"rows": self.rows, "calls": self.calls, "completed": completed, "failed": failed}
 
 
 def _match_column(header: str, names: list[str]) -> str | None:

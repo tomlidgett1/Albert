@@ -80,7 +80,7 @@ function summarizeEvent(event: TraceEvent): string {
       case "narrative":
         return event.text;
       case "plan":
-        return event.steps.map((step) => `${step.status === "done" ? "✓" : step.status === "active" ? "▸" : "○"} ${step.label}`).join(" · ");
+        return event.steps.map((step) => `${step.status === "done" ? "✓" : step.status === "active" ? "▸" : step.status === "blocked" ? "✕" : step.status === "incomplete" ? "–" : "○"} ${step.label}`).join(" · ");
       case "query":
         return `${event.topic} · ${event.metrics.length} metric(s) · ${event.dimensions.length} dimension(s)`;
       case "table":

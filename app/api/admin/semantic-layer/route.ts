@@ -35,6 +35,7 @@ import squareSourceExplorerCubes from "@/cube-playground/model/cubes/square_sour
 import staffCubes from "@/cube-playground/model/cubes/staff.yml?raw";
 import workshopCubes from "@/cube-playground/model/cubes/workshop.yml?raw";
 import xeroAccountingCubes from "@/cube-playground/model/cubes/xero_accounting.yml?raw";
+import xeroReportsCubes from "@/cube-playground/model/cubes/xero_reports.yml?raw";
 import xeroPayrollCubes from "@/cube-playground/model/cubes/xero_payroll.yml?raw";
 import xeroReferenceCubes from "@/cube-playground/model/cubes/xero_reference.yml?raw";
 
@@ -79,6 +80,8 @@ import workshopViews from "@/cube-playground/model/views/workshop_analytics.yml?
 import xeroBusinessViews from "@/cube-playground/model/views/xero_business_analytics.yml?raw";
 import xeroFinanceViews from "@/cube-playground/model/views/xero_finance_analytics.yml?raw";
 import xeroPayrollViews from "@/cube-playground/model/views/xero_payroll_analytics.yml?raw";
+import xeroProfitAndLossViews from "@/cube-playground/model/views/xero_profit_and_loss_analytics.yml?raw";
+import xeroBalanceSheetViews from "@/cube-playground/model/views/xero_balance_sheet_analytics.yml?raw";
 
 type ModelKind = "cube" | "view";
 type AppId =
@@ -135,6 +138,7 @@ const MODEL_SOURCES = Object.freeze([
   { kind: "cube", path: "cube-playground/model/cubes/staff.yml", raw: staffCubes },
   { kind: "cube", path: "cube-playground/model/cubes/workshop.yml", raw: workshopCubes },
   { kind: "cube", path: "cube-playground/model/cubes/xero_accounting.yml", raw: xeroAccountingCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/xero_reports.yml", raw: xeroReportsCubes },
   { kind: "cube", path: "cube-playground/model/cubes/xero_payroll.yml", raw: xeroPayrollCubes },
   { kind: "cube", path: "cube-playground/model/cubes/xero_reference.yml", raw: xeroReferenceCubes },
   { kind: "view", path: "cube-playground/model/views/cash_management_analytics.yml", raw: cashManagementViews },
@@ -178,6 +182,8 @@ const MODEL_SOURCES = Object.freeze([
   { kind: "view", path: "cube-playground/model/views/xero_business_analytics.yml", raw: xeroBusinessViews },
   { kind: "view", path: "cube-playground/model/views/xero_finance_analytics.yml", raw: xeroFinanceViews },
   { kind: "view", path: "cube-playground/model/views/xero_payroll_analytics.yml", raw: xeroPayrollViews },
+  { kind: "view", path: "cube-playground/model/views/xero_profit_and_loss_analytics.yml", raw: xeroProfitAndLossViews },
+  { kind: "view", path: "cube-playground/model/views/xero_balance_sheet_analytics.yml", raw: xeroBalanceSheetViews },
 ] satisfies readonly ModelSource[]);
 
 const APP_DEFINITIONS = Object.freeze([

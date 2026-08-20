@@ -356,7 +356,7 @@ test("the visible plan tool ships on the analytical lane and its events pass the
   // The analytical prompt instructs the model to maintain the plan, and the
   // control-plane append gate accepts 'plan' events (migration 0140).
   const lanes = read("packages/albert-v3/src/engine/lanes.ts");
-  assert.match(lanes, /call update_plan with 2-5 short owner-readable steps/u);
+  assert.match(lanes, /call update_plan with the unchanged stable step ids/u);
   const migration = read("infra/migrations/control-plane/0140_m8_plan_trace_events.sql");
   assert.match(migration, /'progress', 'narrative', 'plan', 'query', 'table', 'chart',/u);
 });

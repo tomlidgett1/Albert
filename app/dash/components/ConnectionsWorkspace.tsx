@@ -633,8 +633,18 @@ export function relativeTimeLabel(iso: string | null, now = Date.now()): string 
  * is hidden. Three consecutive failures stop the poll so a broken worker does
  * not become a request storm; the last good readout stays on screen.
  */
+/**
+ * How often a tile asks the worker for Fivetran status. Every poll costs two
+ * Fivetran API calls against the account's 500/hour limit, so only an ACTIVE
+ * sync (historical load or incremental run) polls quickly; an idle
+ * "scheduled" connection changes nothing until its next run and is read every
+ * five minutes. Three tiles at 15 s each saturated the Fivetran API on
+ * 2026-08-19 and blocked schedule changes.
+ */
 function fivetranPollDelay(phase: FivetranSyncPhase | null): number {
-  return phase === "historical" || phase === "incremental" || phase === "scheduled" ? 15_000 : 120_000;
+  if (phase === "historical" || phase === "incremental") return 15_000;
+  if (phase === null) return 30_000;
+  return 300_000;
 }
 
 export function FivetranSyncProgress({
@@ -683,13 +693,17 @@ export function FivetranSyncProgress({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [connectionId, gaveUp, tick]);
+    // `tick` deliberately NOT a dependency: it only re-renders the relative
+    // time label. Including it restarted this effect (and fetched status)
+    // every 30 s regardless of fivetranPollDelay.
+  }, [connectionId, gaveUp]);
 
   // Re-render every 30 s so "4 min ago" keeps moving between polls.
   useEffect(() => {
     const interval = window.setInterval(() => setTick((value) => value + 1), 30_000);
     return () => window.clearInterval(interval);
   }, []);
+  void tick;
 
   const copy = phase ? fivetranPhaseCopy[phase] : { label: "Checking…", state: "syncing" as ReadinessState };
   const determinate = typeof status?.progress === "number";
@@ -1331,7 +1345,6 @@ function ConnectionsWorkspaceStateful({
       <div className={styles.connectionsDataHeader}>
         <div>
           <h2 id={`${componentId}-title`}>Connections</h2>
-          <p>The systems behind every answer.</p>
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { branchFindingsSchema, branchPlanSchema } from "../../packages/albert-v3/src/engine/deep-lane.ts";
 import { finalAnswerSchema } from "../../packages/albert-v3/src/engine/lanes.ts";
 import { intentSchema } from "../../packages/albert-v3/src/engine/orchestrator.ts";
+import { queryPlanSchema } from "../../packages/albert-v3/src/engine/planned-lane.ts";
 import { createV3Tools } from "../../packages/albert-v3/src/engine/tools.ts";
 import { XAI_API_BASE_URL } from "../../packages/shared/src/index.ts";
 
@@ -41,6 +42,7 @@ test("v3 tool and output schemas convert for OpenAI/xAI strict structured output
   assert.doesNotThrow(() => zodTextFormat(finalAnswerSchema, "final_answer"));
   assert.doesNotThrow(() => zodTextFormat(branchPlanSchema, "branch_plan"));
   assert.doesNotThrow(() => zodTextFormat(branchFindingsSchema, "branch_findings"));
+  assert.doesNotThrow(() => zodTextFormat(queryPlanSchema, "query_plan"));
 });
 
 async function postResponses(input: Readonly<{

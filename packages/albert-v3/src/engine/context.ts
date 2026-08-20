@@ -3,6 +3,7 @@ import type {
   TraceCell,
   TraceConnector,
   TraceEvent,
+  TracePlanStep,
   TraceProvenance,
   TraceTableColumn,
 } from "../../../shared/src/index.js";
@@ -49,8 +50,20 @@ export type TenantSourceFinding = Readonly<{
   recordedAt: string;
 }>;
 
+/** A governed semantic definition used by the no-query conceptual lane. */
+export type SemanticDefinitionEvidence = Readonly<{
+  connector: TraceConnector;
+  view: string;
+  member: string;
+  label: string;
+  definition: string;
+  kind: "measure" | "dimension" | "segment";
+}>;
+
 /** A governed query executed this turn, recorded for provenance and the UI. */
 export type ExecutedCubeQuery = Readonly<{
+  /** Governed result set produced by this successful execution, when tabular. */
+  resultId?: string;
   topic: string;
   view: string;
   /** The tool the view's data comes from (lightspeed, deputy, ...). */
@@ -123,6 +136,12 @@ export type V3TurnContext = {
    */
   freshnessQualified?: boolean;
   /**
+   * A recipe declared that its empty result IS the answer (no open shifts,
+   * nobody on leave): the zero-row answer stays Verified instead of being
+   * downgraded to "No data" by the grounding rules.
+   */
+  emptyResultIsAnswer?: boolean;
+  /**
    * The business context document for this tenant (see context-layer/):
    * what the business is, how it makes money, its vocabulary and what each
    * tool is the source of truth for. Rendered into the cached prompt prefix.
@@ -151,8 +170,8 @@ export type V3TurnContext = {
   unpopulatedCubes?: Map<string, Set<string>>;
   /** update_plan calls (visible tick-off plan) run outside the query budget; capped per turn. */
   planUpdates?: number;
-  /** Latest owner-facing plan already shown; the model ticks this list rather than replacing it. */
-  visiblePlan?: readonly Readonly<{ label: string; status: "pending" | "active" | "done" }>[];
+  /** Latest owner-facing plan with stable ids and exact governed evidence bindings. */
+  visiblePlan?: readonly TracePlanStep[];
   /**
    * Plan steps the engine ticked off (one per completed query) whose findings
    * the model has not yet summarised for the owner. Query tools nudge the
@@ -163,6 +182,8 @@ export type V3TurnContext = {
   catalogueSchemaLoads?: number;
   shopifyQLCatalogueSearches?: number;
   shopifyAdminCatalogueSearches?: number;
+  /** Definitions selected by the conceptual lane; no business rows or figures. */
+  definitionEvidence?: SemanticDefinitionEvidence[];
   readonly executedQueries: ExecutedCubeQuery[];
   readonly tableResults: Map<string, StoredTableResult>;
   /**

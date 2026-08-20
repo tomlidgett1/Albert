@@ -14,7 +14,21 @@ views:
         wage / labour cost, who worked or is on shift now, who is rostered on
         and when, scheduled vs planned cost, leave taken or upcoming, staff
         headcount and positions. shift_date is the business date for worked
-        hours, rostered_date for the schedule, leave_starts for leave.
+        hours, rostered_date for the schedule. LEAVE: "who is on leave / away
+        this week / this month / on <date>", "days of sick leave this year" =
+        the leave_day_* grain (leave_day as the date, leave_day_staff,
+        leave_day_type, leave_day_status; approved_leave_day_count /
+        approved_leave_days_taken) - it is one row per person per day so a
+        request spanning two months is found in both; use leave_starts /
+        leave_* only for request-level lists. "Who is on shift right now" =
+        today's roster (rostered_date = today) with roster_shift_timing, or
+        rostered_on_now_count; in_progress / on_shift_now_count is who has
+        actually clocked on. "Open / unfilled shifts" = open_shift_count or
+        roster_open_shift = true. Weekday breakdowns use shift_weekday /
+        rostered_weekday (order by the _number members). GRAINS NEVER MIX:
+        worked (timesheet, unprefixed/worked_*), rostered_*, leave_* and
+        leave_day_* members cannot be combined in one query - ask each
+        separately and compare narratively.
         Sales per staff member are NOT here: they live in sales_analytics
         (Lightspeed). For questions linking hours to sales, query both views
         separately and combine narratively; match people by name per view
@@ -62,6 +76,8 @@ views:
             alias: worked_area
           - name: company_name
             alias: workplace
+          - shift_weekday
+          - shift_weekday_number
           - hours_worked
           - paid_hours_total
           - leave_hours_paid
@@ -93,10 +109,19 @@ views:
             alias: roster_open_shift
           - name: unit_name
             alias: rostered_area
+          - rostered_weekday
+          - rostered_weekday_number
+          - name: shift_timing
+            alias: roster_shift_timing
           - rostered_shift_count
           - rostered_hours
           - rostered_cost
           - open_shift_count
+          - name: on_now_count
+            alias: rostered_on_now_count
+          - open_shifts
+          - name: on_now
+            alias: rostered_on_now
 
       # Leave requests.
       - join_path: deputy_leave
@@ -122,6 +147,34 @@ views:
           - name: paid_leave
             alias: leave_is_paid
 
+      # Leave at day grain: who is away on which day (overlap-safe).
+      - join_path: deputy_leave_days
+        includes:
+          - name: employee_name
+            alias: leave_day_staff
+          - leave_day
+          - name: starts_on_local
+            alias: leave_day_request_starts
+          - name: ends_on_local
+            alias: leave_day_request_ends
+          - name: status
+            alias: leave_day_status
+          - leave_day_count
+          - approved_leave_day_count
+          - people_on_leave
+          - approved_people_on_leave
+          - approved_leave_days_taken
+          - approved_leave_hours_taken
+          - pending_leave_day_count
+          - name: approved
+            alias: approved_leave_days
+          - name: pending
+            alias: pending_leave_days
+      - join_path: deputy_leave_days.deputy_leave_rules
+        includes:
+          - name: rule_name
+            alias: leave_day_type
+
     folders:
       - name: Hours worked and wage cost
         includes:
@@ -137,6 +190,8 @@ views:
           - shift_hours
           - worked_by
           - worked_area
+          - shift_weekday
+          - shift_weekday_number
       - name: Live and approvals
         includes:
           - on_shift_now_count
@@ -157,6 +212,25 @@ views:
           - rostered_area
           - roster_published
           - roster_open_shift
+          - roster_shift_timing
+          - rostered_on_now_count
+          - rostered_weekday
+          - rostered_weekday_number
+      - name: Leave by day (who is away when)
+        includes:
+          - leave_day
+          - leave_day_staff
+          - leave_day_type
+          - leave_day_status
+          - leave_day_request_starts
+          - leave_day_request_ends
+          - leave_day_count
+          - approved_leave_day_count
+          - people_on_leave
+          - approved_people_on_leave
+          - approved_leave_days_taken
+          - approved_leave_hours_taken
+          - pending_leave_day_count
       - name: Leave
         includes:
           - leave_request_count

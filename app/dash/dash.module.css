@@ -44,6 +44,9 @@
   --dash-chat-workspace: light-dark(#f6f5f5, #24262a);
   --dash-chat-surface: light-dark(#ffffff, #2a2c31);
   --dash-chat-text: light-dark(#242528, #e7e9ee);
+  --dash-question-size: 14px;
+  --dash-question-tracking: -0.01em;
+  --dash-question-leading: 1.5;
   --dash-input-surface: light-dark(#ffffff, #1e2024);
   --dash-input-border: light-dark(#d9d9d9, #41444c);
   --dash-disabled-surface: light-dark(#ededed, #303238);
@@ -2871,41 +2874,6 @@
   gap: 4px;
 }
 
-.chatDetailedMode {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--dash-text-muted);
-  cursor: pointer;
-  font: inherit;
-  /* Match sidebar conversation title type */
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: -0.03em;
-  padding: 0 4px;
-  transition: color 150ms ease;
-}
-
-.chatDetailedMode:hover {
-  background: transparent;
-  color: var(--dash-text-heading);
-}
-
-.chatDetailedModeActive {
-  border-color: transparent;
-  background: transparent;
-  color: var(--dash-text-heading);
-  font-weight: 600;
-}
-
-.chatDetailedMode:focus-visible {
-  outline: 2px solid var(--dash-focus);
-  outline-offset: 2px;
-}
-
 .chatNewChat {
   display: inline-flex;
   min-height: 36px;
@@ -5450,9 +5418,9 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  line-height: 1.5;
+  font-size: var(--dash-question-size);
+  letter-spacing: var(--dash-question-tracking);
+  line-height: var(--dash-question-leading);
   outline: none;
   overflow-x: hidden;
   overflow-y: auto;
@@ -5466,9 +5434,9 @@
   min-width: 0;
   flex: 1 1 auto;
   margin: 0;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  line-height: 1.5;
+  font-size: var(--dash-question-size);
+  letter-spacing: var(--dash-question-tracking);
+  line-height: var(--dash-question-leading);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -5849,9 +5817,9 @@
 
 .chatMessage p {
   margin: 0;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  line-height: 1.5;
+  font-size: var(--dash-question-size);
+  letter-spacing: var(--dash-question-tracking);
+  line-height: var(--dash-question-leading);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -10995,15 +10963,6 @@
   line-height: 1.05;
 }
 
-.connectionsDataHeader p {
-  max-width: 580px;
-  margin: 10px 0 0;
-  color: var(--dash-text-muted);
-  font-size: calc(15px * var(--text-scale));
-  letter-spacing: -0.025em;
-  line-height: 1.5;
-}
-
 .connectionsNotice {
   display: flex;
   width: fit-content;
@@ -13171,6 +13130,15 @@
   padding: 0 6px 4px;
 }
 
+.modelControlsDisclosure {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  padding: 6px 6px 2px;
+}
+
 .modelControlsModelTabs {
   position: relative;
   display: grid;
@@ -13650,6 +13618,18 @@
   gap: 6px;
 }
 
+.traceChartViewToggle {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+.traceChartViewToggle svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
 .traceChartPill {
   display: inline-flex;
   min-width: 0;
@@ -14046,7 +14026,7 @@
 .traceChartScroll {
   width: 100%;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .traceChartCanvas {
@@ -14054,12 +14034,16 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 280px;
+  overflow: visible;
   background: var(--dash-surface);
+  padding: 8px 12px 14px;
 }
 
 .traceChartCanvas svg {
   display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
 }
 
 .traceChartTooltip {
@@ -14108,6 +14092,11 @@
   font-size: calc(12px * var(--text-scale));
   padding: 28px 14px;
   text-align: center;
+}
+
+.traceChartMeta button[aria-pressed="true"] {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-strong);
 }
 
 @keyframes trace-chart-tooltip-enter {
@@ -14246,12 +14235,42 @@
 
 .traceFollowUps {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
   margin-top: 13px;
 }
 
-.traceFollowUps button,
+.traceFollowUps button {
+  display: inline;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 650;
+  line-height: 1.45;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--dash-border-strong);
+  text-underline-offset: 3px;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.traceFollowUps button:hover:not(:disabled) {
+  color: var(--dash-text-heading);
+  text-decoration-color: currentColor;
+}
+
+.traceFollowUps button:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
 .traceClarification button {
   display: inline-flex;
   min-height: 32px;
@@ -14268,24 +14287,16 @@
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.traceFollowUpIcon {
-  width: 11px;
-  height: 11px;
-  flex: 0 0 auto;
-  color: var(--dash-text-faint);
-}
-
-.traceFollowUps button:hover:not(:disabled),
-.traceClarification button:hover:not(:disabled) {
-  border-color: var(--dash-border-focus);
-  background: var(--dash-surface-hover);
-  transform: translateY(-1px);
-}
-
 .traceFollowUps button:disabled,
 .traceClarification button:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.traceClarification button:hover:not(:disabled) {
+  border-color: var(--dash-border-focus);
+  background: var(--dash-surface-hover);
+  transform: translateY(-1px);
 }
 
 .traceClarification {

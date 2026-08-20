@@ -167,11 +167,12 @@ test("diagnostic SQL is fixed, tenant-parameterised, bounded, and omits secret-b
 });
 
 test("operator reveal architecture keeps browser, model, and arbitrary SQL outside the diagnostic boundary", async () => {
-  const [migration, route, repository, service, ui, css, runtime, workflow] = await Promise.all([
+  const [migration, route, repository, service, main, ui, css, runtime, workflow] = await Promise.all([
     readFile("infra/migrations/control-plane/0030_m2_operator_diagnostic_reveals.sql", "utf8"),
     readFile("app/api/admin/pipeline/[tenantId]/sample/route.ts", "utf8"),
     readFile("services/control-plane/src/operator-repository.ts", "utf8"),
     readFile("services/operator-diagnostic/src/database.ts", "utf8"),
+    readFile("services/operator-diagnostic/src/main.ts", "utf8"),
     readFile("app/dash/components/AdminWorkspace.tsx", "utf8"),
     readFile("app/dash/dash.module.css", "utf8"),
     readFile("deploy/runtime-contract.json", "utf8"),
@@ -188,6 +189,9 @@ test("operator reveal architecture keeps browser, model, and arbitrary SQL outsi
   assert.match(repository, /redirect: "error"/u);
   assert.match(service, /SET LOCAL ROLE diagnostic_ro/u);
   assert.match(service, /WHERE tenant_id=\$1 LIMIT \$2/u);
+  assert.match(service, /to_regclass\('ingestion.fivetran_destination_bindings'\)/u);
+  assert.match(main, /uselibpqcompat/u);
+  assert.match(main, /rejectUnauthorized: false/u);
   assert.doesNotMatch(service, /semantic_ro|OPENAI|run_semantic_query/u);
   assert.match(ui, /EXPLICIT DATA ACCESS/u);
   assert.match(ui, /Reveal 3 rows/u);
@@ -200,4 +204,11 @@ test("operator reveal architecture keeps browser, model, and arbitrary SQL outsi
     "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
   ].sort());
   assert.match(workflow, /OPERATOR_DIAGNOSTIC_SERVICE_URL[\s\S]*verify-release-readiness/u);
+});
+
+test("diagnostic pools keep libpq-compatible TLS for Supabase certificate chains", async () => {
+  const main = await readFile("services/operator-diagnostic/src/main.ts", "utf8");
+  assert.match(main, /function compatiblePostgresUrl/u);
+  assert.match(main, /uselibpqcompat/u);
+  assert.match(main, /rejectUnauthorized: false/u);
 });

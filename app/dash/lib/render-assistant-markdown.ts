@@ -174,9 +174,9 @@ function isImplicitSectionHeading(lines: readonly string[], index: number): bool
 }
 
 /**
- * Separates the opening takeaway from a longer report at its first semantic
- * section. Structured answer tables can then sit directly after the takeaway,
- * matching the reading order promised by the answer contract.
+ * Separates the opening takeaway from a longer report. Structured answer
+ * tables sit after that takeaway: either at the first heading, or after the
+ * first paragraph when the rest is more prose (a caveat, not a new section).
  */
 export function splitAssistantMarkdownLead(markdown: string): AssistantMarkdownSections {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
@@ -191,6 +191,19 @@ export function splitAssistantMarkdownLead(markdown: string): AssistantMarkdownS
         detail: lines.slice(index).join("\n").trim(),
       };
     }
+  }
+
+  let start = 0;
+  while (start < lines.length && !lines[start]?.trim()) start += 1;
+  let end = start;
+  while (end < lines.length && lines[end]?.trim()) end += 1;
+  let rest = end;
+  while (rest < lines.length && !lines[rest]?.trim()) rest += 1;
+  if (start < end && rest < lines.length) {
+    return {
+      lead: lines.slice(start, end).join("\n").trim(),
+      detail: lines.slice(rest).join("\n").trim(),
+    };
   }
   return { lead: markdown.trim(), detail: "" };
 }

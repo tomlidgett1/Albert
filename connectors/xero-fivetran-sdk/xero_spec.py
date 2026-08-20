@@ -4,7 +4,7 @@
 #   npx tsx scripts/generate-fivetran-xero-sdk-spec.ts
 import json
 
-SPEC_SHA256 = "52e2b5ece062ef7d969d54b14d41a1cf48e9e1f8906c573c56663bd8f560a277"
+SPEC_SHA256 = "52970becd9e3e884b17d50cf1e07b8428b5b7ed5e6905ea123ca001b6ac69a62"
 
 SPEC = json.loads(r'''{
  "revision": "XeroAPI/Xero-OpenAPI@45ab7e8ceccbbbfb41a0487a47f9d1d00cbb4a0f (accounting, assets, projects, files, payroll AU/UK/NZ, identity) via the domain design + adversarial audit pipeline",
@@ -51,7 +51,7 @@ SPEC = json.loads(r'''{
    "pageSizeParam": null,
    "pageSize": 100,
    "supportsIfModifiedSince": true,
-   "supportsWhere": true,
+   "supportsWhere": false,
    "supportsOrder": true
   },
   "payroll_uk": {

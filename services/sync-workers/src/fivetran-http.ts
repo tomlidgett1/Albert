@@ -47,6 +47,10 @@ type SdkServiceDefinition = Readonly<{
   projectDir: string;
   /** Error when the native connection carries no vendor account reference. */
   accountMissing: string;
+  /** Fivetran schedule for new connections; default 60 (hourly). */
+  syncFrequencyMinutes?: number;
+  /** "HH:00" UTC start time when syncFrequencyMinutes is 1440. */
+  dailySyncTimeUtc?: string;
   configuration: (input: Readonly<{
     brokerOrigin: string; secret: string; tenantId: string; connectionId: string; externalAccountReference: string;
   }>) => Record<string, string>;
@@ -299,6 +303,13 @@ export class FivetranWorkerHttpHandler {
         notConfigured: "Xero via Fivetran needs Albert's Xero OAuth app (XERO_CLIENT_ID) on the sync worker.",
         projectDir: this.dependencies.config.sdkProjectDir ?? "connectors/xero-fivetran-sdk",
         accountMissing: "fivetran_xero_tenant_missing",
+        // Xero allows this (uncertified) app 1,000 calls/day per organisation
+        // and the same allowance serves Albert's live Xero report calls. One
+        // sync a day at 18:00 AEST (08:00 UTC) — ~70 calls plus the ~25-call
+        // Reports refresh — leaves ~900 calls/day for live balance sheets and
+        // bank balances (decision 2026-08-19; ADR 0106).
+        syncFrequencyMinutes: 1440,
+        dailySyncTimeUtc: "08:00",
         configuration: (input) => ({
           albert_token_url: input.brokerOrigin,
           albert_token_secret: input.secret,
@@ -529,7 +540,8 @@ export class FivetranWorkerHttpHandler {
         packageId,
         configuration,
         pythonVersion: this.dependencies.config.sdkPythonVersion ?? "3.12",
-        syncFrequencyMinutes: 60,
+        syncFrequencyMinutes: sdkService.syncFrequencyMinutes ?? 60,
+        ...(sdkService.dailySyncTimeUtc ? { dailySyncTimeUtc: sdkService.dailySyncTimeUtc } : {}),
         paused: true,
       });
     } catch (error) {

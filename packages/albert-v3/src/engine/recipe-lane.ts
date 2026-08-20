@@ -145,11 +145,19 @@ export async function runRecipeLane(
   }
   if (result.ok !== true) return undefined;
   const rowCount = typeof result.rowCount === "number" ? result.rowCount : 0;
-  // An empty period is a lead for the regular lanes (they own the diagnostics).
-  if (rowCount === 0) return undefined;
+  // An empty period is a lead for the regular lanes (they own the diagnostics)
+  // — unless the recipe declares that zero rows IS the answer (no open
+  // shifts, nobody on leave): then the 80-second "why is this empty"
+  // investigation would only manufacture doubt about a true negative.
+  const emptyIsAnswer = rowCount === 0 && Boolean(spec.emptyAnswer);
+  if (rowCount === 0 && !emptyIsAnswer) return undefined;
+  if (emptyIsAnswer) context.emptyResultIsAnswer = true;
 
   const table = [...context.tableResults.values()].find((t) => t.resultId === result.resultId);
   if (!table) return undefined;
+  const emptyGuidance = emptyIsAnswer
+    ? `The result has NO rows, and for this question that is the answer: ${spec.emptyAnswer}. State it plainly for the period asked (one or two sentences), no table, no chart, no speculation about missing data or sync gaps.`
+    : "";
   const composer = new Agent<V3TurnContext, typeof finalAnswerSchema>({
     name: "Albert v3 recipe composer",
     instructions: `${context.businessContext ? `${renderBusinessContextForClassifier(context.businessContext.document)}
@@ -159,10 +167,10 @@ Compose the answer from the result below. Do not run data queries (you have none
 
 ${todayLine(input.config.timezone)}
 
-${PRESENTATION_GUIDANCE[spec.presentation]}
-${spec.answerHint ? `Guidance for this question: ${spec.answerHint}` : ""}
+${emptyIsAnswer ? emptyGuidance : PRESENTATION_GUIDANCE[spec.presentation]}
+${spec.answerHint && !emptyIsAnswer ? `Guidance for this question: ${spec.answerHint}` : ""}
 The result's period is what was asked for; say it in the answer in plain words (e.g. "yesterday (Monday 17 August)", "July"). Numbers must come from the result cells; percentages and differences only via compose_table calculations.
-state=Verified. followUps: one to three short owner-voice questions.
+state=Verified. followUps: zero to three short owner-voice questions; use [] for a self-contained answer.
 
 ${ANSWER_CONTRACT}
 
@@ -194,7 +202,10 @@ ${JSON.stringify({ caption: table.caption, columns: table.columns, rowCount: tab
     });
     // The evidence is in; if the composer ran out of turns, compose plainly
     // from it rather than re-running the pipeline.
-    return run.finalOutput ?? await composeFromGatheredEvidence(input);
+    const answer = run.finalOutput ?? await composeFromGatheredEvidence(input);
+    // A declared empty answer is a verified true negative, not "no data".
+    if (answer && emptyIsAnswer && answer.state !== "Verified") return { ...answer, state: "Verified" };
+    return answer;
   } catch (error) {
     if (error instanceof Error && /max turns/iu.test(error.message)) return composeFromGatheredEvidence(input);
     throw error;

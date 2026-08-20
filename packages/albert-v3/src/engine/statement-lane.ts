@@ -30,7 +30,9 @@ const PROFIT_AND_LOSS = /\b(?:p\s*&\s*l|p\s+and\s+l|pnl|profit\s+(?:and|&|\/)\s+
  * Any of these routes to the statement lane unless OUTSIDE_STATEMENT says the
  * owner wants a grain the statement does not have.
  */
-const PROFIT_AND_LOSS_INTENT = new RegExp([
+// Retained for reference/tests: figure-shaped profit wording that used to
+// route here and now stays on the governed views (see detect below).
+export const PROFIT_AND_LOSS_INTENT = new RegExp([
   String.raw`\b(?:net|gross|operating)\s+profit\b`,
   String.raw`\b(?:how\s+much\s+)?profit\b`,
   String.raw`\bprofitab(?:le|ility)\b`,
@@ -66,8 +68,14 @@ export function detectXeroStatementRequest(message: string): XeroStatementKind |
   if (OUTSIDE_STATEMENT.test(text)) return undefined;
   if (BALANCE_SHEET.test(text)) return "balance_sheet";
   if (TRIAL_BALANCE.test(text)) return "trial_balance";
+  // Explicit statement wording only ("the P&L", "income statement"): the
+  // owner wants to SEE the statement, so the lane fetches Xero's own full
+  // report. Figure-shaped profit questions (PROFIT_AND_LOSS_INTENT — net
+  // profit, biggest expenses, income this year) stay on the general path:
+  // the Fivetran-landed governed P&L views are the figures authority
+  // (ADR 0099) and answer them in seconds without spending the live API
+  // allowance.
   if (PROFIT_AND_LOSS.test(text)) return "profit_and_loss";
-  if (PROFIT_AND_LOSS_INTENT.test(text)) return "profit_and_loss";
   return undefined;
 }
 
@@ -94,7 +102,7 @@ The Australian financial year runs 1 July to 30 June. "YTD", "year to date", "th
 
 Procedure — do exactly this, nothing more:
 1. Resolve the period from the owner's words using the rules above.
-2. Call ${KIND_TOOL[input.kind]} once with that period. For a P&L, use periods+timeframe when the owner asked for a month-by-month, quarterly or year-on-year view or a comparison between periods (e.g. "last quarter vs the quarter before" = toDate at the end of last quarter with periods=1, timeframe=QUARTER; "this FY vs the same period last year" = two calls or periods=1 timeframe=YEAR); use paymentsOnly only when they said cash basis. If Xero returns an error, retry once with the current-financial-year window, then answer Unavailable.
+2. Call ${KIND_TOOL[input.kind]} once with that period. For a P&L, use periods+timeframe when the owner asked for a month-by-month, quarterly or year-on-year view or a comparison between periods (e.g. "last quarter vs the quarter before" = toDate at the end of last quarter with periods=1, timeframe=QUARTER; "this FY vs the same period last year" = two calls or periods=1 timeframe=YEAR); use paymentsOnly only when they said cash basis. A P&L window must be 12 months or less (Xero fails longer windows with a generic error) — for "last two years" fetch the latest 12 months with periods=1, timeframe=YEAR. If Xero returns an error, retry once with the current-financial-year window, then answer Unavailable.
 3. The full statement table is attached to your answer automatically (every line, in Xero's order, with totals). Do not rebuild it, do not list every line in prose, and do not write a Markdown table.
 4. Write the answer to the owner's actual question from the statement:
    - A request for the statement itself: two or three sentences — the period (and "as at" date or basis) and the headline figures (P&L: total income, gross profit, total operating expenses, net profit or loss; balance sheet: total assets, total liabilities, net assets/equity; trial balance: that debits and credits balance), plus one plain observation.

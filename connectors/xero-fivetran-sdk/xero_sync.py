@@ -44,6 +44,15 @@ Checkpoint = Callable[[dict], None]
 PAYROLL_API_FOR_VERSION = {"AU": "payroll_au", "NZ": "payroll_nz", "UK": "payroll_uk"}
 ALWAYS_ON_APIS = {"accounting", "assets", "files", "projects", "identity"}
 SUB_REQUESTS_PER_CHECKPOINT = 25
+# Endpoint circuit breaker. An endpoint Xero refuses (401/403/404: scope
+# tier, region, retired) is re-probed once a day, not every sync; an endpoint
+# that errors (5xx, parse) backs off 6h, doubling per consecutive failure up
+# to a day. Before this every hourly sync re-hit all of them — the twelve
+# Payroll AU endpoints alone burned ~70 of the 1,000 daily calls per hour and
+# starved the Reports API and Albert's live balance-sheet calls.
+UNAVAILABLE_RECHECK_HOURS = 24
+ERROR_BACKOFF_HOURS = 6
+ERROR_BACKOFF_MAX_HOURS = 24
 CONTROL_COLUMNS = {
     "source_record_id": "STRING",
     "source_updated_at": "UTC_DATETIME",
@@ -219,6 +228,30 @@ def xero_datetime(moment: datetime) -> str:
     return f"DateTime({moment.year},{moment.month},{moment.day},{moment.hour},{moment.minute},{moment.second})"
 
 
+def _backoff_entry(entry: dict, kind: str, message: str, now: datetime) -> dict:
+    """State entry for a failed walk: keeps the watermark, records why, and
+    sets retry_after so the walk is skipped until the cooldown has passed."""
+    from datetime import timedelta
+    failures = int(entry.get("failures") or 0) + 1
+    if kind == "unavailable":
+        hours = UNAVAILABLE_RECHECK_HOURS
+    else:
+        hours = min(ERROR_BACKOFF_MAX_HOURS, ERROR_BACKOFF_HOURS * (2 ** (failures - 1)))
+    kept = {k: v for k, v in entry.items() if k in ("watermark",)}
+    return {
+        **kept,
+        kind: message[:160],
+        "checked_at": now.isoformat(),
+        "failures": failures,
+        "retry_after": (now + timedelta(hours=hours)).isoformat(),
+    }
+
+
+def _in_cooldown(entry: dict, now: datetime) -> bool:
+    retry_after = parse_datetime(entry.get("retry_after")) if entry.get("retry_after") else None
+    return bool(retry_after and retry_after > now)
+
+
 def http_date(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
@@ -238,6 +271,7 @@ class XeroSync:
         self.tables = SPEC["tables"]
         self.profiles = SPEC["profiles"]
         self.rows_emitted = 0
+        self.skipped = 0
         self.tables_touched: set[str] = set()
         self._clauseless_groups: set[str] = set()
         self._parent_cache: dict[str, list] = {}
@@ -345,6 +379,9 @@ class XeroSync:
         key = group["key"]
         leader = self.tables[group["leader"]]
         entry = self.state["groups"].get(key) or {}
+        if _in_cooldown(entry, self.now):
+            self.skipped += 1
+            return
         since = parse_datetime(entry.get("watermark")) if entry.get("watermark") else None
         scan_start = self.now
         synced_at = datetime.now(timezone.utc)
@@ -362,16 +399,16 @@ class XeroSync:
             self._walk_pages(group, since, scan_start, on_page)
         except NotAvailable as error:
             # Scope tier / region / retired endpoint: not reachable for this org.
-            self.state["groups"][key] = {**entry, "unavailable": str(error)[:160], "checked_at": scan_start.isoformat()}
+            self.state["groups"][key] = _backoff_entry(entry, "unavailable", str(error), scan_start)
             self.checkpoint(self.state)
             return
         except (DailyLimitReached, TokenBrokerError):
             raise
         except (XeroError, ValueError, TypeError, KeyError, AttributeError) as error:
             # One family failing must not take the whole sync down; keep the old
-            # watermark so the next run retries it.
+            # watermark and back off before retrying it.
             _log(f"group {key} failed: {type(error).__name__}: {error}", "WARNING")
-            self.state["groups"][key] = {**entry, "error": str(error)[:160], "checked_at": scan_start.isoformat()}
+            self.state["groups"][key] = _backoff_entry(entry, "error", str(error), scan_start)
             self.checkpoint(self.state)
             return
         self.state["groups"][key] = {"watermark": scan_start.isoformat()}
@@ -447,6 +484,9 @@ class XeroSync:
             return
 
         entry = self.state["fanouts"].get(fan_out["id"]) or {}
+        if _in_cooldown(entry, self.now):
+            self.skipped += 1
+            return
         since = parse_datetime(entry.get("watermark")) if entry.get("watermark") else None
         scan_start = self.now
         synced_at = datetime.now(timezone.utc)
@@ -479,16 +519,14 @@ class XeroSync:
         try:
             self._walk_pages(parent_group, since, scan_start, on_page)
         except NotAvailable as error:
-            self.state["fanouts"][fan_out["id"]] = {**entry, "unavailable": str(error)[:160],
-                                                    "checked_at": scan_start.isoformat()}
+            self.state["fanouts"][fan_out["id"]] = _backoff_entry(entry, "unavailable", str(error), scan_start)
             self.checkpoint(self.state)
             return
         except (DailyLimitReached, TokenBrokerError):
             raise
         except (XeroError, ValueError, TypeError, KeyError, AttributeError) as error:
             _log(f"fan-out {fan_out['id']} failed: {type(error).__name__}: {error}", "WARNING")
-            self.state["fanouts"][fan_out["id"]] = {**entry, "error": str(error)[:160],
-                                                    "checked_at": scan_start.isoformat()}
+            self.state["fanouts"][fan_out["id"]] = _backoff_entry(entry, "error", str(error), scan_start)
             self.checkpoint(self.state)
             return
         self.state["fanouts"][fan_out["id"]] = {"watermark": scan_start.isoformat()}
@@ -518,4 +556,6 @@ class XeroSync:
             self.checkpoint(self.state)
         summary["rows"] = self.rows_emitted
         summary["calls"] = self.client.calls
+        summary["skipped_in_cooldown"] = self.skipped
+        summary["day_remaining"] = self.client.day_remaining
         return summary

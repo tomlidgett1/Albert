@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { assertOrderedSanitizedTrace, type TraceEvent } from "../../../packages/shared/src";
+import { assertOrderedSanitizedTrace, type TraceEvent } from "../../../packages/shared/src/index.js";
 
 type TraceEventInput = TraceEvent extends infer Event
   ? Event extends TraceEvent

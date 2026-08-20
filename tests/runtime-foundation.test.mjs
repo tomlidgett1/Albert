@@ -66,7 +66,13 @@ after(async () => {
 test("server model policy normalizes untrusted preferences to the allowlist", () => {
   assert.deepEqual(
     shared.ALBERT_MODELS.map(({ id }) => id),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "grok-4.6"],
+    [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "grok-4.6",
+      "claude-haiku-4-5-20251001",
+    ],
   );
   assert.deepEqual(shared.REASONING_EFFORTS, [
     "none",
@@ -85,11 +91,11 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
     "No data",
     "Unavailable",
   ]);
-  // ADR 0077 fixes the qualifying default at Luna + Max on the standard tier.
+  // Dash default is Luna + Max + Fast.
   assert.deepEqual(shared.DEFAULT_AGENT_PREFERENCES, {
     model: "gpt-5.6-luna",
     reasoningEffort: "max",
-    fastMode: false,
+    fastMode: true,
   });
 
   const normalized = shared.normalizeAgentPreferences({
@@ -119,7 +125,20 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
     { model: "grok-4.6", reasoningEffort: "low", fastMode: false },
   );
   assert.deepEqual(shared.GROK_REASONING_EFFORTS, ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "claude-haiku-4-5-20251001",
+      reasoningEffort: "high",
+      fastMode: true,
+    }),
+    {
+      model: "claude-haiku-4-5-20251001",
+      reasoningEffort: "high",
+      fastMode: false,
+    },
+  );
   assert.equal(shared.providerForModel("grok-4.6"), "xai");
+  assert.equal(shared.providerForModel("claude-haiku-4-5-20251001"), "anthropic");
   assert.equal(shared.providerForModel("gpt-5.6-sol"), "openai");
   assert.deepEqual(
     shared.resolveAlbertModelTransport({
@@ -137,9 +156,21 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
     () => shared.resolveAlbertModelTransport({ model: "grok-4.6" }),
     /Grok 4\.6 is not configured/i,
   );
+  assert.deepEqual(
+    shared.resolveAlbertModelTransport({
+      model: "claude-haiku-4-5-20251001",
+      anthropicApiKey: "anthropic-test",
+    }),
+    {
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      apiKey: "anthropic-test",
+      baseUrl: "https://api.anthropic.com",
+    },
+  );
 });
 
-test("Fast mode is independent from model and reasoning effort", () => {
+test("Fast mode remains independent where the selected provider supports it", () => {
   const standard = agent.buildOpenAIAgentRunConfig({
     model: "gpt-5.6-terra",
     reasoningEffort: "high",
@@ -339,6 +370,65 @@ test("trace validation rejects missing sequences and forbidden payload fields", 
     () => shared.assertOrderedSanitizedTrace(unsafe),
     /unsafe trace field/i,
   );
+});
+
+test("trace validation enforces evidence-bound terminal plan states", () => {
+  const fixture = conversation.createDeterministicFixtureTrace();
+  const sourceTable = fixture.find(({ type }) => type === "table");
+  const sourceAnswer = fixture.find(({ type }) => type === "answer");
+  assert.ok(sourceTable && sourceAnswer);
+  const at = "2026-08-19T00:00:00.000Z";
+  const opening = {
+    id: "01PLANOPEN00000000000000000",
+    sequence: 1,
+    occurredAt: at,
+    type: "plan",
+    status: "complete",
+    steps: [
+      { id: "plan_step_1", label: "Check the figure", kind: "evidence", status: "active", evidenceResultIds: [] },
+      { id: "plan_step_2", label: "Confirm the answer", kind: "synthesis", status: "pending", evidenceResultIds: [] },
+    ],
+  };
+  const table = { ...sourceTable, id: "01PLANTABLE0000000000000000", sequence: 2, occurredAt: at };
+  const terminal = {
+    ...opening,
+    id: "01PLANDONE00000000000000000",
+    sequence: 3,
+    steps: opening.steps.map((step) => ({
+      ...step,
+      status: "done",
+      evidenceResultIds: [table.resultId],
+    })),
+  };
+  const answer = { ...sourceAnswer, id: "01PLANANSWER000000000000000", sequence: 4, occurredAt: at };
+  assert.doesNotThrow(() => shared.assertOrderedSanitizedTrace([opening, table, terminal, answer]));
+
+  const unsupported = {
+    ...terminal,
+    steps: terminal.steps.map((step) => ({ ...step, evidenceResultIds: ["01UNKNOWNRESULT00000000000000"] })),
+  };
+  assert.throws(
+    () => shared.assertOrderedSanitizedTrace([opening, table, unsupported]),
+    /not emitted successfully first/i,
+  );
+  const premature = { ...answer, sequence: 2 };
+  assert.throws(
+    () => shared.assertOrderedSanitizedTrace([opening, premature]),
+    /before the visible plan reached truthful terminal states/i,
+  );
+
+  const blocked = {
+    ...opening,
+    id: "01PLANBLOCKED000000000000000",
+    sequence: 2,
+    status: "warning",
+    steps: [
+      { ...opening.steps[0], status: "blocked", statusDetail: "The required source was unavailable." },
+      { ...opening.steps[1], status: "incomplete", statusDetail: "A supported answer could not be completed." },
+    ],
+  };
+  const unavailableAnswer = { ...sourceAnswer, id: "01PLANUNAVAILABLE00000000000", sequence: 3, occurredAt: at, state: "Unavailable" };
+  assert.doesNotThrow(() => shared.assertOrderedSanitizedTrace([opening, blocked, unavailableAnswer]));
 });
 
 test("fixture SSE stream preserves event IDs, ordering, and safe event payloads", async () => {

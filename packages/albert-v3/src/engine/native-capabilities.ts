@@ -41,6 +41,7 @@ const xeroStatements: NativeCapability = Object.freeze({
   connectorKeys: ["xero", "fivetran-xero"],
   label: "Live Xero statement",
   kinds: [
+    { kind: "profit_and_loss", description: "Xero's own full Profit and Loss statement for a period: every income, cost-of-sales and expense line in Xero's layout with Gross and Net Profit. Use when the owner asks to SEE the P&L / profit and loss / income statement; single figures (net profit, total income) stay on the governed views." },
     { kind: "balance_sheet", description: "Xero's own Balance Sheet: assets, liabilities, equity / net assets, bank account balances as at a date." },
     { kind: "trial_balance", description: "Xero's own Trial Balance: every ledger account's balance as at a date." },
   ],

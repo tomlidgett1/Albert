@@ -349,12 +349,67 @@ accessible_views:
       It excludes statement subtotal/formula rows to prevent double counting.
       Never derive Net Profit by summing this view; headline profit and margins
       live in xero_profit_and_loss_analytics.
+  - name: xero_balance_sheet_analytics
+    connector: xero
+    routing_terms:
+      - balance sheet
+      - net assets and equity
+      - total assets and liabilities
+      - inventory value on the balance sheet
+      - loan balance
+      - GST balance owed
+      - accounts payable balance at month end
+    guidance: >
+      Xero's own standard-layout Balance Sheet at month-end grain (trailing 24
+      month ends, current month rendered through the last refresh): total
+      assets, total liabilities, net assets / equity, bank total, accounts
+      receivable and payable balances, GST control balance, inventory, current
+      year earnings, plus every statement line (line_* members) for loan,
+      owner-loan, PAYG/super payable, fixed-asset and equity accounts. Pick ONE
+      as_at date (newest = latest month end); never sum across dates or mix
+      account lines with Xero total lines. The live xero_balance_sheet tool is
+      more current for "as at today"; fall back here (and say the date) when
+      it is unavailable. Dashboard-style "bills to pay" / "invoices owed" come
+      from xero_finance_analytics payable_outstanding / receivable_outstanding.
+  - name: xero_bank_balances_analytics
+    connector: xero
+    routing_terms:
+      - bank account balances
+      - how much is in the bank
+      - balance of each bank account
+      - bank summary by month
+    guidance: >
+      Xero's Bank Summary at monthly grain (trailing 12 months): each bank and
+      credit-card account's opening balance, cash received, cash spent and
+      closing balance IN XERO per calendar month, plus Xero's Total row. The
+      latest month's closing balance is the account's current "Balance in
+      Xero" through the last refresh. Always pick one month and filter
+      is_account_line = true to list accounts; closing balances are
+      point-in-time, never sum across months. For whole-business cash in and
+      out over a period use xero_finance_analytics cash_in / cash_out. The
+      live xero_balance_sheet tool gives today's balances when Xero's API
+      allowance permits.
+  - name: xero_trial_balance_analytics
+    connector: xero
+    routing_terms:
+      - trial balance
+      - ledger account balance
+    guidance: >
+      Xero's Trial Balance per as-at date (last three month ends and the
+      financial-year end): every ledger account with period and YTD debit /
+      credit; net_balance = debit - credit. Choose one as_at and filter
+      is_account_line = true. Balance sheet headlines live in
+      xero_balance_sheet_analytics, P&L in xero_profit_and_loss_analytics.
   - name: xero_finance_analytics
     connector: xero
     guidance: >
       The accounting ledger (Xero). Invoices and bills with amounts due and
-      ageing bands, who owes me / who I owe, average days to pay
-      (avg_days_to_pay), payments received and made, bank account spending
+      ageing bands, who owes me / who I owe (headline payable_outstanding /
+      receivable_outstanding with overdue parts and counts, exactly as Xero's
+      dashboard tiles), average days to pay
+      (avg_days_to_pay), payments received and made, cash in and out of the
+      bank for a period (cash_in / cash_out / net_cash_movement, matching
+      Xero's dashboard), bank account spending
       and income by GL category, GST position (gst_* members), credit notes
       and credit note lines, overpayments (customer/supplier credit
       balances), batch payments, journal debits/credits, recurring invoice
@@ -367,8 +422,10 @@ accessible_views:
       questions use gst_collected / gst_paid / gst_net over gst_date, but
       disclose that GST collected only covers directly invoiced sales
       (register sales post via tax-blind journals) and the authoritative BAS
-      comes from Xero's GST return. NOT AVAILABLE from this connection, say
-      so honestly: live bank balances, budget line values, and Xero's own
+      comes from Xero's GST return. Bank balances in Xero live in
+      xero_bank_balances_analytics (month-end / latest) or the live
+      xero_balance_sheet tool. NOT AVAILABLE from this connection, say
+      so honestly: budget line values, and Xero's own
       report PDFs. This business has no quotes, purchase orders, projects
       or expense claims in Xero.
       "Spend with supplier X" and "who do I buy from" are answered here

@@ -21,6 +21,7 @@ import type { ConnectorDomainFreshness, EmitV3Trace, TenantSourceFinding, V3Turn
 import {
   buildConversationInput,
   classifyIntent,
+  isDefinitionOnlyQuestion,
   type ConversationMessage,
   type IntentDecision,
   type Lane,
@@ -41,9 +42,9 @@ import { runDeepLane } from "./deep-lane.js";
 import { createV3CommentaryState } from "./commentary.js";
 import {
   buildInitialOwnerPlan,
-  completeVisiblePlan,
-  planAfterEvidenceCount,
   publishOwnerPlan,
+  settleVisiblePlan,
+  settleVisiblePlanAfterFailure,
   shouldEmitInitialPlan,
 } from "./initial-plan.js";
 import { createComposeTableTool } from "./tools.js";
@@ -53,10 +54,11 @@ import { runRepresentLane } from "./represent-lane.js";
 import { normaliseRecipeDateRange, runRecipeLane } from "./recipe-lane.js";
 import { runPlannedLane } from "./planned-lane.js";
 import { runMetaLane } from "./meta-lane.js";
+import { runConceptualLane } from "./conceptual-lane.js";
 import { findCertifiedQuery, recipesForRoute } from "../agent-config/loader.js";
 import { detectNativeCapability, renderNativeCapabilitiesForClassifier, resolveNativeCapability } from "./native-capabilities.js";
 import { trackRunnerUsage } from "./usage-accounting.js";
-import { createAlbertResponsesProvider } from "../../../agent/src/responses-provider.js";
+import { createAlbertModelProvider } from "../../../agent/src/responses-provider.js";
 import {
   buildTurnProvenance,
   emptyTurnProvenance,
@@ -132,6 +134,8 @@ export type AlbertV3TurnOptions = Readonly<{
   openaiBaseUrl?: string;
   xaiApiKey?: string;
   xaiBaseUrl?: string;
+  anthropicApiKey?: string;
+  anthropicBaseUrl?: string;
   openaiTracingEnabled?: boolean;
   signal?: AbortSignal;
   emit: EmitV3Trace;
@@ -514,6 +518,7 @@ const BUSINESS_CONTEXT_REFRESH_GRACE_MS = 45_000;
  */
 export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<AlbertV3TurnResult> {
   let contextRefresh: Promise<void> | undefined;
+  let activeTurnContext: V3TurnContext | undefined;
   const config = loadAgentConfig();
   const emit = options.emit;
 
@@ -586,12 +591,14 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       )
     : undefined;
 
-  const provider = createAlbertResponsesProvider(resolveAlbertModelTransport({
+  const provider = createAlbertModelProvider(resolveAlbertModelTransport({
     model: options.preferences.model,
     openaiApiKey: options.openaiApiKey,
     openaiBaseUrl: options.openaiBaseUrl,
     xaiApiKey: options.xaiApiKey,
     xaiBaseUrl: options.xaiBaseUrl,
+    anthropicApiKey: options.anthropicApiKey,
+    anthropicBaseUrl: options.anthropicBaseUrl,
   }));
   const accounting = trackRunnerUsage(new Runner({
     modelProvider: provider,
@@ -613,7 +620,10 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   // Native connector capabilities (registry-driven): a deterministic detector
   // owns explicit requests before classification; the classifier can also
   // route indirect wording to a capability afterwards.
-  const nativeMatch = detectNativeCapability(options.message, { xeroMcp }, options.activeConnectors);
+  const definitionOnly = isDefinitionOnlyQuestion(options.message);
+  const nativeMatch = definitionOnly
+    ? undefined
+    : detectNativeCapability(options.message, { xeroMcp }, options.activeConnectors);
   const statementKind = nativeMatch?.kind;
   // A greeting, thanks or sign-off has no question in it. Reply and stop:
   // no catalogue fetch, no classifier, no planned query to "acknowledge the
@@ -675,7 +685,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       }),
     ),
     statementKind ? Promise.resolve(undefined) : classify(),
-    deriveConnectorFreshness({
+    definitionOnly ? Promise.resolve(options.connectorFreshness ?? []) : deriveConnectorFreshness({
       cube,
       tenantId: options.tenantId,
       probes: config.freshnessProbes,
@@ -790,7 +800,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     ? catalogueResult.catalogue
     : { views: [], fetchedAt: new Date().toISOString() };
   const budget = config.lanes[
-    lane === "quick" || lane === "explain" || lane === "represent" || lane === "meta" ? "quick" : lane === "deep" ? "deep" : "analytical"
+    lane === "quick" || lane === "explain" || lane === "represent" || lane === "meta" || lane === "conceptual" ? "quick" : lane === "deep" ? "deep" : "analytical"
   ];
   const context: V3TurnContext = {
     cube,
@@ -808,18 +818,23 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     sourceFindings: options.sourceFindings ?? [],
     ...(options.recordSourceFinding ? { recordSourceFinding: options.recordSourceFinding } : {}),
     commentary: createV3CommentaryState(lane === "analytical" || lane === "deep"),
+    definitionEvidence: [],
     executedQueries: [],
     tableResults: new Map(),
     priorResults: new Map(),
     chartedResultIds: new Set(),
   };
+  activeTurnContext = context;
   registerPriorResults(context, options.priorResults ?? []);
+  const classifiedNative = !nativeMatch
+    ? resolveNativeCapability(intent.nativeCapability, { xeroMcp }, options.activeConnectors)
+    : undefined;
 
   // Business context refresh under this turn's lease: the probes run beside
   // the turn's own queries (bounded parallelism) and the document is saved
   // before the lease closes. Never on the critical path — awaited, bounded, in
   // the finally block — and never fatal.
-  if (options.businessContext?.refresh?.due && !contextRefresh) {
+  if (!definitionOnly && lane !== "conceptual" && options.businessContext?.refresh?.due && !contextRefresh) {
     const refresh = options.businessContext.refresh;
     contextRefresh = runBusinessContextRefresh({
       cube,
@@ -841,7 +856,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       });
   }
 
-  if (!statementKind && shouldEmitInitialPlan(lane)) {
+  if (!statementKind && !classifiedNative && shouldEmitInitialPlan(lane)) {
     await publishOwnerPlan(context, buildInitialOwnerPlan(intent));
   }
 
@@ -859,6 +874,8 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
           ? "Re-presenting the previous answer"
         : lane === "meta"
           ? "Checking what data is connected"
+        : lane === "conceptual"
+          ? "Explaining the concept"
         : lane === "deep"
           ? "Deep investigation"
           : "Analytical investigation",
@@ -883,9 +900,6 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   // Intent-based delegation: the classifier recognised a native capability the
   // detector did not (indirect wording). Runs before the general lanes; on
   // Escalate the general path continues with the classified intent.
-  const classifiedNative = !nativeMatch
-    ? resolveNativeCapability(intent.nativeCapability, { xeroMcp }, options.activeConnectors)
-    : undefined;
   if (classifiedNative && (lane === "quick" || lane === "analytical")) {
     await emit({ type: "progress", status: "running", stage: "query", label: classifiedNative.capability.label, detail: classifiedNative.kind.replace(/_/gu, " "), progress: 0.2 });
     const answer = await classifiedNative.capability.run(laneInput, classifiedNative.kind);
@@ -898,6 +912,9 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     } else if (answer?.state === "Unavailable") {
       await emit({ type: "progress", status: "warning", stage: "query", label: `${classifiedNative.capability.label} is unavailable right now`, detail: "Answering from the synced data instead.", progress: 0.2 });
     }
+  }
+  if (!statementAnswered && classifiedNative && !context.visiblePlan && shouldEmitInitialPlan(lane)) {
+    await publishOwnerPlan(context, buildInitialOwnerPlan(intent));
   }
   if (statementAnswered) {
     // answered by the classifier-routed native capability
@@ -919,10 +936,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       lane = fallbackLane;
       laneInput = { ...laneInput, intent };
       if (shouldEmitInitialPlan(lane)) {
-        await publishOwnerPlan(context, planAfterEvidenceCount(
-          buildInitialOwnerPlan(intent),
-          context.executedQueries.length,
-        ));
+        await publishOwnerPlan(context, buildInitialOwnerPlan(intent));
       }
       await emit({
         type: "progress",
@@ -935,7 +949,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       if (nativeDown) {
         context.sourceFindings = [...context.sourceFindings, {
           concept: "native report unavailable",
-          finding: `${nativeMatch.capability.label} could not be fetched this turn (the connector's live report failed). Answer from the synced ledger views instead and say the figures come from the synced ledger rather than the live report; do not retry the live report.`,
+          finding: `${nativeMatch.capability.label} could not be fetched this turn (the connector's live report failed). Answer from the synced governed views instead and say the figures come from the synced copy rather than the live report; do not retry the live report. The owner asked for the STATEMENT, so present the complete statement, not just headline totals: for a P&L, compose_table every account line (xero_profit_and_loss_account_analytics statement_amount by section and account_name for the period) together with the headline totals (xero_profit_and_loss_analytics), in Xero's section order (Income, Cost of Sales, Gross Profit, Operating Expenses, Net Profit); for a balance sheet, the line_* members of xero_balance_sheet_analytics grouped by section with the position totals.`,
           recordedAt: new Date().toISOString(),
         }];
       }
@@ -966,6 +980,8 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   }
   if (statementAnswered || recipeAnswered) {
     // handled above
+  } else if (lane === "conceptual") {
+    finalAnswer = await runConceptualLane(laneInput);
   } else if (lane === "meta") {
     finalAnswer = await runMetaLane(laneInput, options.activeConnectors);
     if (!finalAnswer || finalAnswer.state === "Escalate") {
@@ -1037,10 +1053,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       // has become an investigation, put the tick-off plan on screen so the
       // analytical lane has a list to work through.
       if (!context.visiblePlan) {
-        await publishOwnerPlan(context, planAfterEvidenceCount(
-          buildInitialOwnerPlan(intent),
-          context.executedQueries.length,
-        ));
+        await publishOwnerPlan(context, buildInitialOwnerPlan(intent));
       }
       await emit({
         type: "progress",
@@ -1196,6 +1209,8 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     rowsSeen: rowsSeen + reusedRows,
     freshnessQualified: context.freshnessQualified,
     reusedResults,
+    definitionEvidenceCount: context.definitionEvidence?.length ?? 0,
+    emptyResultIsAnswer: context.emptyResultIsAnswer,
   });
   const text = sanitizeAnswerText(ownerFacingAnswerText({
     lane,
@@ -1219,7 +1234,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     : normalizeOwnerFollowUps(finalAnswer.followUps)
       .map((followUp) => sanitizeTraceText(followUp, 160))
       .filter(Boolean);
-  await completeVisiblePlan(context);
+  await settleVisiblePlan(context, state);
   await emit({
     type: "answer",
     status: "complete",
@@ -1243,6 +1258,19 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     resultDigest: digest(text),
     queriesExecuted: context.executedQueries.length,
   };
+  } catch (error) {
+    if (activeTurnContext?.visiblePlan) {
+      try {
+        await settleVisiblePlanAfterFailure(
+          activeTurnContext,
+          options.signal?.aborted ? "cancelled" : "blocked",
+        );
+      } catch {
+        // The original turn failure remains authoritative; terminalising the
+        // cosmetic checklist is best-effort and must never mask it.
+      }
+    }
+    throw error;
   } finally {
     // Give an in-flight business context refresh a bounded chance to land
     // while the lease is still alive; a slow one is simply retried next turn.

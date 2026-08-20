@@ -315,6 +315,16 @@ export function validateCubeQuery(
     if (td.compareDateRange && td.compareDateRange.length < 2) {
       return { error: "compareDateRange needs at least two date ranges." };
     }
+    // The same member as a bucketed time dimension *and* a plain dimension
+    // makes Cube GROUP BY the raw timestamp as well: one row per distinct
+    // second, so a "monthly" query with limit 12 returns twelve arbitrary
+    // sales instead of twelve months (seen in production, 2026-08-19).
+    if (td.granularity && dimensionNames.includes(td.dimension)) {
+      return {
+        error: `${td.dimension} is already a time dimension with granularity ${td.granularity}; `
+          + "remove it from dimensions, or drop the granularity if you want individual timestamps.",
+      };
+    }
   }
   if (selectedView.queryPolicy === "aggregate_only") {
     if (measureNames.length === 0) {

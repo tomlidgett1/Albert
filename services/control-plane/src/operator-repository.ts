@@ -238,7 +238,7 @@ const rowRevealGrantSchema = z.object({
   expires_at: z.string().min(1),
 }).strict();
 
-function operatorDiagnosticServiceUrl(path = "/v1/row-samples"): URL {
+export function operatorDiagnosticServiceUrl(path = "/v1/row-samples"): URL {
   const value = process.env.OPERATOR_DIAGNOSTIC_SERVICE_URL?.trim();
   if (!value) throw new ControlPlaneError("The operator diagnostic service is not configured.", 503);
   try {
@@ -377,7 +377,7 @@ export async function recordShopifyPrivacyDelivery(input: Readonly<{
   }
 }
 
-function operatorDiagnosticSecret(): string {
+export function operatorDiagnosticSecret(): string {
   const secret = process.env.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim() ?? "";
   if (new TextEncoder().encode(secret).byteLength < 32) {
     throw new ControlPlaneError("The operator diagnostic trust boundary is not configured.", 503);

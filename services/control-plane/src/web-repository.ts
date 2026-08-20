@@ -159,6 +159,7 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "review.mutation": Object.freeze({ limit: 30, windowSeconds: 60 }),
   "dashboard.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
   "dashboard.refresh": Object.freeze({ limit: 12, windowSeconds: 60 }),
+  "test-chart.generate": Object.freeze({ limit: 20, windowSeconds: 60 }),
   // A backfill is expensive and vendor-rate-limited; cap it far below click speed.
   "connection.manual_sync": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
   "connection.start_ingestion": Object.freeze({ limit: 6, windowSeconds: 3_600 }),

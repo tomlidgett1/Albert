@@ -1,11 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ANTHROPIC_HAIKU_4_5_RATE_CARD,
   meterOpenAIUsage,
   OPENAI_GPT_5_6_RATE_CARD,
   toModelUsageRpcPayload,
   XAI_GROK_4_6_RATE_CARD,
 } from "../packages/usage-metering/src/index.ts";
+
+test("meters Claude Haiku 4.5 cache, thinking output, and standard processing exactly", () => {
+  const metered = meterOpenAIUsage({
+    model: "claude-haiku-4-5-20251001",
+    fastMode: false,
+    usage: {
+      requests: 1,
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      requestUsageEntries: [{
+        inputTokens: 1_000,
+        outputTokens: 100,
+        inputTokensDetails: { cached_tokens: 200, cache_write_tokens: 100 },
+        outputTokensDetails: { reasoning_tokens: 80 },
+      }],
+    },
+  });
+
+  assert.equal(metered.estimatedCostUsdMicros, 1_345);
+  assert.equal(metered.cachedInputTokens, 200);
+  assert.equal(metered.cacheWriteInputTokens, 100);
+  assert.equal(metered.rateCardId, ANTHROPIC_HAIKU_4_5_RATE_CARD.id);
+  assert.equal(ANTHROPIC_HAIKU_4_5_RATE_CARD.dataResidencyRegion, "global");
+});
 
 test("meters standard, cached, cache-write, output, and Fast usage exactly", () => {
   const metered = meterOpenAIUsage({

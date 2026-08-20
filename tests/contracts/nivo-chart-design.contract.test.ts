@@ -60,7 +60,7 @@ test("normalize fills missing Nivo design fields from shipped defaults", () => {
   assert.equal(next.theme.background, DEFAULT_NIVO_CHART_DESIGN.theme.background);
 });
 
-test("Admin Charts publishes the design into live ResultChart rendering", async () => {
+test("Admin Charts still hosts the Nivo studio; chat charts render through Flint", async () => {
   const [admin, studio, chart, route, publicRoute] = await Promise.all([
     read("app/dash/components/AdminWorkspace.tsx"),
     read("app/dash/components/ChartDesignStudio.tsx"),
@@ -76,9 +76,9 @@ test("Admin Charts publishes the design into live ResultChart rendering", async 
   assert.match(studio, /ResponsiveLine/);
   assert.match(studio, /https:\/\/nivo\.rocks\/bar\//);
   assert.match(studio, /https:\/\/nivo\.rocks\/line\//);
-  assert.match(chart, /usePublishedNivoChartDesign/);
-  assert.match(chart, /barDesignToNivoProps/);
-  assert.match(chart, /lineDesignToNivoProps/);
+  assert.match(chart, /groundedFlintPlanForChart/);
+  assert.match(chart, /FlintChartView/);
+  assert.doesNotMatch(chart, /@nivo\/bar|@nivo\/line|usePublishedNivoChartDesign/u);
   assert.match(route, /isInternalOperator/);
   assert.match(route, /export async function PUT/);
   assert.match(publicRoute, /loadPublishedChartDesign/);

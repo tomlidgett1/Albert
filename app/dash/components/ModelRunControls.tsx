@@ -13,6 +13,8 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ALBERT_MODELS,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+  isAnthropicModel,
   modelSupportsFastMode,
   normalizeAgentPreferences,
   reasoningEffortsForModel,
@@ -42,12 +44,13 @@ const EFFORT_OPTIONS = [
   { id: "none", label: "None" },
 ] as const satisfies ReadonlyArray<{ id: ReasoningEffort; label: string }>;
 
-/** Left-to-right model tabs: efficient → balanced → frontier, then Grok. */
+/** Left-to-right model tabs: GPT family, then the additional providers. */
 const MODEL_TAB_ORDER = [
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "grok-4.6",
+  CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies ReadonlyArray<AlbertModelId>;
 
 const EFFORT_LABELS: Record<ReasoningEffort, string> = Object.fromEntries(
@@ -263,7 +266,12 @@ export function ModelRunControls({
   }, [closePopover, open]);
 
   const updateModel = (model: AlbertModelId) => {
-    onChange(normalizeAgentPreferences({ ...value, model }));
+    const switchingToHaiku = isAnthropicModel(model) && !isAnthropicModel(value.model);
+    onChange(normalizeAgentPreferences({
+      ...value,
+      model,
+      ...(switchingToHaiku ? { reasoningEffort: "low", fastMode: false } : {}),
+    }));
   };
 
   const updateReasoning = (reasoningEffort: ReasoningEffort) => {
@@ -470,6 +478,12 @@ export function ModelRunControls({
                 );
               })}
             </div>
+            {isAnthropicModel(value.model) ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Data is processed globally by Anthropic, not in Australia. Haiku starts at Low;
+                High and Max can take minutes. Fast mode is unavailable.
+              </p>
+            ) : null}
           </div>
         </section>
       </div>

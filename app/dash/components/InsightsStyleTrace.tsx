@@ -11,11 +11,10 @@ import type {
   TracePlanEvent,
   TraceProgressStage,
   TraceProvenance,
-  TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES, type TraceConnectorId } from "./connectors";
-import { formatTraceCell } from "./analytical-values";
+import { GovernedResultGrid } from "./GovernedResultGrid";
 import {
   parseSafeAnswerLineage,
   type SafeAnswerLineage,
@@ -68,7 +67,7 @@ type AuditReceiptState =
   | Readonly<{ kind: "ready"; lineage: SafeAnswerLineage }>
   | Readonly<{ kind: "error"; message: string }>;
 
-type TrailStepStatus = "running" | "done" | "error";
+type TrailStepStatus = "running" | "done" | "error" | "incomplete";
 
 type TrailStep = Readonly<{
   id: string;
@@ -146,6 +145,8 @@ type TrailModel = Readonly<{
   }>;
   /** Sparse, owner-facing plan and finding updates shown only while work runs. */
   commentaryUpdates: readonly TrailCommentaryUpdate[];
+  /** Pre-evidence response rendered in its own slot above the planning shimmer. */
+  initialAcknowledgement?: TrailCommentaryUpdate;
   /** Latest visible working plan; steps tick off as the agent progresses. */
   plan?: TracePlanEvent;
   trace: readonly TraceEntry[];
@@ -165,7 +166,7 @@ function isStopMessage(message: string): boolean {
 }
 
 const answerStateDescriptions = {
-  Verified: "Checked against your connected data",
+  Verified: "Checked against governed evidence",
   Derived: "Calculated deterministically from governed results",
   Qualified: "Useful answer, with a limitation noted below",
   Exploratory: "From your live Lightspeed or Xero data",
@@ -224,7 +225,11 @@ export function laymanProgressStatus(label: string, detail = ""): string {
     .replace(/^Querying\b/iu, "Looking up")
     .replace(/^Exploring\b/iu, "Looking through");
 
-  const looksTechnical = /SQL|governed|allowlisted|intent to available|tenant|staging|lint/iu.test(purpose);
+  // Member lists ("sales_analytics.gross_takings, …") and snake_case view names
+  // are audit detail, not owner copy: keep the softened label instead.
+  const looksTechnical = /SQL|governed|allowlisted|intent to available|tenant|staging|lint/iu.test(purpose)
+    || /\b[a-z][a-z0-9]*_[a-z0-9_]*\.[a-z][a-z0-9_]*\b/u.test(purpose)
+    || /^[a-z0-9_]+(?:,\s*[a-z0-9_]+)+$/u.test(purpose);
   if (purpose && !looksTechnical && (/^Looking up your numbers$/iu.test(softStage) || purpose.length >= softStage.length)) {
     return purpose.charAt(0).toUpperCase() + purpose.slice(1);
   }
@@ -313,7 +318,7 @@ const VIEW_PREFIXES: readonly (readonly [string, TraceConnectorId])[] = [
   ["google_ads_", "google-ads"],
 ];
 
-export type ProgressShimmerActivity = "query" | "catalogue" | "planning";
+export type ProgressShimmerActivity = "query" | "catalogue" | "research" | "planning";
 
 export type ProgressShimmerLine = Readonly<{
   id: string;
@@ -324,6 +329,7 @@ export type ProgressShimmerLine = Readonly<{
 const SHIMMER_HOLD_MS: Readonly<Record<ProgressShimmerActivity, readonly [number, number]>> = {
   query: [1000, 1700],
   catalogue: [1800, 2500],
+  research: [1800, 2500],
   planning: [2600, 3400],
 };
 
@@ -429,7 +435,9 @@ export function shimmerActivityFor(input: {
     return "query";
   }
   if (input.statusStage === "query" || input.statusStage === "source_query") return "query";
+  if (input.statusStage === "research") return "research";
   if (input.statusStage === "catalogue" || input.statusStage === "definition") return "catalogue";
+  if (running.some((step) => step.stage === "research")) return "research";
   if (running.length > 0) return "catalogue";
   return "planning";
 }
@@ -546,12 +554,14 @@ export function buildTrailModel(
   const commentaryUpdates: TrailCommentaryUpdate[] = [];
   const trace: TraceEntry[] = [];
   const answerTables: TraceTableEvent[] = [];
+  const tablesByResultId = new Map<string, TraceTableEvent>();
   const warningsByStep = new Map<string, string[]>();
   let answer: TrailModel["answer"];
   let clarification: TrailModel["clarification"];
   let error: TrailModel["error"];
   let cubecoreMeta: TrailModel["cubecoreMeta"];
   let plan: TracePlanEvent | undefined;
+  let initialAcknowledgement: TrailCommentaryUpdate | undefined;
   let stopped = false;
   let status = streaming ? "Thinking" : "How this was worked out";
   let statusDetail = "";
@@ -603,10 +613,13 @@ export function buildTrailModel(
       const running = streaming && event.status !== "complete";
       const nextStatus: TrailStepStatus = event.status === "error" ? "error" : running ? "running" : "done";
       // A settling step reports the outcome of work already on screen, so it
-      // replaces its own opening step instead of listing a second row.
+      // replaces its own opening step instead of listing a second row. Only a
+      // step that is still running can be settled: a completed lookup must
+      // never be overwritten by the next one, or the trail under-reports work
+      // ("Found views for B" silently replacing "Found views for A").
       const settles = event.status === "complete" || event.status === "error";
       const openIndex = settles && event.stage
-        ? lastStepIndex((step) => step.stage === event.stage)
+        ? lastStepIndex((step) => step.stage === event.stage && step.status === "running")
         : -1;
       const open = openIndex >= 0 ? steps[openIndex] : undefined;
       if (open) {
@@ -639,6 +652,12 @@ export function buildTrailModel(
 
     if (event.type === "narrative") {
       const cleaned = cleanReasoningSummary(event.text);
+      if (event.purpose === "acknowledgement") {
+        if (cleaned && !initialAcknowledgement) {
+          initialAcknowledgement = { id: event.id, text: cleaned };
+        }
+        continue;
+      }
       if (cleaned) {
         commentary.push(cleaned);
         commentaryUpdates.push({ id: event.id, text: cleaned });
@@ -716,6 +735,7 @@ export function buildTrailModel(
     }
 
     if (event.type === "table") {
+      tablesByResultId.set(event.resultId, event);
       status = event.caption;
       statusDetail = `${event.rows.length.toLocaleString()} governed row${event.rows.length === 1 ? "" : "s"} · ${event.columns.length} column${event.columns.length === 1 ? "" : "s"}`;
       statusStage = statusStage ?? "query";
@@ -753,10 +773,11 @@ export function buildTrailModel(
     }
 
     if (event.type === "chart") {
-      const table = [...steps]
-        .reverse()
-        .find((step) => step.table?.resultId === event.dataRef)
-        ?.table;
+      const table = tablesByResultId.get(event.dataRef)
+        ?? [...steps]
+          .reverse()
+          .find((step) => step.table?.resultId === event.dataRef)
+          ?.table;
       status = event.caption;
       statusDetail = `${event.chartType} chart`;
       statusStage = undefined;
@@ -837,7 +858,7 @@ export function buildTrailModel(
         const target = steps.at(-1);
         if (target && target.status === "running") {
           const index = steps.findIndex((step) => step.id === target.id);
-          steps[index] = { ...target, status: "done" };
+          steps[index] = { ...target, status: "incomplete" };
         }
         continue;
       }
@@ -862,7 +883,7 @@ export function buildTrailModel(
     if (step.status !== "running") return step;
     const laterDone = withWarnings.slice(index + 1).some((candidate) => candidate.status !== "running");
     if (!streaming || laterDone || answer || clarification || error || stopped) {
-      const nextStatus: TrailStepStatus = step.error ? "error" : "done";
+      const nextStatus: TrailStepStatus = step.error ? "error" : stopped ? "incomplete" : "done";
       return { ...step, status: nextStatus };
     }
     return step;
@@ -871,6 +892,23 @@ export function buildTrailModel(
   const durationMs = startedAt !== undefined && endedAt !== undefined
     ? Math.max(0, endedAt - startedAt)
     : 0;
+  const displayPlan = plan && !streaming && (stopped || error)
+    ? {
+        ...plan,
+        status: "warning" as const,
+        steps: plan.steps.map((step) => (
+          step.status === "active" || step.status === "pending"
+            ? {
+                ...step,
+                status: "incomplete" as const,
+                statusDetail: stopped
+                  ? "This step stopped before completion."
+                  : "This step ended before completion.",
+              }
+            : step
+        )),
+      }
+    : plan;
 
   return {
     steps: normalised,
@@ -903,12 +941,13 @@ export function buildTrailModel(
                 : "OpenAI",
     },
     commentaryUpdates,
-    plan,
+    initialAcknowledgement,
+    plan: displayPlan,
     trace,
     governedQueries: normalised
       .map((step) => step.governed)
       .filter((query): query is NonNullable<TrailStep["governed"]> => Boolean(query)),
-    charts: normalised.flatMap((step) => step.chart ? [step.chart] : []),
+    charts: normalised.flatMap((step) => step.chart?.table ? [step.chart] : []),
     answerTables,
   };
 }
@@ -948,15 +987,24 @@ function PlanChecklist({
             <span className={styles.planCount}>{done}/{plan.steps.length}</span>
           </div>
           {plan.steps.map((step, index) => (
-            <div key={index} className={styles.planStep} data-status={step.status}>
+            <div key={step.id || `legacy_plan_step_${index}`} className={styles.planStep} data-status={step.status}>
               <span className={styles.planStepIcon}>
                 {step.status === "done"
                   ? <CheckIcon size={12} />
                   : step.status === "active"
                     ? <span className={styles.spinner} />
+                    : step.status === "blocked"
+                      ? <CrossIcon size={11} />
+                      : step.status === "incomplete"
+                        ? <span className={styles.planStepDash}>–</span>
                     : <span className={styles.planStepDot} />}
               </span>
-              <span className={styles.planStepLabel}>{step.label}</span>
+              <span className={styles.planStepCopy}>
+                <span className={styles.planStepLabel}>{step.label}</span>
+                {(step.status === "blocked" || step.status === "incomplete") && step.statusDetail
+                  ? <span className={styles.planStepDetail}>{step.statusDetail}</span>
+                  : null}
+              </span>
             </div>
           ))}
         </div>
@@ -1414,33 +1462,7 @@ function ResultTable({
               <QueryDetails id={`result-yaml-${table.id}`} table={table} queryYaml={queryYaml} />
             ) : null}
 
-            <div className={styles.resultTableWrap} style={{ maxHeight }}>
-              <table className={styles.resultTable}>
-                <thead>
-                  <tr>
-                    {table.columns.map((column) => (
-                      <th key={column.key}>{column.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.rows.length === 0 ? (
-                    <tr><td className={styles.resultTableEmpty} colSpan={Math.max(1, table.columns.length)}>No data for this governed result.</td></tr>
-                  ) : table.rows.map((row, rowIndex) => (
-                    <tr key={`${table.resultId}_${rowIndex}`}>
-                      {table.columns.map((column: TraceTableColumn) => (
-                        <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {table.rows.length > 8 ? (
-              <p className={styles.resultTableFooter}>
-                {table.rows.length.toLocaleString("en-AU")} row{table.rows.length === 1 ? "" : "s"} · scroll for all
-              </p>
-            ) : null}
+            <GovernedResultGrid table={table} maxHeight={maxHeight} />
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -1608,86 +1630,71 @@ type ProgressShimmer = Readonly<{
   transition: { duration: number; ease?: readonly [number, number, number, number] };
 }>;
 
+/** Anything that reads like an internal name is not owner copy. */
+const TECHNICAL_COPY = /albert|\bv3\b|cube|semantic|sql|governed|schema|catalogue index|allowlist|tenant|staging|planner|lane\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[a-z]+\.[a-z_]+\b/iu;
+
 /**
- * One rotating status line per turn. Owned by the trace root so the header and
- * the live commentary can share it: whichever surface is showing the shimmer
- * renders the same line, and the two never drift apart.
+ * Concise, owner-friendly line for what is happening right now, derived from
+ * the running steps: the purpose of the latest lookup ("Looking up margin by
+ * department"), the tools being read when several run in parallel ("Checking
+ * Lightspeed and Xero"), or a plain stage phrase. Falls back to "Thinking"
+ * only when nothing concrete can be said.
+ */
+export function friendlyActivityLine(
+  steps: readonly Pick<TrailStep, "title" | "detail" | "status" | "stage" | "kind" | "governed">[],
+): ProgressShimmerLine {
+  const running = steps.filter((step) => step.status === "running");
+  if (running.length === 0) return { id: "thinking", text: "Thinking", connectors: [] };
+
+  const queries = running.filter((step) => step.kind === "sql" || step.stage === "query" || step.stage === "source_query" || step.governed);
+  const connectors = collectShimmerConnectors({ status: "", steps: queries });
+  // Several lookups in flight: name the tools rather than one arbitrary topic.
+  if (queries.length >= 2 && connectors.length > 0) {
+    return { id: `tools:${connectors.join(",")}`, text: formatCheckingTools(connectors), connectors };
+  }
+
+  const latest = running[running.length - 1]!;
+  const stage = latest.stage;
+  if (stage === "catalogue") return { id: "catalogue", text: "Finding the right data…", connectors: [] };
+  if (stage === "definition") return { id: "definition", text: "Checking how the figures are defined…", connectors: [] };
+  if (stage === "research") return { id: "research", text: "Researching definitions and stored values…", connectors: [] };
+  if (stage === "planning") return { id: "planning", text: "Planning", connectors: [] };
+
+  const purpose = laymanProgressStatus(latest.title, latest.detail ?? "").replace(/\.+$/u, "");
+  const usable = purpose && purpose.length <= 64 && !TECHNICAL_COPY.test(purpose) && !GENERIC_OWNER_THEMES.test(purpose);
+  if (usable) {
+    const text = /^(?:Looking|Checking|Reading|Finding|Comparing|Working|Matching|Counting|Pulling)\b/iu.test(purpose)
+      ? `${purpose}…`
+      : `Looking up ${purpose.charAt(0).toLowerCase()}${purpose.slice(1)}…`;
+    return { id: `text:${text.toLocaleLowerCase("en-AU")}`, text, connectors: [] };
+  }
+  if (connectors.length > 0) {
+    return { id: `tools:${connectors.join(",")}`, text: formatCheckingTools(connectors), connectors };
+  }
+  return { id: "numbers", text: "Looking up your numbers…", connectors: [] };
+}
+
+/**
+ * The status line shown while a turn runs. Owned by the trace root so the
+ * header and the live commentary share it. Before the plan card exists it
+ * reads "Planning"; afterwards it names what is actually happening, in the
+ * owner's terms, never internal labels.
  */
 function useProgressShimmer(
   model: TrailModel,
   streaming: boolean,
   reduceMotion: boolean,
 ): ProgressShimmer {
-  const [fillers] = useState(() => pickShimmerFillers(3));
   const [durationMs] = useState(() => Math.round(2400 + Math.random() * 600));
-  const liveStatus = highLevelProgressTheme({
-    theme: model.statusTheme,
-    stage: model.statusStage,
-    label: model.status || "Working",
-    detail: model.statusDetail,
-  });
-  const liveLine = useMemo(
-    () => liveProgressShimmerLine({
-      status: liveStatus,
-      statusDetail: model.statusDetail,
-      statusStage: model.statusStage,
-      sources: model.sources,
-      steps: model.steps,
-    }),
-    [liveStatus, model.statusDetail, model.statusStage, model.sources, model.steps],
+  const planning = streaming
+    && !model.plan
+    && !model.steps.some((step) => step.status === "running" && step.stage !== "planning");
+  const line = useMemo<ProgressShimmerLine>(
+    () => planning
+      ? { id: "planning", text: "Planning", connectors: [] }
+      : friendlyActivityLine(model.steps),
+    [planning, model.steps],
   );
-  const shimmerActivity = useMemo(
-    () => shimmerActivityFor({ statusStage: model.statusStage, steps: model.steps }),
-    [model.statusStage, model.steps],
-  );
-  const shimmerLines = useMemo(
-    () => collectProgressShimmerLines({
-      theme: model.statusTheme,
-      status: liveStatus,
-      statusDetail: model.statusDetail,
-      statusStage: model.statusStage,
-      sources: model.sources,
-      steps: model.steps,
-      commentary: model.commentaryUpdates.map((update) => update.text),
-      planLabels: model.plan?.steps.map((step) => step.label) ?? [],
-      fillers,
-    }),
-    [
-      fillers,
-      liveStatus,
-      model.commentaryUpdates,
-      model.plan,
-      model.sources,
-      model.statusDetail,
-      model.statusStage,
-      model.statusTheme,
-      model.steps,
-    ],
-  );
-  const [line, setLine] = useState(liveLine);
-
-  useEffect(() => {
-    setLine(liveLine);
-  }, [liveLine]);
-
-  useEffect(() => {
-    if (!streaming || reduceMotion || shimmerLines.length < 2) return;
-    let cancelled = false;
-    let timer = 0;
-    const schedule = () => {
-      timer = window.setTimeout(() => {
-        if (cancelled) return;
-        setLine((current) => pickNextProgressShimmerLine(shimmerLines, current.id));
-        schedule();
-      }, nextProgressShimmerDelayMs(shimmerActivity));
-    };
-    schedule();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [reduceMotion, shimmerActivity, shimmerLines, streaming]);
-
   return useMemo(() => ({
     line,
     durationMs,
@@ -1864,6 +1871,8 @@ function ThinkingTrail({
                       <span className={styles.spinner} />
                     ) : step.status === "error" ? (
                       <span className={styles.agentTrailStepIcon}><CrossIcon size={14} /></span>
+                    ) : step.status === "incomplete" ? (
+                      <span className={styles.agentTrailStepIcon}>–</span>
                     ) : (
                       <span className={styles.agentTrailStepIcon}><CheckIcon size={14} /></span>
                     )}
@@ -1914,26 +1923,187 @@ function ThinkingTrail({
   );
 }
 
+type ActivityBlock =
+  | Readonly<{ kind: "commentary"; id: string; text: string }>
+  | Readonly<{ kind: "activity"; id: string; steps: readonly TrailStep[] }>;
+
+/**
+ * Codex-style interleaving: each commentary paragraph is followed by the work
+ * that happened after it, grouped into one collapsible line. Groups are built
+ * from the trace order, so a query that started before a paragraph stays
+ * above it even if it finished later.
+ */
+function buildActivityBlocks(
+  trace: readonly TraceEntry[],
+  stepsById: ReadonlyMap<string, TrailStep>,
+): ActivityBlock[] {
+  const blocks: ActivityBlock[] = [];
+  let pending: TrailStep[] = [];
+  let pendingId = "lead";
+  const flush = () => {
+    if (pending.length > 0) blocks.push({ kind: "activity", id: `activity_${pendingId}`, steps: pending });
+    pending = [];
+  };
+  for (const entry of trace) {
+    if (entry.type === "commentary") {
+      flush();
+      blocks.push({ kind: "commentary", id: entry.id, text: entry.content });
+      pendingId = entry.id;
+      continue;
+    }
+    const step = stepsById.get(entry.stepId);
+    if (step) pending.push(step);
+  }
+  flush();
+  return blocks;
+}
+
+function activityKind(step: TrailStep): "query" | "catalogue" | "definition" | "research" | "planning" | "other" {
+  if (step.kind === "sql" || step.stage === "query" || step.stage === "source_query" || step.governed) return "query";
+  if (step.stage === "catalogue") return "catalogue";
+  if (step.stage === "definition") return "definition";
+  if (step.stage === "research") return "research";
+  if (step.stage === "planning") return "planning";
+  return "other";
+}
+
+/** Settled-group label: "Ran 3 queries · Read 2 definitions". */
+export function summarizeActivity(steps: readonly Pick<TrailStep, "kind" | "stage" | "governed" | "status">[]): string {
+  const counts = { query: 0, catalogue: 0, definition: 0, research: 0, planning: 0, other: 0, incomplete: 0 };
+  for (const step of steps) {
+    if (step.status === "incomplete") {
+      counts.incomplete += 1;
+      continue;
+    }
+    counts[activityKind(step as TrailStep)] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.query > 0) parts.push(counts.query === 1 ? "Ran 1 query" : `Ran ${counts.query} queries`);
+  if (counts.catalogue > 0) parts.push(counts.catalogue === 1 ? "Searched the catalogue" : `Searched the catalogue ${counts.catalogue} times`);
+  if (counts.definition > 0) parts.push(counts.definition === 1 ? "Read 1 definition" : `Read ${counts.definition} definitions`);
+  if (counts.research > 0) parts.push("Completed research");
+  if (counts.planning > 0) parts.push("Planned the work");
+  if (counts.incomplete > 0) parts.push(counts.incomplete === 1 ? "1 step stopped" : `${counts.incomplete} steps stopped`);
+  if (parts.length === 0) parts.push(counts.other === 1 ? "1 step" : `${counts.other} steps`);
+  return parts.join(" · ");
+}
+
+function ActivityGroup({
+  steps,
+  shimmer,
+  reduceMotion,
+  tail = false,
+}: {
+  steps: readonly TrailStep[];
+  shimmer: ProgressShimmer;
+  reduceMotion: boolean;
+  /**
+   * Only the last group hosts the status shimmer. A running group that a
+   * paragraph has already overtaken shows its label like a settled one, so
+   * there is never more than one shimmer on screen.
+   */
+  tail?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const running = steps.some((step) => step.status === "running");
+  const label = summarizeActivity(steps);
+  const showShimmer = running && tail;
+  return (
+    <div className={styles.activityGroup} data-running={running ? "true" : "false"}>
+      <button
+        type="button"
+        className={styles.activityHeader}
+        aria-expanded={open}
+        aria-label={showShimmer ? `${shimmer.line.text} ${label}` : label}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {showShimmer ? (
+          <ShimmerStatusLine shimmer={shimmer} verb="Thinking" reduceMotion={reduceMotion} />
+        ) : (
+          <span className={styles.activityLabel}>{label}</span>
+        )}
+        <span className={styles.activityChevron}><Chevron open={open} /></span>
+      </button>
+      <div
+        className={styles.expandPanel}
+        style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
+        data-duration="240"
+      >
+        <div className={styles.expandInner}>
+          <div className={styles.agentTrailSteps}>
+            {steps.map((step) => (
+              <div key={step.id} className={styles.agentTrailStep}>
+                {step.status === "running" ? (
+                  <span className={styles.spinner} />
+                ) : step.status === "error" ? (
+                  <span className={styles.agentTrailStepIcon}><CrossIcon size={14} /></span>
+                ) : step.status === "incomplete" ? (
+                  <span className={styles.agentTrailStepIcon}>–</span>
+                ) : (
+                  <span className={styles.agentTrailStepIcon}><CheckIcon size={14} /></span>
+                )}
+                <span className={styles.agentTrailStepBody}>
+                  <span className={styles.agentTrailStepTitle}>
+                    {step.governed?.connector ? (
+                      <span
+                        className={styles.stepToolLogo}
+                        title={`Data from ${CONNECTOR_NAMES[step.governed.connector]}`}
+                      >
+                        <Image
+                          src={CONNECTOR_LOGOS[step.governed.connector]}
+                          alt={CONNECTOR_NAMES[step.governed.connector]}
+                          width={11}
+                          height={11}
+                          unoptimized
+                        />
+                      </span>
+                    ) : null}
+                    {step.findings ? step.title : laymanProgressStatus(step.title, step.detail ?? "")}
+                  </span>
+                  {typeof step.rowCount === "number" ? (
+                    <span className={styles.stepMeta}>
+                      {step.rowCount.toLocaleString()} row{step.rowCount === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Sparse commentary stays visible while a longer turn runs, then folds into
- * the completed "Worked" trail. Routine query/tool events never enter here.
+ * the completed "Worked" trail. Routine query/tool events never enter here as
+ * prose: they appear as a collapsible activity line under the paragraph they
+ * followed, so the reader can click into what was done between findings.
  *
- * Each completed plan step lands as its own short paragraph (what that step
- * found), separated by whitespace rather than a timeline connector. The
- * rotating status shimmer sits directly under the newest paragraph, so the
- * reader's eye finds "what happened" and "what is happening now" together.
+ * Layout: commentary → activity → commentary → activity …, with a status
+ * shimmer at the bottom while the turn is still running.
  */
 function LiveCommentary({
-  updates,
+  model,
   shimmer,
   reduceMotion,
 }: {
-  updates: readonly TrailCommentaryUpdate[];
-  /** Present while the turn is still running; hosts the live status line. */
-  shimmer: ProgressShimmer | null;
+  model: TrailModel;
+  shimmer: ProgressShimmer;
   reduceMotion: boolean;
 }) {
-  if (updates.length === 0) return null;
+  const stepsById = useMemo(
+    () => new Map(model.steps.map((step) => [step.id, step] as const)),
+    [model.steps],
+  );
+  const blocks = useMemo(() => buildActivityBlocks(model.trace, stepsById), [model.trace, stepsById]);
+  if (blocks.length === 0) return null;
+  const commentaryIds = blocks.filter((block) => block.kind === "commentary").map((block) => block.id);
+  const latestCommentaryId = commentaryIds.at(-1);
+  const last = blocks.at(-1);
+  const tailRunning = last?.kind === "activity" && last.steps.some((step) => step.status === "running");
+  const itemTransition = reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const };
 
   return (
     <motion.div
@@ -1944,31 +2114,64 @@ function LiveCommentary({
       initial={reduceMotion ? false : { opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      transition={itemTransition}
     >
       <AnimatePresence initial={false}>
-        {updates.map((update, index) => {
-          const latest = index === updates.length - 1;
-          return (
-            <motion.p
-              key={update.id}
-              className={styles.liveCommentaryItem}
-              data-latest={latest ? "true" : "false"}
-              initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {update.text}
-            </motion.p>
-          );
-        })}
+        {blocks.map((block) => block.kind === "commentary" ? (
+          <motion.p
+            key={block.id}
+            className={styles.liveCommentaryItem}
+            data-latest={block.id === latestCommentaryId ? "true" : "false"}
+            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={itemTransition}
+          >
+            {block.text}
+          </motion.p>
+        ) : (
+          <motion.div
+            key={block.id}
+            initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={itemTransition}
+          >
+            <ActivityGroup
+              steps={block.steps}
+              shimmer={shimmer}
+              reduceMotion={reduceMotion}
+              tail={block.id === last?.id}
+            />
+          </motion.div>
+        ))}
       </AnimatePresence>
-      {shimmer ? (
+      {!tailRunning ? (
         <div className={styles.liveCommentaryStatus} aria-hidden>
-          <ShimmerStatusLine shimmer={shimmer} verb="Working" reduceMotion={reduceMotion} />
+          <ShimmerStatusLine shimmer={shimmer} verb="Thinking" reduceMotion={reduceMotion} />
         </div>
       ) : null}
     </motion.div>
+  );
+}
+
+function InitialAcknowledgement({
+  acknowledgement,
+  reduceMotion,
+}: {
+  acknowledgement: TrailCommentaryUpdate;
+  reduceMotion: boolean;
+}) {
+  return (
+    <motion.p
+      key={acknowledgement.id}
+      className={styles.initialAcknowledgement}
+      aria-live="polite"
+      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {acknowledgement.text}
+    </motion.p>
   );
 }
 
@@ -2036,6 +2239,8 @@ function DetailedQueryResult({
         </div>
       ) : step.status === "error" ? (
         <p className={styles.detailedQueryError}>{step.error || "This query could not be completed."}</p>
+      ) : step.status === "incomplete" ? (
+        <p className={styles.detailedQueryEmpty}>This query stopped before completion.</p>
       ) : !step.table ? (
         <p className={styles.detailedQueryEmpty}>
           {typeof step.rowCount === "number" && step.rowCount > 0
@@ -2065,6 +2270,7 @@ function ChartLoadingState() {
 
 function DetailedSupportStep({ step }: { step: TrailStep }) {
   if (step.chart) {
+    if (!step.chart.table) return null;
     return (
       <div className={styles.detailedChartArtifact}>
         <Suspense fallback={<ChartLoadingState />}>
@@ -2516,7 +2722,16 @@ export default function InsightsStyleTrace({
   const shimmer = useProgressShimmer(model, streaming, reduceMotion);
   // While step summaries are on screen the status shimmer lives under the
   // newest one; the header settles to a static "Working" so only one line moves.
+  // The initial acknowledgement is intentionally visible before the plan
+  // exists. As soon as any commentary arrives the header settles to "Working"
+  // and the live block below carries the "Thinking" shimmer.
   const commentaryLive = streaming && runtime === "v3" && model.commentaryUpdates.length > 0;
+  const acknowledgementLive = streaming
+    && runtime === "v3"
+    && Boolean(model.initialAcknowledgement)
+    && !model.answer
+    && !model.clarification
+    && !model.error;
 
   return (
     <div className={styles.root}>
@@ -2524,6 +2739,15 @@ export default function InsightsStyleTrace({
         <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} onAddToDashboard={onAddToDashboard} />
       ) : (
         <>
+          <AnimatePresence initial={false}>
+            {acknowledgementLive && model.initialAcknowledgement ? (
+              <InitialAcknowledgement
+                key={model.initialAcknowledgement.id}
+                acknowledgement={model.initialAcknowledgement}
+                reduceMotion={reduceMotion}
+              />
+            ) : null}
+          </AnimatePresence>
           <ThinkingTrail
             model={model}
             streaming={streaming}
@@ -2542,7 +2766,7 @@ export default function InsightsStyleTrace({
             {commentaryLive ? (
               <LiveCommentary
                 key="live-commentary"
-                updates={model.commentaryUpdates}
+                model={model}
                 shimmer={shimmer}
                 reduceMotion={reduceMotion}
               />
@@ -2638,16 +2862,7 @@ export default function InsightsStyleTrace({
                   disabled={!onFollowUp}
                   onClick={() => onFollowUp?.(followUp)}
                 >
-                  <svg className={styles.followUpIcon} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path
-                      d="M5.5 3.5h7v7M12.5 3.5 3.5 12.5"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>{followUp}</span>
+                  <span className={styles.followUpLabel}>{followUp}</span>
                 </button>
               ))}
             </div>

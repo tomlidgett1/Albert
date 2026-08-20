@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 import {
+  ANTHROPIC_HAIKU_4_5_RATE_CARD,
   OPENAI_GPT_5_6_RATE_CARD,
   XAI_GROK_4_6_RATE_CARD,
 } from "../../packages/usage-metering/src/index.ts";
@@ -50,4 +51,7 @@ test("settings usage lists per-query tokens and published API cost", () => {
   assert.equal(OPENAI_GPT_5_6_RATE_CARD.models["gpt-5.6-sol"].output, 30_000n);
   assert.equal(XAI_GROK_4_6_RATE_CARD.models["grok-4.6"].input, 2_000n);
   assert.equal(XAI_GROK_4_6_RATE_CARD.models["grok-4.6"].output, 6_000n);
+  assert.equal(ANTHROPIC_HAIKU_4_5_RATE_CARD.models["claude-haiku-4-5-20251001"].input, 1_000n);
+  assert.equal(ANTHROPIC_HAIKU_4_5_RATE_CARD.models["claude-haiku-4-5-20251001"].output, 5_000n);
+  assert.equal(ANTHROPIC_HAIKU_4_5_RATE_CARD.source, "https://platform.claude.com/docs/en/about-claude/pricing");
 });

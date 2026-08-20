@@ -84,7 +84,11 @@ export const XERO_API_PROFILES: Readonly<Record<XeroSpecTable["source"]["api"], 
     pageSizeParam: null,
     pageSize: 100,
     supportsIfModifiedSince: true,
-    supportsWhere: true,
+    // Payroll AU v1 answers HTTP 500 (no error body) to ANY `where=` clause
+    // (verified live 2026-08-20: order-only 200, where-only 500). The 500
+    // looked like an outage, was retried, and burned ~70 daily API calls per
+    // sync. If-Modified-Since is the supported incremental mechanism here.
+    supportsWhere: false,
     supportsOrder: true,
   },
   payroll_uk: {

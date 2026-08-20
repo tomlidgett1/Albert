@@ -666,14 +666,20 @@ test("model, Fast, and reasoning controls bind to the governed request and rende
         ),
       ),
   ).toEqual(["max", "xhigh", "high", "medium", "low", "none"]);
-  await expect(page.locator("[data-model-id]")).toHaveCount(4);
+  await expect(page.locator("[data-model-id]")).toHaveCount(5);
   expect(
     await page
       .locator("[data-model-id]")
       .evaluateAll((elements) =>
         elements.map((element) => element.getAttribute("data-model-id")),
       ),
-  ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "grok-4.6"]);
+  ).toEqual([
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.6-sol",
+    "grok-4.6",
+    "claude-haiku-4-5-20251001",
+  ]);
   await page.getByRole("radio", { name: "GPT 5.6 Terra", exact: true }).click();
   await expect(
     page.getByRole("radio", { name: "GPT 5.6 Terra", exact: true }),
@@ -799,6 +805,48 @@ test("Grok 4.6 selector binds official model id and Grok reasoning levels", asyn
       model: "grok-4.6",
       fastMode: true,
       reasoningEffort: "xhigh",
+    },
+  });
+});
+
+test("Claude Haiku 4.5 selector binds manual reasoning levels without Fast mode", async ({
+  page,
+}) => {
+  const capture = await openDashboard(page);
+  const composer = page.getByRole("textbox", { name: "Ask me anything" });
+  const settingsTrigger = page.getByTestId("model-run-controls-trigger");
+  await settingsTrigger.click();
+  await page.getByRole("radio", { name: "Claude Haiku 4.5", exact: true }).click();
+  await expect(
+    page.getByRole("radio", { name: "Claude Haiku 4.5", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Fast mode" })).toHaveCount(0);
+  await expect(
+    page.getByText(/Data is processed globally by Anthropic.*Haiku starts at Low.*High and Max can take minutes/u),
+  ).toBeVisible();
+  await expect(page.locator('[data-reasoning-effort="low"]')).toHaveAttribute("aria-pressed", "true");
+  expect(
+    await page
+      .locator("[data-reasoning-effort]")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-reasoning-effort")),
+      ),
+  ).toEqual(["max", "xhigh", "high", "medium", "low", "none"]);
+  await page.locator('[data-reasoning-effort="high"]').click();
+  await page.keyboard.press("Escape");
+  await expect(settingsTrigger).toHaveAttribute(
+    "aria-label",
+    /Claude Haiku 4\.5, Standard speed, high reasoning/u,
+  );
+  await composer.fill("Which categories performed best last month?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.conversationPayloads.length).toBe(1);
+  expect(capture.conversationPayloads[0]).toMatchObject({
+    message: "Which categories performed best last month?",
+    preferences: {
+      model: "claude-haiku-4-5-20251001",
+      fastMode: false,
+      reasoningEffort: "high",
     },
   });
 });

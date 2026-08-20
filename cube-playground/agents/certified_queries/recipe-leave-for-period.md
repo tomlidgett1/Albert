@@ -1,39 +1,53 @@
 ---
 user_request: >
-  Who is on leave in a period (approved leave, leave requests)?
+  Who is on leave (away) in a period - approved leave and pending requests, by person and day range?
 recipe: true
 presentation: list
-date_parameter: workforce_analytics.leave_starts
+date_parameter: workforce_analytics.leave_day
 answer_hint: >
-  List approved leave (person, type, dates); mention pending requests separately; ignore declined/cancelled.
+  Name who is away and on which dates (collapse consecutive days into a range per person); list approved leave first, mention 'Awaiting approval' requests separately, ignore declined/cancelled. If no rows, say nobody has leave in that period. A request that started before the period still counts if it covers days in it.
+empty_answer: >
+  nobody has leave (approved or pending) covering that period
 matches:
   - "Who's on leave this month?"
   - "Any leave coming up next month?"
   - "Who has leave booked?"
+  - "Who is away this week?"
+  - "Is anyone on holiday next week?"
+  - "Who's on leave today?"
 ---
 
 ```json
 {
   "measures": [
-    "workforce_analytics.leave_days",
-    "workforce_analytics.leave_hours"
+    "workforce_analytics.leave_day_count"
   ],
   "dimensions": [
-    "workforce_analytics.leave_staff",
-    "workforce_analytics.leave_type",
-    "workforce_analytics.leave_status",
-    "workforce_analytics.leave_starts",
-    "workforce_analytics.leave_ends"
+    "workforce_analytics.leave_day_staff",
+    "workforce_analytics.leave_day_type",
+    "workforce_analytics.leave_day_status",
+    "workforce_analytics.leave_day_request_starts",
+    "workforce_analytics.leave_day_request_ends"
   ],
   "timeDimensions": [
     {
-      "dimension": "workforce_analytics.leave_starts",
+      "dimension": "workforce_analytics.leave_day",
       "dateRange": "this month"
     }
   ],
+  "filters": [
+    {
+      "member": "workforce_analytics.leave_day_status",
+      "operator": "notEquals",
+      "values": [
+        "Declined",
+        "Cancelled"
+      ]
+    }
+  ],
   "order": {
-    "workforce_analytics.leave_starts": "asc"
+    "workforce_analytics.leave_day_request_starts": "asc"
   },
-  "limit": 100
+  "limit": 200
 }
 ```

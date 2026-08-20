@@ -5,6 +5,8 @@ recipe: true
 presentation: table
 answer_hint: >
   Lead with what is already overdue (count and total), then the bills due in the asked window; table of supplier, number, due date, amount, days overdue. Flag implausible due dates (e.g. 1954) as data quirks.
+empty_answer: >
+  there are no approved bills awaiting payment - nothing is unpaid or overdue
 matches:
   - "How many unpaid bills do we have?"
   - "Which bills are overdue?"

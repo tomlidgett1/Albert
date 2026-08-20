@@ -28,7 +28,7 @@ export type V3CommentaryState = {
 
 export type V3CommentaryDecision =
   | Readonly<{ accepted: true; text: string }>
-  | Readonly<{ accepted: false; reason: "disabled" | "duplicate" | "limit" | "no_new_evidence" | "plan_exists" }>;
+  | Readonly<{ accepted: false; reason: "disabled" | "duplicate" | "limit" | "no_new_evidence" | "plan_exists" | "no_fact" }>;
 
 export function createV3CommentaryState(
   enabled: boolean,
@@ -66,6 +66,33 @@ export function clipToSentence(value: string, max: number): string {
   return /[.!?]$/u.test(cut) ? cut : `${cut}…`;
 }
 
+const HEDGE_OPENERS = /^(?:[^:]{0,80}:\s*)?(?:not|no|unknown|n\/a|none|unclear|cannot|can't|could not|couldn't|insufficient|unable|the (?:governed|available) (?:views?|data|output)|a reliable)/iu;
+
+/**
+ * Owner commentary must carry a concrete fact: a figure (money, percentage,
+ * count, hours, date) and a claim about it. Method notes, hedges about what the
+ * data cannot support, and "I'll look at…" intentions are not findings and are
+ * dropped rather than shown as filler.
+ */
+export function looksLikeFinding(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (HEDGE_OPENERS.test(value)) return false;
+  if (/^(?:I['’]ll|I will|I am|I’m|Next,? I|Now I|Checking|Looking|Working)\b/iu.test(value)) return false;
+  // Method and coverage notes ("Analysis covers the 12 complete weeks…") carry
+  // numbers but no finding.
+  if (/^(?:[^:]{0,80}:\s*)?(?:analysis|the analysis|data|the data|figures|coverage|period|this (?:covers|uses|is based)|based on|using|queried|sample|the sample|method)\b/iu.test(value)) return false;
+  const hasFigure = /(?:\$\s?\d|\d[\d,]*(?:\.\d+)?\s?(?:%|percent|per cent|hours?|hrs|days?|weeks?|months?|years?|units?|jobs?|orders?|transactions?|sales|customers?|staff|shifts?|rows?|items?|k\b|m\b|x\b)|\b\d[\d,]*(?:\.\d+)?\b)/iu.test(value);
+  // A ranking claim ("Sunday is the weakest trading day") is a finding even
+  // before the figure is attached.
+  const hasRanking = /\b(?:weakest|strongest|largest|smallest|lowest|highest|best|worst|clearest|biggest|fewest|most|least|top|bottom|leading|only)\b/iu.test(value);
+  return hasFigure || hasRanking;
+}
+
+function looksLikeCompletedNoResult(text: string): boolean {
+  return /\b(?:no matching rows?|returned no rows?|nothing material|no material (?:change|finding|result)|no notable (?:change|finding|result))\b/iu.test(text);
+}
+
 function fingerprint(text: string): string {
   return text
     .toLocaleLowerCase("en-AU")
@@ -91,6 +118,11 @@ export function prepareV3CommentaryUpdate(input: Readonly<{
   }
   if (input.kind === "finding" && input.queryCount <= state.lastQueryCount) {
     return { accepted: false, reason: "no_new_evidence" };
+  }
+  if ((input.kind === "step" || input.kind === "finding")
+    && !looksLikeFinding(input.message)
+    && !(input.kind === "step" && looksLikeCompletedNoResult(input.message))) {
+    return { accepted: false, reason: "no_fact" };
   }
 
   const text = input.kind === "step"

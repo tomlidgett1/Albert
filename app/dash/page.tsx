@@ -7,7 +7,9 @@ import { useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
 import {
   DEFAULT_AGENT_PREFERENCES,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
   describeChatFailure,
+  isAnthropicModel,
   isXaiModel,
   normalizeAgentPreferences,
   type AgentRunPreferences,
@@ -48,6 +50,8 @@ import TenantDeletionWorkspace, {
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
+import MyDataWorkspace from "./components/MyDataWorkspace";
+import TestChartWorkspace from "./components/TestChartWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import styles from "./dash.module.css";
@@ -81,7 +85,21 @@ type IconName =
   | "chevronDown"
   | "leaf"
   | "sparkles"
-  | "dashboard";
+  | "dashboard"
+  | "database"
+  | "chart"
+  | "list";
+
+type ActiveItem =
+  | "Chat"
+  | "Dashboard"
+  | "My Data"
+  | "Test chart"
+  | "Connections"
+  | "Admin"
+  | "BusinessContext"
+  | "Organization"
+  | "Deletion";
 
 type Theme = "system" | "light" | "beige" | "sage" | "dark" | "green";
 
@@ -179,6 +197,19 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M20.2 11.2c0 4.5-3.7 8.1-8.3 8.1a8.8 8.8 0 0 1-3.2-.6l-4.7 1.2 1.2-4.3a7.8 7.8 0 0 1-1.5-4.4c0-4.5 3.7-8.1 8.2-8.1s8.3 3.6 8.3 8.1Z" /></svg>;
     case "dashboard":
       return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M10 10v10" /></svg>;
+    case "database":
+      return <svg {...shared}><ellipse cx="12" cy="5.5" rx="7.5" ry="3" /><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" /></svg>;
+    case "chart":
+      return <svg {...shared}><path d="M4 19V5M4 19h16" /><path d="M8 15v-3M12 15V8M16 15v-6" /></svg>;
+    case "list":
+      return (
+        <svg {...shared}>
+          <path d="M9 6h11M9 12h11M9 18h11" />
+          <circle cx="5" cy="6" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="5" cy="18" r="1.1" fill="currentColor" stroke="none" />
+        </svg>
+      );
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
@@ -245,6 +276,9 @@ function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture">
   }
   if (profile.runtime === "cubecore-v1" || profile.analyticalRuntime === "cubecore") {
     return "cubecore";
+  }
+  if (profile.model === CLAUDE_HAIKU_4_5_MODEL_ID) {
+    return "v3";
   }
   if (
     profile.runtime === "anthropic-agent-sdk"
@@ -642,7 +676,7 @@ export default function DashPage() {
   const [tenantDeletionReceipt, setTenantDeletionReceipt] = useState<TenantDeletionReceipt | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [accountError, setAccountError] = useState("");
-  const [activeItem, setActiveItem] = useState("Chat");
+  const [activeItem, setActiveItem] = useState<ActiveItem>("Chat");
   const dashboardRevisionRef = useRef<number | null>(null);
   const theme = useSyncExternalStore(
     subscribeToTheme,
@@ -1000,9 +1034,16 @@ export default function DashPage() {
       url.searchParams.delete("oauth_detail");
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     }
-    if (requestedView !== "Connections" && !nextOAuthNotice) return;
+    if (
+      requestedView !== "Connections"
+      && requestedView !== "MyData"
+      && requestedView !== "TestChart"
+      && !nextOAuthNotice
+    ) return;
     const task = window.setTimeout(() => {
-      if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
+      if (requestedView === "MyData") setActiveItem("My Data");
+      else if (requestedView === "TestChart") setActiveItem("Test chart");
+      else if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
       setOAuthNotice(nextOAuthNotice);
     }, 0);
     return () => window.clearTimeout(task);
@@ -2067,7 +2108,9 @@ export default function DashPage() {
       ? markConversationComputing(trackedConversationId)
       : null;
     const runPreferences = agentPreferencesRef.current;
-    const runRuntime = activeChatRuntimeRef.current === "xero_mcp"
+    const runRuntime = isAnthropicModel(runPreferences.model)
+      ? "v3"
+      : activeChatRuntimeRef.current === "xero_mcp"
       ? "xero_mcp"
       : isXaiModel(runPreferences.model)
         ? "v3"
@@ -3295,6 +3338,26 @@ export default function DashPage() {
             <Icon name="dashboard" />
             <span className={styles.sidebarActionLabel}>Dashboard</span>
           </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="My Data"
+            aria-current={activeItem === "My Data" ? "page" : undefined}
+            onClick={() => setActiveItem("My Data")}
+          >
+            <Icon name="database" />
+            <span className={styles.sidebarActionLabel}>My Data</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Test chart"
+            aria-current={activeItem === "Test chart" ? "page" : undefined}
+            onClick={() => setActiveItem("Test chart")}
+          >
+            <Icon name="chart" />
+            <span className={styles.sidebarActionLabel}>Test chart</span>
+          </button>
           <label className={`${styles.sidebarAction} ${styles.sidebarSearchAction} ${sidebarSearchOpen || query ? styles.sidebarSearchActionOpen : ""}`}>
             <Icon name="search" />
             <input
@@ -3622,12 +3685,6 @@ export default function DashPage() {
                   setAccountOpen(false);
                 }}
               ><Icon name="organization" /><span>About your business</span></button>
-              <a
-                href="/connector-specs.html"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setAccountOpen(false)}
-              ><Icon name="spec" /><span>Connector specs</span></a>
               {isInternalOperator ? (
                 <button
                   type="button"
@@ -3715,26 +3772,16 @@ export default function DashPage() {
                 </motion.h1>
               </AnimatePresence>
               <div className={styles.chatTopActions}>
-                <button
-                  className={`${styles.chatDetailedMode} ${activeChatRuntime === "xero_mcp" ? styles.chatDetailedModeActive : ""}`}
-                  type="button"
-                  aria-pressed={activeChatRuntime === "xero_mcp"}
-                  title="Live test: ask the official Xero MCP about this organisation"
-                  onClick={() => {
-                    if (activeChatRuntime === "xero_mcp") resetChat("v3");
-                    else resetChat("xero_mcp");
-                  }}
-                >
-                  XERO MCP
-                </button>
                 {chatMessages.length > 0 ? (
                   <button
-                    className={`${styles.chatDetailedMode} ${chatDetailedMode ? styles.chatDetailedModeActive : ""}`}
+                    className={`${styles.chatTakeawaysToggle} ${chatDetailedMode ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
+                    aria-label="Detailed mode"
                     aria-pressed={chatDetailedMode}
+                    title={chatDetailedMode ? "Hide detailed mode" : "Show detailed mode"}
                     onClick={() => setChatDetailedMode((current) => !current)}
                   >
-                    Detailed mode
+                    <Icon name="list" />
                   </button>
                 ) : null}
                 {rawDebugAvailable ? (
@@ -4169,6 +4216,12 @@ export default function DashPage() {
           </div>
         ) : activeItem === "Dashboard" ? (
           <DashboardWorkspace onOpenSource={(conversationId) => void openSavedConversation(conversationId)} />
+        ) : activeItem === "My Data" ? (
+          <MyDataWorkspace />
+        ) : activeItem === "Test chart" ? (
+          <TestChartWorkspace
+            appearance={theme === "dark" || theme === "green" ? "dark" : theme === "system" ? "system" : "light"}
+          />
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}

@@ -84,6 +84,33 @@ export function emptyTurnProvenance(timezone: string): TraceProvenance {
 
 export function buildTurnProvenance(context: V3TurnContext): TraceProvenance {
   if (context.executedQueries.length === 0) {
+    const definitions = context.definitionEvidence ?? [];
+    if (definitions.length > 0) {
+      const definitionDigest = createHash("sha256")
+        .update(JSON.stringify([...definitions].sort((left, right) => left.member.localeCompare(right.member))))
+        .digest("hex")
+        .slice(0, 16);
+      return {
+        // Definitions are model metadata, not a read of connector data, so no
+        // source freshness claim belongs here.
+        sources: [],
+        timeRange: {
+          label: "Not applicable — definition",
+          start: "not applicable",
+          end: "not applicable",
+          timezone: context.config.timezone,
+        },
+        definitions: definitions.map((definition) => ({
+          metric: definition.member,
+          label: definition.label,
+          definition: definition.definition,
+          view: definition.view,
+          kind: definition.kind,
+        })),
+        semanticBundleHash: `albert-v3-definitions-${definitionDigest}`,
+        identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+      };
+    }
     return emptyTurnProvenance(context.config.timezone);
   }
   const now = new Date().toISOString();
@@ -137,19 +164,25 @@ export function groundedAnswerState(input: Readonly<{
   freshnessQualified?: boolean;
   /** Governed result sets from earlier turns this turn re-used as evidence. */
   reusedResults?: number;
+  /** Governed semantic definitions selected and validated by the conceptual lane. */
+  definitionEvidenceCount?: number;
+  /** A recipe declared its empty result to be the answer (a verified true negative). */
+  emptyResultIsAnswer?: boolean;
 }>): AnswerState {
   let state = input.requested;
   // A prior turn's governed result re-used this turn is evidence: a subset,
   // re-sort or re-chart of it needs no new query to be grounded.
   const evidenceSets = input.queriesExecuted + (input.reusedResults ?? 0);
   if (evidenceSets === 0 && (state === "Verified" || state === "Exploratory")) {
-    state = input.lane === "explain"
+    state = input.lane === "conceptual" && (input.definitionEvidenceCount ?? 0) > 0
+      ? state
+      : input.lane === "explain"
       ? "Exploratory"
       : input.lane === "represent" || input.lane === "meta"
         ? state
         : "Unavailable";
   }
-  if (state === "Verified" && input.rowsSeen === 0 && !laneMayReusePriorResults(input.lane) && (input.reusedResults ?? 0) === 0) state = "No data";
+  if (state === "Verified" && input.rowsSeen === 0 && laneRequiresQueryEvidence(input.lane) && (input.reusedResults ?? 0) === 0 && !input.emptyResultIsAnswer) state = "No data";
   // A "verified" emptiness reaching past the sync watermark overstates
   // certainty: the data may simply not have arrived yet.
   if (input.freshnessQualified && (state === "Verified" || state === "No data")) {

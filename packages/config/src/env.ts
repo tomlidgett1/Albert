@@ -194,6 +194,7 @@ const databaseLoginByMode: Readonly<
 const SYDNEY_REGION = "ap-southeast-2";
 const AU_OPENAI_BASE_URL = "https://au.api.openai.com/v1";
 const XAI_API_BASE_URL = "https://api.x.ai/v1";
+const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 
 const webForbiddenProductionValues = Object.freeze([
   "CONTROL_PLANE_DATABASE_URL",
@@ -201,7 +202,6 @@ const webForbiddenProductionValues = Object.freeze([
   "DELETION_ANALYTICAL_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
-  "ANTHROPIC_API_KEY",
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
   "AWS_SESSION_TOKEN",
@@ -252,6 +252,7 @@ export const WEB_REMOTE_SERVICE_URL_NAMES = Object.freeze([
   "CUBECORE_BRIDGE_URL",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
+  "ANTHROPIC_BASE_URL",
   "WEBHOOK_GATEWAY_PUBLIC_URL",
   "SUPABASE_STORAGE_S3_ENDPOINT",
 ] as const);
@@ -527,11 +528,25 @@ export function inspectRuntimeEnvironment(
   ) {
     invalid.push("XAI_BASE_URL");
   }
+  if (
+    source.ANTHROPIC_BASE_URL?.trim()
+    && source.ANTHROPIC_BASE_URL.trim().replace(/\/+$/u, "") !== ANTHROPIC_API_BASE_URL
+  ) {
+    invalid.push("ANTHROPIC_BASE_URL");
+  }
 
   if (production) {
     if (mode === "web") {
       for (const name of webForbiddenProductionValues) {
         if (source[name]?.trim()) invalid.push(name);
+      }
+      if (source.ANTHROPIC_API_KEY?.trim()) {
+        if (source.ALBERT_ANTHROPIC_APP8_APPROVED?.trim() !== "true") {
+          invalid.push("ALBERT_ANTHROPIC_APP8_APPROVED");
+        }
+        if (source.ALBERT_ANTHROPIC_ZDR_APPROVED?.trim() !== "true") {
+          invalid.push("ALBERT_ANTHROPIC_ZDR_APPROVED");
+        }
       }
     }
     if (source.ALBERT_CONTROL_PLANE_REGION?.trim() !== SYDNEY_REGION) {

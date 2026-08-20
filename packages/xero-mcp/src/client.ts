@@ -82,7 +82,7 @@ export class XeroMcpClient {
       turnId: this.context.turnId,
       name,
       arguments: args,
-    }, 45_000, signal) as Promise<XeroMcpToolResult & {
+    }, 75_000, signal) as Promise<XeroMcpToolResult & {
       organisation: XeroMcpOrganisation;
       name: string;
     }>;

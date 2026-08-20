@@ -4,11 +4,14 @@
  * This module deliberately contains no provider SDK imports. It is safe to use
  * from the browser for rendering and from trusted services for validation.
  */
+import type { GroundedFlintSpec } from "./flint-grounded.js";
 
-export const ALBERT_MODEL_PROVIDERS = ["openai", "xai"] as const;
+export const ALBERT_MODEL_PROVIDERS = ["openai", "xai", "anthropic"] as const;
 export type AlbertModelProvider = (typeof ALBERT_MODEL_PROVIDERS)[number];
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1";
+export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
+export const CLAUDE_HAIKU_4_5_MODEL_ID = "claude-haiku-4-5-20251001";
 
 export const ALBERT_MODELS = [
   {
@@ -43,6 +46,14 @@ export const ALBERT_MODELS = [
     tier: "frontier",
     provider: "xai",
   },
+  {
+    id: CLAUDE_HAIKU_4_5_MODEL_ID,
+    label: "Claude Haiku 4.5",
+    shortLabel: "Haiku",
+    description: "Anthropic fast reasoning",
+    tier: "efficient",
+    provider: "anthropic",
+  },
 ] as const;
 
 export type AlbertModelId = (typeof ALBERT_MODELS)[number]["id"];
@@ -71,6 +82,30 @@ export const GROK_REASONING_EFFORTS = [
 
 export type GrokReasoningEffort = (typeof GROK_REASONING_EFFORTS)[number];
 
+/**
+ * Haiku 4.5 predates Anthropic's `output_config.effort` control. Albert maps
+ * its shared effort labels onto manual extended-thinking token budgets. The
+ * values are application policy, not provider-native effort names.
+ */
+export const HAIKU_THINKING_BUDGET_TOKENS = Object.freeze({
+  none: 0,
+  low: 1_024,
+  medium: 4_096,
+  high: 8_192,
+  xhigh: 16_000,
+  max: 32_000,
+} as const satisfies Readonly<Record<ReasoningEffort, number>>);
+
+/** Leaves at least 8k tokens for Haiku's structured answer/tool call. */
+export const HAIKU_MAX_OUTPUT_TOKENS = Object.freeze({
+  none: 8_192,
+  low: 9_216,
+  medium: 12_288,
+  high: 16_384,
+  xhigh: 24_192,
+  max: 40_192,
+} as const satisfies Readonly<Record<ReasoningEffort, number>>);
+
 export type AgentRunPreferences = Readonly<{
   model: AlbertModelId;
   reasoningEffort: ReasoningEffort;
@@ -81,7 +116,7 @@ export type AgentRunPreferences = Readonly<{
 export const DEFAULT_AGENT_PREFERENCES: AgentRunPreferences = Object.freeze({
   model: "gpt-5.6-luna",
   reasoningEffort: "max",
-  fastMode: false,
+  fastMode: true,
 });
 
 const modelIds = new Set<string>(ALBERT_MODEL_IDS);
@@ -113,8 +148,12 @@ export function isXaiModel(id: AlbertModelId): boolean {
   return providerForModel(id) === "xai";
 }
 
+export function isAnthropicModel(id: AlbertModelId): boolean {
+  return providerForModel(id) === "anthropic";
+}
+
 export function modelSupportsFastMode(id: AlbertModelId): boolean {
-  return isAlbertModelId(id);
+  return !isAnthropicModel(id);
 }
 
 /**
@@ -124,7 +163,7 @@ export function modelSupportsFastMode(id: AlbertModelId): boolean {
 export function serviceTierForPreferences(
   preferences: AgentRunPreferences,
 ): "default" | "fast" | "priority" {
-  if (!preferences.fastMode) return "default";
+  if (!preferences.fastMode || !modelSupportsFastMode(preferences.model)) return "default";
   return isXaiModel(preferences.model) ? "priority" : "fast";
 }
 
@@ -155,9 +194,9 @@ export type ResolvedAlbertModelTransport = Readonly<{
 }>;
 
 /**
- * Resolves the Responses API endpoint for the selected model. GPT profiles
- * stay on the configured OpenAI base URL. Grok 4.6 uses the official xAI
- * endpoint and never reuses the OpenAI key or AU OpenAI host.
+ * Resolves the native endpoint for the selected model. GPT profiles stay on
+ * the configured OpenAI base URL, Grok 4.6 uses xAI Responses, and Haiku uses
+ * Anthropic Messages. Provider credentials are never reused across hosts.
  */
 export function resolveAlbertModelTransport(input: Readonly<{
   model: AlbertModelId;
@@ -165,7 +204,23 @@ export function resolveAlbertModelTransport(input: Readonly<{
   openaiBaseUrl?: string;
   xaiApiKey?: string;
   xaiBaseUrl?: string;
+  anthropicApiKey?: string;
+  anthropicBaseUrl?: string;
 }>): ResolvedAlbertModelTransport {
+  if (isAnthropicModel(input.model)) {
+    const apiKey = input.anthropicApiKey?.trim() ?? "";
+    if (!apiKey) {
+      throw new Error("Claude Haiku 4.5 is not configured on this Albert environment.");
+    }
+    const baseUrl = (input.anthropicBaseUrl?.trim() || ANTHROPIC_API_BASE_URL).replace(/\/+$/u, "");
+    return Object.freeze({
+      provider: "anthropic",
+      model: input.model,
+      apiKey,
+      baseUrl,
+    });
+  }
+
   if (isXaiModel(input.model)) {
     const apiKey = input.xaiApiKey?.trim() ?? "";
     if (!apiKey) {
@@ -313,6 +368,7 @@ export interface TraceEventBase {
  */
 export type TraceProgressStage =
   | "planning"
+  | "research"
   | "catalogue"
   | "definition"
   | "capabilities"
@@ -345,10 +401,32 @@ export interface TraceProgressEvent extends TraceEventBase {
 
 export interface TraceNarrativeEvent extends TraceEventBase {
   type: "narrative";
+  /** Separates the pre-plan acknowledgement from evidence-backed commentary. */
+  purpose?: "acknowledgement";
   text: string;
 }
 
-export type TracePlanStepStatus = "pending" | "active" | "done";
+export type TracePlanStepStatus =
+  | "pending"
+  | "active"
+  | "done"
+  | "blocked"
+  | "incomplete";
+
+export type TracePlanStepKind = "evidence" | "synthesis";
+
+export type TracePlanStep = Readonly<{
+  /** Stable within one turn so evidence can be attached without label matching. */
+  id: string;
+  label: string;
+  status: TracePlanStepStatus;
+  /** Evidence steps need governed result references before they may be done. */
+  kind: TracePlanStepKind;
+  /** Successful governed result sets that support this exact step. */
+  evidenceResultIds: readonly string[];
+  /** Owner-safe explanation for blocked or incomplete terminal states. */
+  statusDetail?: string;
+}>;
 
 /**
  * The agent's visible working plan: short owner-readable steps ticked off as
@@ -357,10 +435,7 @@ export type TracePlanStepStatus = "pending" | "active" | "done";
  */
 export interface TracePlanEvent extends TraceEventBase {
   type: "plan";
-  steps: readonly Readonly<{
-    label: string;
-    status: TracePlanStepStatus;
-  }>[];
+  steps: readonly TracePlanStep[];
 }
 
 export interface TraceQueryEvent extends TraceEventBase {
@@ -502,6 +577,13 @@ export interface TraceTableEvent extends TraceEventBase {
   provenance: TraceProvenance;
   /** Answer tables render beside prose; evidence tables remain in the query trail. */
   presentation?: "evidence" | "answer";
+  /**
+   * Rendering hint. "financial_statement" marks a statement-shaped table
+   * (section, line, one currency column per period — a P&L, balance sheet or
+   * trial balance) so the dashboard renders it as an accountant's statement
+   * (section groups, indented lines, ruled totals) instead of a data grid.
+   */
+  layout?: "financial_statement";
   /** Present only when trusted server code can safely replay this table. */
   dashboardReplay?: DashboardReplayRef;
   /** Present with `derived_v1`; the digest is carried by `dashboardReplay`. */
@@ -522,6 +604,13 @@ export interface TraceChartEvent extends TraceEventBase {
   }>[];
   /** Bar orientation requested by the turn; the renderer decides when absent. */
   orientation?: "vertical" | "horizontal";
+  /** Bars only: stack the series (composition) instead of grouping them (comparison). */
+  stacked?: boolean;
+  /**
+   * Trusted Flint compile target for the browser renderer. Never carries plot
+   * rows; the client binds `dataRef`. Absent on historical chart events.
+   */
+  flint?: GroundedFlintSpec;
 }
 
 export interface TraceValidationEvent extends TraceEventBase {
@@ -681,6 +770,8 @@ export function assertOrderedSanitizedTrace(
   events: readonly TraceEvent[],
 ): readonly TraceEvent[] {
   const ids = new Set<string>();
+  const successfulResultIds = new Set<string>();
+  let previousPlan: readonly TracePlanStep[] | undefined;
 
   events.forEach((event, index) => {
     const expectedSequence = index + 1;
@@ -699,6 +790,54 @@ export function assertOrderedSanitizedTrace(
       if (event.progress < 0 || event.progress > 1) {
         throw new Error(`Trace event ${event.id} has progress outside 0..1.`);
       }
+    }
+    if (event.type === "table" && event.status === "complete") {
+      successfulResultIds.add(event.resultId);
+    }
+    if (event.type === "plan") {
+      const stepIds = event.steps.map(({ id }) => id);
+      if (stepIds.some((id) => !/^[a-z][a-z0-9_-]{2,47}$/u.test(id)) || new Set(stepIds).size !== stepIds.length) {
+        throw new Error(`Trace plan ${event.id} has missing, invalid or duplicate step ids.`);
+      }
+      if (event.steps.filter(({ status }) => status === "active").length > 1) {
+        throw new Error(`Trace plan ${event.id} has more than one active step.`);
+      }
+      for (const step of event.steps) {
+        if (new Set(step.evidenceResultIds).size !== step.evidenceResultIds.length) {
+          throw new Error(`Trace plan step ${step.id} has duplicate evidence references.`);
+        }
+        const unknown = step.evidenceResultIds.filter((resultId) => !successfulResultIds.has(resultId));
+        if (unknown.length > 0) {
+          throw new Error(`Trace plan step ${step.id} cites result evidence that was not emitted successfully first.`);
+        }
+        if (step.status === "done" && step.evidenceResultIds.length === 0) {
+          throw new Error(`Trace plan step ${step.id} is done without result evidence.`);
+        }
+        if ((step.status === "blocked" || step.status === "incomplete") && !step.statusDetail?.trim()) {
+          throw new Error(`Trace plan step ${step.id} is ${step.status} without an owner-safe reason.`);
+        }
+      }
+      if (previousPlan) {
+        if (previousPlan.length !== event.steps.length) {
+          throw new Error(`Trace plan ${event.id} changed its step count.`);
+        }
+        event.steps.forEach((step, stepIndex) => {
+          const previous = previousPlan![stepIndex]!;
+          if (step.id !== previous.id || step.kind !== previous.kind) {
+            throw new Error(`Trace plan ${event.id} changed stable step identity or order.`);
+          }
+          if (["done", "blocked", "incomplete"].includes(previous.status) && step.status !== previous.status) {
+            throw new Error(`Trace plan step ${step.id} regressed from ${previous.status}.`);
+          }
+          if (previous.evidenceResultIds.some((resultId) => !step.evidenceResultIds.includes(resultId))) {
+            throw new Error(`Trace plan step ${step.id} removed earlier evidence.`);
+          }
+        });
+      }
+      previousPlan = event.steps;
+    }
+    if (event.type === "answer" && previousPlan?.some(({ status }) => status === "pending" || status === "active")) {
+      throw new Error(`Trace answer ${event.id} was emitted before the visible plan reached truthful terminal states.`);
     }
 
     ids.add(event.id);

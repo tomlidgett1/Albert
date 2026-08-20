@@ -58,6 +58,29 @@ export default defineConfig(async () => {
         : {}),
     },
     plugins: [
+      {
+        name: "albert-stub-vega-on-worker",
+        applyToEnvironment(environment) {
+          return environment.name === "rsc" || environment.name === "ssr";
+        },
+        resolveId(id) {
+          if (
+            id === "vega"
+            || id === "vega-lite"
+            || id === "vega-embed"
+            || id === "vega-interpreter"
+          ) {
+            return `\0albert-vega-stub:${id}`;
+          }
+          return undefined;
+        },
+        load(id) {
+          if (id.startsWith("\0albert-vega-stub:")) {
+            return "export default {};\nexport const expressionInterpreter = {};\n";
+          }
+          return undefined;
+        },
+      },
       vinext(),
       sites(),
       cloudflare({

@@ -12,6 +12,10 @@ configuration of:
   payroll_region         optional AU|NZ|UK override (else read from Organisation.Version)
   include_optional       "true" to also walk optional fan-outs (CIS, contact groups, …)
   reports_interval_hours how often to refresh the Reports tables (default 6)
+  xero_daily_reserve     daily Xero calls the sync must never spend, kept for
+                         Albert's live report calls (default 200)
+  xero_reports_headroom  extra calls kept back while a Reports refresh is due
+                         so the statements always land (default 60)
   xero_access_token      DEBUG ONLY: static token instead of the broker
 
 Tables are Albert's `source_xero.*` staging shapes (generated from
@@ -75,7 +79,22 @@ def update(configuration: dict, state: dict):
 
 
 def _update(configuration: dict, state: dict):
-    client = XeroClient(configuration)
+    # Daily-allowance discipline. Xero gives this (uncertified) app 1,000 calls
+    # a day per organisation and the SAME allowance serves Albert's live Xero
+    # report calls (balance sheet, bank balances, aged receivables). The sync
+    # therefore never spends the last `xero_daily_reserve` calls, and keeps a
+    # further `xero_reports_headroom` untouched while the Reports API refresh
+    # is still due, because Xero's own statements (P&L, balance sheet, bank
+    # summary) are worth more to the owner than one more hourly document walk.
+    live_reserve = int(configuration.get("xero_daily_reserve") or 200)
+    reports_headroom = int(configuration.get("xero_reports_headroom") or 60)
+
+    interval_hours = float(configuration.get("reports_interval_hours") or 6)
+    reports_state = state.setdefault("reports", {})
+    last_reports = parse_datetime(reports_state.get("last_run")) if reports_state.get("last_run") else None
+    reports_due = last_reports is None or datetime.now(timezone.utc) - last_reports >= timedelta(hours=interval_hours)
+
+    client = XeroClient(configuration, daily_reserve=live_reserve + (reports_headroom if reports_due else 0))
     log.info("Albert Xero sync starting")
 
     sync = XeroSync(configuration, state, _emit, _checkpoint, client=client)
@@ -89,24 +108,36 @@ def _update(configuration: dict, state: dict):
         "fan_outs": summary.get("fan_outs"),
         "rows": summary.get("rows"),
         "calls": summary.get("calls"),
+        "skipped_in_cooldown": summary.get("skipped_in_cooldown"),
+        "day_remaining": summary.get("day_remaining"),
         "stopped_early": summary.get("stopped_early"),
     }
 
-    interval_hours = float(configuration.get("reports_interval_hours") or 6)
-    reports_state = state.setdefault("reports", {})
-    last_run = parse_datetime(reports_state.get("last_run")) if reports_state.get("last_run") else None
-    due = last_run is None or datetime.now(timezone.utc) - last_run >= timedelta(hours=interval_hours)
-    if due and not summary.get("stopped_early"):
+    # Reports run whenever they are due and the hard daily limit is not hit;
+    # a walk that stopped early only because it reached the reserve still
+    # leaves the reports headroom, so the statements refresh.
+    hard_limit = bool(summary.get("stopped_early")) and not client.reserve_exhausted()
+    hard_limit = hard_limit or client.day_remaining == 0
+    if reports_due and not hard_limit:
+        client.daily_reserve = live_reserve
         organisation = _organisation(client)
         reports = XeroReports(client, _emit, organisation)
         try:
             report_summary = reports.run()
             reports_state["last_run"] = datetime.now(timezone.utc).isoformat()
+            reports_state["last_summary"] = {
+                "at": reports_state["last_run"],
+                "rows": report_summary.get("rows"),
+                "calls": report_summary.get("calls"),
+                "completed": report_summary.get("completed"),
+                "failed": report_summary.get("failed"),
+            }
             log.info(f"Reports: {json.dumps(report_summary)}")
         except Exception as error:  # noqa: BLE001 - reports must not fail the whole sync
+            reports_state["last_error"] = {"at": datetime.now(timezone.utc).isoformat(), "message": str(error)[:300]}
             log.warning(f"Reports run failed and will retry next sync: {error}")
     op.checkpoint(state=state)
-    log.info(f"Albert Xero sync finished: {sync.client.calls} Xero calls")
+    log.info(f"Albert Xero sync finished: {client.calls} Xero calls, day_remaining={client.day_remaining}")
 
 
 connector = Connector(update=update, schema=schema)
