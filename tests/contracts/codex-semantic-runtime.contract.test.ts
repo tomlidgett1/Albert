@@ -78,6 +78,31 @@ lines.on("line", (line) => {
         params: {
           threadId,
           turnId,
+          item: { type: "error", id: "stream_retry", message: "stream error: response_closed; retrying after 232ms" },
+        },
+      });
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: { type: "error", id: "stream_retry", message: "stream error: response_closed; retrying after 232ms" },
+        },
+      });
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId,
+          item: { type: "sleep", id: "retry_backoff", durationMs: 232 },
+        },
+      });
+      send({ method: "currentTime/read", id: 59, params: {} });
+      send({
+        method: "item/started",
+        params: {
+          threadId,
+          turnId,
           item: { type: "agentMessage", id: "commentary_safe", text: "", phase: "commentary" },
         },
       });

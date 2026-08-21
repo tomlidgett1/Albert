@@ -76,6 +76,12 @@ function publicFailure(error: unknown): Readonly<{ code: string; message: string
   if (/forbidden/iu.test(message)) {
     return { code: "codex_forbidden_capability", message: "Codex attempted a capability this experiment does not permit." };
   }
+  if (/structured output|output schema/iu.test(message)) {
+    return { code: "codex_invalid_output", message: "Codex rejected the analytical output contract before answering." };
+  }
+  if (/timed out/iu.test(message)) {
+    return { code: "codex_turn_timeout", message: "The Codex analysis ran out of time before finishing." };
+  }
   return { code: "codex_runtime_failed", message: "The Codex analysis could not be completed safely." };
 }
 

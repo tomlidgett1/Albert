@@ -90,6 +90,12 @@ server.listen(config.port, "0.0.0.0", () => {
   })}\n`);
 });
 
-const shutdown = () => server.close(() => process.exit(0));
+const shutdown = () => {
+  server.close(() => process.exit(0));
+  server.closeIdleConnections();
+  // A running Codex turn (spawned CLI child) or a lingering connection must
+  // not block replacement: force the exit after a short drain window.
+  setTimeout(() => process.exit(0), 5_000).unref();
+};
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);

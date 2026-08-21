@@ -403,8 +403,12 @@ class CodexJsonRpcSession {
 
   private async handleServerRequest(id: number, method: string, params: unknown): Promise<void> {
     if (method !== "item/tool/call" || !isObject(params)) {
+      // Denying the request is the isolation boundary: approvals, user-input
+      // prompts and utility reads (currentTime/read and friends) all fail
+      // closed through this error reply. Killing the whole analysis on benign
+      // protocol chatter previously turned long turns into hard failures.
       this.write({ id, error: { code: -32_601, message: "Albert does not expose this Codex capability." } });
-      throw new Error(`Codex requested the forbidden ${method} capability.`);
+      return;
     }
     const call: CodexDynamicToolCall = {
       threadId: asString(params.threadId) ?? "",
@@ -486,7 +490,7 @@ function appServerErrorMessage(error: unknown): string {
 }
 
 function isTransientModelTurnFailure(error: unknown): boolean {
-  return /(?:response_closed|response closed|stream (?:closed|ended)|connection (?:closed|reset)|ECONNRESET|temporarily unavailable|server_error)/iu
+  return /(?:response_closed|response closed|stream (?:closed|ended|disconnected|error)|connection (?:closed|reset)|ECONNRESET|temporarily unavailable|server_error|rate limit)/iu
     .test(appServerErrorMessage(error));
 }
 

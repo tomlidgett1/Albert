@@ -12,6 +12,7 @@ import {
   ALBERT_CODEX_RUNTIME,
   ALBERT_CODEX_MODEL_IDS,
   CodexRuntimeServiceClient,
+  CodexRuntimeServiceError,
   codexSocialProvenance,
   codexSocialReply,
   codexConversationRequestSchema,
@@ -170,6 +171,20 @@ function boundedCodexPriorResults(
 }
 
 function publicCodexFailure(error: unknown): string {
+  if (error instanceof CodexRuntimeServiceError) {
+    const byCode: Readonly<Record<string, string>> = {
+      codex_forbidden_capability: "The Codex isolation check rejected an external capability. No business data was sent.",
+      codex_runtime_unavailable: "The pinned Codex runtime is unavailable on this environment.",
+      codex_semantic_unavailable: "The governed semantic layer was unavailable to Codex.",
+      codex_overloaded: "The Codex experiment is at capacity. Try again shortly.",
+      codex_cancelled: "The Codex analysis was cancelled before it finished.",
+      codex_invalid_output: "Codex rejected the analytical output contract before answering.",
+      codex_turn_timeout: "The Codex analysis ran out of time before finishing.",
+      replayed_request: "This Codex request was already used. Ask the question again.",
+    };
+    const mapped = byCode[error.code];
+    if (mapped) return mapped;
+  }
   const detail = error instanceof Error ? error.message : "";
   if (/external instruction source|external workspace root|external MCP|forbidden .* capability/iu.test(detail)) {
     return "The Codex isolation check rejected an external capability. No business data was sent.";

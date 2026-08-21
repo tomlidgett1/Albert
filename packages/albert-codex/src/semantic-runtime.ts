@@ -361,7 +361,15 @@ function forbiddenItemType(method: string, params: unknown): string | null {
     return null;
   }
   const type = typeof params.item.type === "string" ? params.item.type : "unknown";
-  const allowed = new Set(["userMessage", "agentMessage", "reasoning", "plan", "dynamicToolCall", "contextCompaction"]);
+  // "sleep" and "error" are not capabilities: the pinned Codex CLI emits them
+  // as informational items around internal retries and back-off. Aborting on
+  // one turned long analyses into a coin flip. Real capability items
+  // (commandExecution, fileChange, webSearch, mcpToolCall, imageView,
+  // imageGeneration, collabAgentToolCall, subAgentActivity, hookPrompt)
+  // remain forbidden.
+  const allowed = new Set([
+    "userMessage", "agentMessage", "reasoning", "plan", "dynamicToolCall", "contextCompaction", "sleep", "error",
+  ]);
   return allowed.has(type) ? null : type;
 }
 
@@ -2184,54 +2192,66 @@ export async function runCodexSemanticTurn(
   });
   let appServerResult: Awaited<ReturnType<typeof runCodexAppServerTurn>>;
   const appServerStartedAt = Date.now();
+  const attemptEvidenceRecovery = (): ReturnType<typeof buildCodexEvidenceRecoveryAnswer> => {
+    // A defect inside recovery must degrade to the original failure, never
+    // replace a recoverable turn with a new unexplained hard error.
+    try {
+      return buildCodexEvidenceRecoveryAnswer({
+        question: turn.message,
+        evidence,
+        findings: evidenceUpdateState.findings,
+      });
+    } catch {
+      return null;
+    }
+  };
+  const publishEvidenceRecovery = async (
+    recovered: NonNullable<ReturnType<typeof buildCodexEvidenceRecoveryAnswer>>,
+  ): Promise<CodexSemanticTurnResult> => {
+    for (const resultId of recovered.final.presentedResultIds) await materializePriorResult(resultId);
+    await transitionCodexPlan((current) => current ? settleCodexPlan(current, recovered.final.state) : current)
+      .catch(() => undefined);
+    await options.emit({
+      type: "validation",
+      status: "warning",
+      name: "Codex evidence recovery",
+      outcome: "passed",
+      detail: "The isolated Codex process ended after evidence retrieval. Albert published only claims revalidated against successful governed result cells.",
+    });
+    const presented = recovered.final.presentedResultIds
+      .map((resultId) => evidence.find((result) => result.resultId === resultId))
+      .filter((result): result is CodexEvidenceResult => Boolean(result));
+    await options.emit({
+      type: "answer",
+      status: "complete",
+      state: recovered.final.state,
+      text: recovered.final.answer,
+      provenance: answerProvenance(evidence, config.timezone, definitionEvidence),
+      followUps: recovered.final.followUps,
+      presentedResultIds: recovered.final.presentedResultIds,
+      presentedTables: presented.map((result) => ({
+        caption: result.topic,
+        columns: result.columns.map((column) => column.label),
+        rowCount: result.rowCount,
+        rows: result.rows.slice(0, 40).map((row) => result.columns.map((column) => row[column.key] ?? null)),
+      })),
+      claims: recovered.claims,
+    });
+    return {
+      answerState: recovered.final.state,
+      queriesExecuted,
+      codexThreadId: "evidence-recovery",
+      codexTurnId: "evidence-recovery",
+      durationMs: Date.now() - appServerStartedAt,
+    };
+  };
   try {
     appServerResult = await appServerRun;
   } catch (error) {
     const recovered = recoverableHarnessFailure(error, options.signal)
-      ? buildCodexEvidenceRecoveryAnswer({
-          question: turn.message,
-          evidence,
-          findings: evidenceUpdateState.findings,
-        })
+      ? attemptEvidenceRecovery()
       : null;
-    if (recovered) {
-      for (const resultId of recovered.final.presentedResultIds) await materializePriorResult(resultId);
-      await transitionCodexPlan((current) => current ? settleCodexPlan(current, recovered.final.state) : current)
-        .catch(() => undefined);
-      await options.emit({
-        type: "validation",
-        status: "warning",
-        name: "Codex evidence recovery",
-        outcome: "passed",
-        detail: "The isolated Codex process ended after evidence retrieval. Albert published only claims revalidated against successful governed result cells.",
-      });
-      const presented = recovered.final.presentedResultIds
-        .map((resultId) => evidence.find((result) => result.resultId === resultId))
-        .filter((result): result is CodexEvidenceResult => Boolean(result));
-      await options.emit({
-        type: "answer",
-        status: "complete",
-        state: recovered.final.state,
-        text: recovered.final.answer,
-        provenance: answerProvenance(evidence, config.timezone, definitionEvidence),
-        followUps: recovered.final.followUps,
-        presentedResultIds: recovered.final.presentedResultIds,
-        presentedTables: presented.map((result) => ({
-          caption: result.topic,
-          columns: result.columns.map((column) => column.label),
-          rowCount: result.rowCount,
-          rows: result.rows.slice(0, 40).map((row) => result.columns.map((column) => row[column.key] ?? null)),
-        })),
-        claims: recovered.claims,
-      });
-      return {
-        answerState: recovered.final.state,
-        queriesExecuted,
-        codexThreadId: "evidence-recovery",
-        codexTurnId: "evidence-recovery",
-        durationMs: Date.now() - appServerStartedAt,
-      };
-    }
+    if (recovered) return await publishEvidenceRecovery(recovered);
     await transitionCodexPlan((current) => current ? settleCodexPlan(current, "Unavailable") : current)
       .catch(() => undefined);
     throw error;
@@ -2241,6 +2261,10 @@ export async function runCodexSemanticTurn(
   try {
     draft = acceptedCandidate?.draft ?? parseFinalMessage(appServerResult.finalMessage);
   } catch (error) {
+    // A terminal message that cannot be parsed is a model output defect, not
+    // an isolation event; salvage the successful governed evidence.
+    const recovered = attemptEvidenceRecovery();
+    if (recovered) return await publishEvidenceRecovery(recovered);
     await transitionCodexPlan((current) => current ? settleCodexPlan(current, "Unavailable") : current)
       .catch(() => undefined);
     throw error;
