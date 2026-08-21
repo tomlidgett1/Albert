@@ -193,6 +193,7 @@ export function validateReleaseEnvironment(source, project, authConfig = null) {
     cleanHttpsOrigin(required(source, "SEMANTIC_QUERY_SERVICE_URL"), "SEMANTIC_QUERY_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "CUBE_API_URL"), "CUBE_API_URL"),
     cleanHttpsOrigin(required(source, "OPERATOR_DIAGNOSTIC_SERVICE_URL"), "OPERATOR_DIAGNOSTIC_SERVICE_URL"),
+    cleanHttpsOrigin(required(source, "CODEX_RUNTIME_SERVICE_URL"), "CODEX_RUNTIME_SERVICE_URL"),
     cleanHttpsOrigin(required(source, "SYNC_WORKER_INTERNAL_URL"), "SYNC_WORKER_INTERNAL_URL"),
     cleanHttpsOrigin(required(source, "WEBHOOK_GATEWAY_PUBLIC_URL"), "WEBHOOK_GATEWAY_PUBLIC_URL"),
   ];
@@ -225,6 +226,7 @@ export function validateReleaseEnvironment(source, project, authConfig = null) {
     "FLY_WEBHOOK_APP",
     "FLY_DELETION_APP",
     "FLY_OPERATOR_DIAGNOSTIC_APP",
+    "FLY_CODEX_RUNTIME_APP",
     "FLY_SYNC_AUTOSCALER_APP",
     "FLY_TRANSFORM_AUTOSCALER_APP",
   ].map((name) => {

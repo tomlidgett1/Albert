@@ -36,6 +36,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+
+function isRealIsoDate(value: string): boolean {
+  const match = ISO_DATE.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+function explicitDateRange(value: string | readonly [string, string]): readonly [string, string] | null {
+  const pair = typeof value === "string" ? value.split(",") : [...value];
+  if (pair.length !== 2) return null;
+  const start = pair[0]?.trim() ?? "";
+  const end = pair[1]?.trim() ?? "";
+  if (!isRealIsoDate(start) || !isRealIsoDate(end) || start > end) return null;
+  return [start, end];
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
@@ -312,8 +335,18 @@ export function validateCubeQuery(
     if (td.granularity && !CUBE_GRANULARITIES.includes(td.granularity)) {
       return { error: `Granularity ${String(td.granularity)} is not supported.` };
     }
-    if (td.compareDateRange && td.compareDateRange.length < 2) {
-      return { error: "compareDateRange needs at least two date ranges." };
+    if (td.compareDateRange) {
+      if (td.compareDateRange.length < 2 || td.compareDateRange.length > 4) {
+        return { error: "compareDateRange needs between two and four date ranges." };
+      }
+      if (td.compareDateRange.some((range) => explicitDateRange(range) === null)) {
+        return {
+          error: "Every compareDateRange entry must be a real ordered YYYY-MM-DD,YYYY-MM-DD pair.",
+        };
+      }
+    }
+    if (Array.isArray(td.dateRange) && explicitDateRange(td.dateRange) === null) {
+      return { error: "An explicit dateRange must be a real ordered YYYY-MM-DD pair." };
     }
     // The same member as a bucketed time dimension *and* a plain dimension
     // makes Cube GROUP BY the raw timestamp as well: one row per distinct

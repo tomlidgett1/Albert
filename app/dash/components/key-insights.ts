@@ -4,7 +4,7 @@ import type {
   TraceTableColumn,
   TraceTableEvent,
 } from "@/packages/shared/src";
-import { formatTraceCell } from "./analytical-values";
+import { formatTraceCell, traceCellNumber } from "./analytical-values";
 
 export type KeyInsightTurn = Readonly<{
   id: number;
@@ -36,6 +36,32 @@ const numericColumnTypes = new Set<TraceTableColumn["type"]>([
   "currency",
   "percent",
 ]);
+
+export function formatKeyInsightValue(value: KeyInsightValue["value"], column: KeyInsightValue["column"]): string {
+  const numeric = traceCellNumber(value ?? null);
+  if (numeric === null) return formatTraceCell(value ?? null, column);
+  if (column.type === "currency" && column.currency) {
+    try {
+      return new Intl.NumberFormat("en-AU", {
+        style: "currency",
+        currency: column.currency,
+        currencyDisplay: "narrowSymbol",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(numeric);
+    } catch {
+      return formatTraceCell(value ?? null, column);
+    }
+  }
+  if (column.type !== "number") return formatTraceCell(value ?? null, column);
+  const isPercent = /(?:%|percent|rate|margin)/iu.test(`${column.key} ${column.label}`);
+  const isWhole = /(?:count|units|transactions|records)/iu.test(`${column.key} ${column.label}`);
+  const formatted = new Intl.NumberFormat("en-AU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: isWhole ? 0 : 2,
+  }).format(numeric);
+  return isPercent ? `${formatted}%` : formatted;
+}
 
 function hasValue(value: unknown): boolean {
   return value !== null && value !== undefined && String(value).trim() !== "";

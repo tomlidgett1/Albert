@@ -235,6 +235,12 @@ class CapabilityPostgresDriver extends PostgresDriver {
 
 function albertContextFrom(securityContext) {
   const context = securityContext || {};
+  const role = ['owner', 'manager', 'bookkeeper', 'internal_operator'].includes(context.role)
+    ? context.role
+    : null;
+  const specialistAgentId = ['general', 'customers'].includes(context.specialist_agent_id)
+    ? context.specialist_agent_id
+    : 'general';
   return {
     tenantId: typeof context.tenant_id === 'string' ? context.tenant_id : null,
     conversationId: typeof context.conversation_id === 'string' ? context.conversation_id : null,
@@ -242,6 +248,11 @@ function albertContextFrom(securityContext) {
     dashboardTileId: typeof context.dashboard_tile_id === 'string' ? context.dashboard_tile_id : null,
     dashboardRefreshLeaseId: typeof context.dashboard_refresh_lease_id === 'string'
       ? context.dashboard_refresh_lease_id
+      : null,
+    role,
+    specialistAgentId,
+    specialistAgentVersion: Number.isInteger(context.specialist_agent_version)
+      ? context.specialist_agent_version
       : null,
   };
 }
@@ -326,6 +337,8 @@ module.exports = {
       turnId,
       dashboardTileId,
       dashboardRefreshLeaseId,
+      role,
+      specialistAgentId,
     } = albertContextFrom(securityContext);
     const conversationTurn = conversationId && turnId;
     const dashboardRefresh = dashboardTileId && dashboardRefreshLeaseId;
@@ -333,6 +346,16 @@ module.exports = {
       throw new Error(
         'Albert Cube queries require an authenticated turn or dashboard refresh lease.',
       );
+    }
+    // Specialist selection is signed server context, not a browser claim. The
+    // customer profile intentionally exposes customer-level ranking paths, so
+    // fail closed inside Cube as well as at the web route for roles that do not
+    // own customer operations. General Albert keeps its existing role policy.
+    if (
+      specialistAgentId === 'customers'
+      && !['owner', 'manager', 'internal_operator'].includes(role)
+    ) {
+      throw new Error('The Customer Agent requires an owner or manager role.');
     }
     // Defence in depth. Row-level security (capability-scoped) is the
     // authoritative isolation; this pin makes the intent explicit in SQL and

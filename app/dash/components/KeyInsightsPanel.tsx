@@ -3,8 +3,7 @@
 import Image from "next/image";
 import styles from "../dash.module.css";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
-import { formatTraceCell, traceCellNumber } from "./analytical-values";
-import type { KeyInsight } from "./key-insights";
+import { formatKeyInsightValue, type KeyInsight } from "./key-insights";
 
 type KeyInsightsPanelProps = Readonly<{
   insights: readonly KeyInsight[];
@@ -21,19 +20,6 @@ function readableTimeRange(label: string): string | null {
 function sentenceLabel(label: string): string {
   const cleaned = label.replace(/\s*%\s*$/u, "").replace(/\s+/gu, " ").trim();
   return cleaned ? cleaned.toLocaleLowerCase("en-AU") : "value";
-}
-
-function formatInsightValue(value: KeyInsight["rows"][number]["values"][number]["value"], column: KeyInsight["rows"][number]["values"][number]["column"]): string {
-  if (column.type !== "number") return formatTraceCell(value ?? null, column);
-  const numeric = traceCellNumber(value ?? null);
-  if (numeric === null) return formatTraceCell(value ?? null, column);
-  const isPercent = /(?:%|percent|rate|margin)/iu.test(`${column.key} ${column.label}`);
-  const isWhole = /(?:count|units|transactions|records)/iu.test(`${column.key} ${column.label}`);
-  const formatted = new Intl.NumberFormat("en-AU", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: isWhole ? 0 : 2,
-  }).format(numeric);
-  return isPercent ? `${formatted}%` : formatted;
 }
 
 export default function KeyInsightsPanel({
@@ -71,10 +57,10 @@ export default function KeyInsightsPanel({
               <p className={styles.keyInsightSentence}>
                 <strong>{insight.title}:</strong>{" "}
                 {lead.label ? <><strong>{lead.label}</strong>{" shows "}</> : null}
-                <strong>{formatInsightValue(primary.value, primary.column)}</strong>{" "}
+                <strong>{formatKeyInsightValue(primary.value, primary.column)}</strong>{" "}
                 {sentenceLabel(primary.column.label)}
                 {secondary ? (
-                  <>{", and "}<strong>{formatInsightValue(secondary.value, secondary.column)}</strong>{" "}{sentenceLabel(secondary.column.label)}</>
+                  <>{", and "}<strong>{formatKeyInsightValue(secondary.value, secondary.column)}</strong>{" "}{sentenceLabel(secondary.column.label)}</>
                 ) : null}
                 {"."}
               </p>

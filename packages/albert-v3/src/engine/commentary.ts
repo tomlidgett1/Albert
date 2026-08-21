@@ -1,6 +1,6 @@
 import { sanitizeTraceText } from "../../../shared/src/index.js";
 
-export type V3CommentaryKind = "plan" | "finding" | "step";
+export type V3CommentaryKind = "plan" | "finding" | "step" | "orientation";
 
 /**
  * Small, per-turn gate for Codex-style owner commentary.
@@ -14,13 +14,23 @@ export type V3CommentaryKind = "plan" | "finding" | "step";
  * each visible plan step completes. They sit outside the general ceiling
  * (a five-step plan needs five of them) but carry their own cap and share the
  * duplicate filter, so a repeated summary is still dropped.
+ *
+ * `orientation` updates are the two phase-boundary beats of an investigation:
+ * a confidence checkpoint once the right data is found (naming it, so a wrong
+ * data choice is visible before the queries run) and a forward-intent sentence
+ * stating the order of attack. They are exempt from the finding gate — forward
+ * intent is their whole point — but only trusted lane code emits them (the
+ * model-facing report_progress tool cannot), they carry their own small cap,
+ * and mid-investigation "I'll now…" narration stays banned.
  */
 export type V3CommentaryState = {
   enabled: boolean;
   readonly maxUpdates: number;
   readonly maxStepSummaries: number;
+  readonly maxOrientations: number;
   emitted: number;
   stepSummaries: number;
+  orientations: number;
   planEmitted: boolean;
   lastQueryCount: number;
   readonly fingerprints: Set<string>;
@@ -34,13 +44,16 @@ export function createV3CommentaryState(
   enabled: boolean,
   maxUpdates = 4,
   maxStepSummaries = 8,
+  maxOrientations = 2,
 ): V3CommentaryState {
   return {
     enabled,
     maxUpdates: Math.max(1, Math.min(6, Math.floor(maxUpdates))),
     maxStepSummaries: Math.max(1, Math.min(12, Math.floor(maxStepSummaries))),
+    maxOrientations: Math.max(1, Math.min(4, Math.floor(maxOrientations))),
     emitted: 0,
     stepSummaries: 0,
+    orientations: 0,
     planEmitted: false,
     lastQueryCount: 0,
     fingerprints: new Set(),
@@ -49,6 +62,12 @@ export function createV3CommentaryState(
 
 /** Owner-facing step summaries stay short: a glance, not a report. */
 export const STEP_SUMMARY_MAX_CHARS = 320;
+
+export function endSentence(value: string): string {
+  const text = value.trim();
+  if (!text) return "";
+  return /[.!?]$/u.test(text) ? text : `${text}.`;
+}
 
 /**
  * Clip to `max` characters at a sentence boundary, so a long summary ends on a
@@ -110,6 +129,8 @@ export function prepareV3CommentaryUpdate(input: Readonly<{
   if (!state.enabled) return { accepted: false, reason: "disabled" };
   if (input.kind === "step") {
     if (state.stepSummaries >= state.maxStepSummaries) return { accepted: false, reason: "limit" };
+  } else if (input.kind === "orientation") {
+    if (state.orientations >= state.maxOrientations) return { accepted: false, reason: "limit" };
   } else if (state.emitted >= state.maxUpdates) {
     return { accepted: false, reason: "limit" };
   }
@@ -135,6 +156,8 @@ export function prepareV3CommentaryUpdate(input: Readonly<{
 
   if (input.kind === "step") {
     state.stepSummaries += 1;
+  } else if (input.kind === "orientation") {
+    state.orientations += 1;
   } else {
     state.emitted += 1;
   }

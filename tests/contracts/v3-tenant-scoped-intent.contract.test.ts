@@ -10,6 +10,8 @@ import {
   classifyIntent,
   scopedClassifierConnectors,
 } from "../../packages/albert-v3/src/engine/orchestrator.js";
+import { renderDataFactSheet } from "../../packages/albert-v3/src/engine/meta-lane.js";
+import type { LaneRunInput } from "../../packages/albert-v3/src/engine/lanes.js";
 
 const config = loadAgentConfig();
 
@@ -54,14 +56,45 @@ test("a named-but-unconnected tool routes to a working lane, never off_topic or 
   assert.match(instructions, /names a tool that is not listed[\s\S]*do NOT route\s+off_topic and do NOT clarify/u);
 });
 
-test("unknown or empty connection state widens to every configured tool (fail open)", () => {
+test("unknown or stale connection state widens to every configured tool (fail open)", () => {
   const configured = [...new Set(config.accessibleViews.map(({ connector }) => connector))].sort();
   assert.deepEqual([...scopedClassifierConnectors(config, undefined)], configured);
-  assert.deepEqual([...scopedClassifierConnectors(config, [])], configured);
   assert.deepEqual([...scopedClassifierConnectors(config, ["not-a-connector"])], configured);
   const instructions = classifierInstructions(config, [], undefined);
   assert.match(instructions, /connection state was unavailable/u);
   assert.deepEqual([...connectorsIn(instructions)].sort(), configured);
+});
+
+test("a tenant with zero connections is never widened: the classifier is told nothing is connected", () => {
+  // A present-but-empty list is a real answer (no connections), not missing
+  // state; widening it presented the whole configured catalogue to brand-new
+  // accounts as "connected".
+  assert.deepEqual([...scopedClassifierConnectors(config, [])], []);
+  const instructions = classifierInstructions(config, [], []);
+  assert.match(instructions, /NO tools are connected to Albert for THIS business yet/u);
+  assert.doesNotMatch(instructions, /Tools connected to Albert for THIS business \(the only sources of data\)/u);
+  assert.doesNotMatch(instructions, /connection state was unavailable/u);
+  assert.deepEqual([...connectorsIn(instructions)], []);
+});
+
+test("the meta lane fact sheet never presents configured tools as connected to a zero-connection tenant", () => {
+  const input = {
+    config,
+    context: { connectorFreshness: [], sourceFindings: [] },
+  } as unknown as LaneRunInput;
+  const emptyTenant = renderDataFactSheet(input, []);
+  assert.match(emptyTenant, /- none\. No business tools are connected to Albert yet/u);
+  assert.doesNotMatch(emptyTenant, /^- (?:xero|lightspeed|deputy|square|shopify|momence):/mu);
+  // Every configured tool lands in the not-connected section instead.
+  assert.match(emptyTenant, /# Not connected/u);
+  assert.match(emptyTenant, /Xero accounting/u);
+
+  // Unknown state (the control-plane read failed) still fails open.
+  const unknownState = renderDataFactSheet(input, undefined);
+  assert.match(unknownState, /^- xero:/mu);
+  const connectedTenant = renderDataFactSheet(input, ["lightspeed-r", "xero"]);
+  assert.match(connectedTenant, /^- xero:/mu);
+  assert.doesNotMatch(connectedTenant, /^- square:/mu);
 });
 
 test("control-plane keys normalise to descriptor connectors and de-duplicate", () => {

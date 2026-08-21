@@ -8,6 +8,7 @@ import {
   sanitizeAnswerText,
   sanitizeTraceText,
   type AgentRunPreferences,
+  type AnalyticalBrief,
   type AnswerState,
   type PresentedTableDigest,
 } from "../../../shared/src/index.js";
@@ -75,6 +76,14 @@ import {
 } from "./connector-routing.js";
 import { deriveConnectorFreshness } from "./freshness.js";
 import { detectSocialMessage, inferSocialKind, socialReply, type SocialKind } from "./social.js";
+import {
+  matchVerifiedStarterPrompt,
+  normalizeSpecialistAgentId,
+  specialistAgentAllowedForRole,
+  specialistAgentFromConfig,
+  specializeAgentConfig,
+  type SpecialistAgentId,
+} from "../specialist-agents/registry.js";
 
 export const ALBERT_V3_RUNTIME = "albert-v3" as const;
 
@@ -94,10 +103,14 @@ export type AlbertV3TurnOptions = Readonly<{
   tenantId: string;
   actorId?: string;
   role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
+  /** Server-normalized, versioned specialist profile selected for this conversation. */
+  specialistAgentId?: SpecialistAgentId;
   /** Authenticated control-plane connector keys; never accepted from a client request. */
   activeConnectors?: readonly string[];
   /** Per connector+domain sync watermarks from control-plane readiness. */
   connectorFreshness?: readonly ConnectorDomainFreshness[];
+  /** Compare-only frozen goal/coverage contract; ordinary V3 turns omit it. */
+  analysisBrief?: AnalyticalBrief;
   /** Durable source-topology facts for this tenant. */
   sourceFindings?: readonly TenantSourceFinding[];
   /** Persists a source finding the agent verified this turn. */
@@ -519,7 +532,15 @@ const BUSINESS_CONTEXT_REFRESH_GRACE_MS = 45_000;
 export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<AlbertV3TurnResult> {
   let contextRefresh: Promise<void> | undefined;
   let activeTurnContext: V3TurnContext | undefined;
-  const config = loadAgentConfig();
+  const specialistAgentId = normalizeSpecialistAgentId(options.specialistAgentId);
+  const config = specializeAgentConfig(loadAgentConfig(), specialistAgentId);
+  const specialistAgent = specialistAgentFromConfig(config);
+  if (
+    specialistAgent.id !== "general"
+    && !specialistAgentAllowedForRole(specialistAgent.id, options.role)
+  ) {
+    throw new Error("This specialist agent is not available for the current organisation role.");
+  }
   const emit = options.emit;
 
   await emit({
@@ -527,7 +548,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     status: "running",
     stage: "planning",
     label: "Reading the question",
-    detail: "Albert v3 · Cube semantic layer",
+    detail: `${specialistAgent.ui.title} · Cube semantic layer`,
     progress: 0.05,
   });
 
@@ -538,6 +559,9 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       tenant_id: options.tenantId,
       conversation_id: options.conversationId,
       turn_id: options.turnId,
+      ...(options.role ? { role: options.role } : {}),
+      specialist_agent_id: specialistAgent.id,
+      specialist_agent_version: specialistAgent.version,
     },
   });
   // Live Shopify reports contain Level-2 protected customer data. Until a
@@ -608,7 +632,9 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     groupId: options.conversationId,
   }));
   const runner = accounting.runner;
-  const promptCachePartition = digest(options.tenantId).slice(0, 12);
+  const promptCachePartition = digest(
+    `${options.tenantId}:${specialistAgent.id}:${specialistAgent.version}`,
+  ).slice(0, 12);
 
   try {
   // A Xero statement request (P&L / balance sheet / trial balance) has a fully
@@ -630,7 +656,14 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   // owner's thanks" with a currency count.
   const answerSocially = async (kind: SocialKind): Promise<AlbertV3TurnResult> => {
     const reply = socialReply(kind, options.message);
-    const text = sanitizeAnswerText(reply.text);
+    const text = sanitizeAnswerText(
+      specialistAgent.id === "customers" && kind === "greeting"
+        ? "Hi — I’m ready to dig into customer value, repeat behaviour, retention, workshop relationships, and receivables."
+        : reply.text,
+    );
+    const socialFollowUps = specialistAgent.id === "general"
+      ? reply.followUps
+      : specialistAgent.starterPrompts.slice(0, 3).map(({ prompt }) => prompt);
     await emit({
       type: "progress",
       status: "complete",
@@ -645,7 +678,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       state: "Verified",
       text,
       provenance: emptyTurnProvenance(config.timezone),
-      followUps: [...reply.followUps],
+      followUps: [...socialFollowUps],
       presentedResultIds: [],
       claims: [],
     });
@@ -658,6 +691,33 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
   };
   const socialKind = statementKind ? null : detectSocialMessage(options.message, options.conversation);
   if (socialKind) return answerSocially(socialKind);
+  const verifiedStarter = matchVerifiedStarterPrompt(specialistAgent.id, options.message);
+  const verifiedStarterRecipe = verifiedStarter
+    ? findCertifiedQuery(verifiedStarter.certifiedQueryName, config)
+    : undefined;
+  const deterministicStarterIntent: IntentDecision | undefined = verifiedStarterRecipe?.recipe
+    ? {
+        lane: "quick",
+        resolvedQuestion: options.message.trim().slice(0, 600),
+        ownerGoal: null,
+        answerShape: verifiedStarterRecipe.recipe.presentation === "fact"
+          ? "fact"
+          : verifiedStarterRecipe.recipe.presentation === "list"
+            || verifiedStarterRecipe.recipe.presentation === "table"
+            ? "list"
+            : verifiedStarterRecipe.recipe.presentation === "line"
+              ? "trend"
+              : "breakdown",
+        answerMustCover: [],
+        assumptions: [],
+        clarificationQuestion: null,
+        clarificationOptions: [],
+        recipe: verifiedStarterRecipe.name,
+        recipeDateRange: null,
+        recipeEntity: null,
+        nativeCapability: null,
+      }
+    : undefined;
   const classify = () => classifyIntent({
     runner,
     preferences: options.preferences,
@@ -684,7 +744,11 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
         error: error instanceof Error ? error.message : "Cubecore is down. The Cube API could not be reached.",
       }),
     ),
-    statementKind ? Promise.resolve(undefined) : classify(),
+    statementKind
+      ? Promise.resolve(undefined)
+      : deterministicStarterIntent
+        ? Promise.resolve(deterministicStarterIntent)
+        : classify(),
     definitionOnly ? Promise.resolve(options.connectorFreshness ?? []) : deriveConnectorFreshness({
       cube,
       tenantId: options.tenantId,
@@ -708,6 +772,27 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     recipeEntity: null,
     nativeCapability: null,
   };
+
+  if (options.analysisBrief) {
+    const required = [...new Set([
+      ...options.analysisBrief.answerMustCover,
+      ...intent.answerMustCover,
+    ])].slice(0, 4);
+    intent = {
+      ...intent,
+      ownerGoal: options.analysisBrief.ownerGoal,
+      answerMustCover: required,
+      lane: options.analysisBrief.requiredViews.length > 1 && intent.lane === "quick"
+        ? "analytical"
+        : intent.lane,
+      assumptions: [
+        ...intent.assumptions,
+        ...(options.analysisBrief.commonPeriodEnd
+          ? [`Use a common comparison period ending ${options.analysisBrief.commonPeriodEnd}.`]
+          : []),
+      ],
+    };
+  }
 
   if (intent.lane === "social") return answerSocially(inferSocialKind(options.message));
 

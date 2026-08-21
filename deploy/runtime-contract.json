@@ -51,8 +51,10 @@
         "SEMANTIC_QUERY_SERVICE_URL",
         "ANTHROPIC_ANALYTICS_SERVICE_URL",
         "OPERATOR_DIAGNOSTIC_SERVICE_URL",
+        "CODEX_RUNTIME_SERVICE_URL",
         "CUBE_API_URL",
         "CUBEJS_API_SECRET",
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "LIGHTSPEED_CLIENT_ID",
@@ -124,6 +126,32 @@
         "CUBEJS_API_SECRET"
       ],
       "optionalSecretNames": []
+    },
+    "codex-runtime": {
+      "platform": "fly",
+      "manifest": "deploy/fly/codex-runtime.toml",
+      "buildCommand": "npm run build:services",
+      "artifact": ".albert-build/services/codex-runtime.js",
+      "exposure": "signed-public",
+      "livenessPath": "/livez",
+      "healthPath": "/readyz",
+      "requiredSecretNames": [
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+        "CUBE_API_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL"
+      ],
+      "optionalSecretNames": [],
+      "forbiddenRuntimeValues": [
+        "CUBEJS_API_SECRET",
+        "CONTROL_PLANE_DATABASE_URL",
+        "ANALYTICAL_DATABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "TOKEN_ENCRYPTION_KEY",
+        "LIGHTSPEED_CLIENT_SECRET",
+        "XERO_CLIENT_SECRET",
+        "DEPUTY_CLIENT_SECRET"
+      ]
     },
     "sync-worker": {
       "platform": "fly",

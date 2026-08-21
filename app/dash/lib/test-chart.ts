@@ -724,6 +724,7 @@ function encodingFieldNames(value: FlintEncoding): string[] {
       return isNonemptyString(item.field) ? [item.field.trim()] : [];
     });
   }
+  if (!isRecord(value)) return [];
   return isNonemptyString(value.field) ? [value.field.trim()] : [];
 }
 

@@ -54,6 +54,7 @@ import {
   planCoverageError,
   type PlannedEvidenceBinding,
 } from "./initial-plan.js";
+import { clipToSentence, endSentence, prepareV3CommentaryUpdate } from "./commentary.js";
 
 /**
  * A step whose filter or date window is a value only an earlier step produces
@@ -666,15 +667,16 @@ export async function runPlannedLane(
     detail: "The relevant definitions and stored filter values are ready.",
     findings: researchFindings,
   });
-  await context.emit({
-    type: "narrative",
-    text: sanitizeTraceText(
-      valueValidation.findings[0] === "No named filter values needed validation."
-        ? `Research complete: I found the ${retrieved.viewNames.length} relevant data ${retrieved.viewNames.length === 1 ? "area" : "areas"}; no named filter values needed checking.`
-        : `Research complete: I found the relevant data areas and validated ${valueValidation.findings.length} stored-value ${valueValidation.findings.length === 1 ? "filter" : "filters"}.`,
-      300,
-    ),
+  // The Omni-style phase-boundary beat: confidence (which data was found — a
+  // wrong data choice becomes visible before the queries run) plus the
+  // planner's own forward-intent sentence. Gated, so quick turns stay quiet.
+  const orientation = prepareV3CommentaryUpdate({
+    state: context.commentary,
+    kind: "orientation",
+    message: `I've found the right data for this — ${areaLabels.join(", ")}. ${endSentence(clipToSentence(plan.plan, 260))}`,
+    queryCount: context.executedQueries.length,
   });
+  if (orientation.accepted) await context.emit({ type: "narrative", text: orientation.text });
   const steps: PlannedStep[] = valueValidation.steps.map((step) => ({ ...step }));
   await context.emit({
     type: "progress",

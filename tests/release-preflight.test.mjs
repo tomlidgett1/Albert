@@ -52,6 +52,7 @@ const validRelease = Object.freeze({
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.albert.example",
   CUBE_API_URL: "https://cube.albert.example",
   OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.albert.example",
+  CODEX_RUNTIME_SERVICE_URL: "https://codex.albert.example",
   SYNC_WORKER_INTERNAL_URL: "https://sync.albert.example",
   WEBHOOK_GATEWAY_PUBLIC_URL: "https://webhooks.albert.example",
   CONTROL_PLANE_MIGRATION_URL:
@@ -66,6 +67,7 @@ const validRelease = Object.freeze({
   FLY_WEBHOOK_APP: "albert-webhook-prod",
   FLY_DELETION_APP: "albert-deletion-prod",
   FLY_OPERATOR_DIAGNOSTIC_APP: "albert-diagnostic-prod",
+  FLY_CODEX_RUNTIME_APP: "albert-codex-runtime-prod",
   FLY_SYNC_AUTOSCALER_APP: "albert-sync-autoscaler-prod",
   FLY_TRANSFORM_AUTOSCALER_APP: "albert-transform-autoscaler-prod",
   FLY_ORGANIZATION_SLUG: "albert-production",
@@ -404,6 +406,22 @@ test("Fly secret inventory is exact per runtime and rejects undeclared privilege
     () => validateRuntimeSecretNames(contract, "cube", [
       ...cubeInventory,
       { Name: "ANALYTICAL_MIGRATION_URL", Digest: "forbidden" },
+    ]),
+    /prohibited secret names/,
+  );
+  const codex = contract.runtimes["codex-runtime"];
+  const codexInventory = codex.requiredSecretNames.map((Name) => ({
+    Name,
+    Digest: "not-a-secret-value",
+  }));
+  assert.deepEqual(
+    validateRuntimeSecretNames(contract, "codex-runtime", codexInventory),
+    { runtimeName: "codex-runtime", count: codexInventory.length },
+  );
+  assert.throws(
+    () => validateRuntimeSecretNames(contract, "codex-runtime", [
+      ...codexInventory,
+      { Name: "CUBEJS_API_SECRET", Digest: "forbidden" },
     ]),
     /prohibited secret names/,
   );

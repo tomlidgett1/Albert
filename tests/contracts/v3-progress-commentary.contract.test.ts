@@ -162,6 +162,68 @@ test("update_plan carries a per-step findings summary and query tools nudge for 
   assert.match(deepLane, /emitDeepCommentary\(input\.context, "step", stepSummary\)/u);
 });
 
+test("orientation beats bypass the fact gate but stay capped, deduplicated and quiet on quick turns", () => {
+  const state = createV3CommentaryState(true, 1, 2, 2);
+  assert.equal(prepareV3CommentaryUpdate({
+    state,
+    kind: "plan",
+    message: "I’ll compare the two periods, then break the gap down.",
+    queryCount: 0,
+  }).accepted, true);
+  // The general ceiling (1) is spent, and the message is pure forward intent —
+  // both would kill a finding. An orientation still shows: it sits outside the
+  // general ceiling and the fact gate does not apply to it.
+  assert.equal(prepareV3CommentaryUpdate({
+    state,
+    kind: "orientation",
+    message: "I've found the right data for this — Sales analytics. I'll compare the two periods, then break the gap down by category.",
+    queryCount: 0,
+  }).accepted, true);
+  assert.deepEqual(prepareV3CommentaryUpdate({
+    state,
+    kind: "orientation",
+    message: "I've found the right data for this — Sales analytics. I'll compare the two periods, then break the gap down by category.",
+    queryCount: 0,
+  }), { accepted: false, reason: "duplicate" });
+  assert.equal(prepareV3CommentaryUpdate({
+    state,
+    kind: "orientation",
+    message: "I've split this into three angles and will cross-check the findings before recommending anything.",
+    queryCount: 0,
+  }).accepted, true);
+  assert.deepEqual(prepareV3CommentaryUpdate({
+    state,
+    kind: "orientation",
+    message: "A third orientation is over the per-turn cap of two.",
+    queryCount: 0,
+  }), { accepted: false, reason: "limit" });
+
+  const disabled = createV3CommentaryState(false);
+  assert.deepEqual(prepareV3CommentaryUpdate({
+    state: disabled,
+    kind: "orientation",
+    message: "Quick turns stay quiet even for orientations.",
+    queryCount: 0,
+  }), { accepted: false, reason: "disabled" });
+});
+
+test("phase-boundary orientations are emitted by trusted lane code only, through the gate", () => {
+  const plannedLane = read("packages/albert-v3/src/engine/planned-lane.ts");
+  const deepLane = read("packages/albert-v3/src/engine/deep-lane.ts");
+  const tools = read("packages/albert-v3/src/engine/tools.ts");
+
+  // Planned lane: the research-complete beat names the matched data areas and
+  // carries the planner's forward-intent sentence, gated (not a bare emit).
+  assert.match(plannedLane, /kind: "orientation"/u);
+  assert.match(plannedLane, /I've found the right data for this/u);
+  assert.match(plannedLane, /prepareV3CommentaryUpdate/u);
+  // Deep lane: the attack-order beat after branch decomposition.
+  assert.match(deepLane, /emitDeepCommentary\(\s*input\.context,\s*"orientation"/u);
+  assert.match(deepLane, /I've split this into \$\{plan\.branches\.length\} angles/u);
+  // The model-facing progress tool cannot emit orientations.
+  assert.match(tools, /kind: z\.enum\(\["plan", "finding"\]\)/u);
+});
+
 test("quick turns cannot emit owner commentary", () => {
   const state = createV3CommentaryState(false);
   assert.deepEqual(prepareV3CommentaryUpdate({

@@ -5,6 +5,8 @@ import { runAlbertV3Turn } from "../packages/albert-v3/src/index.js";
 import { normalizeAgentPreferences } from "../packages/shared/src/index.js";
 import { xeroMcpServiceUrl } from "../packages/xero-mcp/src/client.js";
 import { PgTransactionalDatabase } from "../services/sync-workers/src/postgres.js";
+type V3TurnOptions = Parameters<typeof runAlbertV3Turn>[0];
+type V3TraceInput = Parameters<V3TurnOptions["emit"]>[0];
 const T="01KZN20VTX2EWW1TQ2AA3MCPW6";
 for (const l of readFileSync(".env.local","utf8").split("\n")){const m=/^([A-Z_][A-Z0-9_]*)=(.*)$/u.exec(l);if(!m)continue;let x=m[2]!;if(/^".*"$|^'.*'$/.test(x))x=x.slice(1,-1);process.env[m[1]!]??=x;}
 const v=process.env as Record<string,string>;
@@ -26,13 +28,13 @@ const result=await runAlbertV3Turn({
   shopifyAdminServiceUrl:v.SYNC_WORKER_INTERNAL_URL, shopifyAdminSigningSecret:v.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET,
   xeroMcpServiceUrl:xeroMcpServiceUrl(), xeroMcpSigningSecret:v.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
   openaiApiKey:v.OPENAI_API_KEY,
-  emit: async (e:any)=>{ const t=((Date.now()-t0)/1000).toFixed(1); seq+=1; const event={...e,id:ulid(),sequence:seq,occurredAt:new Date().toISOString()};
+  emit: async (e:V3TraceInput)=>{ const t=((Date.now()-t0)/1000).toFixed(1); seq+=1; const event={...e,id:ulid(),sequence:seq,occurredAt:new Date().toISOString()};
     if(e.type==="progress") console.log(`[${t}s] progress ${e.stage}/${e.status}: ${e.label} — ${e.detail??""}`);
     else if(e.type==="query") console.log(`[${t}s] QUERY ${e.view}: ${e.topic} rows=${e.rowCount}`);
     else if(e.type==="answer") console.log(`[${t}s] ANSWER state=${e.state}\n${e.text}`);
     else if(e.type==="narrative") console.log(`[${t}s] narrative: ${e.text}`);
-    else if(e.type==="plan") console.log(`[${t}s] plan: ${e.steps.map((s:any)=>s.status+":"+s.label).join(" | ")}`);
-    else if(e.type==="table") console.log(`[${t}s] TABLE presentation=${e.presentation??"evidence"} rows=${e.rows.length} cols=${e.columns.map((c:any)=>c.label).join("|")} :: ${e.caption}`);
+    else if(e.type==="plan") console.log(`[${t}s] plan: ${e.steps.map((s)=>s.status+":"+s.label).join(" | ")}`);
+    else if(e.type==="table") console.log(`[${t}s] TABLE presentation=${e.presentation??"evidence"} rows=${e.rows.length} cols=${e.columns.map((c)=>c.label).join("|")} :: ${e.caption}`);
     else console.log(`[${t}s] ${e.type}`); return event; },
 });
 console.log("RESULT", JSON.stringify({state:result.answerState, queries:result.queriesExecuted, ms:Date.now()-t0}));

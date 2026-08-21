@@ -27,6 +27,8 @@ import styles from "../dash.module.css";
 type ModelRunControlsProps = {
   value: AgentRunPreferences;
   onChange: (value: AgentRunPreferences) => void;
+  allowedModelIds?: readonly AlbertModelId[];
+  allowedReasoningEfforts?: readonly ReasoningEffort[];
   disabled?: boolean;
   runActive?: boolean;
   popoverPlacement?: "above" | "below";
@@ -86,6 +88,8 @@ type PopoverCoords = {
 export function ModelRunControls({
   value,
   onChange,
+  allowedModelIds,
+  allowedReasoningEfforts,
   disabled = false,
   popoverPlacement = "above",
   popoverAlign = "trigger-end",
@@ -127,13 +131,18 @@ export function ModelRunControls({
   }, [clearCloseTimer]);
 
   const modelTabs = useMemo(
-    () => MODEL_TAB_ORDER.map((id) => ALBERT_MODELS.find((model) => model.id === id)!),
-    [],
+    () => {
+      const allowed = allowedModelIds ? new Set<AlbertModelId>(allowedModelIds) : null;
+      return MODEL_TAB_ORDER
+        .filter((id) => !allowed || allowed.has(id))
+        .map((id) => ALBERT_MODELS.find((model) => model.id === id)!);
+    },
+    [allowedModelIds],
   );
 
   const selectedModel = useMemo(
-    () => ALBERT_MODELS.find((model) => model.id === value.model) ?? ALBERT_MODELS[0],
-    [value.model],
+    () => modelTabs.find((model) => model.id === value.model) ?? modelTabs[0] ?? ALBERT_MODELS[0],
+    [modelTabs, value.model],
   );
 
   const selectedModelIndex = useMemo(
@@ -144,9 +153,10 @@ export function ModelRunControls({
   const effortOptions = useMemo(
     () => {
       const allowed = new Set(reasoningEffortsForModel(value.model));
-      return EFFORT_OPTIONS.filter((effort) => allowed.has(effort.id));
+      const configured = allowedReasoningEfforts ? new Set(allowedReasoningEfforts) : null;
+      return EFFORT_OPTIONS.filter((effort) => allowed.has(effort.id) && (!configured || configured.has(effort.id)));
     },
-    [value.model],
+    [allowedReasoningEfforts, value.model],
   );
   const showFastMode = modelSupportsFastMode(value.model);
 

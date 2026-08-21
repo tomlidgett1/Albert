@@ -18,6 +18,7 @@ report calls (balance sheet, bank balances), which must keep headroom.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import time
 import urllib.error
@@ -53,6 +54,15 @@ class DailyLimitReached(XeroError):
 class BudgetReserveReached(DailyLimitReached):
     """The remaining daily allowance fell to the reserve kept for live use.
     Stops a walk exactly like the hard daily limit (checkpoint, end cleanly)."""
+
+
+class RateLimitStalled(DailyLimitReached):
+    """Xero kept answering 429 after every honoured Retry-After: something else
+    (live statement calls, business-context probes) is sharing this org's
+    minute budget right now. Subclasses DailyLimitReached so the sync stops
+    cleanly and resumes next schedule — a stall must never be recorded as a
+    per-group error, which would put healthy endpoints into hours of cooldown
+    (observed 2026-08-20: a first backfill's whole Payroll AU family)."""
 
 
 class TokenBrokerError(XeroError):
@@ -121,7 +131,10 @@ class TokenSupply:
                 if error.code in (401, 403, 404, 409):
                     raise TokenBrokerError(f"token broker refused ({error.code}): {detail}")
                 last_error = TokenBrokerError(f"token broker error {error.code}: {detail}")
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            # urllib wraps only request-send failures in URLError; errors while
+            # reading the response (RemoteDisconnected, IncompleteRead, SSL EOF)
+            # surface raw as OSError/http.client.HTTPException subclasses.
+            except (OSError, http.client.HTTPException, json.JSONDecodeError) as error:
                 last_error = TokenBrokerError(f"token broker unreachable: {error}")
             time.sleep(2 * (attempt + 1))
         raise last_error or TokenBrokerError("token broker unavailable")
@@ -184,7 +197,7 @@ class XeroClient:
                 return 200 <= response.status < 300
         except urllib.error.HTTPError as error:
             return error.code != 401
-        except (urllib.error.URLError, TimeoutError):
+        except (OSError, http.client.HTTPException):
             return False
 
     def _pace(self) -> None:
@@ -204,6 +217,7 @@ class XeroClient:
         query = urllib.parse.urlencode(params or {}, quote_via=urllib.parse.quote)
         url = f"{self.origin}{path}" + (f"?{query}" if query else "")
         force_refresh = False
+        last_throttle = ""
         for attempt in range(MAX_ATTEMPTS):
             token = self.tokens.token(force=force_refresh)
             force_refresh = False
@@ -255,7 +269,13 @@ class XeroClient:
                         raise DailyLimitReached(
                             f"Xero daily limit reached on {path} (problem={problem or '?'}, remaining={daily_remaining}, retry after {retry_after}s)"
                         )
-                    _log(f"Xero 429 on {path}; sleeping {retry_after}s", "WARNING")
+                    minute_remaining = error.headers.get("X-MinLimit-Remaining")
+                    last_throttle = (
+                        f"problem={problem or '?'} retry_after={error.headers.get('Retry-After') or '?'}"
+                        f" min_remaining={minute_remaining or '?'} day_remaining={daily_remaining or '?'}"
+                        f" body={body[:120]}"
+                    )
+                    _log(f"Xero 429 on {path}; {last_throttle}; sleeping {retry_after}s", "WARNING")
                     time.sleep(retry_after)
                     continue
                 if status >= 500 or status == 408:
@@ -264,11 +284,18 @@ class XeroClient:
                     time.sleep(min(60, 2 ** attempt))
                     continue
                 raise XeroError(f"Xero {status} for {path}: {body[:200]}")
-            except (urllib.error.URLError, TimeoutError) as error:
+            # urllib wraps only request-send failures in URLError; errors while
+            # reading the response (RemoteDisconnected, IncompleteRead, SSL EOF)
+            # surface raw as OSError/http.client.HTTPException subclasses.
+            except (OSError, http.client.HTTPException) as error:
                 if attempt + 1 >= SERVER_ERROR_ATTEMPTS:
                     raise XeroError(f"Xero unreachable for {path}: {error}")
                 time.sleep(min(60, 2 ** attempt))
-        raise XeroError(f"Xero gave up after {MAX_ATTEMPTS} attempts for {path}")
+        # The loop can only run out of attempts on repeated 429s (401 refreshes
+        # once then raises; 5xx and timeouts raise after SERVER_ERROR_ATTEMPTS).
+        raise RateLimitStalled(
+            f"Xero still throttling {path} after {MAX_ATTEMPTS} attempts with Retry-After honoured ({last_throttle})"
+        )
 
     def _observe_day_limit(self, headers) -> None:
         value = _first_header(headers, DAY_LIMIT_HEADERS)

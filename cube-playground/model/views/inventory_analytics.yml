@@ -27,7 +27,11 @@ views:
         example inventory_logs_* with transfer_items_*) in one query. Stock
         value is at cost, ex tax; it is not retail value. Price-list questions
         ("what price types does X have") use item_prices_* with items_*;
-        bundle contents use item_components_*.
+        bundle contents use item_components_*. Blank catalogue-price members
+        do not prove an item is unpriced: for a selling-price fallback, query
+        completed sale-line `normal_unit_price`, `unit_price`, and
+        `average_selling_price` in product_sales_analytics and label them as
+        observed/historical rather than current catalogue truth.
 
     cubes:
       # items owns the view's tenant_id: every grain in this view reaches

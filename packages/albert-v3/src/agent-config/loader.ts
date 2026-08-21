@@ -52,6 +52,10 @@ export type CertifiedQueryRecipe = Readonly<{
    * composes it directly instead of escalating to the diagnostic lanes.
    */
   emptyAnswer?: string;
+  /** Trusted first-row interpolation template compiled from recipe frontmatter. */
+  answerTemplate?: string;
+  /** Static owner-voice next questions used only with a deterministic template. */
+  followUps?: readonly string[];
 }>;
 
 export type CertifiedQuery = Readonly<{
@@ -206,13 +210,22 @@ export function loadAgentConfig(): AlbertV3AgentConfig {
     alwaysRulesBlock: alwaysRules.map((rule) => rule.body).join("\n\n"),
     alwaysRules: Object.freeze(alwaysRules.map((rule) => Object.freeze({ ...rule }))),
     agentRequestedRules: Object.freeze(agentRequestedRules.map((rule) => Object.freeze({ ...rule }))),
-    certifiedQueries: Object.freeze(certifiedQueries.map((query) => Object.freeze({
-      name: query.name,
-      userRequest: query.userRequest,
-      notes: query.notes,
-      query: query.query,
-      ...("recipe" in query && query.recipe ? { recipe: Object.freeze({ ...(query.recipe as CertifiedQueryRecipe) }) } : {}),
-    }))),
+    certifiedQueries: Object.freeze(certifiedQueries.map((query) => {
+      const recipe = "recipe" in query ? query.recipe as CertifiedQueryRecipe | undefined : undefined;
+      return Object.freeze({
+        name: query.name,
+        userRequest: query.userRequest,
+        notes: query.notes,
+        query: query.query,
+        ...(recipe ? {
+          recipe: Object.freeze({
+            ...recipe,
+            ...(recipe.matches ? { matches: Object.freeze([...recipe.matches]) } : {}),
+            ...(recipe.followUps ? { followUps: Object.freeze([...recipe.followUps]) } : {}),
+          }),
+        } : {}),
+      });
+    })),
     skills: Object.freeze(skills.map((skill) => Object.freeze({ ...skill }))),
   });
   return cached;

@@ -1,6 +1,7 @@
 "use client";
 
-import { ResponsiveBar } from "@nivo/bar";
+import { ResponsiveBar, type BarLegendProps } from "@nivo/bar";
+import type { LegendProps } from "@nivo/legends";
 import { ResponsiveLine } from "@nivo/line";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -401,7 +402,9 @@ function ChartPreview({ design, tab }: { design: NivoChartDesign; tab: StudioTab
             axisLeft={axisToNivo(design.bar.axisLeft, "Amount")}
             axisTop={axisToNivo(design.bar.axisTop, "Period")}
             axisRight={axisToNivo(design.bar.axisRight, "Amount")}
-            legends={design.bar.legend.enabled ? [legendToNivo(design.bar.legend, design.bar.legend.dataFrom)] : []}
+            legends={design.bar.legend.enabled
+              ? [legendToNivo(design.bar.legend, design.bar.legend.dataFrom) as unknown as BarLegendProps]
+              : []}
           />
         ) : (
           <ResponsiveLine
@@ -411,7 +414,9 @@ function ChartPreview({ design, tab }: { design: NivoChartDesign; tab: StudioTab
             axisLeft={axisToNivo(design.line.axisLeft, "Amount")}
             axisTop={axisToNivo(design.line.axisTop, "Period")}
             axisRight={axisToNivo(design.line.axisRight, "Amount")}
-            legends={design.line.legend.enabled ? [legendToNivo(design.line.legend)] : []}
+            legends={design.line.legend.enabled
+              ? [legendToNivo(design.line.legend) as unknown as LegendProps]
+              : []}
           />
         )}
       </div>
@@ -453,7 +458,7 @@ export default function ChartDesignStudio({ refreshToken = 0 }: { refreshToken?:
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
   }, [load, refreshToken]);
 
   useLayoutEffect(() => {

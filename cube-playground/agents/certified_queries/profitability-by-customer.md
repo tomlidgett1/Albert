@@ -1,11 +1,20 @@
 ---
 user_request: >
-  Break down profitability by customer. Who are the most and least profitable
-  customers?
+  Which customers have contributed the most gross profit?
+recipe: true
+presentation: table
+date_parameter: sales_analytics.completed_at
+answer_hint: >
+  Rank attached customer profiles by gross profit for the requested period.
+  Call it gross profit, never whole-business or net profit, and disclose the
+  attached-customer scope without exposing contact details.
+matches:
+  - "Which customers are most profitable?"
+  - "Which customers generate the most gross profit?"
+  - "Show customer profitability"
 ---
 
-Period-scoped: add a timeDimension dateRange on completed_at when the user
-names a period.
+Gross-profit ranking only: Lightspeed does not contain operating expenses.
 
 ```json
 {
@@ -22,6 +31,6 @@ names a period.
     { "member": "sales_analytics.has_customer", "operator": "equals", "values": ["true"] }
   ],
   "order": { "sales_analytics.gross_profit": "desc" },
-  "limit": 25
+  "limit": 20
 }
 ```

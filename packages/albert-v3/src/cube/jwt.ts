@@ -22,6 +22,13 @@ export function signCubeJwt(input: Readonly<{
   const header = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({
     tenant_id: tenantId,
+    ...(input.securityContext.role ? { role: input.securityContext.role } : {}),
+    ...(input.securityContext.specialist_agent_id
+      ? {
+        specialist_agent_id: input.securityContext.specialist_agent_id,
+        specialist_agent_version: input.securityContext.specialist_agent_version,
+      }
+      : {}),
     ...(input.securityContext.conversation_id
       ? {
         conversation_id: input.securityContext.conversation_id,

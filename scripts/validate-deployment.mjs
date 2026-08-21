@@ -8,6 +8,13 @@ import {
 } from "./capacity-attestation-timing.mjs";
 
 const services = Object.freeze({
+  "codex-runtime.toml": Object.freeze({
+    runtime: "codex-runtime",
+    command: "services/codex-runtime.js",
+    port: 8792,
+    exposure: "signed-public",
+    source: "services/codex-runtime/src/http.ts",
+  }),
   "cube.toml": Object.freeze({
     runtime: "cube",
     port: 4000,
@@ -24,20 +31,6 @@ const services = Object.freeze({
     exposure: "private",
     source: "services/deletion-worker/src/main.ts",
   }),
-  "anthropic-analytics.toml": Object.freeze({
-    runtime: "anthropic-analytics",
-    command: "services/anthropic-analytics.js",
-    port: 8791,
-    exposure: "signed-public",
-    source: "services/anthropic-analytics/src/http.ts",
-  }),
-  "semantic-query.toml": Object.freeze({
-    runtime: "semantic-query",
-    command: "services/semantic-query.js",
-    port: 8788,
-    exposure: "signed-public",
-    source: "services/semantic-query/src/node-server.ts",
-  }),
   "operator-diagnostic.toml": Object.freeze({
     runtime: "operator-diagnostic",
     command: "services/operator-diagnostic.js",
@@ -51,13 +44,6 @@ const services = Object.freeze({
     port: 8080,
     exposure: "signed-public",
     source: "services/sync-workers/src/main.ts",
-  }),
-  "transform-worker.toml": Object.freeze({
-    runtime: "transform-worker",
-    command: "services/transform-worker.js",
-    port: 8080,
-    exposure: "private",
-    source: "services/transform-worker/src/main.ts",
   }),
   "webhook-gateway.toml": Object.freeze({
     runtime: "webhook-gateway",
@@ -419,7 +405,6 @@ for (const [file, expected] of Object.entries(services)) {
 
 for (const [name, metricPrefix, targetFloor] of [
   ["sync-worker.toml", "albert_sync_queue", 300],
-  ["transform-worker.toml", "albert_transform_queue", 120],
 ]) {
   const autoscaler = await readFile(
     new URL(`../deploy/fly-autoscalers/${name}`, import.meta.url),
@@ -457,12 +442,6 @@ for (const [name, metricPrefix, targetFloor] of [
     false,
     `${name} autoscaler must not commit its scaling token.`,
   );
-  if (name === "transform-worker.toml") {
-    assert.ok(
-      autoscaler.includes("albert_transform_maintenance_due"),
-      "Transform autoscaling must include the hourly tenant sweep backlog.",
-    );
-  }
 }
 
 const [vercelManifest, vercelProject] = await Promise.all([
@@ -550,7 +529,6 @@ const [
   releaseWorkflow,
   dogfoodWorkflow,
   migrationRunner,
-  registryPublisher,
   webProxy,
   supabaseServer,
 ] = await Promise.all([
@@ -575,7 +553,6 @@ const [
     "utf8",
   ),
   readFile(new URL("./migrate.ts", import.meta.url), "utf8"),
-  readFile(new URL("./registry.ts", import.meta.url), "utf8"),
   readFile(new URL("../proxy.ts", import.meta.url), "utf8"),
   readFile(new URL("../utils/supabase/server.ts", import.meta.url), "utf8"),
 ]);
@@ -584,17 +561,8 @@ assert.equal(
   "node scripts/release-preflight.mjs",
 );
 assert.equal(
-  packageJson.scripts["capacity:transform"],
-  "tsx scripts/transform-capacity-harness.ts",
-);
-assert.equal(
   packageJson.scripts["build:capacity-attestor"],
   "node scripts/build-capacity-attestor.mjs",
-);
-assert.match(
-  buildServices,
-  /"transform-capacity-harness"\s*:\s*"scripts\/transform-capacity-harness\.ts"/u,
-  "The exact transform capacity harness must ship in the worker image.",
 );
 assert.match(
   buildServices,
@@ -632,9 +600,9 @@ const serviceNpmCaches = [
   ),
 ].map((match) => match[1]);
 assert.equal(
-  serviceNpmCaches.length,
-  2,
-  "Both service image stages must use locked, explicitly named npm caches.",
+  serviceNpmCaches.length >= 2,
+  true,
+  "Every service image npm operation must use a locked, explicitly named cache.",
 );
 assert.equal(
   new Set(serviceNpmCaches).size,
@@ -821,7 +789,6 @@ const migrationIndex = releaseWorkflow.indexOf(
   "Apply immutable migrations with deployer identities",
 );
 const securityProvisionIndex = releaseWorkflow.indexOf("\n  runtime-security:");
-const registryIndex = releaseWorkflow.indexOf("\n  publish-registry:");
 const rawStorageStageIndex = releaseWorkflow.indexOf(
   "\n  stage-raw-storage-sessions:",
 );
@@ -835,11 +802,10 @@ assert.ok(
     bootstrapUpgradeIndex > releasePreflightIndex &&
     migrationIndex > bootstrapUpgradeIndex &&
     securityProvisionIndex > migrationIndex &&
-    registryIndex > securityProvisionIndex &&
-    rawStorageStageIndex > registryIndex &&
+    rawStorageStageIndex > securityProvisionIndex &&
     vendorRelayStageIndex > rawStorageStageIndex &&
     deployServicesIndex > vendorRelayStageIndex,
-  "Release security bootstrap, migrations, key provisioning, and publication are out of order.",
+  "Release security bootstrap, migrations, key provisioning, and deployment staging are out of order.",
 );
 const capacityAttestationJob = releaseWorkflow.slice(
   capacityAttestationIndex,
@@ -973,7 +939,8 @@ assert.match(
   releaseWorkflow,
   /provision:raw-storage-machine-users[\s\S]*SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY[\s\S]*ALBERT_RAW_STORAGE_CREDENTIAL_GENERATION/u,
 );
-assert.match(releaseWorkflow, /publish-registry:[\s\S]*runtime-security/u);
+assert.doesNotMatch(releaseWorkflow, /publish-registry:|registry:publish/u);
+assert.match(releaseWorkflow, /deploy-services:[\s\S]*needs:[\s\S]*- runtime-security/u);
 assert.match(releaseWorkflow, /ALBERT_REQUIRE_DEPLOYER_LOGIN:\s*"true"/u);
 assert.match(
   releaseWorkflow,
@@ -1003,17 +970,6 @@ assert.match(
   /sessionUser !== target\.deployerLogin/u,
   "Release migrations must verify the actual deployer login.",
 );
-assert.match(
-  registryPublisher,
-  /publicationRole !== "albert_control_migration_owner"/u,
-  "Registry publication must use the migration owner.",
-);
-assert.match(
-  registryPublisher,
-  /session_user !== "albert_control_deployer"/u,
-  "Registry publication must verify the deployer login.",
-);
-
 const [
   attestorMain,
   attestorOidc,

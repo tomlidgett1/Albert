@@ -42,7 +42,16 @@ views:
           - quote_id
           - has_customer
           - transactions
+          - purchase_transactions
+          - identified_transactions
+          - anonymous_transactions
+          - identified_transaction_coverage_pct
+          - anonymous_transaction_coverage_pct
           - gross_takings
+          - identified_gross_takings
+          - anonymous_gross_takings
+          - identified_revenue_coverage_pct
+          - anonymous_revenue_coverage_pct
           - net_sales_ex_tax
           - tax_collected
           - tax1_collected
@@ -71,11 +80,13 @@ views:
       - join_path: sales.customers
         prefix: true
         includes:
-          - customer_id
           - full_name
           - company
           - first_purchase_at
           - last_purchase_at
+          - purchase_count
+          - refund_count
+          - lifetime_net_spend
           - lifetime_revenue
           - lifetime_transactions
           - is_repeat_customer
@@ -128,6 +139,7 @@ views:
       - name: Revenue
         includes:
           - transactions
+          - purchase_transactions
           - gross_takings
           - net_sales_ex_tax
           - average_sale_value
@@ -170,11 +182,21 @@ views:
         includes:
           - has_customer
           - purchasing_customers
-          - customers_customer_id
+          - identified_transactions
+          - anonymous_transactions
+          - identified_transaction_coverage_pct
+          - anonymous_transaction_coverage_pct
+          - identified_gross_takings
+          - anonymous_gross_takings
+          - identified_revenue_coverage_pct
+          - anonymous_revenue_coverage_pct
           - customers_full_name
           - customers_company
           - customers_first_purchase_at
           - customers_last_purchase_at
+          - customers_purchase_count
+          - customers_refund_count
+          - customers_lifetime_net_spend
           - customers_lifetime_revenue
           - customers_lifetime_transactions
           - customers_is_repeat_customer

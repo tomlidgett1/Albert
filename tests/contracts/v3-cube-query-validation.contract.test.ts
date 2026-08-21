@@ -73,6 +73,36 @@ test("a bucketed time dimension repeated as a plain dimension is refused before 
   assert.ok(!("error" in rawTimestamps), errorOf(rawTimestamps));
 });
 
+test("comparison ranges are complete real ordered date pairs", () => {
+  for (const compareDateRange of [
+    [["2026-02-30", "2026-03-31"], ["2025-03-01", "2025-03-31"]],
+    [["2026-04-01", "2026-03-01"], ["2025-03-01", "2025-03-31"]],
+    ["2026-01-01,2026-01-31", "last month"],
+    [["2026-01-01", "2026-01-31"]],
+  ] as const) {
+    const rejected = validateCubeQuery({
+      measures: ["sales_analytics.gross_takings"],
+      timeDimensions: [{
+        dimension: "sales_analytics.completed_at",
+        compareDateRange,
+      }],
+    }, CATALOGUE);
+    assert.match(errorOf(rejected), /compareDateRange|ordered YYYY-MM-DD/u);
+  }
+
+  const accepted = validateCubeQuery({
+    measures: ["sales_analytics.gross_takings"],
+    timeDimensions: [{
+      dimension: "sales_analytics.completed_at",
+      compareDateRange: [
+        ["2026-03-01", "2026-03-31"],
+        "2025-03-01,2025-03-31",
+      ],
+    }],
+  }, CATALOGUE);
+  assert.ok(!("error" in accepted), errorOf(accepted));
+});
+
 test("the Cube config keeps orchestrator creation idempotent for per-turn orchestrators", () => {
   // Cube's getOrchestratorApi is check-then-set across awaits; a compareDateRange
   // request calls it once per sub-query in the same tick and, for a brand-new

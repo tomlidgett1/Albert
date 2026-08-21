@@ -7,14 +7,24 @@ version: 1
 accessible_views:
   - name: sales_analytics
     connector: lightspeed
+    routing_terms:
+      - best employee this month
+      - top staff sales performance
+      - employee performance by takings
     guidance: >
       Whole-transaction grain. Revenue, refunds, discounts, tax, quotes, voids,
-      store and staff performance, and the customer on the sale.
+      store and staff performance, and the customer on the sale. “Best employee”
+      also requires authoritative hours from workforce_analytics when Deputy is
+      connected; sales alone are contribution, not productivity.
   - name: product_sales_analytics
     connector: lightspeed
     guidance: >
       Sale-line grain. Units, item revenue, discounts, cost and gross profit by
-      product, category, brand, season and tags.
+      product, category, brand, season and tags. Also the R-Series fallback for
+      observed selling prices when current catalogue-price fields are blank:
+      normal_unit_price is the pre-discount line price, unit_price is charged,
+      and average_selling_price is a period aggregate; none is current catalogue
+      truth.
   - name: payments_analytics
     connector: lightspeed
     guidance: >
@@ -23,8 +33,11 @@ accessible_views:
   - name: customer_analytics
     connector: lightspeed
     guidance: >
-      Customer grain. Profiles, types, geography, contactability, lifetime
-      behaviour, store credit and gift cards.
+      Customer-profile grain. Refund-safe positive-purchase recency/frequency,
+      true censored 90-day repeat, signed lifetime net spend, broad geography,
+      aggregate contactability, store credit and gift cards. Profiles are not
+      deduplicated people. Exact contact values, street address, date of birth,
+      custom values and note text are deliberately excluded.
   - name: workshop_analytics
     connector: lightspeed
     guidance: >
@@ -40,7 +53,9 @@ accessible_views:
       price lists and bundle components. Aged inventory reports: group
       units_on_hand and stock_value by stock_age_band with the in_stock
       segment (one query); do not reconstruct ageing from goods receipts or
-      movement logs.
+      movement logs. Blank catalogue prices do not prove an item is unpriced;
+      recover observed prices from product_sales_analytics before concluding
+      unavailable.
   - name: purchasing_analytics
     connector: lightspeed
     guidance: >
@@ -311,6 +326,10 @@ accessible_views:
       (Deputy). Sales per staff member stay in sales_analytics.
   - name: workforce_analytics
     connector: deputy
+    routing_terms:
+      - best employee by productivity
+      - employee sales per worked hour
+      - staff performance with hours worked
     guidance: >
       Workforce (Deputy) grain. Authoritative hours worked and wage cost from
       timesheets, rostered / scheduled shifts and planned cost, open and
@@ -752,10 +771,27 @@ context_probes:
       timeDimensions: [{ dimension: workshop_analytics.checked_in_at, granularity: month, dateRange: last 12 months }]
   - connector: lightspeed
     key: customers
-    purpose: "Customer base: customers on file, customers with purchases, repeat customers and repeat rate."
+    purpose: "Customer base: profiles on file/active, positive purchasers, repeat profiles, lifetime repeat rate, signed net spend and refunds. Profiles are not deduplicated people."
     rows: 1
     query:
-      measures: [customer_analytics.customer_count, customer_analytics.customers_with_purchases, customer_analytics.repeat_customers, customer_analytics.repeat_purchase_rate_pct]
+      measures: [customer_analytics.customer_count, customer_analytics.active_customer_count, customer_analytics.customers_with_purchases, customer_analytics.repeat_customers, customer_analytics.repeat_purchase_rate_pct, customer_analytics.total_lifetime_net_spend, customer_analytics.total_lifetime_refund_value]
+  - connector: lightspeed
+    key: customer_recency_frequency
+    purpose: "Active customer profile distribution by transparent purchase recency and positive-purchase frequency bands; operational segments, not predicted churn."
+    rows: 30
+    query:
+      measures: [customer_analytics.customer_count, customer_analytics.total_lifetime_net_spend]
+      dimensions: [customer_analytics.recency_band, customer_analytics.frequency_band]
+      segments: [customer_analytics.active_customers]
+      order: { customer_analytics.customer_count: desc }
+      limit: 30
+  - connector: lightspeed
+    key: customer_attribution_12m
+    purpose: "Last-12-month completed transactions and takings split into customer-profile-attached versus anonymous coverage."
+    rows: 1
+    query:
+      measures: [sales_analytics.transactions, sales_analytics.identified_transactions, sales_analytics.anonymous_transactions, sales_analytics.identified_transaction_coverage_pct, sales_analytics.gross_takings, sales_analytics.identified_gross_takings, sales_analytics.anonymous_gross_takings, sales_analytics.identified_revenue_coverage_pct]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, dateRange: last 12 months }]
   - connector: lightspeed
     key: catalogue_and_stock
     purpose: "Catalogue and stock position: distinct items in stock, units on hand, stock value, positions below reorder."

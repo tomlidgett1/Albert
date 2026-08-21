@@ -1,5 +1,8 @@
 import type { Page } from "@playwright/test";
-import { createDeterministicFixtureTrace } from "../../../services/conversation/src/fixture";
+import {
+  createDeterministicFixtureTrace,
+  FIXTURE_RESULT_ID,
+} from "../../../services/conversation/src/fixture";
 
 export const fixtureWorkspace = Object.freeze({
   tenantName: "Albert Bike Store",
@@ -152,6 +155,8 @@ export const fixtureWorkspace = Object.freeze({
 export type AppApiCapture = {
   bootstrapPayloads: unknown[];
   conversationPayloads: unknown[];
+  codexConversationPayloads: unknown[];
+  runtimeRequestStartedAt: { v3: number[]; codex: number[] };
   anthropicConversationPayloads: unknown[];
   oauthSelectionPayloads: unknown[];
   reviewPayloads: unknown[];
@@ -792,20 +797,28 @@ export async function installAppApiRoutes(
   options: Readonly<{
     needsBootstrap?: boolean;
     anthropicHistory?: boolean;
+    specialistHistory?: boolean;
+    codexHistory?: boolean;
+    v3DelayMs?: number;
+    codexDelayMs?: number;
     anthropicDelayMs?: number;
     internalOperator?: boolean;
     semanticDraft?: boolean;
+    role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
   }> = {},
 ): Promise<AppApiCapture> {
   await installSupabaseBrowserAuthRoutes(page);
   const capture: AppApiCapture = {
     bootstrapPayloads: [],
     conversationPayloads: [],
+    codexConversationPayloads: [],
+    runtimeRequestStartedAt: { v3: [], codex: [] },
     anthropicConversationPayloads: [],
     oauthSelectionPayloads: [],
     reviewPayloads: [],
     semanticPayloads: [],
   };
+  const sessionRole = options.role ?? "owner";
   let bootstrapped = false;
   let semanticRevision = 3;
 
@@ -816,7 +829,7 @@ export async function installAppApiRoutes(
       bootstrapped = true;
       await route.fulfill({
         status: 201,
-        json: { context: { tenant_name: "Albert Bike Store", role: "owner" } },
+        json: { context: { tenant_name: "Albert Bike Store", role: sessionRole } },
       });
       return;
     }
@@ -832,7 +845,7 @@ export async function installAppApiRoutes(
         context:
           options.needsBootstrap && !bootstrapped
             ? null
-            : { tenant_name: "Albert Bike Store", role: "owner" },
+            : { tenant_name: "Albert Bike Store", role: sessionRole },
         internalOperator: Boolean(options.internalOperator),
         deletionReceipt: null,
         needsBootstrap: Boolean(options.needsBootstrap && !bootstrapped),
@@ -962,24 +975,45 @@ export async function installAppApiRoutes(
   await page.route(/\/api\/conversations(?:\?.*)?$/u, async (route) => {
     await route.fulfill({
       json: {
-        conversations: options.anthropicHistory
+        conversations: options.anthropicHistory || options.specialistHistory || options.codexHistory
           ? [
               {
                 conversation_id: "01J00000000000000000000021",
-                title: "Claude sales review",
+                title: options.specialistHistory
+                  ? "Customer review"
+                  : options.codexHistory
+                    ? "Codex business review"
+                    : "Claude sales review",
                 status: "active",
                 created_at: "2026-08-09T00:00:00.000Z",
                 updated_at: "2026-08-09T00:01:00.000Z",
                 last_turn: {
                   turn_id: "01J00000000000000000000022",
                   turn_number: 1,
-                  user_message: "Review yesterday's sales",
+                  user_message: options.specialistHistory
+                    ? "Review our customer base"
+                    : options.codexHistory
+                      ? "Review the business"
+                      : "Review yesterday's sales",
                   status: "completed",
                   answer_state: "verified",
-                  runtime_profile: {
-                    model: "claude-opus-5",
-                    runtime: "anthropic-agent-sdk",
-                  },
+                  runtime_profile: options.specialistHistory
+                    ? {
+                        model: "gpt-5.6-luna",
+                        runtime: "albert-v3",
+                        analyticalRuntime: "cube-v3",
+                        specialistAgentId: "customers",
+                      }
+                    : options.codexHistory
+                      ? {
+                          model: "gpt-5.6-sol",
+                          runtime: "codex-app-server",
+                          analyticalRuntime: "cube-codex-v1",
+                        }
+                      : {
+                        model: "claude-opus-5",
+                        runtime: "anthropic-agent-sdk",
+                      },
                   created_at: "2026-08-09T00:00:00.000Z",
                   completed_at: "2026-08-09T00:01:00.000Z",
                 },
@@ -1002,13 +1036,30 @@ export async function installAppApiRoutes(
               {
                 turn_id: "01J00000000000000000000022",
                 turn_number: 1,
-                user_message: "Review yesterday's sales",
+                user_message: options.specialistHistory
+                  ? "Review our customer base"
+                  : options.codexHistory
+                    ? "Review the business"
+                    : "Review yesterday's sales",
                 status: "completed",
                 answer_state: "verified",
-                runtime_profile: {
-                  model: "claude-opus-5",
-                  runtime: "anthropic-agent-sdk",
-                },
+                runtime_profile: options.specialistHistory
+                  ? {
+                      model: "gpt-5.6-luna",
+                      runtime: "albert-v3",
+                      analyticalRuntime: "cube-v3",
+                      specialistAgentId: "customers",
+                    }
+                  : options.codexHistory
+                    ? {
+                        model: "gpt-5.6-sol",
+                        runtime: "codex-app-server",
+                        analyticalRuntime: "cube-codex-v1",
+                      }
+                    : {
+                      model: "claude-opus-5",
+                      runtime: "anthropic-agent-sdk",
+                    },
                 created_at: "2026-08-09T00:00:00.000Z",
                 completed_at: "2026-08-09T00:01:00.000Z",
                 events: createDeterministicFixtureTrace(),
@@ -1021,8 +1072,20 @@ export async function installAppApiRoutes(
   );
 
   await page.route(/\/api\/(?:v3-)?conversation$/u, async (route) => {
-    capture.conversationPayloads.push(route.request().postDataJSON());
+    const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
+    capture.conversationPayloads.push(requestPayload);
+    const fixtureTurnId = `01J000000000000000000000${String(40 + capture.conversationPayloads.length).padStart(2, "0")}`;
     const isV3 = /v3-conversation/u.test(route.request().url());
+    const requestedPreferences = requestPayload.preferences && typeof requestPayload.preferences === "object"
+      ? requestPayload.preferences as Record<string, unknown>
+      : {};
+    const requestedModel = typeof requestedPreferences.model === "string"
+      ? requestedPreferences.model
+      : "gpt-5.6-luna";
+    if (isV3) capture.runtimeRequestStartedAt.v3.push(Date.now());
+    if (isV3 && options.v3DelayMs) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, options.v3DelayMs));
+    }
     const body = createDeterministicFixtureTrace()
       .map((event) =>
         isV3
@@ -1037,8 +1100,159 @@ export async function installAppApiRoutes(
         "Cache-Control": "no-store",
         "Content-Type": "text/event-stream; charset=utf-8",
         "X-Albert-Runtime": isV3 ? "v3" : "fixture",
+        ...(isV3 ? {
+          "X-Albert-Model": requestedModel,
+          "X-Albert-Conversation-Id": "01J00000000000000000000020",
+          "X-Albert-Turn-Id": fixtureTurnId,
+          "X-Albert-Specialist-Agent": typeof requestPayload.specialistAgentId === "string"
+            ? requestPayload.specialistAgentId
+            : "general",
+          ...(requestPayload.comparisonMode === true
+            ? { "X-Albert-Analysis-Brief": "fixture-shared-brief" }
+            : {}),
+        } : {}),
       },
+    }).catch(() => undefined);
+  });
+
+  await page.route(/\/api\/codex-conversation$/u, async (route) => {
+    const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
+    capture.codexConversationPayloads.push(requestPayload);
+    capture.runtimeRequestStartedAt.codex.push(Date.now());
+    if (options.codexDelayMs) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, options.codexDelayMs));
+    }
+    const fixtureEvents = createDeterministicFixtureTrace();
+    const requestedMessage = typeof requestPayload.message === "string" ? requestPayload.message : "";
+    const contextualAcknowledgement = /categor/iu.test(requestedMessage)
+      ? "I’ll compare category performance and check what explains the difference."
+      : /opportun/iu.test(requestedMessage)
+        ? "I’ll investigate the strongest near-term business opportunity and follow the evidence."
+        : "I’ll investigate the requested business question and follow the strongest evidence.";
+    const analyticalCodexEvents = [
+      {
+        id: "trace_fixture_codex_acknowledgement",
+        sequence: 1,
+        type: "narrative",
+        status: "complete",
+        purpose: "acknowledgement",
+        occurredAt: "2026-08-03T00:42:59.980Z",
+        text: contextualAcknowledgement,
+      },
+      { ...fixtureEvents[0], sequence: 2 },
+      {
+        id: "trace_fixture_codex_plan",
+        sequence: 3,
+        type: "plan",
+        status: "complete",
+        occurredAt: "2026-08-03T00:43:00.040Z",
+        steps: [
+          { id: "codex_plan_step_1", label: "Find the governed sales view", status: "active", kind: "evidence", evidenceResultIds: [] },
+          { id: "codex_plan_step_2", label: "Query the supported sales measure", status: "pending", kind: "evidence", evidenceResultIds: [] },
+          { id: "codex_plan_step_3", label: "Validate and present the answer", status: "pending", kind: "synthesis", evidenceResultIds: [] },
+        ],
+      },
+      ...fixtureEvents.slice(1, 5).map((event) => ({ ...event, sequence: event.sequence + 2 })),
+      {
+        id: "trace_fixture_codex_plan_evidence",
+        sequence: 8,
+        type: "plan",
+        status: "complete",
+        occurredAt: "2026-08-03T00:43:00.440Z",
+        steps: [
+          { id: "codex_plan_step_1", label: "Find the governed sales view", status: "done", kind: "evidence", evidenceResultIds: [FIXTURE_RESULT_ID] },
+          { id: "codex_plan_step_2", label: "Query the supported sales measure", status: "done", kind: "evidence", evidenceResultIds: [FIXTURE_RESULT_ID] },
+          { id: "codex_plan_step_3", label: "Validate and present the answer", status: "active", kind: "synthesis", evidenceResultIds: [] },
+        ],
+      },
+      ...fixtureEvents.slice(5, 7).map((event) => ({ ...event, sequence: event.sequence + 3 })),
+      {
+        id: "trace_fixture_codex_evidence_update",
+        sequence: 11,
+        type: "narrative",
+        status: "complete",
+        occurredAt: "2026-08-03T00:43:00.600Z",
+        text: "Bikes led category net sales at $84,240.00.",
+      },
+      {
+        id: "trace_fixture_codex_plan_complete",
+        sequence: 12,
+        type: "plan",
+        status: "complete",
+        occurredAt: "2026-08-03T00:43:00.680Z",
+        steps: [
+          { id: "codex_plan_step_1", label: "Find the governed sales view", status: "done", kind: "evidence", evidenceResultIds: [FIXTURE_RESULT_ID] },
+          { id: "codex_plan_step_2", label: "Query the supported sales measure", status: "done", kind: "evidence", evidenceResultIds: [FIXTURE_RESULT_ID] },
+          { id: "codex_plan_step_3", label: "Validate and present the answer", status: "done", kind: "synthesis", evidenceResultIds: [FIXTURE_RESULT_ID] },
+        ],
+      },
+      ...fixtureEvents.slice(8).map((event) => ({ ...event, sequence: event.sequence + 4 })),
+    ];
+    const localConversationEvent = (id: string, text: string) => ({
+      id,
+      sequence: 1,
+      type: "answer",
+      status: "complete",
+      occurredAt: "2026-08-03T00:43:00.000Z",
+      state: "Verified",
+      text,
+      provenance: {
+        sources: [],
+        timeRange: {
+          label: "Not applicable — conversational reply",
+          start: "unknown",
+          end: "unknown",
+          timezone: "UTC",
+        },
+        definitions: [],
+        semanticBundleHash: "albert-codex-social-v1",
+        identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+      },
+      followUps: [],
+      presentedResultIds: [],
+      claims: [],
     });
+    const codexEvents = /^date tomorrow[?.!]?$/iu.test(requestedMessage.trim())
+      ? [localConversationEvent(
+          "trace_fixture_codex_tomorrow_answer",
+          "Tomorrow is Saturday, 22 August 2026.",
+        )]
+      : /^whats todays date[?.!]?$/iu.test(requestedMessage.trim())
+        ? [localConversationEvent(
+          "trace_fixture_codex_date_answer",
+          "Today is Friday, 21 August 2026.",
+        )]
+        : /^nice one[.!]?$/iu.test(requestedMessage.trim())
+          ? [localConversationEvent(
+            "trace_fixture_codex_social_answer",
+            "Glad that helped.",
+          )]
+          : analyticalCodexEvents;
+    const body = codexEvents
+      .map((event) => `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`)
+      .join("");
+    const requestedPreferences = requestPayload.preferences && typeof requestPayload.preferences === "object"
+      ? requestPayload.preferences as Record<string, unknown>
+      : {};
+    const requestedModel = typeof requestedPreferences.model === "string"
+      ? requestedPreferences.model
+      : "gpt-5.6-luna";
+    await route.fulfill({
+      status: 200,
+      body,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Albert-Runtime": "codex",
+        "X-Albert-Model": requestedModel,
+        "X-Albert-Conversation-Id": "01J00000000000000000000031",
+        "X-Albert-Turn-Id": "01J00000000000000000000032",
+        "X-Albert-Codex-Version": "0.148.0",
+        ...(requestPayload.comparisonMode === true
+          ? { "X-Albert-Analysis-Brief": "fixture-shared-brief" }
+          : {}),
+      },
+    }).catch(() => undefined);
   });
 
   await page.route(/\/api\/anthropic-conversation$/u, async (route) => {

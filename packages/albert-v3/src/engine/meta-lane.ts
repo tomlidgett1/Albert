@@ -23,13 +23,26 @@ export function renderDataFactSheet(input: LaneRunInput, activeConnectors: reado
   const config = input.config;
   const active = [...new Set((activeConnectors ?? []).map((key) => normalizeV3Connector(key)).filter((k): k is NonNullable<typeof k> => Boolean(k)))];
   const configured = [...new Set(config.accessibleViews.map((view) => view.connector))];
-  const connected = active.length > 0 ? active : configured;
+  // Only UNKNOWN connection state — undefined (the control-plane read failed)
+  // or a non-empty list whose keys no longer normalise (stale metadata) — may
+  // widen to the configured surface. A present-but-empty list means the tenant
+  // has no connections; widening it would present the whole configured
+  // catalogue to a zero-connection tenant as "connected".
+  const noneConnected = activeConnectors !== undefined && activeConnectors.length === 0;
+  const connected = noneConnected ? [] : active.length > 0 ? active : configured;
   const notConnected = configured.filter((connector) => !connected.includes(connector));
   const lines: string[] = [];
   if (input.context.businessContext) {
     lines.push(input.context.businessContext.rendered, "");
   }
   lines.push("# Connected tools (the ONLY sources of data for this business)");
+  if (connected.length === 0) {
+    lines.push(
+      "- none. No business tools are connected to Albert yet, so Albert holds no business data"
+      + " at all. Say this plainly (the answer to \"do we have any data\" is no), and tell the"
+      + " owner the next step is connecting a tool from Albert's Connections page.",
+    );
+  }
   for (const connector of connected) {
     const views = config.accessibleViews.filter((view) => view.connector === connector);
     lines.push(`- ${connector}: ${CONNECTOR_LABELS[connector] ?? connector}. Data areas: ${views.map((view) => `${view.name.replace(/_analytics$/u, "").replace(/_/gu, " ")} — ${(view.purpose ?? view.guidance).replace(/\s+/gu, " ").slice(0, 90)}`).join("; ")}`);

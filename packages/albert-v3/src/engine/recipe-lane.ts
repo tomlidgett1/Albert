@@ -6,9 +6,10 @@
  * period", "who is rostered", "what do we owe suppliers", ...). When the intent
  * orchestrator recognises one, this lane executes it directly — the period the
  * owner named is substituted into the recipe's date parameter — and a small
- * composer turns the rows into the answer (with a table or chart when the
- * recipe says so). No catalogue search, no schema load, no agentic loop, no
- * evidence review: three model-free steps and one bounded model call.
+ * trusted template can turn a one-row result into the final answer with no
+ * model request; recipes without a valid template retain the bounded composer
+ * (and its table/chart tools). No catalogue search, schema load, agentic loop,
+ * or evidence review is needed on either path.
  *
  * The mechanism is connector-agnostic: recipes are declared next to the views
  * they read (any connector can ship them) and executed through the same
@@ -24,8 +25,8 @@ import { createComposeTableTool, createPresentResultTool, executeGovernedCubeQue
 import { createMakeChartTool } from "./chart-layer.js";
 import { createAggregateResultTool } from "./aggregate-layer.js";
 import { renderBusinessContextForClassifier } from "../context-layer/render.js";
-import type { V3TurnContext } from "./context.js";
-import { sanitizeTraceText } from "../../../shared/src/index.js";
+import type { StoredTableResult, V3TurnContext } from "./context.js";
+import { sanitizeAnswerText, sanitizeTraceText, type TraceCell, type TraceTableColumn } from "../../../shared/src/index.js";
 
 const RELATIVE_RANGE = /^(?:today|yesterday|tomorrow|this (?:week|month|quarter|year)|last (?:week|month|quarter|year)|next (?:week|month)|last \d{1,3} (?:days|weeks|months|quarters|years)|from \d+ (?:days|weeks|months|years) ago to now|\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2}|(?:last |this |in )?[a-z]{3,9}\.?(?: \d{4})?)$/iu;
 
@@ -120,6 +121,137 @@ const PRESENTATION_GUIDANCE: Record<NonNullable<CertifiedQuery["recipe"]>["prese
   bar: "Attach a bar chart with make_chart (chartType bar, sort=y_desc, limit to the N the owner asked for or 10) and write one sentence naming the leader. Compose a table only if the owner asked for shares or a table.",
 };
 
+const RECIPE_TEMPLATE_TOKEN = /\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,2})\s*\|\s*(integer|number|percent|currency|date|text)\s*\}\}/gu;
+const OWNER_FOLLOW_UP = /^(?!\s*(?:i can|i'll|i will|i'd|i would|happy to|want me to|would you like(?: me)? to|shall i|let me|try:)\b).{4,160}$/iu;
+
+type RecipeAnswerFormat = "integer" | "number" | "percent" | "currency" | "date" | "text";
+export type RecipeRenderOptions = Readonly<{
+  currency: string;
+  timezone: string;
+  locale?: string;
+}>;
+
+const FORMAT_COLUMN_TYPES: Readonly<Record<RecipeAnswerFormat, ReadonlySet<TraceTableColumn["type"]>>> = {
+  integer: new Set(["number"]),
+  number: new Set(["number"]),
+  percent: new Set(["percent"]),
+  currency: new Set(["currency"]),
+  date: new Set(["date", "datetime"]),
+  text: new Set(["string"]),
+};
+
+function finiteNumber(value: TraceCell): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || !/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/iu.test(value.trim())) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function escapeMarkdownText(value: string): string {
+  return sanitizeTraceText(value, 300).replace(/[\\`*_[\]<>]/gu, "\\$&");
+}
+
+function formatRecipeCell(
+  value: TraceCell,
+  column: TraceTableColumn,
+  format: RecipeAnswerFormat,
+  options: RecipeRenderOptions,
+): string | undefined {
+  if (value === null || !FORMAT_COLUMN_TYPES[format].has(column.type)) return undefined;
+  const locale = options.locale ?? "en-AU";
+  if (format === "text") return typeof value === "string" && value.trim() ? escapeMarkdownText(value) : undefined;
+  if (format === "date") {
+    if (typeof value !== "string") return undefined;
+    const date = /^\d{4}-\d{2}-\d{2}$/u.test(value)
+      ? new Date(`${value}T12:00:00.000Z`)
+      : new Date(value);
+    if (!Number.isFinite(date.getTime())) return undefined;
+    try {
+      return new Intl.DateTimeFormat(locale, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: options.timezone,
+      }).format(date);
+    } catch {
+      return undefined;
+    }
+  }
+  const numeric = finiteNumber(value);
+  if (numeric === undefined) return undefined;
+  if (format === "integer") {
+    if (!Number.isSafeInteger(numeric)) return undefined;
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(numeric);
+  }
+  if (format === "number") {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(numeric);
+  }
+  if (format === "percent") {
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(numeric)}%`;
+  }
+  const currency = (column.currency ?? options.currency).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/u.test(currency)) return undefined;
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      currencyDisplay: "narrowSymbol",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numeric);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Renders a trusted recipe from exact cells in its first governed result row.
+ * Any unknown member, incompatible column type, null, malformed placeholder,
+ * or invalid static follow-up returns undefined so the existing composer owns
+ * the answer instead. No partial deterministic answer is ever emitted.
+ */
+export function renderDeterministicRecipeAnswer(
+  recipe: CertifiedQuery,
+  table: Pick<StoredTableResult, "columns" | "rows">,
+  options: RecipeRenderOptions,
+): FinalAnswer | undefined {
+  const template = recipe.recipe?.answerTemplate;
+  const firstRow = table.rows[0];
+  if (!template || !firstRow || template.length > 2_000) return undefined;
+  const columns = new Map(table.columns.map((column) => [column.key, column]));
+  let placeholderCount = 0;
+  let failed = false;
+  const answer = template.replace(RECIPE_TEMPLATE_TOKEN, (_token, member: string, format: RecipeAnswerFormat) => {
+    placeholderCount += 1;
+    const column = columns.get(member);
+    if (!column || !Object.hasOwn(firstRow, member)) {
+      failed = true;
+      return "";
+    }
+    const rendered = formatRecipeCell(firstRow[member] ?? null, column, format, options);
+    if (rendered === undefined) failed = true;
+    return rendered ?? "";
+  });
+  if (failed || placeholderCount < 1 || placeholderCount > 12 || answer.includes("{{") || answer.includes("}}")) {
+    return undefined;
+  }
+  const followUps = recipe.recipe?.followUps ?? [];
+  if (
+    followUps.length > 3
+    || followUps.some((followUp) => !OWNER_FOLLOW_UP.test(followUp.trim()))
+    || new Set(followUps.map((followUp) => followUp.trim().toLowerCase())).size !== followUps.length
+  ) {
+    return undefined;
+  }
+  const parsed = finalAnswerSchema.safeParse({
+    answer: sanitizeAnswerText(answer, 8_000),
+    state: "Verified",
+    followUps: followUps.map((followUp) => followUp.trim()),
+    assumptionsDisclosed: [],
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
 export async function runRecipeLane(
   input: LaneRunInput,
   recipe: CertifiedQuery,
@@ -155,6 +287,13 @@ export async function runRecipeLane(
 
   const table = [...context.tableResults.values()].find((t) => t.resultId === result.resultId);
   if (!table) return undefined;
+  const deterministicAnswer = !emptyIsAnswer
+    ? renderDeterministicRecipeAnswer(recipe, table, {
+      currency: input.config.currency,
+      timezone: input.config.timezone,
+    })
+    : undefined;
+  if (deterministicAnswer) return deterministicAnswer;
   const emptyGuidance = emptyIsAnswer
     ? `The result has NO rows, and for this question that is the answer: ${spec.emptyAnswer}. State it plainly for the period asked (one or two sentences), no table, no chart, no speculation about missing data or sync gaps.`
     : "";

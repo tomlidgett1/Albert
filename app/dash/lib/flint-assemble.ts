@@ -2,7 +2,7 @@
  * Browser / Node helper. Do not import this from the Vinext worker
  * (API routes or RSC). Flint is safe; Vega is not.
  */
-import { assembleVegaLite } from "flint-chart";
+import { assembleVegaLite, type ChartAssemblyInput } from "flint-chart";
 
 export type FlintAppearance = "light" | "dark";
 
@@ -125,7 +125,7 @@ export function toAssemblyInput(
   plan: AssemblableFlintPlan,
   appearance: FlintAppearance,
   options?: FlintAssembleOptions,
-): Readonly<Record<string, unknown>> {
+): ChartAssemblyInput {
   const width = options?.width ?? 720;
   const height = options?.height ?? 400;
   const cardFrame = options?.cardFrame !== false;
@@ -147,7 +147,7 @@ export function toAssemblyInput(
       },
     },
     options: { addTooltips: true },
-  };
+  } as ChartAssemblyInput;
 }
 
 /**

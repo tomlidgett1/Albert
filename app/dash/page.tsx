@@ -13,9 +13,18 @@ import {
   isXaiModel,
   normalizeAgentPreferences,
   type AgentRunPreferences,
+  type AlbertModelId,
+  type ReasoningEffort,
   type TraceEvent,
   type TraceTableEvent,
 } from "@/packages/shared/src";
+import {
+  getPublicSpecialistAgentDefinition,
+  normalizeSpecialistAgentId,
+  parseSpecialistAgentId,
+  specialistAgentAllowedForRole,
+  type SpecialistAgentId,
+} from "@/packages/albert-v3/src/specialist-agents/registry";
 import { createClient } from "@/utils/supabase/client";
 import InsightsStyleTrace from "./components/InsightsStyleTrace";
 import AdminWorkspace from "./components/AdminWorkspace";
@@ -36,6 +45,8 @@ import ConnectionsWorkspace, {
 import DictationWaveform from "./components/DictationWaveform";
 import KeyInsightsPanel from "./components/KeyInsightsPanel";
 import { ModelRunControls } from "./components/ModelRunControls";
+import { ConversationRuntimeTabs, type ConversationRuntimeTab } from "./components/conversation-runtime-tabs";
+import RuntimeComparisonWorkspace from "./components/runtime-comparison-workspace";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
 import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
 import RawDebugger from "./components/RawDebugger";
@@ -87,6 +98,7 @@ type IconName =
   | "sparkles"
   | "dashboard"
   | "database"
+  | "agents"
   | "chart"
   | "list";
 
@@ -102,6 +114,26 @@ type ActiveItem =
   | "Deletion";
 
 type Theme = "system" | "light" | "beige" | "sage" | "dark" | "green";
+
+const codexStarterPrompts = Object.freeze([
+  "Give me a candid health check across sales, customers, inventory and cash",
+  "What changed most in the last 90 days, and what evidence explains it?",
+  "Find one high-confidence opportunity I could test this month",
+  "Challenge the assumptions I may be making about business performance",
+]);
+
+const CODEX_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+] as const satisfies readonly AlbertModelId[]);
+const CODEX_REASONING_EFFORTS = Object.freeze([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ReasoningEffort[]);
 
 const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
   { value: "system", label: "System theme", icon: "monitor" },
@@ -199,6 +231,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M10 10v10" /></svg>;
     case "database":
       return <svg {...shared}><ellipse cx="12" cy="5.5" rx="7.5" ry="3" /><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" /></svg>;
+    case "agents":
+      return <svg {...shared}><circle cx="9" cy="8" r="3" /><path d="M3.8 19c.4-3.5 2.1-5.3 5.2-5.3s4.8 1.8 5.2 5.3" /><circle cx="17.2" cy="9" r="2.3" /><path d="M15.3 14.3c.6-.3 1.3-.4 2.1-.4 2.1 0 3.3 1.3 3.6 3.8" /></svg>;
     case "chart":
       return <svg {...shared}><path d="M4 19V5M4 19h16" /><path d="M8 15v-3M12 15V8M16 15v-6" /></svg>;
     case "list":
@@ -263,11 +297,14 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare";
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
+  if (profile.runtime === "codex-app-server" || profile.analyticalRuntime === "cube-codex-v1") {
+    return "codex";
+  }
   if (profile.runtime === "xero-mcp" || profile.analyticalRuntime === "xero-mcp") {
     return "xero_mcp";
   }
@@ -292,6 +329,11 @@ function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture">
     return "v3";
   }
   return "openai";
+}
+
+function specialistAgentIdFromProfile(value: unknown): SpecialistAgentId {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "general";
+  return normalizeSpecialistAgentId((value as Record<string, unknown>).specialistAgentId);
 }
 
 type ChatMessage = {
@@ -383,6 +425,7 @@ type ConversationSummary = Readonly<{
   lastMessage: string;
   lastTurnStatus?: string;
   runtime: Exclude<ChatRuntime, "fixture">;
+  specialistAgentId: SpecialistAgentId;
 }>;
 
 type OAuthNotice = Readonly<{
@@ -546,6 +589,7 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
       ? lastTurnRecord.status
       : undefined;
     const runtime = chatRuntimeFromProfile(lastTurnRecord?.runtime_profile);
+    const specialistAgentId = specialistAgentIdFromProfile(lastTurnRecord?.runtime_profile);
     const storedTitle = typeof candidate.title === "string" ? candidate.title.trim() : "";
     summaries.push({
       conversationId: candidate.conversation_id,
@@ -556,6 +600,7 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
       lastMessage,
       lastTurnStatus,
       runtime,
+      specialistAgentId,
     });
   }
   return summaries;
@@ -692,10 +737,12 @@ export default function DashPage() {
   const [sidebarNavRevealed, setSidebarNavRevealed] = useState(true);
   const sidebarWasCollapsedRef = useRef(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("v3");
+  const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
@@ -779,6 +826,9 @@ export default function DashPage() {
   const accountPopoverRef = useRef<HTMLDivElement>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
   const accountPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const agentsAreaRef = useRef<HTMLDivElement>(null);
+  const agentsPopoverRef = useRef<HTMLDivElement>(null);
+  const agentsTriggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const chatWorkspaceRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
@@ -800,10 +850,13 @@ export default function DashPage() {
     controller: AbortController;
     assistantId: number;
     preferences: AgentRunPreferences;
+    runtime: Exclude<ChatRuntime, "fixture">;
+    specialistAgentId: SpecialistAgentId;
     turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
   const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("v3");
+  const specialistAgentIdRef = useRef<SpecialistAgentId>("general");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
   agentPreferencesRef.current = agentPreferences;
@@ -814,6 +867,7 @@ export default function DashPage() {
     preferences: AgentRunPreferences;
     messageSequence: number;
     runtime: Exclude<ChatRuntime, "fixture">;
+    specialistAgentId: SpecialistAgentId;
   }>());
 
   useEffect(() => {
@@ -823,6 +877,9 @@ export default function DashPage() {
   useEffect(() => {
     activeChatRuntimeRef.current = activeChatRuntime;
   }, [activeChatRuntime]);
+  useEffect(() => {
+    specialistAgentIdRef.current = specialistAgentId;
+  }, [specialistAgentId]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
   const [conversationSkelPhase, setConversationSkelPhase] = useState<"idle" | "loading" | "revealing">("idle");
   const [conversationSkelRevealed, setConversationSkelRevealed] = useState(false);
@@ -935,6 +992,11 @@ export default function DashPage() {
   }, [closeMobileConnect, mobileConnectClosing, mobileConnectOpen]);
 
   const canManageConnections = accountOrganisation.role === "owner" || accountOrganisation.role === "manager";
+  const canUseCustomerAgent = specialistAgentAllowedForRole("customers", accountOrganisation.role)
+    || isInternalOperator;
+  const activeSpecialistAgent = getPublicSpecialistAgentDefinition(specialistAgentId);
+  const customerSpecialistAgent = getPublicSpecialistAgentDefinition("customers");
+  const isCustomerAgent = specialistAgentId === "customers";
   const accountInitial = accountEmail.trim().charAt(0).toUpperCase() || "P";
   const accountRoleLabel = accountOrganisation.role
     ? accountOrganisation.role
@@ -1357,6 +1419,7 @@ export default function DashPage() {
     let messageId = 0;
     let restoredPreferences = fallbackPreferences;
     let restoredRuntime: Exclude<ChatRuntime, "fixture"> = "openai";
+    let restoredSpecialistAgentId: SpecialistAgentId = "general";
     if (!Array.isArray(history.turns)) {
       return null;
     }
@@ -1383,6 +1446,7 @@ export default function DashPage() {
         : events;
       const turnRuntime = chatRuntimeFromProfile(turn.runtime_profile);
       restoredRuntime = turnRuntime;
+      restoredSpecialistAgentId = specialistAgentIdFromProfile(turn.runtime_profile);
       restored.push({
         id: messageId,
         role: "assistant",
@@ -1402,6 +1466,7 @@ export default function DashPage() {
       preferences: restoredPreferences,
       messageSequence: messageId,
       runtime: restoredRuntime,
+      specialistAgentId: restoredSpecialistAgentId,
     };
   }, []);
 
@@ -1453,6 +1518,7 @@ export default function DashPage() {
       preferences: AgentRunPreferences;
       messageSequence: number;
       runtime: Exclude<ChatRuntime, "fixture">;
+      specialistAgentId: SpecialistAgentId;
     },
   ) => {
     const live = liveTurnsRef.current.has(conversationId);
@@ -1473,6 +1539,8 @@ export default function DashPage() {
     setAgentPreferences(cached.preferences);
     setActiveChatRuntime(cached.runtime);
     activeChatRuntimeRef.current = cached.runtime;
+    setSpecialistAgentId(cached.specialistAgentId);
+    specialistAgentIdRef.current = cached.specialistAgentId;
     const baseMessages = (live ? cached.messages : finalizeStreamingMessages(cached.messages)).map((message) => ({
       ...message,
       suppressEnter: true,
@@ -1484,6 +1552,7 @@ export default function DashPage() {
       preferences: cached.preferences,
       messageSequence: cached.messageSequence,
       runtime: cached.runtime,
+      specialistAgentId: cached.specialistAgentId,
     });
     setChatMessages(baseMessages);
     setIsChatResponding(live);
@@ -1549,6 +1618,7 @@ export default function DashPage() {
       preferences: agentPreferencesRef.current,
       messageSequence: chatMessageSequenceRef.current,
       runtime: activeChatRuntimeRef.current,
+      specialistAgentId: specialistAgentIdRef.current,
     });
   };
 
@@ -1572,6 +1642,11 @@ export default function DashPage() {
     setActiveConversationId(conversationId);
     activeConversationIdRef.current = conversationId;
     viewingKeyRef.current = conversationId;
+    const summarySpecialist = conversationSummaries.find((item) => item.conversationId === conversationId)?.specialistAgentId;
+    if (summarySpecialist) {
+      setSpecialistAgentId(summarySpecialist);
+      specialistAgentIdRef.current = summarySpecialist;
+    }
     void loadConversationSummaries();
     setComposerExpanded(true);
     shouldAnimatePinRef.current = false;
@@ -2031,6 +2106,56 @@ export default function DashPage() {
     };
   }, [accountOpen]);
 
+  useEffect(() => {
+    if (canUseCustomerAgent) return;
+    setAgentsOpen(false);
+  }, [canUseCustomerAgent]);
+
+  useEffect(() => {
+    if (!agentsOpen) return;
+
+    const popover = agentsPopoverRef.current;
+    const focusFrame = window.requestAnimationFrame(() => {
+      popover?.querySelector<HTMLElement>("[role=\"menuitemradio\"]")?.focus();
+    });
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!agentsAreaRef.current?.contains(event.target as Node)) setAgentsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAgentsOpen(false);
+        window.requestAnimationFrame(() => agentsTriggerRef.current?.focus());
+        return;
+      }
+      if (event.key === "Tab") {
+        setAgentsOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = [...(popover?.querySelectorAll<HTMLElement>("[role=\"menuitemradio\"]") ?? [])];
+      if (items.length === 0) return;
+      event.preventDefault();
+      const current = Math.max(0, items.indexOf(document.activeElement as HTMLElement));
+      const next = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowDown"
+            ? (current + 1) % items.length
+            : (current - 1 + items.length) % items.length;
+      items[next]?.focus();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [agentsOpen]);
+
   const markConversationComputing = useCallback((conversationId: string) => {
     const token = Symbol(conversationId);
     computingTokensRef.current.set(conversationId, token);
@@ -2077,15 +2202,11 @@ export default function DashPage() {
       ? chatMessages.slice(0, options.priorMessageCount)
       : chatMessages;
     const existing = liveTurnsRef.current.get(turnKey);
-    const replaceTurnId = existing?.turnId
-      ?? [...priorMessages]
-        .reverse()
-        .find((message) => (
-          message.role === "assistant"
-          && typeof message.turnId === "string"
-          && ulidPattern.test(message.turnId)
-        ))
-        ?.turnId;
+    // Replacement is only for an accepted turn that is still in flight and
+    // is being superseded by a newly typed follow-up. A completed assistant
+    // turn is conversation history: sending its id here rewinds it instead of
+    // appending, which destroys the context referential follow-ups need.
+    const replaceTurnId = existing?.turnId;
     const lastConversationRuntime = [...priorMessages]
       .reverse()
       .find((message) => message.runtime && message.runtime !== "fixture")
@@ -2108,7 +2229,10 @@ export default function DashPage() {
       ? markConversationComputing(trackedConversationId)
       : null;
     const runPreferences = agentPreferencesRef.current;
-    const runRuntime = isAnthropicModel(runPreferences.model)
+    const runSpecialistAgentId = specialistAgentIdRef.current;
+    const runRuntime = activeChatRuntimeRef.current === "codex"
+      ? "codex"
+      : isAnthropicModel(runPreferences.model)
       ? "v3"
       : activeChatRuntimeRef.current === "xero_mcp"
       ? "xero_mcp"
@@ -2150,6 +2274,7 @@ export default function DashPage() {
       preferences: runPreferences,
       messageSequence: messageSequenceAtStart,
       runtime: runRuntime,
+      specialistAgentId: runSpecialistAgentId,
     });
     if (trackedConversationId) {
       const now = new Date().toISOString();
@@ -2192,6 +2317,8 @@ export default function DashPage() {
       controller,
       assistantId,
       preferences: runPreferences,
+      runtime: runRuntime,
+      specialistAgentId: runSpecialistAgentId,
     });
     const receivedEvents: TraceEvent[] = [];
     const debug = createRawDebugRecorder({
@@ -2215,6 +2342,7 @@ export default function DashPage() {
         messages: next,
         preferences: runPreferences,
         runtime: runRuntime,
+        specialistAgentId: runSpecialistAgentId,
         messageSequence: Math.max(
           messageSequenceAtStart,
           conversationCacheRef.current.get(cacheKey)?.messageSequence ?? 0,
@@ -2241,6 +2369,7 @@ export default function DashPage() {
             preferences: runPreferences,
             messageSequence: chatMessageSequenceRef.current,
             runtime: runRuntime,
+            specialistAgentId: runSpecialistAgentId,
           });
           return next;
         });
@@ -2253,12 +2382,15 @@ export default function DashPage() {
     try {
       const requestBody = {
         message: text,
-        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
+        ...(runRuntime === "v3" ? { specialistAgentId: runSpecialistAgentId } : {}),
         confirmedOption,
       };
-      const endpoint = runRuntime === "anthropic"
+      const endpoint = runRuntime === "codex"
+        ? "/api/codex-conversation"
+        : runRuntime === "anthropic"
         ? "/api/anthropic-conversation"
         : runRuntime === "cubecore"
           ? "/api/cube-conversation"
@@ -2291,6 +2423,8 @@ export default function DashPage() {
       const runtimeHeader = response.headers.get("X-Albert-Runtime");
       const runtime: ChatRuntime = runtimeHeader === "fixture"
         ? "fixture"
+        : runtimeHeader === "codex"
+          ? "codex"
         : runtimeHeader === "anthropic"
           ? "anthropic"
           : runtimeHeader === "cubecore"
@@ -2302,6 +2436,9 @@ export default function DashPage() {
                 : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+      const responseSpecialistAgentId = parseSpecialistAgentId(
+        response.headers.get("X-Albert-Specialist-Agent"),
+      );
       debug.response(response, {
         runtime,
         conversationId: responseConversationId,
@@ -2310,6 +2447,14 @@ export default function DashPage() {
       if (runtime !== "fixture" && runtime !== runRuntime) {
         await response.body?.cancel("runtime_lock_mismatch");
         throw new Error("The conversation runtime did not match the selected method.");
+      }
+      if (runtime === "codex" && response.headers.get("X-Albert-Model") !== runPreferences.model) {
+        await response.body?.cancel("codex_model_mismatch");
+        throw new Error("The Codex conversation did not use the selected model.");
+      }
+      if (runtime === "v3" && responseSpecialistAgentId !== runSpecialistAgentId) {
+        await response.body?.cancel("specialist_agent_lock_mismatch");
+        throw new Error("The conversation specialist did not match the selected agent.");
       }
       if (runtime !== "fixture" && (
         !responseConversationId || !ulidPattern.test(responseConversationId)
@@ -2363,6 +2508,7 @@ export default function DashPage() {
             lastMessage: text,
             lastTurnStatus: "running",
             runtime: runRuntime,
+            specialistAgentId: runSpecialistAgentId,
           };
           return [nextItem, ...current.filter((item) => item.conversationId !== responseConversationId)];
         });
@@ -2559,7 +2705,11 @@ export default function DashPage() {
           : entry
       )));
     } finally {
-      if (trackedConversationId && computingToken) {
+      if (
+        trackedConversationId
+        && computingToken
+        && !(controller.signal.aborted && runRuntime === "codex")
+      ) {
         clearConversationComputing(trackedConversationId, computingToken);
       }
       if (liveTurnsRef.current.get(turnKey)?.controller === controller) {
@@ -2583,7 +2733,9 @@ export default function DashPage() {
           item.conversationId === trackedConversationId
             ? {
               ...item,
-              lastTurnStatus: controller.signal.aborted ? "cancelled" : "completed",
+              lastTurnStatus: controller.signal.aborted
+                ? (runRuntime === "codex" ? "running" : "cancelled")
+                : "completed",
             }
             : item
         )));
@@ -2597,27 +2749,34 @@ export default function DashPage() {
     if (!key) return;
     const live = liveTurnsRef.current.get(key);
     if (!live || live.controller.signal.aborted) return;
+    const continuesInBackground = live.runtime === "codex";
     live.controller.abort();
     liveTurnsRef.current.delete(key);
     setIsChatResponding(false);
     setChatMessages((messages) => {
-      const next = finalizeStreamingMessages(messages, "Stopped.");
+      const next = finalizeStreamingMessages(
+        messages,
+        continuesInBackground
+          ? "Continuing in the background. Reopen this conversation to see the completed analysis."
+          : "Stopped.",
+      );
       conversationCacheRef.current.set(key, {
         messages: next,
         preferences: agentPreferencesRef.current,
         messageSequence: chatMessageSequenceRef.current,
-        runtime: activeChatRuntimeRef.current,
+        runtime: live.runtime,
+        specialistAgentId: live.specialistAgentId,
       });
       return next;
     });
     if (activeConversationId) {
-      if (computingTokensRef.current.has(activeConversationId)) {
+      if (!continuesInBackground && computingTokensRef.current.has(activeConversationId)) {
         computingTokensRef.current.delete(activeConversationId);
         setComputingConversationIds(new Set(computingTokensRef.current.keys()));
       }
       setConversationSummaries((current) => current.map((item) => (
         item.conversationId === activeConversationId && item.lastTurnStatus === "running"
-          ? { ...item, lastTurnStatus: "cancelled" }
+          ? { ...item, lastTurnStatus: continuesInBackground ? "running" : "cancelled" }
           : item
       )));
     }
@@ -2863,7 +3022,10 @@ export default function DashPage() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [cancelEditUserMessage, editingMessageId]);
 
-  const resetChat = (runtime: Exclude<ChatRuntime, "fixture">) => {
+  const resetChat = (
+    runtime: Exclude<ChatRuntime, "fixture">,
+    nextSpecialistAgentId: SpecialistAgentId = "general",
+  ) => {
     snapshotViewedConversation();
     chatPinAnimationsRef.current.forEach((animation) => animation.stop());
     chatPinAnimationsRef.current = [];
@@ -2888,6 +3050,9 @@ export default function DashPage() {
     activeConversationIdRef.current = undefined;
     setActiveChatRuntime(runtime);
     activeChatRuntimeRef.current = runtime;
+    setSpecialistAgentId(nextSpecialistAgentId);
+    specialistAgentIdRef.current = nextSpecialistAgentId;
+    setAgentsOpen(false);
     viewingKeyRef.current = null;
     chatMessageSequenceRef.current = 0;
     setChatDraft("");
@@ -2900,8 +3065,39 @@ export default function DashPage() {
     setEditDraft("");
   };
 
-  // Albert v3 is the default engine. XERO MCP is an explicit live-Xero test mode.
-  const startNewChat = () => resetChat(activeChatRuntimeRef.current === "xero_mcp" ? "xero_mcp" : "v3");
+  // New Analysis leaves specialist mode, while preserving an explicitly
+  // selected connector test runtime exactly as the existing dash did.
+  const startNewChat = () => resetChat(
+    activeChatRuntimeRef.current === "xero_mcp" ? "xero_mcp" : "v3",
+    "general",
+  );
+  const startCustomerChat = () => {
+    resetChat("v3", "customers");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const startCodexChat = () => {
+    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    resetChat("codex", "general");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const startCompareChat = () => {
+    resetChat("compare", "general");
+  };
+  const selectConversationRuntime = (tab: ConversationRuntimeTab) => {
+    if (tab === "compare") {
+      if (activeChatRuntimeRef.current !== "compare") startCompareChat();
+      return;
+    }
+    if (tab === "codex") {
+      if (activeChatRuntimeRef.current !== "codex") startCodexChat();
+      return;
+    }
+    if (activeChatRuntimeRef.current === "codex" || activeChatRuntimeRef.current === "compare") {
+      resetChat("v3", "general");
+      window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+    }
+  };
   const startNewChatRef = useRef(startNewChat);
   startNewChatRef.current = startNewChat;
 
@@ -3134,7 +3330,16 @@ export default function DashPage() {
                     <div className={traceStyles.expandInner}>
                       {showEditChrome ? (
                         <div className={styles.chatMessageEditTrailing}>
-                          {activeChatRuntime === "anthropic" ? (
+                          {activeChatRuntime === "codex" ? (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              allowedModelIds={CODEX_MODEL_IDS}
+                              allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
+                          ) : activeChatRuntime === "anthropic" ? (
                             <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
                           ) : activeChatRuntime === "cubecore" ? (
                             <span className={styles.chatRuntimeIndicator}>Cubecore</span>
@@ -3230,7 +3435,7 @@ export default function DashPage() {
       className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
-      <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""}`}>
+      <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""} ${agentsOpen ? styles.sidebarAgentsMenuOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
             <Image
@@ -3328,6 +3533,57 @@ export default function DashPage() {
             <Icon name="plus" />
             <span className={styles.sidebarActionLabel}>New Analysis</span>
           </button>
+          {canUseCustomerAgent ? (
+            <div className={styles.sidebarAgents} ref={agentsAreaRef}>
+              <button
+                ref={agentsTriggerRef}
+                className={`${styles.sidebarAction} ${styles.sidebarAgentsTrigger}`}
+                type="button"
+                aria-label="Agents"
+                aria-haspopup="menu"
+                aria-expanded={agentsOpen}
+                aria-controls="sidebar-agents-menu"
+                aria-current={isCustomerAgent && activeItem === "Chat" ? "page" : undefined}
+                onClick={() => {
+                  setAccountOpen(false);
+                  setAgentsOpen((current) => !current);
+                }}
+              >
+                <Icon name="agents" />
+                <span className={styles.sidebarActionLabel}>Agents</span>
+                <Icon className={styles.sidebarAgentsChevron} name="chevronDown" />
+              </button>
+              <div
+                ref={agentsPopoverRef}
+                id="sidebar-agents-menu"
+                className={`${styles.sidebarAgentsPopover} ${agentsOpen ? styles.sidebarAgentsPopoverOpen : ""}`}
+                role="menu"
+                aria-label="Specialist agents"
+                aria-hidden={!agentsOpen}
+                inert={!agentsOpen}
+              >
+                <p className={styles.sidebarAgentsHeading}>Specialists</p>
+                <button
+                  className={styles.sidebarAgentOption}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isCustomerAgent}
+                  onClick={startCustomerChat}
+                >
+                  <span className={styles.sidebarAgentOptionIcon} aria-hidden="true">
+                    <Icon name="agents" />
+                  </span>
+                  <span className={styles.sidebarAgentOptionCopy}>
+                    <strong>{customerSpecialistAgent.ui.navigationLabel}</strong>
+                    <small>{customerSpecialistAgent.ui.description}</small>
+                  </span>
+                  <span className={styles.sidebarAgentOptionStatus} aria-hidden="true">
+                    {isCustomerAgent ? "✓" : ""}
+                  </span>
+                </button>
+              </div>
+            </div>
+          ) : null}
           <button
             className={styles.sidebarAction}
             type="button"
@@ -3717,7 +3973,10 @@ export default function DashPage() {
               aria-label={`${accountOrganisation.name} account menu`}
               aria-expanded={accountOpen}
               aria-haspopup="dialog"
-              onClick={() => setAccountOpen((value) => !value)}
+              onClick={() => {
+                setAgentsOpen(false);
+                setAccountOpen((value) => !value);
+              }}
             >
               <span className={styles.accountAvatar}>{accountInitial}</span>
               <span className={styles.accountWorkspaceCopy}>
@@ -3751,26 +4010,47 @@ export default function DashPage() {
         ) : null}
         {tenantDeletionReceipt ? (
           <TenantDeletionWorkspace initialReceipt={tenantDeletionReceipt} />
+        ) : activeItem === "Chat" && activeChatRuntime === "compare" ? (
+          <RuntimeComparisonWorkspace
+            organisationName={accountOrganisation.name}
+            onSelectRuntime={selectConversationRuntime}
+            onConversationsChanged={loadConversationSummaries}
+          />
         ) : activeItem === "Chat" ? (
           <div className={`${styles.chatShell} ${takeawaysOpen ? styles.chatShellTakeawaysOpen : ""}`}>
           <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.h1
-                  key={chatTitle}
-                  id="dash-title"
-                  className={styles.chatTopTitle}
-                  initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
-                  transition={{
-                    duration: reduceMotion ? 0 : 0.34,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                >
-                  {chatTitle}
-                </motion.h1>
-              </AnimatePresence>
+              <div className={styles.chatTopIdentity}>
+                <ConversationRuntimeTabs
+                  value={activeChatRuntime === "codex" ? "codex" : "albert"}
+                  onChange={selectConversationRuntime}
+                />
+                <span className={styles.chatSpecialistContextDivider} aria-hidden="true" />
+                {isCustomerAgent ? (
+                  <>
+                    <span className={styles.chatSpecialistContext}>
+                      {activeSpecialistAgent.ui.navigationLabel} · {accountOrganisation.name}
+                    </span>
+                    <span className={styles.chatSpecialistContextDivider} aria-hidden="true" />
+                  </>
+                ) : null}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.h1
+                    key={`${activeChatRuntime}:${specialistAgentId}:${chatTitle}`}
+                    id="dash-title"
+                    className={styles.chatTopTitle}
+                    initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.34,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
+                    {chatTitle}
+                  </motion.h1>
+                </AnimatePresence>
+              </div>
               <div className={styles.chatTopActions}>
                 {chatMessages.length > 0 ? (
                   <button
@@ -3884,9 +4164,9 @@ export default function DashPage() {
             >
               <AnimatePresence initial={false}>
                 {chatComposerHero ? (
-                  <motion.h2
-                    key="chat-hero-title"
-                    className={styles.chatHeroTitle}
+                  <motion.div
+                    key={`chat-hero:${activeChatRuntime}:${specialistAgentId}`}
+                    className={styles.chatHeroIntro}
                     initial={reduceMotion ? false : { opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
@@ -3895,8 +4175,55 @@ export default function DashPage() {
                       ease: [0.22, 1, 0.36, 1],
                     }}
                   >
-                    {activeChatRuntime === "xero_mcp" ? "Ask Xero anything" : "Ask me anything"}
-                  </motion.h2>
+                    <h2 className={styles.chatHeroTitle}>
+                      {activeChatRuntime === "xero_mcp"
+                        ? "Ask Xero anything"
+                        : activeChatRuntime === "codex"
+                          ? "Ask Codex about your business"
+                        : isCustomerAgent
+                          ? activeSpecialistAgent.ui.emptyStateTitle
+                          : "Ask me anything"}
+                    </h2>
+                    {activeChatRuntime === "codex" ? (
+                      <>
+                        <p className={styles.chatHeroBody}>
+                          A separate Codex harness can investigate all of Albert’s governed data. It is read-only and cannot change your source systems.
+                        </p>
+                        <div className={styles.chatStarterPrompts} aria-label="Suggested Codex investigations">
+                          {codexStarterPrompts.map((prompt) => (
+                            <button
+                              key={prompt}
+                              className={styles.chatStarterPrompt}
+                              type="button"
+                              data-codex-starter="true"
+                              onClick={() => void sendChatMessage(prompt)}
+                            >
+                              <span>{prompt}</span>
+                              <small>Codex · governed data</small>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : isCustomerAgent ? (
+                      <>
+                        <p className={styles.chatHeroBody}>{activeSpecialistAgent.ui.emptyStateBody}</p>
+                        <div className={styles.chatStarterPrompts} aria-label="Verified customer questions">
+                          {activeSpecialistAgent.starterPrompts.slice(0, 4).map((starter) => (
+                            <button
+                              key={starter.id}
+                              className={styles.chatStarterPrompt}
+                              type="button"
+                              data-certified-query={starter.certifiedQueryName}
+                              onClick={() => void sendChatMessage(starter.prompt)}
+                            >
+                              <span>{starter.prompt}</span>
+                              <small><span aria-hidden="true">✓</span> Verified</small>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </motion.div>
                 ) : null}
               </AnimatePresence>
               <AnimatePresence initial={false}>
@@ -4028,10 +4355,24 @@ export default function DashPage() {
                 ) : (
                   <textarea
                     ref={chatTextareaRef}
-                    aria-label={activeChatRuntime === "xero_mcp" ? "Ask Xero anything" : "Ask me anything"}
+                    aria-label={activeChatRuntime === "xero_mcp"
+                      ? "Ask Xero anything"
+                      : activeChatRuntime === "codex"
+                        ? "Ask Codex about your business"
+                      : isCustomerAgent
+                        ? "Ask the Customer Agent"
+                        : "Ask me anything"}
                     placeholder={
-                      chatMessages.length > 0
-                        ? "Send follow-up"
+                      activeChatRuntime === "codex"
+                        ? chatMessages.length > 0
+                          ? "Ask Codex a follow-up…"
+                          : "Ask Codex anything about your connected data…"
+                      : isCustomerAgent
+                        ? chatMessages.length > 0
+                          ? "Ask a follow-up about your customers…"
+                          : `${activeSpecialistAgent.ui.composerPlaceholder}…`
+                        : chatMessages.length > 0
+                          ? "Send follow-up"
                         : activeChatRuntime === "xero_mcp"
                           ? "Ask anything about Xero…"
                           : "Ask anything about your business…"
@@ -4059,7 +4400,14 @@ export default function DashPage() {
               </div>
               <div className={styles.chatComposerTrailing}>
                 {dictation.status === "idle" && (
-                  activeChatRuntime === "anthropic" ? (
+                  activeChatRuntime === "codex" ? (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                      allowedModelIds={CODEX_MODEL_IDS}
+                      allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                    />
+                  ) : activeChatRuntime === "anthropic" ? (
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
                   ) : activeChatRuntime === "cubecore" ? (
                     <span className={styles.chatRuntimeIndicator}>Cubecore</span>

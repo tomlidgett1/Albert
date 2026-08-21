@@ -164,6 +164,7 @@ export class ShopifyQLWorkerHttpHandler {
     let binding: Awaited<ReturnType<ShopifyQLRuntimeStore["reserve"]>> | undefined;
     try {
       const compiled = compileShopifyQLQuery(parsed.data.input);
+      const rowLimit = compiled.normalizedInput.limit ?? 100;
       binding = await this.dependencies.store.reserve({
         requestId: parsed.data.requestId,
         tenantId: parsed.data.tenantId,
@@ -177,7 +178,7 @@ export class ShopifyQLWorkerHttpHandler {
         schema: compiled.schema,
         since: compiled.normalizedInput.timeWindow.since,
         until: compiled.normalizedInput.timeWindow.until,
-        rowLimit: compiled.normalizedInput.limit,
+        rowLimit,
         appClientIdSha256: this.appClientIdSha256,
       });
       const connector = this.dependencies.connectors.get("shopify", {
@@ -205,7 +206,7 @@ export class ShopifyQLWorkerHttpHandler {
       // A block that races the vendor request may never expose its result.
       await this.dependencies.store.assertCurrent(binding);
       const rows = vendor.tableData?.rows ?? [];
-      if (rows.length > compiled.normalizedInput.limit) throw new Error("shopifyql_response_row_limit_exceeded");
+      if (rows.length > rowLimit) throw new Error("shopifyql_response_row_limit_exceeded");
       const output = {
         requestId: parsed.data.requestId,
         apiVersion: compiled.apiVersion,

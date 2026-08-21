@@ -1,8 +1,7 @@
 import { Agent, system, user, type AgentInputItem } from "@openai/agents";
 import { z } from "zod";
 import { isXaiModel, sanitizeTraceText } from "../../../shared/src/index.js";
-import {
-  ANSWER_CONTRACT,
+import {ANALYST_DOCTRINE, ANSWER_CONTRACT,
   buildKnowledgeBlock,
   finalAnswerSchema,
   GROK_INVESTIGATION_ADDENDUM,
@@ -13,8 +12,7 @@ import {
   v3PromptCacheKey,
   withV3PromptCacheBoundary,
   type FinalAnswer,
-  type LaneRunInput,
-} from "./lanes.js";
+  type LaneRunInput,} from "./lanes.js";
 import { MISSING_QUERY_RETRY_MESSAGE } from "./grounding.js";
 import { createComposeTableTool, createV3Tools } from "./tools.js";
 import { runVisualiser } from "./visualise-lane.js";
@@ -22,6 +20,7 @@ import type { V3TurnContext } from "./context.js";
 import {
   clipToSentence,
   createV3CommentaryState,
+  endSentence,
   looksLikeFinding,
   prepareV3CommentaryUpdate,
   STEP_SUMMARY_MAX_CHARS,
@@ -48,12 +47,6 @@ export const branchFindingsSchema = z.object({
 });
 
 type BranchFindings = z.infer<typeof branchFindingsSchema>;
-
-function endSentence(value: string): string {
-  const text = value.trim();
-  if (!text) return "";
-  return /[.!?]$/u.test(text) ? text : `${text}.`;
-}
 
 /**
  * A glanceable owner-facing summary for a finished branch: the headline, plus
@@ -145,7 +138,8 @@ async function runGrokBranch(args: Readonly<{
     }));
   const composer = new Agent<V3TurnContext, typeof branchFindingsSchema>({
     name: `Albert v3 branch findings: ${branchTitle}`,
-    instructions: `You are one investigation branch of a deeper analysis. The queries for
+    instructions: `You are one investigation branch of a deeper analysis, working as the
+owner's business analyst. The queries for
 your branch have already run; their results are below. Report your findings from those
 numbers only. Do not run new queries. Ground every finding in retrieved numbers and
 quantify materiality in dollars where possible. If the data shows nothing noteworthy,
@@ -254,6 +248,16 @@ ${knowledge}`,
     detail: sanitizeTraceText(plan.branches.map((branch) => branch.title).join(" · "), 300),
     progress: 0.2,
   });
+
+  // Phase-boundary orientation: the angles are chosen, so tell the owner the
+  // order of attack in a sentence before the long parallel wait begins. A
+  // wrong decomposition becomes visible here, not after the queries.
+  const branchTitles = plan.branches.map((branch) => branch.title.replace(/[.!?]+$/u, ""));
+  await emitDeepCommentary(
+    input.context,
+    "orientation",
+    `I've split this into ${plan.branches.length} angles — ${branchTitles.join(", ")}. I'll investigate each in parallel, then cross-check the findings before making recommendations.`,
+  );
 
   const perBranchQueries = Math.max(
     3,
@@ -443,7 +447,11 @@ ${findings.findings.map((finding) => `- ${finding}`).join("\n")}`;
 reported back. Cross-examine them: discard weak or low-confidence claims that conflict
 with stronger evidence, rank the remaining insights by dollar materiality, and compose
 the final answer with concrete recommendations grounded ONLY in the branch findings
-below. Do not introduce numbers that are not in the findings. Profit figures are gross
+below.
+
+${ANALYST_DOCTRINE}
+
+Do not introduce numbers that are not in the findings. Profit figures are gross
 profit (before operating costs); say so once, briefly, only where it matters. End with
 the two or three highest-impact actions.
 

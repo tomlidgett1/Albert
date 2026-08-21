@@ -18,6 +18,11 @@ import type { FivetranDestinationStore } from "./fivetran-destinations.js";
 import { packageSdkProject } from "./fivetran-sdk-package.js";
 import type { FivetranConnectionStore } from "./fivetran-store.js";
 
+function randomBase64UrlSecret(): string {
+  const bytes = (randomBytes as unknown as (size: number) => unknown)(32);
+  return (bytes as { toString(encoding: string): string }).toString("base64url");
+}
+
 export type FivetranWorkerConfig = Readonly<{
   apiKey: string;
   apiSecret: string;
@@ -469,7 +474,7 @@ export class FivetranWorkerHttpHandler {
     if (existing) {
       // Re-consent for an org Fivetran already syncs: rotate the broker secret
       // and refresh the deployed code, nothing else.
-      const secret = randomBytes(32).toString("base64url");
+      const secret = randomBase64UrlSecret();
       const projectDirExisting = resolve(process.cwd(), sdkService.projectDir);
       const packageId = await this.client.uploadSdkPackage({ zip: packageSdkProject(projectDirExisting).bytes });
       await this.client.updateSdkPackage(existing.fivetranConnectionId, packageId).catch(() => undefined);
@@ -492,7 +497,7 @@ export class FivetranWorkerHttpHandler {
 
     const connectionId = ulid();
     const destinationSchema = fivetranConnectionSchema(this.schemaPrefix(definition), connectionId);
-    const secret = randomBytes(32).toString("base64url");
+    const secret = randomBase64UrlSecret();
     const configuration = sdkService.configuration({
       brokerOrigin, secret, tenantId, connectionId, externalAccountReference: credential.externalAccountReference,
     });
@@ -798,6 +803,11 @@ export class FivetranWorkerHttpHandler {
       actorUserId: requiredString(input, "userId", 36),
     });
     if (connection.status === "disconnected") throw new Error("fivetran_connection_not_found");
+    // Maintenance (stamp + union rebuild) needs only the analytical database,
+    // so it must not sit behind the Fivetran API calls below: a 429 storm or
+    // the pending-id 404 race would otherwise throw first and leave a freshly
+    // landed schema out of the Cube contract until the next daily sync.
+    void this.maintainDestination(connection);
     const [remote, schema, tables] = await Promise.all([
       this.client.getConnection(connection.fivetranConnectionId),
       this.client.getSchemaSummary(connection.fivetranConnectionId).catch(
@@ -849,7 +859,6 @@ export class FivetranWorkerHttpHandler {
       authHealth: setupBroken ? "expired" : "healthy",
       status: setupBroken ? "blocked" : phase === "failed" ? "degraded" : "connected",
     }).catch(() => undefined);
-    void this.maintainDestination(connection);
     return response({
       connectionId: connection.connectionId,
       phase,

@@ -7,9 +7,13 @@ import { webBackendLoopbackMessage } from "@/packages/config/src/env";
 import { xeroMcpServiceUrl } from "@/packages/xero-mcp/src/client";
 import {
   ALBERT_V3_RUNTIME,
+  SPECIALIST_AGENT_IDS,
   businessContextRefreshDue,
   detectSocialMessage,
+  getSpecialistAgentDefinition,
   runAlbertV3Turn,
+  specialistAgentAllowedForRole,
+  specialistAgentDefinitionDigest,
   type ConversationMessage,
 } from "@/packages/albert-v3/src";
 import { loadBusinessContext, saveBusinessContext } from "@/services/control-plane/src/business-context-repository";
@@ -21,6 +25,7 @@ import {
 import {
   createLiveTraceSseResponse,
   createTraceEmitter,
+  buildSharedAnalyticalBrief,
   generateConversationTitle,
   generateInitialAcknowledgement,
   INITIAL_ACKNOWLEDGEMENT_MODEL,
@@ -62,6 +67,8 @@ const LEASE_RENEWAL_INTERVAL_MS = 120_000;
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(8_000),
   preferences: z.unknown().optional(),
+  specialistAgentId: z.enum(SPECIALIST_AGENT_IDS).optional(),
+  comparisonMode: z.boolean().optional(),
   conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   replaceTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   confirmedOption: z.object({
@@ -114,6 +121,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const preferences = normalizeAgentPreferences(parsed.preferences);
+  const specialistAgentId = parsed.specialistAgentId ?? "general";
+  const specialistAgent = getSpecialistAgentDefinition(specialistAgentId);
+  if (!specialistAgentAllowedForRole(specialistAgentId, tenant.role)) {
+    return jsonError(
+      "The Customer Agent is available to organisation owners and managers.",
+      403,
+      correlationId,
+    );
+  }
   const loopbackBackends = webBackendLoopbackMessage();
   if (loopbackBackends) {
     logger.error("v3.loopback_backends", { message: loopbackBackends }, correlationId);
@@ -172,6 +188,9 @@ export async function POST(request: Request): Promise<Response> {
     reasoningEffort: preferences.reasoningEffort,
     fastMode: preferences.fastMode,
     analyticalRuntime: "cube-v3",
+    specialistAgentId,
+    specialistAgentVersion: specialistAgent.version,
+    specialistAgentDigest: specialistAgentDefinitionDigest(specialistAgent),
   } as const;
 
   let begun;
@@ -199,7 +218,12 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const conversationId = begun.conversationId;
-  const shouldGenerateInitialAcknowledgement = detectSocialMessage(parsed.message) === null;
+  const shouldGenerateInitialAcknowledgement = detectSocialMessage(parsed.message) === null
+    // Specialist chats already carry an immediate, request-specific profile
+    // acknowledgement in the UI and start with a focused cached prefix. A
+    // second auxiliary model call would add up to four seconds before the
+    // analytical engine can begin, defeating the specialist latency contract.
+    && specialistAgentId === "general";
   const initialAcknowledgementStartedAt = shouldGenerateInitialAcknowledgement ? Date.now() : null;
   // Start the small Luna request before the independent context reads. By the
   // time SSE is mounted it is normally already complete, while any failure is
@@ -306,11 +330,21 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  const analysisBrief = parsed.comparisonMode
+    ? buildSharedAnalyticalBrief({
+        message: parsed.message,
+        activeConnectors,
+        connectorFreshness,
+        includeGeneric: true,
+      })
+    : undefined;
+
   logger.info("v3.turn_started", {
     tenantId: tenant.tenant_id,
     conversationId,
     turnId,
     model: preferences.model,
+    specialistAgentId,
   }, correlationId);
 
   const response = createLiveTraceSseResponse({
@@ -403,10 +437,12 @@ export async function POST(request: Request): Promise<Response> {
           tenantId: tenant.tenant_id,
           actorId: auth.user.id,
           role: tenant.role,
+          specialistAgentId,
           activeConnectors,
           connectorFreshness,
           sourceFindings,
           priorResults,
+          analysisBrief,
           businessContext: {
             ...(businessContext ? { current: businessContext, ownerLocked: businessContext.ownerLocked } : {}),
             // Only owners/managers may write it; a stale or missing document is
@@ -550,6 +586,8 @@ export async function POST(request: Request): Promise<Response> {
   });
   response.headers.set("X-Albert-Runtime", "v3");
   response.headers.set("X-Albert-Model", preferences.model);
+  response.headers.set("X-Albert-Specialist-Agent", specialistAgentId);
+  if (analysisBrief) response.headers.set("X-Albert-Analysis-Brief", analysisBrief.digest);
   response.headers.set("X-Request-Id", correlationId);
   return response;
 }

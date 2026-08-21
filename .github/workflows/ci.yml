@@ -99,9 +99,6 @@ jobs:
         run: npx tsx scripts/test-momence-0153-upgrade.mts
       - run: npm run provision:runtime-logins -- --target=analytical
       - run: npm run provision:analytical-capability-key -- --target=analytical
-      - run: npm run test:lightspeed-supplier-transform
-        env:
-          ALBERT_LIGHTSPEED_SUPPLIER_TEST_MODE: ci
       - run: npm run test:analytical-capability-boundary
         env:
           ALBERT_CAPABILITY_TEST_MODE: ci

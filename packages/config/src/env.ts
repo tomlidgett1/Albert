@@ -34,6 +34,8 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "SYNC_WORKER_INTERNAL_URL",
     "OPERATOR_DIAGNOSTIC_SERVICE_URL",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+    "CODEX_RUNTIME_SERVICE_URL",
+    "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
     "CUBE_API_URL",
     "CUBEJS_API_SECRET",
     "OPENAI_API_KEY",
@@ -248,6 +250,7 @@ export const WEB_REMOTE_SERVICE_URL_NAMES = Object.freeze([
   "NEXT_PUBLIC_SUPABASE_URL",
   "SYNC_WORKER_INTERNAL_URL",
   "OPERATOR_DIAGNOSTIC_SERVICE_URL",
+  "CODEX_RUNTIME_SERVICE_URL",
   "CUBE_API_URL",
   "CUBECORE_BRIDGE_URL",
   "OPENAI_BASE_URL",
@@ -816,6 +819,7 @@ export function inspectRuntimeEnvironment(
     "ALBERT_SHOPIFYQL_SIGNING_SECRET",
     "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+    "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
     "ALBERT_USER_HASH_SECRET",
     "DELETION_PROOF_HMAC_KEY",
   ]) {
@@ -835,6 +839,19 @@ export function inspectRuntimeEnvironment(
     ].some((candidate) => candidate === operatorDiagnosticSecret)
   ) {
     invalid.push("ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET");
+  }
+  const codexRuntimeSecret = source.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim();
+  if (
+    codexRuntimeSecret
+    && [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === codexRuntimeSecret)
+  ) {
+    invalid.push("ALBERT_CODEX_RUNTIME_SIGNING_SECRET");
   }
   const shopifyQLSigningSecret = source.ALBERT_SHOPIFYQL_SIGNING_SECRET?.trim();
   if (

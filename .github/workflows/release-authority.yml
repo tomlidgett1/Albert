@@ -681,6 +681,7 @@ jobs:
           CUBE_API_URL: ${{ vars.CUBE_API_URL }}
           ANTHROPIC_ANALYTICS_SERVICE_URL: ${{ vars.ANTHROPIC_ANALYTICS_SERVICE_URL }}
           OPERATOR_DIAGNOSTIC_SERVICE_URL: ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
+          CODEX_RUNTIME_SERVICE_URL: ${{ vars.CODEX_RUNTIME_SERVICE_URL }}
           SYNC_WORKER_INTERNAL_URL: ${{ vars.SYNC_WORKER_INTERNAL_URL }}
           WEBHOOK_GATEWAY_PUBLIC_URL: ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
           CONTROL_PLANE_MIGRATION_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
@@ -694,6 +695,7 @@ jobs:
           FLY_WEBHOOK_APP: ${{ vars.FLY_WEBHOOK_APP }}
           FLY_DELETION_APP: ${{ vars.FLY_DELETION_APP }}
           FLY_OPERATOR_DIAGNOSTIC_APP: ${{ vars.FLY_OPERATOR_DIAGNOSTIC_APP }}
+          FLY_CODEX_RUNTIME_APP: ${{ vars.FLY_CODEX_RUNTIME_APP }}
           FLY_ORGANIZATION_SLUG: ${{ vars.FLY_ORGANIZATION_SLUG }}
           FLY_SYNC_AUTOSCALER_APP: ${{ vars.FLY_SYNC_AUTOSCALER_APP }}
           FLY_TRANSFORM_AUTOSCALER_APP: ${{ vars.FLY_TRANSFORM_AUTOSCALER_APP }}
@@ -895,32 +897,6 @@ jobs:
           WEBHOOK_ATTESTATION_KEY_ID: ${{ vars.WEBHOOK_ATTESTATION_KEY_ID }}
           WEBHOOK_ATTESTATION_SECRET: ${{ secrets.WEBHOOK_ATTESTATION_SECRET }}
 
-  publish-registry:
-    name: Publish authority-reviewed semantic registry
-    if: github.run_attempt == 1
-    needs:
-      - build-candidate
-      - plan
-      - authorize
-      - runtime-security
-    environment: production
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.23.1
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run registry:publish
-        env:
-          CONTROL_PLANE_DATABASE_URL: ${{ secrets.CONTROL_PLANE_MIGRATION_URL }}
-          ALBERT_SEMANTIC_PUBLISH_ROLE: albert_control_migration_owner
-          ALBERT_REQUIRE_DEPLOYER_LOGIN: "true"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
 
@@ -1016,7 +992,7 @@ jobs:
       - build-cube-candidate
       - plan
       - authorize
-      - publish-registry
+      - runtime-security
       - stage-raw-storage-sessions
       - stage-vendor-attestor-relay
     environment: production
@@ -1031,6 +1007,7 @@ jobs:
           - { service: webhook-gateway, config: deploy/fly/webhook-gateway.toml, app_variable: FLY_WEBHOOK_APP, token_secret: FLY_WEBHOOK_API_TOKEN, exposure: public }
           - { service: deletion-worker, config: deploy/fly/deletion-worker.toml, app_variable: FLY_DELETION_APP, token_secret: FLY_DELETION_API_TOKEN, exposure: private }
           - { service: operator-diagnostic, config: deploy/fly/operator-diagnostic.toml, app_variable: FLY_OPERATOR_DIAGNOSTIC_APP, token_secret: FLY_OPERATOR_DIAGNOSTIC_API_TOKEN, exposure: public }
+          - { service: codex-runtime, config: deploy/fly/codex-runtime.toml, app_variable: FLY_CODEX_RUNTIME_APP, token_secret: FLY_CODEX_RUNTIME_API_TOKEN, exposure: public }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1044,9 +1021,9 @@ jobs:
           APP_NAME: ${{ vars[matrix.app_variable] }}
           FLY_API_TOKEN: ${{ secrets[matrix.token_secret] }}
           CANDIDATE_IMAGE: ${{ matrix.service == 'cube' && needs.build-cube-candidate.outputs.cube_image || needs.build-candidate.outputs.services_image }}
-          TARGET_FLOOR: ${{ matrix.service == 'cube' && 1 || 2 }}
+          TARGET_FLOOR: ${{ (matrix.service == 'cube' || matrix.service == 'codex-runtime') && 1 || 2 }}
         run: |
-          if [ "${{ matrix.service }}" = cube ]; then
+          if [ "${{ matrix.service }}" = cube ] || [ "${{ matrix.service }}" = codex-runtime ]; then
             test "$TARGET_FLOOR" -eq 1
           else
             test "$TARGET_FLOOR" -ge 2
@@ -1060,7 +1037,7 @@ jobs:
             --env "ALBERT_SERVICE_VERSION=$ALBERT_RELEASE_CANDIDATE_SHA" \
             --env "ALBERT_DEPLOYMENT_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           running_count="$(flyctl machines list --app "$APP_NAME" --json | jq '[.[] | select(.state == "started")] | length')"
-          if [ "${{ matrix.service }}" = cube ]; then
+          if [ "${{ matrix.service }}" = cube ] || [ "${{ matrix.service }}" = codex-runtime ]; then
             flyctl scale count 1 --app "$APP_NAME" --yes
           elif [ "$running_count" -lt "$TARGET_FLOOR" ]; then
             flyctl scale count "$TARGET_FLOOR" --app "$APP_NAME" --yes
@@ -1069,7 +1046,7 @@ jobs:
             --arg service "${{ matrix.service }}" \
             --argjson floor "$TARGET_FLOOR" --arg sha "$ALBERT_RELEASE_CANDIDATE_SHA" \
             --arg digest "${CANDIDATE_IMAGE##*@}" \
-            '((if $service == "cube"
+            '((if ($service == "cube" or $service == "codex-runtime")
                then ([.[] | select(.state == "started")] | length) == $floor
                else ([.[] | select(.state == "started")] | length) >= $floor
                end) and
@@ -1195,6 +1172,7 @@ jobs:
             ${{ vars.SYNC_WORKER_INTERNAL_URL }}
             ${{ vars.WEBHOOK_GATEWAY_PUBLIC_URL }}
             ${{ vars.OPERATOR_DIAGNOSTIC_SERVICE_URL }}
+            ${{ vars.CODEX_RUNTIME_SERVICE_URL }}
         run: |
           for service_url in $SERVICE_URLS; do
             node scripts/verify-release-readiness.mjs \

@@ -227,7 +227,7 @@ ${reconnectNote}
       finalText = outputText(response);
       break;
     }
-    input.push(...response.output);
+    input.push(...(response.output as unknown as OpenAI.Responses.ResponseInput));
     for (const call of calls) {
       const args = (() => {
         try { return JSON.parse(call.arguments || "{}") as Record<string, unknown>; }

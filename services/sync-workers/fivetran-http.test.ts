@@ -535,7 +535,7 @@ test("a concurrent Deputy start converges on the winner instead of duplicating",
     },
     async createConnected() { throw new Error("fivetran_native_already_connected"); },
   } as unknown as FivetranConnectionStore;
-  let findResult: Record<string, unknown> | null = null;
+  const findResult: Record<string, unknown> | null = null;
   const client = new FivetranClient({
     apiKey: "key",
     apiSecret: "secret",

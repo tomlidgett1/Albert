@@ -536,7 +536,7 @@ export function ResultChart({ event, table }: { event: TraceChartEvent; table?: 
         </div>
       ) : (
         <p className={styles.traceChartUnavailable}>
-          At least {minimumPoints} chartable {minimumPoints === 1 ? "value is" : "values are"} required; the exact result remains available in the governed source table.
+          At least {minimumPoints} chartable values are required; the exact result remains available in the governed source table.
         </p>
       )}
     </figure>

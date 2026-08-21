@@ -17,6 +17,8 @@ const appEnvironment = {
   ALBERT_ANTHROPIC_SIGNING_SECRET: "browser-acceptance-anthropic-secret-0001",
   ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET:
     "browser-acceptance-diagnostic-secret-001",
+  ALBERT_CODEX_RUNTIME_SIGNING_SECRET:
+    "browser-acceptance-codex-runtime-secret-001",
   ALBERT_USER_HASH_SECRET: "browser-acceptance-user-hash-secret-00001",
   ALBERT_PUBLIC_ORIGIN: appOrigin,
   SYNC_WORKER_INTERNAL_URL: "https://sync.browser-acceptance.invalid",
@@ -25,6 +27,8 @@ const appEnvironment = {
     "https://anthropic.browser-acceptance.invalid",
   OPERATOR_DIAGNOSTIC_SERVICE_URL:
     "https://diagnostic.browser-acceptance.invalid",
+  CODEX_RUNTIME_SERVICE_URL:
+    "https://codex.browser-acceptance.invalid",
   OPENAI_API_KEY: "browser-acceptance-openai-key",
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   LIGHTSPEED_CLIENT_ID: "browser-acceptance-lightspeed-client",

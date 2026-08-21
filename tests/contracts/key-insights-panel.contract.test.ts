@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TraceTableEvent } from "../../packages/shared/src/index.js";
-import { deriveKeyInsights } from "../../app/dash/components/key-insights.js";
+import { deriveKeyInsights, formatKeyInsightValue } from "../../app/dash/components/key-insights.js";
 
 const baseProvenance: TraceTableEvent["provenance"] = {
   sources: [{
@@ -105,4 +105,13 @@ test("Key Insights shortens analytical query captions into editorial topics", ()
     streaming: false,
   }]);
   assert.equal(insight?.title, "Lowest gross-profit products");
+});
+
+test("Key Insights presents owner-facing currency precision and symbols", () => {
+  assert.equal(formatKeyInsightValue(18293.1552, {
+    key: "product_sales_analytics.line_gross_profit",
+    label: "Line gross profit",
+    type: "currency",
+    currency: "AUD",
+  }), "$18,293.16");
 });

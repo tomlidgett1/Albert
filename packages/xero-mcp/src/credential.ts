@@ -8,7 +8,7 @@ export type XeroMcpCredentialQuery = {
   query<T extends Record<string, unknown>>(
     sql: string,
     values?: readonly unknown[],
-  ): Promise<{ rows: T[] }>;
+  ): Promise<Readonly<{ rows: readonly T[] }>>;
 };
 
 export type ResolvedXeroMcpCredential = Readonly<{

@@ -18,6 +18,7 @@ await build({
     "deletion-worker": "services/deletion-worker/src/main.ts",
     "webhook-gateway": "services/webhook-gateway/src/main.ts",
     "operator-diagnostic": "services/operator-diagnostic/src/main.ts",
+    "codex-runtime": "services/codex-runtime/src/main.ts",
   },
   outdir,
   bundle: true,

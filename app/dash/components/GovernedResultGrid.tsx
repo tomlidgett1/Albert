@@ -28,8 +28,8 @@ export function GovernedResultGrid({
         <table className={styles.resultTable}>
           <thead>
             <tr>
-              {table.columns.map((column) => (
-                <th key={column.key}>{column.label}</th>
+              {table.columns.map((column, columnIndex) => (
+                <th key={`${column.key}_${columnIndex}`}>{column.label}</th>
               ))}
             </tr>
           </thead>
@@ -42,8 +42,8 @@ export function GovernedResultGrid({
               </tr>
             ) : table.rows.map((row, rowIndex) => (
               <tr key={`${table.resultId}_${rowIndex}`}>
-                {table.columns.map((column) => (
-                  <td key={column.key}>{formatTraceCell(row[column.key] ?? null, column)}</td>
+                {table.columns.map((column, columnIndex) => (
+                  <td key={`${column.key}_${columnIndex}`}>{formatTraceCell(row[column.key] ?? null, column)}</td>
                 ))}
               </tr>
             ))}

@@ -6,6 +6,7 @@ import { ulid } from "ulid";
 import { XeroMcpClient } from "../packages/xero-mcp/src/client.js";
 import { runXeroMcpTurn } from "../packages/xero-mcp/src/agent.js";
 import { PgTransactionalDatabase } from "../services/sync-workers/src/postgres.js";
+type XeroTraceInput = Parameters<Parameters<typeof runXeroMcpTurn>[0]["emit"]>[0];
 
 const TENANT_ID = "01KZN20VTX2EWW1TQ2AA3MCPW6";
 
@@ -86,7 +87,7 @@ async function main(): Promise<void> {
       client,
       openaiApiKey: required(values, "OPENAI_API_KEY"),
       openaiBaseUrl: values.OPENAI_BASE_URL || "https://api.openai.com/v1",
-      emit: (async (event) => {
+      emit: (async (event: XeroTraceInput) => {
         const label = "label" in event && typeof event.label === "string" ? event.label : "";
         const detail = "detail" in event && typeof event.detail === "string" ? event.detail : "";
         traces.push([event.type, label, detail].filter(Boolean).join(" | "));

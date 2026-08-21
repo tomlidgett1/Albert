@@ -175,6 +175,384 @@ test("light, beige, dark, green, and system themes remain accessible", async ({
   await expectNoWcagViolations(page, "system");
 });
 
+test("the Customers specialist is selectable, keyboard-safe, and carried in V3 requests", async ({
+  page,
+}) => {
+  const capture = await openDashboard(page);
+  const agentsTrigger = page.getByRole("button", { name: "Agents", exact: true });
+
+  await expect(agentsTrigger).toBeVisible();
+  await agentsTrigger.click();
+  await expect(page.getByRole("menu", { name: "Specialist agents" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu", { name: "Specialist agents" })).not.toBeVisible();
+  await expect(agentsTrigger).toBeFocused();
+
+  await agentsTrigger.click();
+  await page.getByRole("menuitemradio", { name: /Customers/u }).click();
+  await expect(page.getByText("Customers · Albert Bike Store", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Understand the people behind your business", level: 2 }),
+  ).toBeVisible();
+  await expect(page.getByText(/Explore who buys, who returns/u)).toBeVisible();
+  const composer = page.getByRole("textbox", { name: "Ask the Customer Agent" });
+  await expect(composer).toHaveAttribute("placeholder", "Ask anything about your customers…");
+
+  const starter = page.getByRole("button", {
+    name: /Give me a quick pulse check on the customer base\./u,
+  });
+  await expect(starter).toHaveAttribute("data-certified-query", "recipe-customer-pulse");
+  await starter.click();
+  await expect.poll(() => capture.conversationPayloads.length).toBe(1);
+  expect(capture.conversationPayloads[0]).toMatchObject({
+    message: "Give me a quick pulse check on the customer base.",
+    specialistAgentId: "customers",
+  });
+
+  await page.getByRole("button", { name: "New Analysis", exact: true }).click();
+  await expect(page.getByText("Customers · Albert Bike Store", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Ask me anything", level: 2 })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask me anything" })).toHaveAttribute(
+    "placeholder",
+    "Ask anything about your business…",
+  );
+});
+
+test("saved Customer Agent conversations restore their specialist context", async ({ page }) => {
+  await installAppApiRoutes(page, { specialistHistory: true });
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Customer review", exact: true }).click();
+
+  await expect(page.getByText("Customers · Albert Bike Store", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask the Customer Agent" })).toHaveAttribute(
+    "placeholder",
+    "Ask a follow-up about your customers…",
+  );
+});
+
+test("Codex tab starts a clean isolated runtime and leaves normal Albert chat unchanged", async ({ page }) => {
+  const capture = await openDashboard(page);
+  const albertTab = page.getByRole("tab", { name: "Albert", exact: true });
+  const codexTab = page.getByRole("tab", { name: /Codex/u });
+
+  await expect(albertTab).toHaveAttribute("aria-selected", "true");
+  await codexTab.click();
+  await expect(codexTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Ask Codex about your business", level: 2 })).toBeVisible();
+  await expect(page.getByText(/separate Codex harness can investigate/u)).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toHaveAttribute(
+    "placeholder",
+    "Ask Codex anything about your connected data…",
+  );
+  const codexSettings = page.getByTestId("model-run-controls-trigger");
+  await expect(codexSettings).toHaveAttribute(
+    "aria-label",
+    "Run settings: GPT 5.6 Luna, Fast mode, max reasoning",
+  );
+  await codexSettings.click();
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Terra" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Sol" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Grok 4.6" })).toHaveCount(0);
+  await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  const prompt = "Find one high-confidence opportunity I could test this month";
+  await page.getByRole("button", { name: new RegExp(prompt, "u") }).click();
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  const codexPlan = page.getByLabel("Plan");
+  await expect(codexPlan).toBeVisible();
+  await expect(codexPlan.getByText("Find the governed sales view", { exact: true })).toBeVisible();
+  await expect(codexPlan.getByText("3/3", { exact: true })).toBeVisible();
+  await expect(page.getByText("Bikes led category net sales at $84,240.00.")).toBeVisible();
+  await expect(page.getByText("Net sales by category", { exact: true })).toBeVisible();
+  await expect(page.getByText(/\{"state"/u)).toHaveCount(0);
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: true },
+  });
+  expect(capture.conversationPayloads).toHaveLength(0);
+
+  await albertTab.click();
+  await expect(albertTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Ask me anything", level: 2 })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask me anything" })).toHaveAttribute(
+    "placeholder",
+    "Ask anything about your business…",
+  );
+});
+
+test("Codex model controls allow a reviewed OpenAI model change", async ({ page }) => {
+  const capture = await openDashboard(page);
+  await page.getByRole("tab", { name: /Codex/u }).click();
+  const settings = page.getByTestId("model-run-controls-trigger");
+  await settings.click();
+  await page.getByRole("radio", { name: "GPT 5.6 Terra" }).click();
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveAttribute(
+    "aria-label",
+    "Run settings: GPT 5.6 Terra, Fast mode, max reasoning",
+  );
+  await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill("Show customer health");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: "Show customer health",
+    preferences: { model: "gpt-5.6-terra", reasoningEffort: "max", fastMode: true },
+  });
+});
+
+test("saved Codex conversations restore the Codex runtime tab", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { codexHistory: true });
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Codex business review", exact: true }).click();
+
+  await expect(page.getByRole("tab", { name: /Codex/u })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toHaveAttribute(
+    "placeholder",
+    "Ask Codex a follow-up…",
+  );
+  const composer = page.getByRole("textbox", { name: "Ask Codex about your business" });
+  await composer.fill("What time period is that?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  const latestAssistant = page.locator("article").last();
+  await expect(latestAssistant.getByLabel("Plan")).toBeVisible();
+  await expect(latestAssistant.getByLabel("Plan").getByText("3/3", { exact: true })).toBeVisible();
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: "What time period is that?",
+    conversationId: "01J00000000000000000000021",
+    preferences: { model: "gpt-5.6-sol", reasoningEffort: "max", fastMode: true },
+  });
+});
+
+test("Codex social follow-ups stay conversational and skip analytical progress", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { codexHistory: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Codex business review", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "Ask Codex about your business" });
+  await composer.fill("nice one");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: "nice one",
+    conversationId: "01J00000000000000000000021",
+    preferences: { model: "gpt-5.6-sol", reasoningEffort: "max", fastMode: true },
+  });
+  await expect(page.getByText("Glad that helped.", { exact: true })).toBeVisible();
+  const latestAssistant = page.locator("article").last();
+  await expect(latestAssistant.getByText("Codex is planning the analysis", { exact: true })).toHaveCount(0);
+  await expect(latestAssistant.getByText("Codex evidence grounding", { exact: true })).toHaveCount(0);
+});
+
+test("Codex answers the current date from the tenant clock without a data investigation", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { codexHistory: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Codex business review", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "Ask Codex about your business" });
+  await composer.fill("whats todays date");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  await expect(page.getByText("Today is Friday, 21 August 2026.", { exact: true })).toBeVisible();
+  const latestAssistant = page.locator("article").last();
+  await expect(latestAssistant.getByText("Codex is planning the analysis", { exact: true })).toHaveCount(0);
+  await expect(latestAssistant.getByText(/Querying/u)).toHaveCount(0);
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: "whats todays date",
+    conversationId: "01J00000000000000000000021",
+    preferences: { model: "gpt-5.6-sol", reasoningEffort: "max", fastMode: true },
+  });
+});
+
+test("Codex handles relative calendar follow-ups without entering analytics", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { codexHistory: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Codex business review", exact: true }).click();
+  const composer = page.getByRole("textbox", { name: "Ask Codex about your business" });
+  await composer.fill("date tomorrow?");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+  await expect(page.getByText("Tomorrow is Saturday, 22 August 2026.", { exact: true })).toBeVisible();
+  const latestAssistant = page.locator("article").last();
+  await expect(latestAssistant.getByText("Codex is planning the analysis", { exact: true })).toHaveCount(0);
+  await expect(latestAssistant.getByText(/Querying/u)).toHaveCount(0);
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: "date tomorrow?",
+    conversationId: "01J00000000000000000000021",
+    preferences: { model: "gpt-5.6-sol", reasoningEffort: "max", fastMode: true },
+  });
+});
+
+test("Codex tab is accessible in compact dark mode with reduced motion", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await openDashboard(page);
+  await page.getByRole("tab", { name: /Codex/u }).click();
+  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toBeVisible();
+  const layout = await page.evaluate(() => ({
+    innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    runningAnimations: document
+      .querySelector("main")
+      ?.getAnimations({ subtree: true })
+      .filter((animation) => animation.playState === "running").length ?? 0,
+  }));
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
+  expect(layout.runningAnimations).toBe(0);
+  await expectNoWcagViolations(page, "Codex compact dark");
+});
+
+test("Compare launches Albert and Codex concurrently with the exact same prompt and streams both panes", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { v3DelayMs: 650, codexDelayMs: 650 });
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  const albertTab = page.getByRole("tab", { name: "Albert", exact: true });
+  await albertTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: /Codex/u })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /Codex/u })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Compare", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Compare", exact: true })).toBeFocused();
+
+  await expect(page.getByRole("heading", { name: "Ask once. Watch both analyse.", level: 2 })).toBeVisible();
+  await expect(page.getByText("Independent prompts and tool sets", { exact: true })).toBeVisible();
+  const compareSettings = page.getByTestId("model-run-controls-trigger");
+  await expect(compareSettings).toHaveAttribute(
+    "aria-label",
+    "Run settings: GPT 5.6 Luna, Fast mode, max reasoning",
+  );
+  await compareSettings.click();
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Terra" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Sol" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Grok 4.6" })).toHaveCount(0);
+  await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveCount(0);
+  await page.getByRole("radio", { name: "GPT 5.6 Terra" }).click();
+  await page.keyboard.press("Escape");
+  await expect(compareSettings).toHaveAttribute(
+    "aria-label",
+    "Run settings: GPT 5.6 Terra, Fast mode, max reasoning",
+  );
+  const prompt = "Which categories performed best last month?";
+  const composer = page.getByRole("textbox", { name: "Ask both Albert and Codex" });
+  await composer.fill(prompt);
+  await page.getByRole("button", { name: "Compare answers", exact: true }).click();
+
+  await expect.poll(() => capture.runtimeRequestStartedAt.v3.length).toBe(1);
+  await expect.poll(() => capture.runtimeRequestStartedAt.codex.length).toBe(1);
+  expect(Math.abs(
+    capture.runtimeRequestStartedAt.v3[0]! - capture.runtimeRequestStartedAt.codex[0]!,
+  )).toBeLessThan(150);
+  expect(capture.conversationPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-terra", reasoningEffort: "max", fastMode: true },
+    specialistAgentId: "general",
+    comparisonMode: true,
+  });
+  expect(capture.codexConversationPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-terra", reasoningEffort: "max", fastMode: true },
+    comparisonMode: true,
+  });
+
+  const albertPane = page.getByRole("region", { name: "Albert comparison result" });
+  const codexPane = page.getByRole("region", { name: "Codex comparison result" });
+  await expect(albertPane.getByText(/GPT 5\.6 Terra · Max · Fast/u)).toBeVisible();
+  await expect(codexPane.getByText(/GPT 5\.6 Terra · Max · Fast/u)).toBeVisible();
+  await expect(albertPane.getByText(/Bikes led net sales in July/u)).toBeVisible();
+  await expect(codexPane.getByText(/Bikes led net sales in July/u)).toBeVisible();
+  await expect(codexPane.getByLabel("Plan")).toBeVisible();
+  await expect(codexPane.getByLabel("Plan").getByText("3/3", { exact: true })).toBeVisible();
+  await expect(albertPane.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(codexPane.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Observed answer times/u)).toBeVisible();
+  await expect(page.getByText("Same analytical brief", { exact: true })).toBeVisible();
+  await expect(page.getByText(/answered .* sooner/u)).toHaveCount(0);
+  await expectNoWcagViolations(page, "Compare completed panes");
+});
+
+test("Compare cancellation is lane-isolated and Stop both remains available", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { v3DelayMs: 1_500, codexDelayMs: 1_500 });
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await page.getByRole("tab", { name: "Compare", exact: true }).click();
+  await page.getByRole("textbox", { name: "Ask both Albert and Codex" }).fill("Compare customer health");
+  await page.getByRole("button", { name: "Compare answers", exact: true }).click();
+  await expect.poll(() => capture.runtimeRequestStartedAt.v3.length).toBe(1);
+  await expect.poll(() => capture.runtimeRequestStartedAt.codex.length).toBe(1);
+
+  await page.getByRole("button", { name: "Stop Albert", exact: true }).click();
+  const albertPane = page.getByRole("region", { name: "Albert comparison result" });
+  await expect(albertPane.getByText("Stopped", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop Codex", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Stop both", exact: true }).click();
+  const codexPane = page.getByRole("region", { name: "Codex comparison result" });
+  await expect(codexPane.getByText("Stopped", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Observed answer times/u)).toHaveCount(0);
+});
+
+test("Compare stacks both live panes accessibly on compact dark screens", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await page.getByRole("tab", { name: "Compare", exact: true }).click();
+  const albertPane = page.getByRole("region", { name: "Albert comparison result" });
+  const codexPane = page.getByRole("region", { name: "Codex comparison result" });
+  const [albertBox, codexBox] = await Promise.all([albertPane.boundingBox(), codexPane.boundingBox()]);
+  expect(albertBox).not.toBeNull();
+  expect(codexBox).not.toBeNull();
+  expect(codexBox!.y).toBeGreaterThan(albertBox!.y + albertBox!.height - 2);
+  const overflow = await page.evaluate(() => ({
+    innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + 1);
+  await expectNoWcagViolations(page, "Compare compact dark");
+});
+
+test("Customers specialist navigation is hidden from bookkeepers", async ({ page }) => {
+  await installAppApiRoutes(page, { role: "bookkeeper" });
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Agents", exact: true })).toHaveCount(0);
+});
+
+test("the Customer Agent remains usable in the compact dark sidebar with reduced motion", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await openDashboard(page);
+
+  const agentsTrigger = page.getByRole("button", { name: "Agents", exact: true });
+  await agentsTrigger.click();
+  const menu = page.getByRole("menu", { name: "Specialist agents" });
+  await expect(menu).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(Math.ceil((menuBox?.x ?? 0) + (menuBox?.width ?? 0))).toBeLessThanOrEqual(390);
+
+  await page.getByRole("menuitemradio", { name: /Customers/u }).click();
+  await expect(page.getByRole("textbox", { name: "Ask the Customer Agent" })).toBeVisible();
+  const layout = await page.evaluate(() => ({
+    innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    runningAnimations: document
+      .querySelector("main")
+      ?.getAnimations({ subtree: true })
+      .filter((animation) => animation.playState === "running").length ?? 0,
+  }));
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
+  expect(layout.runningAnimations).toBe(0);
+  await expectNoWcagViolations(page, "system dark");
+});
+
 test("internal operators can inspect the semantic registry in an accessible dark-mode admin workspace", async ({
   page,
 }) => {

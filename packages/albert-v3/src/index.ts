@@ -62,4 +62,24 @@ export {
 } from "./engine/orchestrator.js";
 export { conceptualDefinitionCards, runConceptualLane } from "./engine/conceptual-lane.js";
 export { detectSocialMessage } from "./engine/social.js";
+export {
+  PUBLIC_SPECIALIST_AGENT_DEFINITIONS,
+  SPECIALIST_AGENT_DEFINITIONS,
+  SPECIALIST_AGENT_IDS,
+  getPublicSpecialistAgentDefinition,
+  getSpecialistAgentDefinition,
+  isSpecialistAgentId,
+  matchVerifiedStarterPrompt,
+  normalizeSpecialistAgentId,
+  parseSpecialistAgentId,
+  specialistAgentAllowedForRole,
+  specialistAgentFromConfig,
+  specializeAgentConfig,
+  type SpecialistAgentDefinition,
+  type SpecialistAgentId,
+  type SpecialistAgentPublicDefinition,
+  type SpecialistAgentRole,
+  type VerifiedStarterPrompt,
+} from "./specialist-agents/registry.js";
+export { specialistAgentDefinitionDigest } from "./specialist-agents/digest.js";
 export * from "./context-layer/index.js";

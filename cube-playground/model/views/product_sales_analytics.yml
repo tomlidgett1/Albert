@@ -14,7 +14,11 @@ views:
         completed_at. Line costs are line totals (already multiplied by quantity).
         "Sales by category" = line_revenue (or line_net_revenue ex tax) grouped by
         categories_full_path_name. Profitability by product/category/customer =
-        line_gross_profit and line_gross_margin_pct.
+        line_gross_profit and line_gross_margin_pct. When R-Series catalogue
+        price members are blank, this view is the governed fallback for observed
+        selling prices: normal_unit_price is the pre-discount line price,
+        unit_price is the charged line price, and average_selling_price is a
+        period aggregate. Never call those current catalogue prices.
 
     cubes:
       - join_path: sale_lines
@@ -116,7 +120,6 @@ views:
       - join_path: sale_lines.customers
         prefix: true
         includes:
-          - customer_id
           - full_name
           - company
           - is_repeat_customer

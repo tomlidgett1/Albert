@@ -3,7 +3,7 @@
  *
  * Drives `runAlbertV3Turn` against production-shaped CubeCore/Fivetran with the
  * exact inputs the web route injects for
- * Ashburton Cycles: Luna at max reasoning, fast mode off, active connectors
+ * Ashburton Cycles: Luna at max reasoning, selectable Fast/profile, active connectors
  * lightspeed-r/xero/deputy, the tenant's source findings, and the
  * production-shaped conversation context for multi-turn threads.
  *
@@ -12,15 +12,21 @@
  *   npx tsx scripts/albert-eval/run.mts --run smoke --ids E-LS-01,F-01a,F-01b
  *   npx tsx scripts/albert-eval/run.mts --run baseline --resume        # skip ids already recorded
  *   npx tsx scripts/albert-eval/run.mts --run x --filter pattern=chart_reformat
+ *   npx tsx scripts/albert-eval/run.mts --run customer-fast --profile customers --fast --filter surface=customers
  *
  * Options: --concurrency N (default 4), --timeout-ms (default 780000, mirrors
- * the Vercel maxDuration ceiling), --limit N.
+ * the Vercel maxDuration ceiling), --limit N, --profile general|customers,
+ * and --fast. Formal ADR 0077 qualification intentionally omits --fast.
  *
  * Results append to evals/albert/runs/<run>/results.jsonl, one JSON row per turn.
  */
 import path from "node:path";
 import { execSync } from "node:child_process";
-import { runAlbertV3Turn } from "../../packages/albert-v3/src/index.js";
+import {
+  parseSpecialistAgentId,
+  runAlbertV3Turn,
+  type SpecialistAgentId,
+} from "../../packages/albert-v3/src/index.js";
 import type { TraceEvent } from "../../packages/shared/src/index.js";
 import { QUESTIONS, type EvalQuestion } from "./questions.js";
 import { priorResultsFromRecords , loadEvalBusinessContext } from "./lib.js";
@@ -42,10 +48,27 @@ import {
   type EvalTurnRecord,
 } from "./lib.js";
 
-type Args = { run: string; ids?: Set<string>; filter?: [string, string]; concurrency: number; timeoutMs: number; limit?: number; resume: boolean };
+type Args = {
+  run: string;
+  ids?: Set<string>;
+  filter?: [string, string];
+  concurrency: number;
+  timeoutMs: number;
+  limit?: number;
+  resume: boolean;
+  fastMode: boolean;
+  specialistAgentId: SpecialistAgentId;
+};
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { run: "adhoc", concurrency: 4, timeoutMs: 780_000, resume: false };
+  const args: Args = {
+    run: "adhoc",
+    concurrency: 4,
+    timeoutMs: 780_000,
+    resume: false,
+    fastMode: false,
+    specialistAgentId: "general",
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
     const next = () => argv[++i]!;
@@ -56,6 +79,13 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--timeout-ms") args.timeoutMs = Number(next());
     else if (a === "--limit") args.limit = Number(next());
     else if (a === "--resume") args.resume = true;
+    else if (a === "--fast") args.fastMode = true;
+    else if (a === "--profile") {
+      const requested = next();
+      const parsed = parseSpecialistAgentId(requested);
+      if (!parsed) throw new Error(`Unknown specialist agent profile: ${requested}`);
+      args.specialistAgentId = parsed;
+    }
   }
   return args;
 }
@@ -103,7 +133,7 @@ for (const [thread, turns] of byThread) units.push({ key: thread, turns: turns.s
 units.sort((a, b) => (b.turns.length - a.turns.length) || a.key.localeCompare(b.key));
 const limited = args.limit ? units.slice(0, args.limit) : units;
 const totalTurns = limited.reduce((n, u) => n + u.turns.length, 0);
-console.log(`[eval] run=${args.run} engine=${engineVersion} units=${limited.length} turns=${totalTurns} concurrency=${args.concurrency} leases=${LEASES.length}`);
+console.log(`[eval] run=${args.run} engine=${engineVersion} profile=${args.specialistAgentId} fast=${args.fastMode} units=${limited.length} turns=${totalTurns} concurrency=${args.concurrency} leases=${LEASES.length}`);
 
 const cube = createEvalCube(env);
 
@@ -134,6 +164,8 @@ async function runTurn(question: EvalQuestion, prior: EvalTurnRecord[], lease: R
     errors: [],
     engineVersion,
     businessContext: Boolean(BUSINESS_CONTEXT),
+    specialistAgentId: args.specialistAgentId,
+    fastMode: args.fastMode,
   };
   const t0 = Date.now();
   let sequence = 0;
@@ -144,10 +176,11 @@ async function runTurn(question: EvalQuestion, prior: EvalTurnRecord[], lease: R
     const result = await runAlbertV3Turn({
       message: question.question,
       conversation: conversation as never,
-      preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+      preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: args.fastMode },
       tenantId: TENANT_ID,
       actorId: ACTOR_ID,
       role: ROLE,
+      specialistAgentId: args.specialistAgentId,
       activeConnectors: [...ACTIVE_CONNECTORS],
       // Production currently has no readiness/cursor watermarks for the Fivetran-backed connections.
       connectorFreshness: [],

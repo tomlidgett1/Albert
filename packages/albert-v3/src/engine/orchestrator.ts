@@ -10,6 +10,7 @@ import {
   v3PromptCacheKey,
   withV3PromptCacheBoundary,
 } from "./lanes.js";
+import { specialistAgentFromConfig } from "../specialist-agents/registry.js";
 
 export const LANES = ["quick", "analytical", "deep", "explain", "represent", "meta", "conceptual", "social", "clarification", "off_topic"] as const;
 export type Lane = (typeof LANES)[number];
@@ -352,9 +353,13 @@ export function buildConversationInput(
 
 /**
  * The tenant's connected tools, normalised to the connector keys the view
- * descriptors use. Missing or unknown connection state widens to every
- * configured connector (a cost optimisation, never an authorisation gate —
- * the same fail-open stance as tool routing).
+ * descriptors use. Unknown connection state — undefined (the control-plane
+ * read failed) or a non-empty list whose keys no longer normalise (stale
+ * metadata) — widens to every configured connector (a cost optimisation,
+ * never an authorisation gate — the same fail-open stance as tool routing).
+ * A present-but-EMPTY list is not unknown: the tenant has no connections,
+ * and widening would present the configured catalogue as this business's
+ * data sources.
  */
 export function scopedClassifierConnectors(
   config: AlbertV3AgentConfig,
@@ -366,7 +371,14 @@ export function scopedClassifierConnectors(
       const normalized = normalizeV3Connector(connector);
       return normalized && configured.has(normalized) ? [normalized] : [];
     }))].sort();
-  return active.length > 0 ? active : [...configured].sort();
+  if (active.length > 0) return active;
+  if (activeConnectors !== undefined && activeConnectors.length === 0) return [];
+  return [...configured].sort();
+}
+
+/** True when the tenant's connection state is known and holds no connections. */
+export function noConnectionsKnown(activeConnectors: readonly string[] | undefined): boolean {
+  return activeConnectors !== undefined && activeConnectors.length === 0;
 }
 
 export const CONNECTOR_LABELS: Readonly<Record<string, string>> = Object.freeze({
@@ -390,9 +402,11 @@ export function classifierInstructions(
   /** Compact business context digest (context-layer/render.ts renderBusinessContextForClassifier). */
   businessContext = "",
 ): string {
+  const specialistAgent = specialistAgentFromConfig(config);
   const connectors = scopedClassifierConnectors(config, activeConnectors);
   const connected = new Set(connectors);
   const connectionKnown = (activeConnectors ?? []).length > 0;
+  const noneConnected = noConnectionsKnown(activeConnectors);
   const shopifyConnected = connected.has("shopify");
   const views = config.accessibleViews
     .filter((view) => connected.has(view.connector))
@@ -401,7 +415,13 @@ export function classifierInstructions(
   const connectedTools = connectors
     .map((connector) => `- ${connector}: ${CONNECTOR_LABELS[connector] ?? connector}`)
     .join("\n");
-  const connectionsBlock = connectionKnown
+  const connectionsBlock = noneConnected
+    ? `NO tools are connected to Albert for THIS business yet — Albert holds no business data
+at all. Route questions about what is connected or what data exists to meta. Route every
+other data question (sales, payroll, accounting, staff) to meta as well, so the owner is
+told plainly that nothing is connected yet; never route them off_topic, and never invent
+figures.`
+    : connectionKnown
     ? `Tools connected to Albert for THIS business (the only sources of data):
 ${connectedTools}
 Reason only about these. If the owner names a tool that is not listed (for example
@@ -460,6 +480,16 @@ object and field questions are in scope even when no Cube view lists them.
     ? ` Website traffic, search, conversion and marketing
   attribution are in scope when they concern a connected Shopify store.`
     : "";
+  const specialistBlock = specialistAgent.id === "general"
+    ? ""
+    : `# Explicitly selected specialist: ${specialistAgent.ui.title}
+The owner selected this profile for the whole conversation. Bias ambiguous wording toward
+its domain and prefer these semantic views first: ${specialistAgent.primaryViews.join(", ")}.
+All other connected business data remains available when it materially answers the question;
+the profile is a focused starting point, not a restriction or a separate runtime.
+${specialistAgent.alwaysRule?.body ?? ""}
+
+`;
   return `You are the intent orchestrator for Albert, an analytics assistant for a small
 business. You never answer the question yourself; you route it.
 
@@ -467,7 +497,7 @@ ${todayLine(config.timezone)}
 
 ${businessContext ? `${businessContext}
 
-` : ""}${connectionsBlock}
+` : ""}${specialistBlock}${connectionsBlock}
 
 The data available (semantic views over those connected tools; the [tag] names the tool):
 ${views}

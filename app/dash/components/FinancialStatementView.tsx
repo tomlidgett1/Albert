@@ -55,7 +55,6 @@ export function FinancialStatementView({ table }: { table: TraceTableEvent }) {
   );
   const showPeriodHeader = periodColumns.length > 1
     || (periodColumns[0]?.label && periodColumns[0].label.toLowerCase() !== "amount");
-  let previousSection: string | null = null;
   return (
     <div className={styles.statementWrap} aria-label={table.caption}>
       <table className={styles.statementTable}>
@@ -74,8 +73,8 @@ export function FinancialStatementView({ table }: { table: TraceTableEvent }) {
             const section = String(row.section ?? "");
             const line = String(row.line ?? "");
             const kind = lineKind(section, line);
+            const previousSection = rowIndex > 0 ? String(table.rows[rowIndex - 1]?.section ?? "") : null;
             const isNewSection = section.trim() !== "" && section !== previousSection;
-            previousSection = section;
             return (
               <Fragment key={`${table.resultId}_st_${rowIndex}`}>
                 {isNewSection ? (

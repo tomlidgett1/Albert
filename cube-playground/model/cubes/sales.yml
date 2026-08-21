@@ -218,6 +218,36 @@ cubes:
           Number of completed, non-voided sale transactions (refund transactions included).
         filters:
           - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: purchase_transactions
+        type: count
+        title: Positive purchase transactions
+        description: Completed, non-voided transactions with a positive tax-inclusive total. Refunds and zero-value activity are excluded.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.calc_total, 0) > 0"
+      - name: identified_transactions
+        type: count
+        title: Transactions with a customer
+        description: Completed, non-voided transactions attributed to a non-zero customer profile; purchases and refunds both reconcile to transactions.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
+      - name: anonymous_transactions
+        type: count
+        title: Transactions without a customer
+        description: Completed, non-voided transactions with no attached customer profile. identified_transactions plus anonymous_transactions equals transactions.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND ({CUBE}.customer_id IS NULL OR {CUBE}.customer_id = 0)"
+      - name: identified_transaction_coverage_pct
+        type: number
+        sql: "100.0 * {identified_transactions} / NULLIF({transactions}, 0)"
+        format: percent
+        title: Customer attribution coverage %
+        description: Share of completed, non-voided transactions carrying a customer profile.
+      - name: anonymous_transaction_coverage_pct
+        type: number
+        sql: "100.0 * {anonymous_transactions} / NULLIF({transactions}, 0)"
+        format: percent
+        title: Anonymous transaction share %
+        description: Share of completed, non-voided transactions with no attached customer profile.
       - name: gross_takings
         type: sum
         sql: calc_total
@@ -228,6 +258,34 @@ cubes:
           This is what "revenue", "sales" or "takings" means by default.
         filters:
           - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: identified_gross_takings
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Takings with a customer
+        description: Signed tax-inclusive takings on completed, non-voided transactions with an attached customer; refunds subtract.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
+      - name: anonymous_gross_takings
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Takings without a customer
+        description: Signed tax-inclusive takings on completed, non-voided anonymous transactions; refunds subtract. This plus identified_gross_takings equals gross_takings.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND ({CUBE}.customer_id IS NULL OR {CUBE}.customer_id = 0)"
+      - name: identified_revenue_coverage_pct
+        type: number
+        sql: "100.0 * {identified_gross_takings} / NULLIF({gross_takings}, 0)"
+        format: percent
+        title: Customer-attributed takings share %
+        description: Signed gross takings attached to customer profiles as a share of all signed gross takings for the same selection.
+      - name: anonymous_revenue_coverage_pct
+        type: number
+        sql: "100.0 * {anonymous_gross_takings} / NULLIF({gross_takings}, 0)"
+        format: percent
+        title: Anonymous takings share %
+        description: Signed anonymous gross takings as a share of all signed gross takings for the same selection.
       - name: net_sales_ex_tax
         type: sum
         sql: calc_subtotal
@@ -381,23 +439,23 @@ cubes:
         type: count_distinct
         sql: customer_id
         title: Distinct purchasing customers
-        description: Distinct customer profiles attached to completed, non-voided sales. Anonymous sales are not counted.
+        description: Distinct customer profiles attached to positive completed, non-voided purchases. Refund-only activity and anonymous sales are not counted.
         filters:
-          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.calc_total, 0) > 0 AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
       - name: first_sale_at
         type: min
         sql: complete_time
         public: false
-        description: Earliest completed sale time; used as the sub-query source for customer first-purchase dates.
+        description: Earliest positive completed purchase time for an attached customer; retained as a private compatibility measure.
         filters:
-          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.calc_total, 0) > 0 AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
       - name: last_sale_at
         type: max
         sql: complete_time
         public: false
-        description: Latest completed sale time; used as the sub-query source for customer last-purchase dates.
+        description: Latest positive completed purchase time for an attached customer; retained as a private compatibility measure.
         filters:
-          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.calc_total, 0) > 0 AND {CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
 
     segments:
       - name: completed_sales

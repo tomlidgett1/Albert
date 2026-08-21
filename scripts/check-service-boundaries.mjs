@@ -5,6 +5,7 @@ const sync=await readFile(".albert-build/services/sync-worker.js","utf8");
 const webhook=await readFile(".albert-build/services/webhook-gateway.js","utf8");
 const deletion=await readFile(".albert-build/services/deletion-worker.js","utf8");
 const diagnostic=await readFile(".albert-build/services/operator-diagnostic.js","utf8");
+const codex=await readFile(".albert-build/services/codex-runtime.js","utf8");
 const buildIdentity=JSON.parse(await readFile(".albert-build/services/build-identity.json","utf8"));
 
 for(const forbidden of [
@@ -136,6 +137,31 @@ for(const forbidden of [
   "semantic_ro",
 ]){
   assert.equal(diagnostic.includes(forbidden),false,`operator-diagnostic bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+for(const required of [
+  "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+  "CUBE_API_URL",
+  "OPENAI_API_KEY",
+  "albert_codex_tab",
+  "run_semantic_query",
+]){
+  assert.equal(codex.includes(required),true,`codex-runtime bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "process.env.CUBEJS_API_SECRET",
+  "process.env.CONTROL_PLANE_DATABASE_URL",
+  "process.env.ANALYTICAL_DATABASE_URL",
+  "process.env.SUPABASE_SERVICE_ROLE_KEY",
+  "process.env.TOKEN_ENCRYPTION_KEY",
+  "process.env.LIGHTSPEED_CLIENT_SECRET",
+  "process.env.XERO_CLIENT_SECRET",
+  "process.env.DEPUTY_CLIENT_SECRET",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+]){
+  assert.equal(codex.includes(forbidden),false,`codex-runtime crossed a forbidden boundary: ${forbidden}`);
 }
 
 for(const forbidden of [

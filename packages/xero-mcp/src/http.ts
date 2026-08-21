@@ -86,7 +86,7 @@ export class XeroMcpWorkerHttpHandler {
       query<T extends Record<string, unknown>>(
         sql: string,
         values?: readonly unknown[],
-      ): Promise<{ rows: T[] }>;
+      ): Promise<Readonly<{ rows: readonly T[] }>>;
     };
     vault: WorkerCredentialVault;
     connectors: { get(provider: "xero"): unknown };

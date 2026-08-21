@@ -16,6 +16,7 @@ pace between responses and snaps back to the server's numbers on every call.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import time
@@ -128,7 +129,10 @@ class TokenSupply:
                 if error.code in (401, 403, 404, 409):
                     raise TokenBrokerError(f"token broker refused ({error.code}): {detail}")
                 last_error = TokenBrokerError(f"token broker error {error.code}: {detail}")
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            # urllib wraps only request-send failures in URLError; errors while
+            # reading the response (RemoteDisconnected, IncompleteRead, SSL EOF)
+            # surface raw as OSError/http.client.HTTPException subclasses.
+            except (OSError, http.client.HTTPException, json.JSONDecodeError) as error:
                 last_error = TokenBrokerError(f"token broker unreachable: {error}")
             time.sleep(2 * (attempt + 1))
         raise last_error or TokenBrokerError("token broker unavailable")
@@ -327,7 +331,10 @@ class LightspeedClient:
                     self.sleep(min(60, 2 ** attempt))
                     continue
                 raise LightspeedError(f"Lightspeed {status} for {path}: {body[:200]}")
-            except (urllib.error.URLError, TimeoutError) as error:
+            # urllib wraps only request-send failures in URLError; errors while
+            # reading the response (RemoteDisconnected, IncompleteRead, SSL EOF)
+            # surface raw as OSError/http.client.HTTPException subclasses.
+            except (OSError, http.client.HTTPException) as error:
                 self.sleep(min(60, 2 ** attempt))
                 if attempt == MAX_ATTEMPTS - 1:
                     raise LightspeedError(f"Lightspeed unreachable for {path}: {error}")

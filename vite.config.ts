@@ -60,10 +60,10 @@ export default defineConfig(async () => {
     plugins: [
       {
         name: "albert-stub-vega-on-worker",
-        applyToEnvironment(environment) {
+        applyToEnvironment(environment: { name: string }) {
           return environment.name === "rsc" || environment.name === "ssr";
         },
-        resolveId(id) {
+        resolveId(id: string) {
           if (
             id === "vega"
             || id === "vega-lite"
@@ -74,7 +74,7 @@ export default defineConfig(async () => {
           }
           return undefined;
         },
-        load(id) {
+        load(id: string) {
           if (id.startsWith("\0albert-vega-stub:")) {
             return "export default {};\nexport const expressionInterpreter = {};\n";
           }

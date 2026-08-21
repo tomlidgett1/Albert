@@ -2,7 +2,7 @@ import {
   loadRawStorageS3Config,
   type RawStorageS3Config,
 } from "../../../packages/storage/src/s3.js";
-import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
+import { loadReplicaWorkerId } from "../../../packages/shared/src/worker-id.js";
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 

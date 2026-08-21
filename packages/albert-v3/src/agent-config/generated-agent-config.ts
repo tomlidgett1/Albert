@@ -11,12 +11,17 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "name": "sales_analytics",
         "connector": "lightspeed",
-        "guidance": "Whole-transaction grain. Revenue, refunds, discounts, tax, quotes, voids, store and staff performance, and the customer on the sale.\n"
+        "routing_terms": [
+          "best employee this month",
+          "top staff sales performance",
+          "employee performance by takings"
+        ],
+        "guidance": "Whole-transaction grain. Revenue, refunds, discounts, tax, quotes, voids, store and staff performance, and the customer on the sale. “Best employee” also requires authoritative hours from workforce_analytics when Deputy is connected; sales alone are contribution, not productivity.\n"
       },
       {
         "name": "product_sales_analytics",
         "connector": "lightspeed",
-        "guidance": "Sale-line grain. Units, item revenue, discounts, cost and gross profit by product, category, brand, season and tags.\n"
+        "guidance": "Sale-line grain. Units, item revenue, discounts, cost and gross profit by product, category, brand, season and tags. Also the R-Series fallback for observed selling prices when current catalogue-price fields are blank: normal_unit_price is the pre-discount line price, unit_price is charged, and average_selling_price is a period aggregate; none is current catalogue truth.\n"
       },
       {
         "name": "payments_analytics",
@@ -26,7 +31,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "name": "customer_analytics",
         "connector": "lightspeed",
-        "guidance": "Customer grain. Profiles, types, geography, contactability, lifetime behaviour, store credit and gift cards.\n"
+        "guidance": "Customer-profile grain. Refund-safe positive-purchase recency/frequency, true censored 90-day repeat, signed lifetime net spend, broad geography, aggregate contactability, store credit and gift cards. Profiles are not deduplicated people. Exact contact values, street address, date of birth, custom values and note text are deliberately excluded.\n"
       },
       {
         "name": "workshop_analytics",
@@ -36,7 +41,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "name": "inventory_analytics",
         "connector": "lightspeed",
-        "guidance": "Stock grain. Current stock on hand and value per item and store, reorder alerts, stock ageing, stock movement history, stocktake variances and shrinkage, inter-store transfers, special orders, serialised units, price lists and bundle components. Aged inventory reports: group units_on_hand and stock_value by stock_age_band with the in_stock segment (one query); do not reconstruct ageing from goods receipts or movement logs.\n"
+        "guidance": "Stock grain. Current stock on hand and value per item and store, reorder alerts, stock ageing, stock movement history, stocktake variances and shrinkage, inter-store transfers, special orders, serialised units, price lists and bundle components. Aged inventory reports: group units_on_hand and stock_value by stock_age_band with the in_stock segment (one query); do not reconstruct ageing from goods receipts or movement logs. Blank catalogue prices do not prove an item is unpriced; recover observed prices from product_sales_analytics before concluding unavailable.\n"
       },
       {
         "name": "purchasing_analytics",
@@ -282,6 +287,11 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "name": "workforce_analytics",
         "connector": "deputy",
+        "routing_terms": [
+          "best employee by productivity",
+          "employee sales per worked hour",
+          "staff performance with hours worked"
+        ],
         "guidance": "Workforce (Deputy) grain. Authoritative hours worked and wage cost from timesheets, rostered / scheduled shifts and planned cost, open and published shifts, leave requests by type and status, staff headcount and positions. For cross-tool questions (e.g. hours vs sales), query this and the sales views separately, matching the person by name in each tool, then combine narratively.\n"
       },
       {
@@ -704,14 +714,64 @@ export const ALBERT_V3_AGENT_CONFIG = {
       {
         "connector": "lightspeed",
         "key": "customers",
-        "purpose": "Customer base: customers on file, customers with purchases, repeat customers and repeat rate.",
+        "purpose": "Customer base: profiles on file/active, positive purchasers, repeat profiles, lifetime repeat rate, signed net spend and refunds. Profiles are not deduplicated people.",
         "rows": 1,
         "query": {
           "measures": [
             "customer_analytics.customer_count",
+            "customer_analytics.active_customer_count",
             "customer_analytics.customers_with_purchases",
             "customer_analytics.repeat_customers",
-            "customer_analytics.repeat_purchase_rate_pct"
+            "customer_analytics.repeat_purchase_rate_pct",
+            "customer_analytics.total_lifetime_net_spend",
+            "customer_analytics.total_lifetime_refund_value"
+          ]
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "customer_recency_frequency",
+        "purpose": "Active customer profile distribution by transparent purchase recency and positive-purchase frequency bands; operational segments, not predicted churn.",
+        "rows": 30,
+        "query": {
+          "measures": [
+            "customer_analytics.customer_count",
+            "customer_analytics.total_lifetime_net_spend"
+          ],
+          "dimensions": [
+            "customer_analytics.recency_band",
+            "customer_analytics.frequency_band"
+          ],
+          "segments": [
+            "customer_analytics.active_customers"
+          ],
+          "order": {
+            "customer_analytics.customer_count": "desc"
+          },
+          "limit": 30
+        }
+      },
+      {
+        "connector": "lightspeed",
+        "key": "customer_attribution_12m",
+        "purpose": "Last-12-month completed transactions and takings split into customer-profile-attached versus anonymous coverage.",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "sales_analytics.transactions",
+            "sales_analytics.identified_transactions",
+            "sales_analytics.anonymous_transactions",
+            "sales_analytics.identified_transaction_coverage_pct",
+            "sales_analytics.gross_takings",
+            "sales_analytics.identified_gross_takings",
+            "sales_analytics.anonymous_gross_takings",
+            "sales_analytics.identified_revenue_coverage_pct"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "sales_analytics.completed_at",
+              "dateRange": "last 12 months"
+            }
           ]
         }
       },
@@ -1032,6 +1092,10 @@ export const ALBERT_V3_AGENT_CONFIG = {
       "body": "# Business dates and terminology\n\n- The default time dimension for sales questions is `completed_at` (when the\n  sale was finalised at the till), not `created_at`.\n- The business timezone is Australia/Melbourne. \"Today\", \"this month\" and\n  similar phrases resolve in that timezone.\n- Terminology map: revenue = takings = turnover = `gross_takings`;\n  basket size / average sale = `average_sale_value`; COGS = cost of goods =\n  `cost_of_goods`; margin = `gross_margin_pct`; brand = manufacturer.\n- Use Australian English in every answer (analyse, organisation, colour).\n- Every numeric claim in an answer must come from a Cube query run this turn.\n  Never estimate or invent figures."
     },
     {
+      "name": "employee-performance-review",
+      "body": "# Employee performance review\n\n- “Best employee”, “performed best”, “top staff member” and equivalent wording\n  are multi-lens questions, not sales-only rankings. State the chosen operational\n  interpretation, but do not make authoritative worked-hours evidence an\n  optional follow-up when Deputy is connected.\n- Query `sales_analytics` for employee-attributed takings, transactions, average\n  sale value and gross profit. POS attribution measures work rung through an\n  employee login; it does not measure every duty or prove who influenced a sale.\n- When `workforce_analytics` is available, query Deputy hours worked and wage\n  cost by employee for the same period. Use the earliest trustworthy source\n  watermark as the common end date for productivity; a later POS-only result may\n  be shown separately as current contribution context.\n- Compare total contribution and effort-adjusted productivity. Use only a\n  trusted derived result for takings/gross-profit per worked hour; never divide\n  figures in model prose.\n- Cross-source employee alignment is limited to exact unique source labels in\n  the current Codex runtime, not a canonical identity graph. Disclose unmatched\n  and duplicate labels and never merge approximate names.\n- A useful conclusion names the leader under total contribution and under\n  productivity, says whether those readings agree, quantifies how close the\n  credible contenders are, and explains coverage/non-sales-duty limitations.\n- Do not publish while a required sales, workforce, common-period or trusted\n  productivity obligation remains an optional follow-up. Query it or state the\n  exact unavailable observation."
+    },
+    {
       "name": "gst-and-revenue",
       "body": "# GST and revenue semantics\n\n- All money in this Lightspeed dataset is AUD. Totals such as `gross_takings`\n  and `line_revenue` are tax inclusive (GST inc). `net_sales_ex_tax` and\n  `line_net_revenue` are ex GST.\n- When the user says \"revenue\", \"sales\", \"takings\" or \"turnover\" without\n  qualification, use `gross_takings` (tax inclusive) and say so in the answer.\n- Never mix tax-inclusive and tax-exclusive figures in one calculation.\n  Gross profit is already computed correctly inside the model\n  (`gross_profit` = net sales ex tax minus cost of goods); do not attempt to\n  re-derive it from tax-inclusive members.\n- \"Profitability\" in Lightspeed means gross margin only. There are no\n  operating expenses in this data, and answers about profit must state that\n  the figure is gross margin, not net profit."
     },
@@ -1042,6 +1106,10 @@ export const ALBERT_V3_AGENT_CONFIG = {
     {
       "name": "momence-yoga-studio-semantics",
       "body": "# Momence yoga and wellness studio semantics\n\nApply these rules whenever a result comes from a `momence_*` view:\n\n- Keep native grains separate. A schedule occurrence, reservation, member,\n  membership plan, bought entitlement, sale item, tender item, detailed payment\n  item and refund event are different facts. Query one view at a time and\n  reconcile independently aggregated results in the answer; never raw-join two\n  array/event grains.\n- `momence_schedule_analytics` answers what is scheduled and reserved. Booked\n  places are not attendance, unique people, captured payments or revenue.\n  Capacity minus booked places is an availability estimate, not guaranteed\n  bookability. Draft/cancelled activities never count as scheduled performance.\n- `momence_attendance_analytics` answers member reservation/check-in outcomes.\n  Momence session bookings expose a booking-level `checkedIn` boolean while one\n  booking may have multiple `ticketsBought`; label the attendance rate as\n  reservation-record weighted. “No-show” is an Albert proxy for an ended,\n  non-cancelled, unchecked record and must always be called a proxy.\n- A teacher is an instructor identity/assignment only. Never infer employment,\n  rostered or actual hours, labour cost, wage, payroll or productivity from\n  `momence_instructor_analytics` or the teacher dimensions on schedule/attendance.\n- A member profile is not an entitlement. Member visit counters are current\n  lifetime-style source snapshots and may be API-history bounded; `first_seen`\n  and `last_seen` are observed activity bounds, not guaranteed signup/churn.\n- A membership plan is a definition. A bought membership from\n  `momence_member_entitlement_analytics` is a current active-endpoint entitlement\n  snapshot. Frozen is not cancelled. Declined renewal is risk evidence, not\n  proof that access ended. Never sum current balances across ingestion dates.\n- Event credits, money credits, session limits and appointment limits are\n  different units. Never add them together or call credit units cash/revenue.\n- HostSale is experimental and does not return status, void state, location or\n  currency. `momence_sales_analytics` and\n  `momence_product_sales_analytics` expose reported source arithmetic, not\n  certified revenue. Never add item totals to tender totals and never invent a\n  currency for HostSale or membership-plan price values.\n- Captured cash uses `momence_payment_analytics.captured_currency_amount` with\n  `payment_status = succeeded`, grouped by `currency_code`. Payment header and\n  payment-item amounts are alternative grains, not additive. Host/customer\n  covered processor and platform fees remain separate.\n- Detailed payment and refund coverage is partial: Momence exposes no global\n  payment transaction list, so Albert can retrieve only transaction IDs found in\n  member notes. Never treat missing rows as zero, claim full processor\n  reconciliation or compare the partial total to all HostSales as if complete.\n- Refund flow uses `momence_refund_analytics` over `refund_created_at`. Keep\n  refunded currency, money credits and event credits separate. A refund method\n  cannot identify the returned yoga class, appointment, product or membership.\n- Public location/catalogue streams and experimental sales/payment streams can\n  be unavailable for a staff role. Missing optional coverage produces an honest\n  partial/unavailable answer, not a synthetic zero.\n- Use `momence_source_explorer` only after curated views fail to expose the\n  exact concept. Filter one `parent_stream` or `source_object_type` and one exact\n  stable `field_path`; use `field_pointer` for a specific array occurrence and\n  the value member matching `value_kind`. Numeric values are not automatically\n  additive and a missing path means no returned value, never permission to infer.\n- Member contact fields, notes, contracts, payment identifiers and online/Zoom\n  credentials can appear in the exhaustive explorer. Reveal source PII or\n  sensitive text only for an explicit tenant-authorized request; otherwise\n  aggregate, redact or state that access is governed."
+    },
+    {
+      "name": "r-series-selling-price-recovery",
+      "body": "# R-Series selling-price recovery\n\n- Keep price meanings separate. `items_default_price` / `item_prices_amount`\n  are current catalogue configuration; `normal_unit_price` is the pre-discount\n  price recorded on a completed sale line; `unit_price` is the charged unit\n  price; `average_selling_price` is a period aggregate. Cost fields are never\n  selling prices.\n- For a current-price question, check the R-Series catalogue members first.\n  Blank `items_default_price`, `items_msrp`, or `item_prices_*` results do not\n  prove that an item has no price: catalogue-price coverage can be absent for a\n  connected account even while completed sale lines contain observed prices.\n- When catalogue price fields are blank or the price-list query is empty, keep\n  working. Load `product_sales_analytics` and query\n  `normal_unit_price`, `unit_price`, `average_selling_price`, `completed_at`,\n  `items_item_id`, and `items_name`. Use exact item IDs from prior governed\n  results, never display-name joins.\n- For a small named/shortlisted set, retrieve the most recent completed,\n  non-return sale line per item (one item-scoped query when needed). If that is\n  too sparse, add a clearly labelled recent-period average selling price.\n- Label the result honestly: current catalogue price, last observed normal\n  price, last charged price, or recent average. A historical observation is a\n  fallback/proxy, not proof of today's shelf price.\n- Do not conclude that selling prices are unavailable until both the current\n  catalogue path and the completed sale-line path have been checked. If both\n  are empty, say exactly which paths were exhausted and which source field or\n  sync would unlock the answer."
     },
     {
       "name": "refunds-voids-and-state",
@@ -1081,7 +1149,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
     {
       "name": "new-vs-returning",
       "description": "Definitions and method for new versus returning customer analysis, repeat purchase rate, and customer retention questions.",
-      "body": "# New vs returning customers\n\n- A customer is \"new\" in a period when their `customers_first_purchase_at`\n  falls inside that period; otherwise a purchase from them is \"returning\".\n- Repeat customers overall: `repeat_customers` and `repeat_purchase_rate_pct`\n  on customer_analytics (share of purchasing customers with 2+ transactions).\n- For a period split, run sales_analytics with `purchasing_customers` filtered\n  by `customers_first_purchase_at` inside vs before the period.\n- Walk-in sales with no attached customer cannot be classified: report the\n  share of sales with `has_customer = false` alongside any new/returning\n  split so the coverage is honest."
+      "body": "# New vs returning customers\n\n- A customer is \"new\" in a period when their `customers_first_purchase_at`\n  falls inside that period; otherwise a positive purchase from them is\n  \"returning\". first_purchase_at and purchase_count exclude refunds.\n- Repeat customers overall: `repeat_customers` and `repeat_purchase_rate_pct`\n  on customer_analytics (share of purchasing profiles with 2+ positive\n  purchases). This lifetime repeat rate is not cohort retention.\n- For a period split, run sales_analytics with `purchasing_customers` filtered\n  by `customers_first_purchase_at` inside vs before the period.\n- Walk-in sales with no attached customer cannot be classified: report\n  `identified_transaction_coverage_pct` and\n  `identified_revenue_coverage_pct` for the same period alongside any\n  new/returning split.\n- \"Is retention improving?\" requires a like-for-like period mix or an explicit\n  cohort/horizon. Do not call a changing new/returning sales mix causal evidence\n  of retention, and do not invent a cohort metric the current view lacks."
     },
     {
       "name": "profitability-review",
@@ -1832,8 +1900,8 @@ export const ALBERT_V3_AGENT_CONFIG = {
     },
     {
       "name": "profitability-by-customer",
-      "userRequest": "Break down profitability by customer. Who are the most and least profitable customers?",
-      "notes": "Period-scoped: add a timeDimension dateRange on completed_at when the user\nnames a period.",
+      "userRequest": "Which customers have contributed the most gross profit?",
+      "notes": "Gross-profit ranking only: Lightspeed does not contain operating expenses.",
       "query": {
         "measures": [
           "sales_analytics.gross_takings",
@@ -1856,7 +1924,17 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "order": {
           "sales_analytics.gross_profit": "desc"
         },
-        "limit": 25
+        "limit": 20
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Rank attached customer profiles by gross profit for the requested period. Call it gross profit, never whole-business or net profit, and disclose the attached-customer scope without exposing contact details.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "Which customers are most profitable?",
+          "Which customers generate the most gross profit?",
+          "Show customer profitability"
+        ]
       }
     },
     {
@@ -1965,23 +2043,174 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
+      "name": "recipe-customer-90-day-repeat-cohorts",
+      "userRequest": "How has our censored 90-day repeat-purchase rate changed by first-purchase cohort month?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "customer_analytics.mature_90_day_customers",
+          "customer_analytics.repeated_within_90_days",
+          "customer_analytics.repeat_within_90_days_pct"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "customer_analytics.first_purchase_at",
+            "granularity": "month",
+            "dateRange": "last 36 months"
+          }
+        ],
+        "filters": [
+          {
+            "member": "customer_analytics.mature_90_day_customers",
+            "operator": "gt",
+            "values": [
+              "0"
+            ]
+          }
+        ],
+        "order": {
+          "customer_analytics.first_purchase_at": "asc"
+        },
+        "limit": 36
+      },
+      "recipe": {
+        "presentation": "line",
+        "answerHint": "Plot the 90-day repeat rate by first-purchase cohort month and include the mature-customer denominator. Only customers whose full 90-day observation window has elapsed belong in either numerator or denominator; omit rows with no mature denominator. Refunds never count as purchases. Describe changes as associations, never causal effects of a campaign or business action.",
+        "matches": [
+          "What is our 90-day repeat rate by cohort?",
+          "Is 90-day customer repeat improving?",
+          "Show monthly customer cohorts repeating within 90 days"
+        ]
+      }
+    },
+    {
+      "name": "recipe-customer-attribution-coverage",
+      "userRequest": "What share of sales transactions and takings have a customer profile attached?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "sales_analytics.transactions",
+          "sales_analytics.identified_transactions",
+          "sales_analytics.anonymous_transactions",
+          "sales_analytics.identified_transaction_coverage_pct",
+          "sales_analytics.gross_takings",
+          "sales_analytics.identified_gross_takings",
+          "sales_analytics.anonymous_gross_takings",
+          "sales_analytics.identified_revenue_coverage_pct"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "sales_analytics.completed_at",
+            "dateRange": "last 12 months"
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "Report identified and anonymous transactions/takings for the same period and their coverage percentages. Explain that unattributed sales cannot support customer-level conclusions; do not treat one anonymous bucket as a customer.",
+        "dateParameter": "sales_analytics.completed_at",
+        "matches": [
+          "What share of sales have a customer attached?",
+          "How good is our customer attribution coverage?",
+          "How much revenue is anonymous versus identified?"
+        ],
+        "answerTemplate": "For the requested period, **{{sales_analytics.identified_transactions|integer}}** of **{{sales_analytics.transactions|integer}}** completed transactions had a customer profile attached (**{{sales_analytics.identified_transaction_coverage_pct|percent}}**). Those identified sales represented **{{sales_analytics.identified_gross_takings|currency}}** of **{{sales_analytics.gross_takings|currency}}** in takings (**{{sales_analytics.identified_revenue_coverage_pct|percent}}**); the remaining **{{sales_analytics.anonymous_gross_takings|currency}}** cannot support customer-level conclusions.",
+        "followUps": [
+          "How has customer attribution coverage changed by month?",
+          "Which customer segments contribute the most takings?",
+          "Give me a quick pulse check on the customer base."
+        ]
+      }
+    },
+    {
       "name": "recipe-customer-count",
       "userRequest": "How many customers do we have on file / how many have bought from us?",
       "notes": "",
       "query": {
         "measures": [
           "customer_analytics.customer_count",
+          "customer_analytics.active_customer_count",
           "customer_analytics.customers_with_purchases",
-          "customer_analytics.repeat_customers"
+          "customer_analytics.repeat_customers",
+          "customer_analytics.repeat_purchase_rate_pct"
         ]
       },
       "recipe": {
         "presentation": "fact",
-        "answerHint": "One or two sentences: customers on file, how many have purchased, repeat customers.",
+        "answerHint": "One or two sentences: active profiles, how many have made a positive purchase, repeat customers and the repeat-purchase rate. Profiles are not deduplicated people.",
         "matches": [
           "How many customers do we have?",
           "How many customers are on file?",
           "How many repeat customers do we have?"
+        ],
+        "answerTemplate": "There are **{{customer_analytics.customer_count|integer}} customer profiles** on file, including **{{customer_analytics.active_customer_count|integer}} active profiles**. **{{customer_analytics.customers_with_purchases|integer}}** have made a positive purchase and **{{customer_analytics.repeat_customers|integer}}** have bought more than once, a **{{customer_analytics.repeat_purchase_rate_pct|percent}} lifetime repeat-purchase rate**. Profiles are not deduplicated people.",
+        "followUps": [
+          "Give me a quick pulse check on the customer base.",
+          "Who are our top customers by lifetime net spend?",
+          "What share of sales have a customer attached?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-customer-geography-contactability",
+      "userRequest": "Where are our customer profiles located and what share have an email on file without a recorded email opt-out?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "customer_analytics.customer_count"
+        ],
+        "dimensions": [
+          "customer_analytics.contacts_city",
+          "customer_analytics.contacts_state_code",
+          "customer_analytics.contacts_postcode",
+          "customer_analytics.contacts_has_email",
+          "customer_analytics.contacts_no_email"
+        ],
+        "segments": [
+          "customer_analytics.active_customers"
+        ],
+        "order": {
+          "customer_analytics.customer_count": "desc"
+        },
+        "limit": 25
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Show only suburb/state/postcode aggregates and the has-email/recorded-opt-out flags. Never reveal a street address or contact value. No recorded opt-out is not proof of legal marketing consent.",
+        "matches": [
+          "Where are our customers located?",
+          "How many customers can we reach by email?",
+          "Show customer geography and contactability"
+        ]
+      }
+    },
+    {
+      "name": "recipe-customer-pulse",
+      "userRequest": "Give me a quick pulse check on the customer base.",
+      "notes": "",
+      "query": {
+        "measures": [
+          "customer_analytics.active_customer_count",
+          "customer_analytics.customers_with_purchases",
+          "customer_analytics.repeat_customers",
+          "customer_analytics.repeat_purchase_rate_pct",
+          "customer_analytics.total_lifetime_net_spend",
+          "customer_analytics.total_lifetime_refund_value"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "Summarise active profiles, purchasing profiles, repeat customers, repeat rate, signed lifetime net spend and refunds. Do not call lifetime repeat rate cohort retention, and do not infer a cause or marketing consent.",
+        "matches": [
+          "How are our customers doing?",
+          "Give me a customer pulse check",
+          "How healthy is our customer base?"
+        ],
+        "answerTemplate": "You have **{{customer_analytics.active_customer_count|integer}} active customer profiles**. **{{customer_analytics.customers_with_purchases|integer}}** have made a positive purchase and **{{customer_analytics.repeat_customers|integer}}** have bought more than once, a **{{customer_analytics.repeat_purchase_rate_pct|percent}} lifetime repeat-purchase rate**. Signed lifetime net spend is **{{customer_analytics.total_lifetime_net_spend|currency}}** after **{{customer_analytics.total_lifetime_refund_value|currency}}** in attributed refunds. These are POS profiles, not deduplicated people.",
+        "followUps": [
+          "Who are our top customers by lifetime net spend?",
+          "Which high-value customers have not purchased in 180 days?",
+          "What share of sales have a customer attached?"
         ]
       }
     },
@@ -2141,6 +2370,39 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Which day of the week do staff work the most hours?",
           "Hours worked by day of week",
           "Which day costs us the most in wages?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-lapsed-high-value-customers",
+      "userRequest": "Which previously valuable customers have not made a positive purchase for more than 180 days?",
+      "notes": "",
+      "query": {
+        "dimensions": [
+          "customer_analytics.full_name",
+          "customer_analytics.company",
+          "customer_analytics.lifetime_net_spend",
+          "customer_analytics.purchase_count",
+          "customer_analytics.refund_count",
+          "customer_analytics.last_purchase_at",
+          "customer_analytics.recency_band"
+        ],
+        "segments": [
+          "customer_analytics.active_customers",
+          "customer_analytics.lapsed_180_days"
+        ],
+        "order": {
+          "customer_analytics.lifetime_net_spend": "desc"
+        },
+        "limit": 25
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Rank active customer profiles whose latest positive purchase is over 180 elapsed days old by signed lifetime net spend. \"Lapsed\" is this fixed recency rule, not a churn prediction. Do not claim they consented to contact.",
+        "matches": [
+          "Which high-value customers are lapsed?",
+          "Who should we consider winning back?",
+          "Which valuable customers have not returned in 180 days?"
         ]
       }
     },
@@ -3813,14 +4075,33 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "dimensions": [
           "customer_analytics.full_name",
           "customer_analytics.company",
-          "customer_analytics.lifetime_revenue",
-          "customer_analytics.lifetime_transactions",
+          "customer_analytics.lifetime_net_spend",
+          "customer_analytics.purchase_count",
+          "customer_analytics.refund_count",
           "customer_analytics.last_purchase_at"
         ],
+        "filters": [
+          {
+            "member": "customer_analytics.purchase_count",
+            "operator": "gt",
+            "values": [
+              "0"
+            ]
+          }
+        ],
         "order": {
-          "customer_analytics.lifetime_revenue": "desc"
+          "customer_analytics.lifetime_net_spend": "desc"
         },
         "limit": 20
+      },
+      "recipe": {
+        "presentation": "table",
+        "answerHint": "Present the highest signed lifetime net spend first, with positive purchase count, refund count and last positive purchase. State that customer profiles may contain duplicate records for one person; do not expose contact details.",
+        "matches": [
+          "Who are our best customers of all time?",
+          "Who are our top customers by lifetime spend?",
+          "Which customers have spent the most with us?"
+        ]
       }
     },
     {
@@ -4030,7 +4311,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
       "name": "customer-health-review",
       "title": "Customer health review",
       "description": "Use when the user asks about the state of their customer base, retention, loyalty, churn risk, or \"how are my customers doing\".",
-      "body": "# Customer health review\n\n1. Base size: `customer_count`, `customers_with_purchases`,\n   `repeat_customers`, `repeat_purchase_rate_pct` on customer_analytics.\n2. Value distribution: top 10 customers by `lifetime_revenue`; compare their\n   combined revenue with `total_lifetime_revenue` for concentration risk.\n3. Recency: purchasing customers and revenue by month for the last 6 months on\n   sales_analytics, plus new customers per month\n   (`customers_first_purchase_at` inside the month).\n4. Lapsed high-value: customers ordered by `lifetime_revenue` with\n   `days_since_last_purchase` > 90.\n5. Contactability: `has_email` / `no_email` split so recommendations about\n   reaching out are grounded.\n\nAnswer with: base health headline, concentration risk, retention trend, a\nshort lapsed-VIP list, and one concrete follow-up action."
+      "body": "# Customer health review\n\nStart with the certified customer-pulse and attribution-coverage shapes. Add a\nquery only when it answers a requested facet; do not expand a quick question\ninto a generic audit.\n\n1. Population: `customer_count` counts POS profiles, not deduplicated humans;\n   `active_customer_count` excludes archived profiles. State that distinction\n   when the user says people, unique customers or \"real customers\".\n2. Buying behavior: `purchase_count`, `first_purchase_at` and\n   `last_purchase_at` use positive completed purchases only. Refunds never make\n   a profile repeat or move recency forward. `lifetime_net_spend` is signed;\n   pair it with `refund_count` / `lifetime_refund_value` when refunds matter.\n3. Repeat health: `repeat_purchase_rate_pct` is the lifetime share of purchasing\n   profiles with at least two positive purchases. It is not cohort retention.\n   `repeat_within_90_days_pct` is the censored cohort measure: its denominator\n   contains only `mature_90_day_customers` whose complete 90-day window has\n   elapsed, and its numerator is `repeated_within_90_days`. Recent immature\n   profiles are excluded, never counted as non-repeaters. For a period's\n   new/returning mix, follow the new-vs-returning rule and report attribution\n   coverage for the same period.\n4. Value concentration: rank profiles by `lifetime_net_spend`, or use\n   sales_analytics for a named period. Customer profitability is Lightspeed\n   gross profit only; never call it net or whole-business profit.\n5. Recency: use the published `recency_band` / `frequency_band`. The lapsed\n   starter uses a fixed definition: latest positive purchase more than 180\n   elapsed days ago. Call it an operational segment, not predicted churn.\n6. Geography and contactability: aggregate by suburb/state/postcode and safe\n   booleans only. `contacts_has_email = true` plus `contacts_no_email = false`\n   means an address exists and no opt-out is recorded in this source; it does\n   not prove legal marketing consent. Never request or expose email, phone,\n   street address, date of birth, custom values or customer-note text.\n7. Recommendations: propose analysis-only experiments tied to retrieved facts\n   (for example review a lapsed high-value segment or improve till attribution).\n   Do not claim causality, response lift, churn, consent, or likely success\n   without evidence, and never claim to send a campaign or write back to a\n   source system.\n\nWhen comparing 90-day cohort months, report the mature denominator with every\nrate. A cohort month may be partially observable near the censoring boundary;\nnever describe a recent null/zero denominator as poor retention. Differences\nbetween cohort rates are associations, not proof that a campaign, product or\nstaff action caused the change.\n\nAnswer with the smallest evidence-backed shape that resolves the question. A\nfull review may include: base/attribution headline, repeat and recency signals,\nvalue concentration, one bounded opportunity list when explicitly requested,\nand at most three clearly labelled hypotheses or next analyses."
     },
     {
       "name": "momence-studio-operating-review",

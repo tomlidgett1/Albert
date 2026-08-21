@@ -7,6 +7,12 @@ export const INITIAL_ACKNOWLEDGEMENT_MODEL = "gpt-5.6-luna" as const;
 export const INITIAL_ACKNOWLEDGEMENT_REASONING_EFFORT = "high" as const;
 export const INITIAL_ACKNOWLEDGEMENT_SERVICE_TIER = "fast" as const;
 export const INITIAL_ACKNOWLEDGEMENT_TIMEOUT_MS = 4_000;
+/** Fastest official GPT profile for tiny contextual UI copy. */
+export const LOW_LATENCY_ACKNOWLEDGEMENT_MODEL = "gpt-5-nano" as const;
+export const LOW_LATENCY_ACKNOWLEDGEMENT_REASONING_EFFORT = "minimal" as const;
+export const LOW_LATENCY_ACKNOWLEDGEMENT_SERVICE_TIER = "fast" as const;
+export const LOW_LATENCY_ACKNOWLEDGEMENT_TIMEOUT_MS = 2_500;
+export const LOW_LATENCY_ACKNOWLEDGEMENT_MAX_OUTPUT_TOKENS = 128;
 
 const acknowledgementPlanSchema = z.object({
   action: z.enum(["lookup", "compare", "investigate", "explain", "present"]),
@@ -86,6 +92,11 @@ export async function generateInitialAcknowledgement(options: Readonly<{
   safetyIdentifier: string;
   signal?: AbortSignal;
   client?: OpenAI;
+  model?: string;
+  reasoningEffort?: "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  serviceTier?: "default" | "fast" | "priority";
+  timeoutMs?: number;
+  maxOutputTokens?: number;
 }>): Promise<InitialAcknowledgementResult | null> {
   const question = options.question.trim().slice(0, 1_000);
   if (!question) return null;
@@ -93,15 +104,15 @@ export async function generateInitialAcknowledgement(options: Readonly<{
   const client = options.client ?? new OpenAI({
     apiKey: options.apiKey,
     baseURL: options.baseUrl,
-    timeout: INITIAL_ACKNOWLEDGEMENT_TIMEOUT_MS,
+    timeout: options.timeoutMs ?? INITIAL_ACKNOWLEDGEMENT_TIMEOUT_MS,
     maxRetries: 0,
   });
   const response = await client.responses.create({
-    model: INITIAL_ACKNOWLEDGEMENT_MODEL,
+    model: options.model ?? INITIAL_ACKNOWLEDGEMENT_MODEL,
     store: false,
-    max_output_tokens: 512,
-    reasoning: { effort: INITIAL_ACKNOWLEDGEMENT_REASONING_EFFORT },
-    service_tier: INITIAL_ACKNOWLEDGEMENT_SERVICE_TIER,
+    max_output_tokens: options.maxOutputTokens ?? 512,
+    reasoning: { effort: options.reasoningEffort ?? INITIAL_ACKNOWLEDGEMENT_REASONING_EFFORT },
+    service_tier: options.serviceTier ?? INITIAL_ACKNOWLEDGEMENT_SERVICE_TIER,
     safety_identifier: options.safetyIdentifier,
     text: {
       verbosity: "low",

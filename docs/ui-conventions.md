@@ -84,6 +84,48 @@ Use the smallest native pattern that fits. Do not turn dense menus or review que
 - A completed answer displays one of: Verified, Qualified, Exploratory, Clarification, or Unavailable.
 - Numerical artefacts display source, time range, definition, freshness, result identifier, and validation outcome. “Explain this number” opens lineage and semantic metadata; it never exposes hidden reasoning or creates an agent-facing SQL surface.
 
+## Specialist agents
+
+- Specialists are profiles inside the existing chat, never separate products or
+  a second conversation design. The sidebar uses one standard `36px` Agents
+  navigation row; its `16px` anchored popover uses the existing spring motion,
+  `8px` menu rows, outside-click close, Escape close/focus restore and arrow-key
+  navigation.
+- Selecting a specialist starts a clean conversation. New Analysis leaves the
+  specialist and returns to general Albert; saved conversations restore their
+  immutable specialist profile from the server runtime receipt.
+- The chat header shows a compact `<specialist> · <organisation>` context before
+  the ordinary conversation title. It truncates before reducing action targets.
+- A specialist empty state may show at most four reviewed starter questions in
+  a two-column desktop / one-column mobile grid. Each starter must name a real
+  certified recipe and be answerable under current permissions. The “Verified”
+  label means a reviewed semantic/query path, never that an answer has been
+  precomputed.
+- Starter rows use the standard `8px` compact-button radius, dash surfaces and
+  focus ring. They are not decorative cards. Hover lift is removed under
+  reduced motion.
+- Role-gated agents are absent, not disabled teasers. The server and semantic
+  layer independently recheck the role; the browser state is never the
+  authorization boundary.
+
+## Runtime comparison
+
+- Compare is one shared question above two equal-width, independently
+  scrolling trace panes. Never merge event streams, evidence IDs, answer states
+  or provenance between panes.
+- Desktop uses a two-column split with the same `16px` analytical surface
+  radius. At the compact breakpoint both complete panes stack vertically;
+  neither stream is discarded or replaced by a summary.
+- Both lanes use the same renderer, width, model label and timing vocabulary.
+  Show first-evidence and terminal-answer time, never acknowledgement time or a
+  winner inferred from one run.
+- The shared composer uses the dash input surface and pill treatment. While a
+  run is active it becomes Stop both; each pane also has its own compact stop
+  control so one result can continue independently.
+- Always disclose that Compare launches and saves two governed conversations,
+  uses runtime-specific prompts/tools, and reads live rather than from a frozen
+  benchmark snapshot.
+
 ## Personal dashboard
 
 - Dashboard is a dense conversation-derived pinboard, never a query builder.

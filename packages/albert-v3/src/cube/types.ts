@@ -135,7 +135,12 @@ export type CubeLoadFailure = Readonly<{
 
 export type CubeLoadResponse = CubeLoadResult | CubeLoadFailure;
 
-export type CubeSecurityContext = Readonly<{ tenant_id: string }> & (
+export type CubeSecurityContext = Readonly<{
+  tenant_id: string;
+  role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
+  specialist_agent_id?: "general" | "customers";
+  specialist_agent_version?: number;
+}> & (
   | Readonly<{
     conversation_id: string;
     turn_id: string;

@@ -40,9 +40,9 @@ export default function LoginForm({ authError = false }: Readonly<{ authError?: 
   useEffect(() => {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     if (hash.get("error_code") === "otp_expired" || hash.get("error") === "access_denied") {
-      setErrorMessage(
+      queueMicrotask(() => setErrorMessage(
         "That email link was already used or has expired. Request a new reset link, then use Continue in the browser.",
-      );
+      ));
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }
   }, []);

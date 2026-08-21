@@ -53,7 +53,7 @@ type InsightsStyleTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   detailedMode?: boolean;
-  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp";
+  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onAddToChat?: (text: string) => void;
@@ -545,7 +545,7 @@ export function collectProgressShimmerLines(input: {
 export function buildTrailModel(
   events: readonly TraceEvent[],
   streaming: boolean,
-  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp",
+  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare",
 ): TrailModel {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
   const visibleResultIds = responseVisibleResultIds(ordered);
@@ -930,6 +930,10 @@ export function buildTrailModel(
       durationMs,
       runtimeLabel: runtime === "fixture"
         ? "Fixture"
+        : runtime === "codex"
+          ? "Codex"
+        : runtime === "compare"
+          ? "Compare"
         : runtime === "anthropic"
           ? "Claude Opus 5"
           : runtime === "cubecore"
@@ -1208,14 +1212,18 @@ function ResearchFindings({ step }: { step: TrailStep }) {
 function QueryDetails({ id, table, queryYaml }: { id: string; table: TraceTableEvent; queryYaml: string }) {
   const [showYaml, setShowYaml] = useState(false);
   const provenance = table.provenance;
-  const definitions = provenance.definitions.filter((definition) => !definition.metric.includes(":"));
+  const definitions = [...new Map(
+    provenance.definitions
+      .filter((definition) => !definition.metric.includes(":"))
+      .map((definition) => [`${definition.metric}:${definition.kind ?? "unknown"}`, definition] as const),
+  ).values()];
   const measures = definitions.filter((definition) => definition.kind === "measure");
   const others = definitions.filter((definition) => definition.kind !== "measure");
   const filters = provenance.filters ?? [];
   const calculations = provenance.calculations ?? [];
   const kindLabel = (kind?: string) => kind === "measure" ? "metric" : kind === "time" ? "time" : kind === "segment" ? "segment" : "field";
-  const renderField = (definition: TraceProvenance["definitions"][number]) => (
-    <li key={definition.metric} className={styles.queryDetailsField}>
+  const renderField = (definition: TraceProvenance["definitions"][number], index: number) => (
+    <li key={`${definition.metric}_${index}`} className={styles.queryDetailsField}>
       <span className={styles.queryDetailsFieldHead}>
         <span className={styles.queryDetailsFieldLabel}>{definition.label}</span>
         <span className={styles.queryDetailsKind}>{kindLabel(definition.kind)}</span>
@@ -1259,8 +1267,8 @@ function QueryDetails({ id, table, queryYaml }: { id: string; table: TraceTableE
         <div className={styles.queryDetailsSection}>
           <span className={styles.queryDetailsEyebrow}>Calculations</span>
           <ul className={styles.queryDetailsList}>
-            {calculations.map((calc) => (
-              <li key={calc.column} className={styles.queryDetailsField}>
+            {calculations.map((calc, index) => (
+              <li key={`${calc.column}_${index}`} className={styles.queryDetailsField}>
                 <span className={styles.queryDetailsFieldLabel}>{calc.column}</span>
                 <span className={styles.queryDetailsFormula}>= {calc.formula}</span>
               </li>
@@ -1500,10 +1508,12 @@ function GovernedQuerySummary({
 }: {
   query: NonNullable<TrailStep["governed"]>;
 }) {
-  const yamlModels = query.metrics
+  const yamlModels = [...new Set(query.metrics
     .filter((metric) => metric.startsWith("cube.yaml:"))
-    .map((metric) => metric.replace(/^cube\.yaml:/u, "").split("/").pop() || metric);
-  const intentMetrics = query.metrics.filter((metric) => !metric.startsWith("cube.yaml:"));
+    .map((metric) => metric.replace(/^cube\.yaml:/u, "").split("/").pop() || metric))];
+  const intentMetrics = [...new Set(query.metrics.filter((metric) => !metric.startsWith("cube.yaml:")))];
+  const queryCubes = [...new Set(query.cubes ?? [])];
+  const queryDimensions = [...new Set(query.dimensions)];
   const isCubeV3 = Boolean(query.queryYaml || query.view);
   const isCubecore = /cubecore/iu.test(query.lens || "") || yamlModels.length > 0;
   const ungoverned = /ungoverned/iu.test(query.lens || "");
@@ -1528,12 +1538,12 @@ function GovernedQuerySummary({
             <dd><span>{query.view}</span></dd>
           </div>
         ) : null}
-        {query.cubes && query.cubes.length > 0 ? (
+        {queryCubes.length > 0 ? (
           <div>
             <dt>Cubes</dt>
             <dd>
-              {query.cubes.map((cube) => (
-                <span key={cube}>{cube}</span>
+              {queryCubes.map((cube, index) => (
+                <span key={`${cube}_${index}`}>{cube}</span>
               ))}
             </dd>
           </div>
@@ -1542,8 +1552,8 @@ function GovernedQuerySummary({
           <div>
             <dt>YAML models</dt>
             <dd>
-              {yamlModels.map((file) => (
-                <span key={file}>{file}</span>
+              {yamlModels.map((file, index) => (
+                <span key={`${file}_${index}`}>{file}</span>
               ))}
             </dd>
           </div>
@@ -1552,18 +1562,18 @@ function GovernedQuerySummary({
           <div>
             <dt>Metrics</dt>
             <dd>
-              {intentMetrics.map((metric) => (
-                <span key={metric}>{humanize(metric)}</span>
+              {intentMetrics.map((metric, index) => (
+                <span key={`${metric}_${index}`}>{humanize(metric)}</span>
               ))}
             </dd>
           </div>
         ) : null}
-        {query.dimensions.length > 0 ? (
+        {queryDimensions.length > 0 ? (
           <div>
             <dt>Dimensions</dt>
             <dd>
-              {query.dimensions.map((dimension) => (
-                <span key={dimension}>{humanize(dimension)}</span>
+              {queryDimensions.map((dimension, index) => (
+                <span key={`${dimension}_${index}`}>{humanize(dimension)}</span>
               ))}
             </dd>
           </div>
@@ -2725,9 +2735,11 @@ export default function InsightsStyleTrace({
   // The initial acknowledgement is intentionally visible before the plan
   // exists. As soon as any commentary arrives the header settles to "Working"
   // and the live block below carries the "Thinking" shimmer.
-  const commentaryLive = streaming && runtime === "v3" && model.commentaryUpdates.length > 0;
+  const commentaryLive = streaming
+    && (runtime === "v3" || runtime === "codex")
+    && model.commentaryUpdates.length > 0;
   const acknowledgementLive = streaming
-    && runtime === "v3"
+    && (runtime === "v3" || runtime === "codex")
     && Boolean(model.initialAcknowledgement)
     && !model.answer
     && !model.clarification

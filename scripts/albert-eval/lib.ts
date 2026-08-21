@@ -242,6 +242,8 @@ export type EvalTurnRecord = {
   engineVersion?: string;
   /** Whether the business context document was injected for this turn. */
   businessContext?: boolean;
+  specialistAgentId?: "general" | "customers";
+  fastMode?: boolean;
 };
 
 const MAX_GOVERNED_QUERIES_PER_ANSWER = 8;

@@ -100,8 +100,93 @@ for (const file of markdownFiles(path.join(agentsDir, "rules"))) {
 }
 if (alwaysRules.length === 0) throw new Error("At least one always rule is required.");
 
-type Recipe = { presentation: "fact" | "list" | "table" | "line" | "bar"; answerHint?: string; dateParameter?: string; matches?: readonly string[]; emptyAnswer?: string };
+const RECIPE_ANSWER_FORMATS = ["integer", "number", "percent", "currency", "date", "text"] as const;
+type Recipe = {
+  presentation: "fact" | "list" | "table" | "line" | "bar";
+  answerHint?: string;
+  dateParameter?: string;
+  matches?: readonly string[];
+  emptyAnswer?: string;
+  answerTemplate?: string;
+  followUps?: readonly string[];
+};
 const RECIPE_PRESENTATIONS = new Set(["fact", "list", "table", "line", "bar"]);
+const RECIPE_ANSWER_FORMAT_SET: ReadonlySet<string> = new Set(RECIPE_ANSWER_FORMATS);
+const RECIPE_PLACEHOLDER = /^\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,2})\s*\|\s*([a-z]+)\s*\}\}$/u;
+const RECIPE_PLACEHOLDER_TOKEN = /\{\{[^{}]*\}\}/gu;
+const ASSISTANT_OFFER = /^(?:i can|i'll|i will|i'd|i would|happy to|want me to|would you like(?: me)? to|shall i|let me|try:)\b/iu;
+
+function selectedQueryMembers(query: unknown): ReadonlySet<string> {
+  if (!query || typeof query !== "object" || Array.isArray(query)) return new Set();
+  const record = query as Record<string, unknown>;
+  const selected = new Set<string>();
+  for (const field of ["measures", "dimensions"] as const) {
+    if (!Array.isArray(record[field])) continue;
+    for (const member of record[field]) {
+      if (typeof member === "string") selected.add(member);
+    }
+  }
+  if (Array.isArray(record.timeDimensions)) {
+    for (const value of record.timeDimensions) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const timeDimension = value as Record<string, unknown>;
+      if (typeof timeDimension.dimension === "string" && typeof timeDimension.granularity === "string") {
+        selected.add(`${timeDimension.dimension}.${timeDimension.granularity}`);
+      }
+    }
+  }
+  return selected;
+}
+
+/** Validates the trusted deterministic-answer DSL before it reaches the bundle. */
+export function validateRecipeAnswerTemplate(raw: unknown, query: unknown, file: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") throw new Error(`${file} answer_template must be a string.`);
+  const template = raw.trim();
+  if (template.length < 1 || template.length > 2_000) {
+    throw new Error(`${file} answer_template must be 1-2000 characters.`);
+  }
+  const tokens = [...template.matchAll(RECIPE_PLACEHOLDER_TOKEN)].map(([token]) => token);
+  if (tokens.length < 1 || tokens.length > 12) {
+    throw new Error(`${file} answer_template must contain 1-12 member placeholders.`);
+  }
+  const withoutTokens = template.replace(RECIPE_PLACEHOLDER_TOKEN, "");
+  if (withoutTokens.includes("{{") || withoutTokens.includes("}}")) {
+    throw new Error(`${file} answer_template contains a malformed placeholder.`);
+  }
+  const selected = selectedQueryMembers(query);
+  for (const token of tokens) {
+    const match = token.match(RECIPE_PLACEHOLDER);
+    if (!match || !RECIPE_ANSWER_FORMAT_SET.has(match[2]!)) {
+      throw new Error(`${file} placeholder ${token} must be {{view.member|${RECIPE_ANSWER_FORMATS.join("|")}}}.`);
+    }
+    if (!selected.has(match[1]!)) {
+      throw new Error(`${file} placeholder ${token} is not an exact member selected by its Cube query.`);
+    }
+  }
+  return template;
+}
+
+/** Follow-ups are static owner messages, never assistant offers. */
+export function validateRecipeFollowUps(raw: unknown, file: string): readonly string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length > 3) {
+    throw new Error(`${file} follow_ups must contain at most three strings.`);
+  }
+  const followUps = raw.map((value, index) => {
+    if (typeof value !== "string") throw new Error(`${file} follow_ups[${index}] must be a string.`);
+    const followUp = value.trim();
+    if (followUp.length < 4 || followUp.length > 160 || ASSISTANT_OFFER.test(followUp)) {
+      throw new Error(`${file} follow_ups[${index}] must be a 4-160 character owner-voice prompt.`);
+    }
+    return followUp;
+  });
+  if (new Set(followUps.map((value) => value.toLowerCase())).size !== followUps.length) {
+    throw new Error(`${file} follow_ups must be unique.`);
+  }
+  return followUps;
+}
+
 const certifiedQueries: { name: string; userRequest: string; notes: string; query: unknown; recipe?: Recipe }[] = [];
 for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
   const name = path.basename(file, ".md");
@@ -115,6 +200,9 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
   // A certified query flagged as a recipe is a complete fast-path answer: the
   // intent orchestrator may route straight to it (see recipe-lane.ts).
   let recipe: Recipe | undefined;
+  if (frontmatter.recipe !== true && (frontmatter.answer_template !== undefined || frontmatter.follow_ups !== undefined)) {
+    throw new Error(`${file} answer_template and follow_ups are only valid on recipe: true queries.`);
+  }
   if (frontmatter.recipe === true) {
     const presentation = String(frontmatter.presentation ?? "").trim();
     if (!RECIPE_PRESENTATIONS.has(presentation)) {
@@ -127,6 +215,11 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
     const matches = Array.isArray(frontmatter.matches)
       ? frontmatter.matches.map((m) => String(m).trim()).filter(Boolean).slice(0, 12)
       : undefined;
+    const answerTemplate = validateRecipeAnswerTemplate(frontmatter.answer_template, query, file);
+    const followUps = validateRecipeFollowUps(frontmatter.follow_ups, file);
+    if (followUps && !answerTemplate) {
+      throw new Error(`${file} follow_ups require answer_template so they stay on the deterministic path.`);
+    }
     recipe = {
       presentation: presentation as Recipe["presentation"],
       ...(frontmatter.answer_hint ? { answerHint: String(frontmatter.answer_hint).trim() } : {}),
@@ -136,6 +229,8 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
       // leave, nothing overdue) and the recipe lane answers directly instead
       // of handing an "empty period" to the diagnostic lanes.
       ...(frontmatter.empty_answer ? { emptyAnswer: String(frontmatter.empty_answer).trim() } : {}),
+      ...(answerTemplate ? { answerTemplate } : {}),
+      ...(followUps ? { followUps } : {}),
     };
   }
   certifiedQueries.push({ name, userRequest, notes, query, ...(recipe ? { recipe } : {}) });

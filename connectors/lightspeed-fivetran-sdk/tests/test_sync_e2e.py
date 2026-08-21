@@ -64,6 +64,9 @@ class MockLightspeed(BaseHTTPRequestHandler):
     strip_relation: tuple | None = None
     # 429 once for these resources.
     throttle_once: set = set()
+    # Close the connection without any response, once, for these resources
+    # (the client sees http.client.RemoteDisconnected).
+    drop_once: set = set()
     # Resource -> relation the vendor refuses with a 400 (ItemFee.ItemFeeCategories live).
     refuse_relation: dict = {}
     # Resource -> relation silently dropped whenever more than N relations are requested.
@@ -95,6 +98,11 @@ class MockLightspeed(BaseHTTPRequestHandler):
             body = json.loads(json.dumps(EXACT.get(ACCOUNT_PREFIX + "Account.json") or {"@attributes": {"count": "1"}, "Account": {"accountID": "12345", "name": "Mock Bikes"}}))
             return self._reply(200, body)
         resource = path[len(ACCOUNT_PREFIX):].removesuffix(".json") if path.startswith(ACCOUNT_PREFIX) else ""
+        if resource in MockLightspeed.drop_once:
+            MockLightspeed.drop_once.discard(resource)
+            self.close_connection = True
+            self.connection.close()
+            return
         if resource in MockLightspeed.absent:
             return self._reply(404, {"httpCode": "404", "message": "Endpoint not found"})
         if resource in MockLightspeed.throttle_once:
@@ -316,6 +324,15 @@ class SyncEndToEnd(unittest.TestCase):
     def test_throttle_is_retried(self):
         MockLightspeed.calls = []
         MockLightspeed.throttle_once = {"Sale"}
+        configuration, client = self._client()
+        _, _, emitted = self._run(configuration, client)
+        self.assertIn("ls_sales", emitted)
+        self.assertEqual(len([c for c in MockLightspeed.calls if c[0].endswith("/Sale.json")]), 2)
+
+    def test_remote_disconnect_is_retried(self):
+        MockLightspeed.calls = []
+        MockLightspeed.drop_once = {"Sale"}
+        self.addCleanup(lambda: setattr(MockLightspeed, "drop_once", set()))
         configuration, client = self._client()
         _, _, emitted = self._run(configuration, client)
         self.assertIn("ls_sales", emitted)

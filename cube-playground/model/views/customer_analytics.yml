@@ -3,50 +3,72 @@ views:
     title: Customer analytics
     description: >
       Customer-centric surface: profiles, types, geography and contactability,
-      lifetime behaviour (first/last purchase, lifetime value, repeat rate),
-      store credit and gift card balances, custom fields and notes. Fact grain
-      is one row per customer profile.
+      refund-safe lifetime behaviour (purchase recency/frequency, signed net
+      spend and repeat rate), store credit, and safe custom-field/note metadata.
+      Exact contact details, street address, date of birth, source customer IDs,
+      custom values and note text are deliberately excluded. Fact grain is one
+      row per customer profile.
     meta:
       ai_context: >
         Use for "who are my customers" questions: top customers by lifetime value,
-        new vs returning, lapsed customers (days_since_last_purchase), geography,
-        marketing lists, credit balances. Lifetime figures come from completed,
-        non-voided sales. For revenue in a specific period grouped by customer,
-        prefer sales_analytics (customers_* members) so the period filter applies
-        to the sales, not the customer lifetime. Custom-field members
-        (customer_custom_field_values_*) and note members (customer_notes_*) are
-        child grains: combine them with customer dimensions, not with each other.
+        new vs returning, fixed recency/frequency bands, customers lapsed for
+        more than 180 days, broad geography, aggregate contactability and credit
+        balances. purchase_count/first_purchase_at/last_purchase_at exclude
+        refunds; lifetime_net_spend is signed and refunds subtract. The guarded
+        90-day repeat rate includes only profiles whose full observation window
+        has elapsed. For revenue in a specific period grouped by customer,
+        prefer sales_analytics so the period filter applies to sales.
+        Contactability does not prove marketing consent. Custom-field and note
+        text are not available here.
 
     cubes:
       - join_path: customers
         includes:
           - tenant_id
-          - customer_id
           - first_name
           - last_name
           - full_name
           - company
-          - date_of_birth
           - archived
           - created_at
           - updated_at
           - first_purchase_at
+          - second_purchase_at
           - last_purchase_at
+          - days_to_second_purchase
+          - purchase_count
+          - refund_count
+          - activity_transaction_count
+          - lifetime_net_spend
+          - lifetime_purchase_value
+          - lifetime_refund_value
           - lifetime_revenue
           - lifetime_transactions
           - lifetime_gross_profit
           - is_repeat_customer
           - days_since_last_purchase
+          - recency_band
+          - frequency_band
+          - is_lapsed_180_days
+          - is_mature_90_day_customer
+          - repeated_within_90_days_flag
           - customer_count
           - active_customer_count
           - customers_with_purchases
           - repeat_customers
           - repeat_purchase_rate_pct
+          - mature_90_day_customers
+          - repeated_within_90_days
+          - repeat_within_90_days_pct
           - total_lifetime_revenue
+          - total_lifetime_net_spend
+          - total_lifetime_purchase_value
+          - total_lifetime_refund_value
           - average_lifetime_revenue
           - average_lifetime_transactions
           - active_customers
           - business_customers
+          - lapsed_180_days
       - join_path: customers.customer_types
         prefix: true
         includes:
@@ -54,8 +76,6 @@ views:
       - join_path: customers.contacts
         prefix: true
         includes:
-          - address1
-          - address2
           - city
           - state
           - state_code
@@ -65,8 +85,6 @@ views:
           - no_email
           - no_mail
           - no_phone
-          - primary_email
-          - primary_phone
           - has_email
       - join_path: customers.credit_accounts
         prefix: true
@@ -78,45 +96,57 @@ views:
       - join_path: customer_custom_field_values
         prefix: true
         includes:
-          - name
           - data_type
-          - value_text
           - deleted
           - count
       - join_path: customer_notes
         prefix: true
         includes:
-          - note
-          - is_public
-          - noted_at
           - note_count
           - latest_note_at
 
     folders:
       - name: Profile
         includes:
-          - customer_id
           - full_name
           - first_name
           - last_name
           - company
-          - date_of_birth
           - archived
           - created_at
           - customer_types_name
       - name: Lifetime behaviour
         includes:
           - first_purchase_at
+          - second_purchase_at
           - last_purchase_at
+          - days_to_second_purchase
+          - purchase_count
+          - refund_count
+          - activity_transaction_count
+          - lifetime_net_spend
+          - lifetime_purchase_value
+          - lifetime_refund_value
           - lifetime_revenue
           - lifetime_transactions
           - lifetime_gross_profit
           - is_repeat_customer
           - days_since_last_purchase
+          - recency_band
+          - frequency_band
+          - is_lapsed_180_days
+          - is_mature_90_day_customer
+          - repeated_within_90_days_flag
           - customers_with_purchases
           - repeat_customers
           - repeat_purchase_rate_pct
+          - mature_90_day_customers
+          - repeated_within_90_days
+          - repeat_within_90_days_pct
           - total_lifetime_revenue
+          - total_lifetime_net_spend
+          - total_lifetime_purchase_value
+          - total_lifetime_refund_value
           - average_lifetime_revenue
           - average_lifetime_transactions
       - name: Geography and contact
@@ -127,8 +157,6 @@ views:
           - contacts_postcode
           - contacts_country
           - contacts_country_code
-          - contacts_primary_email
-          - contacts_primary_phone
           - contacts_has_email
           - contacts_no_email
           - contacts_no_mail
@@ -138,12 +166,10 @@ views:
           - credit_accounts_name
           - credit_accounts_is_gift_card
           - credit_accounts_balance
-      - name: Custom fields and notes
+      - name: Safe custom-field and note metadata
         includes:
-          - customer_custom_field_values_name
-          - customer_custom_field_values_value_text
+          - customer_custom_field_values_data_type
+          - customer_custom_field_values_deleted
           - customer_custom_field_values_count
-          - customer_notes_note
-          - customer_notes_noted_at
           - customer_notes_note_count
           - customer_notes_latest_note_at

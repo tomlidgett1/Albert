@@ -95,8 +95,14 @@ class MockXero(BaseHTTPRequestHandler):
     stamp = "Mon, 17 Aug 2026 00:00:00 GMT"
     # Paths that answer 401 the way Xero does for a scope the app cannot hold.
     scope_denied: set = set()
+    # Paths that answer 429 on every request: a shared minute budget under
+    # sustained contention (Retry-After honoured but never enough).
+    throttled: set = set()
     # When set, every request 401s: a genuinely dead token.
     token_dead = False
+    # Close the connection without any response, once, for these paths
+    # (the client sees http.client.RemoteDisconnected).
+    drop_once: set = set()
 
     def log_message(self, *_args):  # quiet
         return
@@ -105,6 +111,20 @@ class MockXero(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         MockXero.calls.append((path, parse_qs(parsed.query), {k.lower(): v for k, v in self.headers.items()}))
+        if path in MockXero.drop_once:
+            MockXero.drop_once.discard(path)
+            self.close_connection = True
+            self.connection.close()
+            return
+        if path in MockXero.throttled:
+            payload = b'{"Title":"Too Many Requests"}'
+            self.send_response(429)
+            self.send_header("Retry-After", "1")
+            self.send_header("X-Rate-Limit-Problem", "minute")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if MockXero.token_dead or path in MockXero.scope_denied:
             payload = b'{"Type":"UnauthorizedError","Title":"Unauthorized"}'
             self.send_response(401)
@@ -259,6 +279,33 @@ class SyncEndToEnd(unittest.TestCase):
         paths = [c[0] for c in MockXero.calls]
         second_denied = len(paths) - 1 - paths[::-1].index("/api.xro/2.0/ExpenseClaims")
         self.assertEqual(paths[second_denied + 1], "/connections")  # the token probe
+
+    def test_sustained_429_stops_early_without_poisoning_groups(self):
+        """A minute-budget stall (429 after every honoured Retry-After) must end
+        the walk like the daily limit — checkpoint and resume next sync — and
+        must NOT write an error cooldown onto the stalled group, which would
+        skip a healthy endpoint for hours (the 2026-08-20 Payroll AU backfill)."""
+        MockXero.calls = []
+        MockXero.throttled = {"/payroll.xro/1.0/Employees"}
+        self.addCleanup(lambda: setattr(MockXero, "throttled", set()))
+        configuration, client = self._client()
+        emitted: dict[str, list] = {}
+        sync = XeroSync(configuration, {}, lambda t, r: emitted.setdefault(t, []).append(r), lambda s: None,
+                        client=client, now=datetime(2026, 8, 17, tzinfo=timezone.utc))
+        summary = sync.run()
+        self.assertIn("throttling", summary["stopped_early"] or "")
+        self.assertIn("xero_invoices", emitted)  # groups before the stall landed
+        for key, entry in sync.state["groups"].items():
+            self.assertNotIn("error", entry, f"{key} was poisoned with a cooldown by the stall")
+
+    def test_remote_disconnect_is_retried(self):
+        MockXero.calls = []
+        MockXero.drop_once = {"/connections"}
+        self.addCleanup(lambda: setattr(MockXero, "drop_once", set()))
+        _, client = self._client()
+        status, _body = client.get_json("/connections", tenant_scoped=False)
+        self.assertEqual(status, 200)
+        self.assertEqual(len([c for c in MockXero.calls if c[0] == "/connections"]), 2)
 
     def test_dead_token_is_fatal(self):
         MockXero.token_dead = True

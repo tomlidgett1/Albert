@@ -4,20 +4,100 @@ cubes:
     public: false
     description: >
       One row per customer profile: names, company, type, contact linkage,
-      tax exemption and lifetime behaviour (first/last purchase, lifetime value)
-      derived from their completed sales. Tombstoned rows are excluded.
+      tax exemption and lifetime behaviour derived once from the latest
+      completed-sale snapshot. Positive sales define purchases and repeat
+      behaviour; refunds remain separate and subtract from signed net spend.
+      Tombstoned rows are excluded.
     meta:
       ai_context: >
-        Lifetime dimensions (first_purchase_at, last_purchase_at, lifetime_revenue,
-        lifetime_transactions) are computed from completed, non-voided sales.
-        A "new" customer in a period is one whose first_purchase_at falls in that
-        period; "returning" means they purchased before it. Anonymous walk-in
+        first_purchase_at, last_purchase_at and purchase_count use positive
+        completed, non-voided sales only. Refund transactions never make a
+        customer repeat. lifetime_net_spend (and compatibility alias
+        lifetime_revenue) is signed: completed refunds subtract. A "new"
+        customer in a period is one whose first_purchase_at falls in that
+        period; profile created_at is a separate source-record event and
+        "returning" means first purchase predates the period. Anonymous walk-in
         sales have no customer row, so customer-based analyses cover attributed
         sales only and answers should say so when relevant.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_customers t
-      WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customers ORDER BY ingested_at DESC LIMIT 1)
+      WITH latest_customer_pack AS MATERIALIZED (
+        SELECT mapping_version
+        FROM source_lightspeed_official.ls_customers
+        ORDER BY ingested_at DESC NULLS LAST
+        LIMIT 1
+      ), latest_sales_pack AS MATERIALIZED (
+        SELECT mapping_version
+        FROM source_lightspeed_official.ls_sales
+        ORDER BY ingested_at DESC NULLS LAST
+        LIMIT 1
+      ), latest_customers AS MATERIALIZED (
+        SELECT customer.*
+        FROM source_lightspeed_official.ls_customers customer
+        WHERE NOT customer.tombstone
+          AND customer.mapping_version = (SELECT mapping_version FROM latest_customer_pack)
+      ), latest_customer_activity AS MATERIALIZED (
+        SELECT sale.*
+        FROM source_lightspeed_official.ls_sales sale
+        WHERE NOT sale.tombstone
+          AND sale.mapping_version = (SELECT mapping_version FROM latest_sales_pack)
+          AND sale.completed = true
+          AND COALESCE(sale.voided, false) = false
+          AND sale.customer_id IS NOT NULL
+          AND sale.customer_id <> 0
+      ), ordered_positive_purchases AS MATERIALIZED (
+        SELECT sale.tenant_id, sale.customer_id, sale.complete_time,
+               ROW_NUMBER() OVER (
+                 PARTITION BY sale.tenant_id, sale.customer_id
+                 ORDER BY sale.complete_time ASC NULLS LAST,
+                          sale.sale_id ASC NULLS LAST,
+                          sale.namespaced_source_key ASC
+               ) AS purchase_sequence
+        FROM latest_customer_activity sale
+        WHERE COALESCE(sale.calc_total, 0) > 0
+      ), second_purchases AS MATERIALIZED (
+        SELECT purchase.tenant_id, purchase.customer_id,
+               MIN(purchase.complete_time) FILTER (WHERE purchase.purchase_sequence = 2) AS second_purchase_at
+        FROM ordered_positive_purchases purchase
+        GROUP BY purchase.tenant_id, purchase.customer_id
+      ), lifetime AS MATERIALIZED (
+        SELECT sale.tenant_id, sale.customer_id, second_purchase.second_purchase_at,
+               MIN(sale.complete_time) FILTER (WHERE COALESCE(sale.calc_total, 0) > 0) AS first_purchase_at,
+               MAX(sale.complete_time) FILTER (WHERE COALESCE(sale.calc_total, 0) > 0) AS last_purchase_at,
+               COUNT(*) FILTER (WHERE COALESCE(sale.calc_total, 0) > 0) AS purchase_count,
+               COUNT(*) FILTER (WHERE COALESCE(sale.calc_total, 0) < 0) AS refund_count,
+               COUNT(*) AS activity_transaction_count,
+               COALESCE(SUM(sale.calc_total), 0) AS lifetime_net_spend,
+               COALESCE(SUM(sale.calc_total) FILTER (WHERE COALESCE(sale.calc_total, 0) > 0), 0) AS lifetime_purchase_value,
+               COALESCE(SUM(ABS(sale.calc_total)) FILTER (WHERE COALESCE(sale.calc_total, 0) < 0), 0) AS lifetime_refund_value,
+               COALESCE(SUM(
+                 COALESCE(sale.calc_subtotal, 0) -
+                 CASE
+                   WHEN COALESCE(sale.calc_fifo_cost, 0) = 0 AND COALESCE(sale.calc_subtotal, 0) <> 0
+                     THEN COALESCE(sale.calc_avg_cost, 0)
+                   ELSE COALESCE(sale.calc_fifo_cost, 0)
+                 END
+               ), 0) AS lifetime_gross_profit
+        FROM latest_customer_activity sale
+        LEFT JOIN second_purchases second_purchase
+          ON second_purchase.tenant_id = sale.tenant_id
+         AND second_purchase.customer_id = sale.customer_id
+        GROUP BY sale.tenant_id, sale.customer_id, second_purchase.second_purchase_at
+      )
+      SELECT customer.*,
+             lifetime.first_purchase_at,
+             lifetime.second_purchase_at,
+             lifetime.last_purchase_at,
+             COALESCE(lifetime.purchase_count, 0) AS purchase_count,
+             COALESCE(lifetime.refund_count, 0) AS refund_count,
+             COALESCE(lifetime.activity_transaction_count, 0) AS activity_transaction_count,
+             COALESCE(lifetime.lifetime_net_spend, 0) AS lifetime_net_spend,
+             COALESCE(lifetime.lifetime_purchase_value, 0) AS lifetime_purchase_value,
+             COALESCE(lifetime.lifetime_refund_value, 0) AS lifetime_refund_value,
+             COALESCE(lifetime.lifetime_gross_profit, 0) AS lifetime_gross_profit
+      FROM latest_customers customer
+      LEFT JOIN lifetime
+        ON lifetime.tenant_id = customer.tenant_id
+       AND lifetime.customer_id = customer.customer_id
 
     joins:
       - name: customer_types
@@ -59,6 +139,7 @@ cubes:
       - name: customer_id
         sql: customer_id
         type: number
+        public: false
         description: Lightspeed's identifier for the customer.
       - name: first_name
         sql: first_name
@@ -70,9 +151,9 @@ cubes:
         description: Family name.
       - name: full_name
         type: string
-        sql: "TRIM(COALESCE({CUBE}.first_name, '') || ' ' || COALESCE({CUBE}.last_name, ''))"
+        sql: "COALESCE(NULLIF(TRIM(COALESCE({CUBE}.first_name, '') || ' ' || COALESCE({CUBE}.last_name, '')), ''), NULLIF(TRIM({CUBE}.company), ''), 'Unnamed customer')"
         title: Customer name
-        description: Full display name.
+        description: Person name, falling back to company and then Unnamed customer.
       - name: title
         sql: title
         type: string
@@ -95,6 +176,7 @@ cubes:
       - name: date_of_birth
         sql: dob
         type: time
+        public: false
         description: Date of birth, when captured (birthday promotions, age bands).
       - name: archived
         sql: archived
@@ -131,49 +213,128 @@ cubes:
         type: number
         public: false
 
-      # Lifetime behaviour (sub-query dimensions computed from the sales cube)
+      # Lifetime behaviour is computed once in this cube's SQL, not as one
+      # correlated Cube sub-query per member/customer.
       - name: first_purchase_at
-        sql: "{sales.first_sale_at}"
+        sql: first_purchase_at
         type: time
-        sub_query: true
         title: First purchase at
-        description: Time of this customer's first completed, non-voided sale. Defines when they became a "new" customer.
+        description: Time of this customer's first positive completed, non-voided sale. Refunds and zero-value activity do not define acquisition.
       - name: last_purchase_at
-        sql: "{sales.last_sale_at}"
+        sql: last_purchase_at
         type: time
-        sub_query: true
         title: Last purchase at
-        description: Time of this customer's most recent completed, non-voided sale.
+        description: Time of this customer's most recent positive completed, non-voided sale. Refunds do not move recency forward.
+      - name: second_purchase_at
+        sql: second_purchase_at
+        type: time
+        title: Second purchase at
+        description: Time of this customer's second positive completed, non-voided purchase after deterministic ordering. Null until a second purchase exists; refunds never count.
+      - name: days_to_second_purchase
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.second_purchase_at - {CUBE}.first_purchase_at)) / 86400.0"
+        type: number
+        title: Days to second purchase
+        description: Elapsed days from first to second positive purchase. Null for profiles without two positive purchases.
+      - name: purchase_count
+        sql: purchase_count
+        type: number
+        title: Lifetime purchases
+        description: Positive completed, non-voided sale transactions attributed to this customer.
+      - name: refund_count
+        sql: refund_count
+        type: number
+        title: Lifetime refund transactions
+        description: Negative completed, non-voided sale transactions attributed to this customer.
+      - name: activity_transaction_count
+        sql: activity_transaction_count
+        type: number
+        title: Lifetime attributed activity
+        description: All completed, non-voided attributed transactions, including positive purchases, refunds and zero-value activity.
+      - name: lifetime_net_spend
+        sql: lifetime_net_spend
+        type: number
+        format: currency
+        title: Lifetime net spend
+        description: Signed tax-inclusive lifetime value; completed refunds subtract from positive purchases.
+      - name: lifetime_purchase_value
+        sql: lifetime_purchase_value
+        type: number
+        format: currency
+        title: Lifetime purchase value
+        description: Tax-inclusive value of positive completed purchases before subtracting refunds.
+      - name: lifetime_refund_value
+        sql: lifetime_refund_value
+        type: number
+        format: currency
+        title: Lifetime refund value
+        description: Positive magnitude of completed refund transactions attributed to this customer.
       - name: lifetime_revenue
-        sql: "{sales.gross_takings}"
+        sql: lifetime_net_spend
         type: number
         format: currency
-        sub_query: true
         title: Lifetime revenue
-        description: Tax-inclusive lifetime spend across completed, non-voided sales (refunds subtract).
+        description: Compatibility alias for lifetime_net_spend; signed, tax inclusive, with completed refunds subtracting.
       - name: lifetime_transactions
-        sql: "{sales.transactions}"
+        sql: purchase_count
         type: number
-        sub_query: true
         title: Lifetime transactions
-        description: Number of completed, non-voided transactions this customer has made.
+        description: Compatibility alias for purchase_count; refunds never count as purchases.
       - name: lifetime_gross_profit
-        sql: "{sales.gross_profit}"
+        sql: lifetime_gross_profit
         type: number
         format: currency
-        sub_query: true
         title: Lifetime gross profit
-        description: Gross profit this customer has generated across their completed sales.
+        description: Signed ex-tax gross profit across completed, non-voided attributed activity, including refund effects.
       - name: is_repeat_customer
         type: boolean
-        sql: "(COALESCE({lifetime_transactions}, 0) > 1)"
+        sql: "(COALESCE({CUBE}.purchase_count, 0) > 1)"
         title: Repeat customer
-        description: True when the customer has more than one completed transaction.
+        description: True when the customer has more than one positive completed purchase; refunds never make a customer repeat.
       - name: days_since_last_purchase
         type: number
-        sql: "EXTRACT(EPOCH FROM (NOW() - {last_purchase_at})) / 86400.0"
+        sql: "EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_purchase_at)) / 86400.0"
         title: Days since last purchase
-        description: Days elapsed since the customer's most recent completed sale. Null for customers who never purchased.
+        description: Days elapsed since the most recent positive purchase. Null for customers who never made one.
+      - name: recency_band
+        type: string
+        sql: >
+          CASE
+            WHEN {CUBE}.last_purchase_at IS NULL THEN 'Never purchased'
+            WHEN {CUBE}.last_purchase_at >= NOW() - INTERVAL '30 days' THEN '0-30 days'
+            WHEN {CUBE}.last_purchase_at >= NOW() - INTERVAL '90 days' THEN '31-90 days'
+            WHEN {CUBE}.last_purchase_at >= NOW() - INTERVAL '180 days' THEN '91-180 days'
+            WHEN {CUBE}.last_purchase_at >= NOW() - INTERVAL '365 days' THEN '181-365 days'
+            ELSE 'Over 365 days'
+          END
+        title: Purchase recency band
+        description: Fixed, transparent bands based only on days since the latest positive purchase.
+      - name: frequency_band
+        type: string
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.purchase_count, 0) = 0 THEN 'Never purchased'
+            WHEN {CUBE}.purchase_count = 1 THEN '1 purchase'
+            WHEN {CUBE}.purchase_count <= 4 THEN '2-4 purchases'
+            WHEN {CUBE}.purchase_count <= 9 THEN '5-9 purchases'
+            ELSE '10+ purchases'
+          END
+        title: Purchase frequency band
+        description: Fixed lifetime positive-purchase count bands; refunds are excluded.
+      - name: is_lapsed_180_days
+        type: boolean
+        sql: "({CUBE}.last_purchase_at IS NOT NULL AND {CUBE}.last_purchase_at < NOW() - INTERVAL '180 days')"
+        title: Lapsed over 180 days
+        description: True when the latest positive purchase was more than 180 elapsed days ago; it is a fixed operational definition, not a prediction of churn.
+      - name: is_mature_90_day_customer
+        type: boolean
+        sql: "({CUBE}.first_purchase_at IS NOT NULL AND {CUBE}.first_purchase_at <= NOW() - INTERVAL '90 days')"
+        title: Observable for 90-day repeat
+        description: True only after the full 90-day repeat window has elapsed since first positive purchase.
+      - name: repeated_within_90_days_flag
+        type: boolean
+        sql: "({CUBE}.first_purchase_at IS NOT NULL AND {CUBE}.first_purchase_at <= NOW() - INTERVAL '90 days' AND {CUBE}.second_purchase_at IS NOT NULL AND {CUBE}.second_purchase_at <= {CUBE}.first_purchase_at + INTERVAL '90 days')"
+        title: Repeated within 90 days
+        description: True when a mature profile made its second positive purchase within 90 elapsed days of its first. Immature profiles and refunds never qualify.
 
     measures:
       - name: customer_count
@@ -189,38 +350,74 @@ cubes:
       - name: customers_with_purchases
         type: count
         title: Customers who have purchased
-        description: Customer profiles with at least one completed transaction.
+        description: Customer profiles with at least one positive completed purchase.
         filters:
-          - sql: "COALESCE({lifetime_transactions}, 0) > 0"
+          - sql: "COALESCE({CUBE}.purchase_count, 0) > 0"
       - name: repeat_customers
         type: count
         title: Repeat customers
-        description: Customers with more than one completed transaction.
+        description: Customers with more than one positive completed purchase.
         filters:
-          - sql: "COALESCE({lifetime_transactions}, 0) > 1"
+          - sql: "COALESCE({CUBE}.purchase_count, 0) > 1"
       - name: repeat_purchase_rate_pct
         type: number
         sql: "100.0 * {repeat_customers} / NULLIF({customers_with_purchases}, 0)"
         format: percent
         title: Repeat purchase rate %
         description: Share of purchasing customers who bought more than once.
+      - name: mature_90_day_customers
+        type: count
+        title: Mature 90-day customer cohort
+        description: Purchasing profiles whose first positive purchase was at least 90 elapsed days ago; recent customers are right-censored and excluded.
+        filters:
+          - sql: "{CUBE}.first_purchase_at IS NOT NULL AND {CUBE}.first_purchase_at <= NOW() - INTERVAL '90 days'"
+      - name: repeated_within_90_days
+        type: count
+        title: Customers repeated within 90 days
+        description: Mature purchasing profiles whose second positive purchase occurred within 90 elapsed days of their first; refunds never count.
+        filters:
+          - sql: "{CUBE}.first_purchase_at IS NOT NULL AND {CUBE}.first_purchase_at <= NOW() - INTERVAL '90 days' AND {CUBE}.second_purchase_at IS NOT NULL AND {CUBE}.second_purchase_at <= {CUBE}.first_purchase_at + INTERVAL '90 days'"
+      - name: repeat_within_90_days_pct
+        type: number
+        sql: "100.0 * {repeated_within_90_days} / NULLIF({mature_90_day_customers}, 0)"
+        format: percent
+        title: 90-day repeat rate %
+        description: Share of the mature 90-day cohort that made a second positive purchase inside its observation window. Immature customers are excluded from both numerator and denominator.
       - name: total_lifetime_revenue
         type: sum
-        sql: "{lifetime_revenue}"
+        sql: lifetime_net_spend
         format: currency
         title: Total lifetime revenue
-        description: Summed lifetime revenue across the selected customers.
+        description: Compatibility total of signed lifetime net spend across selected customers.
+      - name: total_lifetime_net_spend
+        type: sum
+        sql: lifetime_net_spend
+        format: currency
+        title: Total lifetime net spend
+        description: Signed tax-inclusive customer spend after completed refunds.
+      - name: total_lifetime_purchase_value
+        type: sum
+        sql: lifetime_purchase_value
+        format: currency
+        title: Total lifetime purchase value
+        description: Positive purchase value before subtracting refunds.
+      - name: total_lifetime_refund_value
+        type: sum
+        sql: lifetime_refund_value
+        format: currency
+        title: Total lifetime refund value
+        description: Positive magnitude of attributed completed refunds.
       - name: average_lifetime_revenue
         type: avg
-        sql: "{lifetime_revenue}"
+        sql: lifetime_net_spend
         format: currency
         title: Average lifetime revenue per customer
-        description: Mean lifetime spend across the selected customers (null lifetimes excluded).
+        description: Mean signed lifetime net spend across selected customer profiles.
       - name: average_lifetime_transactions
         type: avg
-        sql: "{lifetime_transactions}"
+        sql: purchase_count
         title: Average transactions per customer
-        description: Mean completed-transaction count across the selected customers.
+        description: Mean positive purchase count across selected customer profiles.
 
     segments:
       - name: active_customers
@@ -229,6 +426,9 @@ cubes:
       - name: business_customers
         sql: "{CUBE}.company IS NOT NULL AND {CUBE}.company <> ''"
         description: Customers with a company name (trade/business accounts).
+      - name: lapsed_180_days
+        sql: "{CUBE}.last_purchase_at IS NOT NULL AND {CUBE}.last_purchase_at < NOW() - INTERVAL '180 days'"
+        description: Customer profiles whose latest positive purchase was more than 180 days ago.
 
   - name: customer_types
     title: Customer types
@@ -290,9 +490,33 @@ cubes:
         these address dimensions. no_email/no_mail/no_phone are opt-out flags to
         respect in any marketing-list answer.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_contacts t
-      WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contacts ORDER BY ingested_at DESC LIMIT 1)
+      WITH latest_contact_pack AS MATERIALIZED (
+        SELECT mapping_version
+        FROM source_lightspeed_official.ls_contacts
+        ORDER BY ingested_at DESC NULLS LAST
+        LIMIT 1
+      ), latest_email_pack AS MATERIALIZED (
+        SELECT mapping_version
+        FROM source_lightspeed_official.ls_contact_emails
+        ORDER BY ingested_at DESC NULLS LAST
+        LIMIT 1
+      ), email_flags AS MATERIALIZED (
+        SELECT email.tenant_id,
+               email.contact_id,
+               COUNT(*) AS email_count
+        FROM source_lightspeed_official.ls_contact_emails email
+        WHERE NOT email.tombstone
+          AND email.mapping_version = (SELECT mapping_version FROM latest_email_pack)
+        GROUP BY email.tenant_id, email.contact_id
+      )
+      SELECT contact.*,
+             COALESCE(email_flags.email_count, 0) AS safe_email_count
+      FROM source_lightspeed_official.ls_contacts contact
+      LEFT JOIN email_flags
+        ON email_flags.tenant_id = contact.tenant_id
+       AND email_flags.contact_id = contact.contact_id
+      WHERE NOT contact.tombstone
+        AND contact.mapping_version = (SELECT mapping_version FROM latest_contact_pack)
 
     dimensions:
       - name: row_key
@@ -375,14 +599,13 @@ cubes:
         title: Phone number
         description: A phone number on file for this contact (the first, when several exist).
       - name: email_count
-        sql: "{contact_emails.count}"
+        sql: "{CUBE}.safe_email_count"
         type: number
-        sub_query: true
         public: false
         description: How many email addresses are on file.
       - name: has_email
         type: boolean
-        sql: "(COALESCE({email_count}, 0) > 0)"
+        sql: "(COALESCE({CUBE}.safe_email_count, 0) > 0)"
         title: Has email on file
         description: True when at least one email address is recorded.
 
@@ -395,7 +618,7 @@ cubes:
         title: Contactable by email
         description: Contacts with an email on file who have not opted out.
         filters:
-          - sql: "COALESCE({no_email}, false) = false AND COALESCE({email_count}, 0) > 0"
+          - sql: "COALESCE({no_email}, false) = false AND COALESCE({CUBE}.safe_email_count, 0) > 0"
 
   - name: contact_emails
     title: Contact email addresses
