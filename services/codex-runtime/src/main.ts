@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
 import { loadCodexRuntimeConfig } from "./config.js";
 import { CodexRuntimeHttpHandler } from "./http.js";
 
-declare const __ALBERT_SERVICE_BUILD_SHA__: string;
-
+const releaseSha = assertEmbeddedServiceBuildIdentity(process.env);
 const config = loadCodexRuntimeConfig();
 const handler = new CodexRuntimeHttpHandler(config);
 
@@ -85,7 +85,7 @@ server.listen(config.port, "0.0.0.0", () => {
   process.stdout.write(`${JSON.stringify({
     event: "codex_runtime_started",
     port: config.port,
-    buildSha: typeof __ALBERT_SERVICE_BUILD_SHA__ === "string" ? __ALBERT_SERVICE_BUILD_SHA__ : "development",
+    buildSha: releaseSha,
     pinnedCliVersion: config.pinnedCliVersion,
   })}\n`);
 });

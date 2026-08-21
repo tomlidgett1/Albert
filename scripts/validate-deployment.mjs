@@ -585,6 +585,11 @@ assert.match(
   /FROM node:22\.23\.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime/u,
 );
 assert.match(
+  dockerfile,
+  /ENV SSL_CERT_FILE=\/etc\/ssl\/certs\/ca-certificates\.crt[\s\S]*apt-get install -y --no-install-recommends ca-certificates/u,
+  "The service image must trust the CA bundle used by the Codex Responses websocket.",
+);
+assert.match(
   releaseWorkflow,
   /provision:runtime-logins[\s\S]*ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD:\s*\$\{\{\s*secrets\.ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD\s*\}\}/u,
   "Production runtime-login reconciliation must receive the dedicated Anthropic control password.",

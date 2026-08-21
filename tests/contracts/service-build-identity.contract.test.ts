@@ -47,12 +47,10 @@ test("all release runtimes start with and report the captured image identity", a
   const root = new URL("../../", import.meta.url);
   const startupFiles = [
     "services/sync-workers/src/main.ts",
-    "services/transform-worker/src/main.ts",
     "services/deletion-worker/src/main.ts",
     "services/webhook-gateway/src/main.ts",
-    "services/semantic-query/src/main.ts",
     "services/operator-diagnostic/src/main.ts",
-    "scripts/transform-capacity-harness.ts",
+    "services/codex-runtime/src/main.ts",
   ];
   for (const file of startupFiles) {
     const source = await readFile(new URL(file, root), "utf8");
@@ -61,11 +59,10 @@ test("all release runtimes start with and report the captured image identity", a
 
   const readinessFiles = [
     "services/sync-workers/src/main.ts",
-    "services/transform-worker/src/main.ts",
     "services/deletion-worker/src/main.ts",
     "services/webhook-gateway/src/main.ts",
-    "services/semantic-query/src/node-server.ts",
-    "services/operator-diagnostic/src/node-server.ts",
+    "services/operator-diagnostic/src/main.ts",
+    "services/codex-runtime/src/main.ts",
   ];
   for (const file of readinessFiles) {
     const source = await readFile(new URL(file, root), "utf8");
@@ -88,6 +85,11 @@ test("the OCI and release build path inject the trusted checkout SHA", async () 
   assert.match(builder, /GITHUB_ACTIONS[\s\S]*GitHub Actions service builds require GITHUB_SHA/u);
   assert.match(dockerfile, /ARG ALBERT_BUILD_SHA=development[\s\S]*ENV ALBERT_BUILD_SHA=\$ALBERT_BUILD_SHA[\s\S]*npm run build:services/u);
   assert.match(dockerfile, /LABEL org\.opencontainers\.image\.revision=\$ALBERT_BUILD_SHA/u);
+  assert.match(
+    dockerfile,
+    /ENV SSL_CERT_FILE=\/etc\/ssl\/certs\/ca-certificates\.crt[\s\S]*apt-get install -y --no-install-recommends ca-certificates/u,
+    "The Linux Codex websocket client requires the system CA bundle and its explicit path.",
+  );
   assert.match(workflow, /docker buildx build candidate[\s\S]*--build-arg "ALBERT_BUILD_SHA=\$ALBERT_RELEASE_CANDIDATE_SHA"/u);
   assert.match(workflow, /flyctl deploy[\s\S]*--image "\$SERVICES_IMAGE"/u);
 });
