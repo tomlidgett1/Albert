@@ -152,11 +152,15 @@ export function codexAppServerArguments(
     "-c", "project_doc_max_bytes=0",
     "-c", "project_doc_fallback_filenames=[]",
     "-c", "mcp_servers={}",
-    // The desktop-managed Codex home contributes these built-in MCP entries
-    // above the ordinary user mcp_servers table. Disable them explicitly so
-    // subscription evaluation retains the same zero-MCP boundary as API mode.
-    "-c", "mcp_servers.openaiDeveloperDocs.enabled=false",
-    "-c", "mcp_servers.node_repl.enabled=false",
+    // The desktop-managed ChatGPT home contributes these built-in MCP entries
+    // above the ordinary user mcp_servers table. Disable them explicitly for
+    // subscription evaluation. A fresh API-mode home has no such entries;
+    // declaring only `enabled=false` there is an incomplete MCP transport and
+    // makes the real Linux app-server exit during startup.
+    ...(authentication.mode === "chatgpt" ? [
+      "-c", "mcp_servers.openaiDeveloperDocs.enabled=false",
+      "-c", "mcp_servers.node_repl.enabled=false",
+    ] : []),
     ...(openaiBaseUrl ? ["-c", `openai_base_url=${JSON.stringify(openaiBaseUrl)}`] : []),
   ]);
 }

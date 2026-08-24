@@ -352,8 +352,8 @@ test("Codex startup disables coding, browser, plugin and multi-agent capabilitie
   assert.match(argumentsList, /approval_policy="never"/u);
   assert.match(argumentsList, /sandbox_mode="read-only"/u);
   assert.match(argumentsList, /tools\.update_plan\.enabled=true/u);
-  assert.match(argumentsList, /mcp_servers\.openaiDeveloperDocs\.enabled=false/u);
-  assert.match(argumentsList, /mcp_servers\.node_repl\.enabled=false/u);
+  assert.doesNotMatch(argumentsList, /mcp_servers\.openaiDeveloperDocs/u);
+  assert.doesNotMatch(argumentsList, /mcp_servers\.node_repl/u);
   assert.doesNotMatch(argumentsList, /not-rendered/u);
   const subscriptionFast = codexAppServerArguments({
     mode: "chatgpt",
@@ -364,6 +364,8 @@ test("Codex startup disables coding, browser, plugin and multi-agent capabilitie
   assert.match(subscriptionFast, /service_tier="fast"/u);
   assert.match(subscriptionFast, /sqlite_home="\/tmp\/albert-codex-turn-fixture\/runtime-state"/u);
   assert.match(subscriptionFast, /log_dir="\/tmp\/albert-codex-turn-fixture\/runtime-state\/logs"/u);
+  assert.match(subscriptionFast, /mcp_servers\.openaiDeveloperDocs\.enabled=false/u);
+  assert.match(subscriptionFast, /mcp_servers\.node_repl\.enabled=false/u);
   assert.doesNotMatch(subscriptionFast, /OPENAI_BASE_URL|api\.openai/u);
 });
 
