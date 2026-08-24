@@ -100,11 +100,11 @@ const recentTurnSchema = z.object({
 }).strict();
 
 const queryContextSnapshotSchema = z.object({
-  question: z.string(),
+  question: z.string().nullable(),
   conversationTitle: z.string().nullable(),
-  turnNumber: z.number().int().positive(),
+  turnNumber: z.number().int().positive().nullable(),
   tenantName: z.string(),
-  runtimeProfile: z.record(z.string(), z.unknown()),
+  runtimeProfile: z.record(z.string(), z.unknown()).nullable(),
   recentTurns: z.array(recentTurnSchema).max(6),
 }).strict();
 

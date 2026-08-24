@@ -72,6 +72,10 @@ function failureText(item: AnalyticalQueryLogItem): string | null {
   return null;
 }
 
+function questionLabel(item: AnalyticalQueryLogItem): string {
+  return item.contextSnapshot.question?.trim() || item.topic || "Query attempt";
+}
+
 type LoadState = Readonly<{ kind: "loading" | "ready" | "error"; message?: string }>;
 
 export default function QueryLogsWorkspace({
@@ -239,7 +243,7 @@ export default function QueryLogsWorkspace({
                     <span className={styles.status} data-status={item.status}>{STATUS_LABELS[item.status]}</span>
                     <time dateTime={item.startedAt}>{relativeTime(item.startedAt)}</time>
                   </span>
-                  <strong>{item.contextSnapshot.question}</strong>
+                  <strong>{questionLabel(item)}</strong>
                   <span className={styles.rowMeta}>{item.tenantName} · {sourceLabel(item)}</span>
                   {failureText(item) ? <small>{failureText(item)}</small> : null}
                 </button>
@@ -252,7 +256,7 @@ export default function QueryLogsWorkspace({
               <header className={styles.detailHeader}>
                 <div>
                   <span className={styles.status} data-status={selected.status}>{STATUS_LABELS[selected.status]}</span>
-                  <h2>{selected.topic || selected.contextSnapshot.question}</h2>
+                  <h2>{selected.topic || questionLabel(selected)}</h2>
                   <p>{sourceLabel(selected)} · {selected.tenantName} · {formatTimestamp(selected.startedAt)}</p>
                 </div>
                 <div className={styles.detailActions}>
@@ -281,17 +285,21 @@ export default function QueryLogsWorkspace({
 
               <section className={styles.section}>
                 <div className={styles.sectionHeading}>
-                  <div><span>QUESTION CONTEXT</span><h3>{selected.contextSnapshot.question}</h3></div>
+                  <div><span>QUESTION CONTEXT</span><h3>{questionLabel(selected)}</h3></div>
                 </div>
-                <div className={styles.contextTimeline}>
-                  {selected.contextSnapshot.recentTurns.map((turn) => (
+                {selected.contextSnapshot.recentTurns.length > 0 ? (
+                  <div className={styles.contextTimeline}>
+                    {selected.contextSnapshot.recentTurns.map((turn) => (
                     <div key={turn.turnId} className={styles.contextTurn} data-current={turn.turnId === selected.turnId ? "true" : undefined}>
                       <span>Turn {turn.turnNumber}</span>
                       <p>{turn.userMessage}</p>
                       {turn.assistantAnswer ? <blockquote>{turn.assistantAnswer}</blockquote> : null}
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.missingContext}>Question context was not captured for this pre-fix attempt.</p>
+                )}
               </section>
 
               <section className={styles.section}>

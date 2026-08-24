@@ -13,6 +13,7 @@ function read(path: string): string {
 }
 
 const migration = read("infra/migrations/control-plane/0170_m8_analytical_query_attempt_ledger.sql");
+const contextFix = read("infra/migrations/control-plane/0171_m8_query_attempt_context_scalars.sql");
 
 test("query attempts and outcomes are separate immutable control-plane records", () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS control_plane\.analytical_query_attempts/u);
@@ -36,6 +37,14 @@ test("the database derives bounded question context and only Tom can read the cr
   assert.match(migration, /REVOKE ALL ON TABLE[\s\S]*FROM PUBLIC, anon, authenticated, service_role/u);
   assert.doesNotMatch(migration, /GRANT SELECT ON (?:TABLE )?control_plane\.analytical_query/u);
   assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.albert_analytical_query_logs[\s\S]*TO authenticated/u);
+});
+
+test("the context repair reads turn fields into scalar variables", () => {
+  assert.match(contextFix, /turn_row\.user_message,[\s\S]*turn_row\.turn_number,[\s\S]*turn_row\.runtime_profile/u);
+  assert.match(contextFix, /INTO[\s\S]*selected_user_message,[\s\S]*selected_turn_number,[\s\S]*selected_runtime_profile/u);
+  assert.match(contextFix, /'question', left\(selected_user_message, 8000\)/u);
+  assert.match(contextFix, /turn_context\.turn_number <= selected_turn_number/u);
+  assert.doesNotMatch(contextFix, /selected_turn control_plane\.conversation_turns%ROWTYPE/u);
 });
 
 test("both chat runtimes and the Tom-only sidebar use the shared durable recorder", () => {

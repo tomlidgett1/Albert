@@ -443,6 +443,16 @@
   border-radius: 10px;
 }
 
+.missingContext {
+  margin: 0;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 10px;
+  background: var(--dash-surface-inset);
+  color: var(--dash-text-muted);
+  font-size: calc(10px * var(--text-scale));
+  padding: 12px;
+}
+
 .contextTurn {
   border-bottom: 1px solid var(--dash-border-soft);
   padding: 10px 12px;
