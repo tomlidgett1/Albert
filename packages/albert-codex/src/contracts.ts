@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { CubeFilter, CubeQuery } from "../../albert-v3/src/cube/types.js";
-import type { AnalyticalBrief } from "../../shared/src/index.js";
+import {
+  ANALYTICAL_QUERY_OUTCOMES,
+  ANALYTICAL_QUERY_SOURCES,
+  type AnalyticalBrief,
+} from "../../shared/src/index.js";
 
 export const ALBERT_CODEX_RUNTIME = "codex-app-server" as const;
 export const ALBERT_CODEX_ANALYTICAL_RUNTIME = "cube-codex-v1" as const;
@@ -27,6 +31,42 @@ const traceColumnSchema = z.object({
   type: z.enum(["string", "number", "currency", "percent", "date", "datetime"]),
   currency: z.string().regex(/^[A-Z]{3}$/u).optional(),
 }).strict();
+
+const boundedDiagnosticObjectSchema = z.record(z.string(), z.unknown()).refine(
+  (value) => JSON.stringify(value).length <= 65_536,
+  "The analytical query audit document is too large.",
+);
+
+export const codexQueryAuditEventSchema = z.discriminatedUnion("phase", [
+  z.object({
+    type: z.literal("query_audit"),
+    phase: z.literal("start"),
+    attempt: z.object({
+      queryAttemptId: ulidSchema,
+      runtime: z.literal("codex-app-server"),
+      source: z.enum(ANALYTICAL_QUERY_SOURCES),
+      operation: z.string().regex(/^[a-z][a-z0-9_.-]{1,79}$/u),
+      topic: z.string().min(1).max(240).optional(),
+      branchLabel: z.string().min(1).max(160).optional(),
+      queryDocument: boundedDiagnosticObjectSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    type: z.literal("query_audit"),
+    phase: z.literal("finish"),
+    outcome: z.object({
+      queryAttemptId: ulidSchema,
+      status: z.enum(ANALYTICAL_QUERY_OUTCOMES),
+      executionMs: z.number().int().min(0).max(3_600_000).optional(),
+      rowCount: z.number().int().min(0).max(2_000_000).optional(),
+      failureCode: z.string().regex(/^[a-z][a-z0-9_]{1,119}$/u).optional(),
+      failureMessage: z.string().min(1).max(1_000).optional(),
+      resultMetadata: z.record(z.string(), z.unknown()).optional(),
+    }).strict(),
+  }).strict(),
+]);
+
+export type CodexQueryAuditEvent = z.infer<typeof codexQueryAuditEventSchema>;
 
 export const codexConversationRequestSchema = z.object({
   message: z.string().trim().min(1).max(8_000),

@@ -17,6 +17,7 @@ import {
   type ConversationMessage,
 } from "@/packages/albert-v3/src";
 import { loadBusinessContext, saveBusinessContext } from "@/services/control-plane/src/business-context-repository";
+import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import {
   correlationIdFromHeader,
   createServiceLogger,
@@ -218,6 +219,12 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const conversationId = begun.conversationId;
+  const queryRecorder = createSupabaseAnalyticalQueryRecorder({
+    supabase: auth.supabase,
+    conversationId,
+    turnId,
+    correlationId,
+  });
   const shouldGenerateInitialAcknowledgement = detectSocialMessage(parsed.message) === null
     // Specialist chats already carry an immediate, request-specific profile
     // acknowledgement in the UI and start with a focused cached prefix. A
@@ -498,6 +505,7 @@ export async function POST(request: Request): Promise<Response> {
           openaiTracingEnabled: process.env.ALBERT_OPENAI_TRACING_ENABLED === "true",
           signal: streamSignal,
           emit,
+          queryRecorder,
           onProviderUsage: async (providerUsage, providerResponseId) => {
             try {
               const metering = meterOpenAIUsage({

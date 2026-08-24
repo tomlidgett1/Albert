@@ -90,6 +90,7 @@ import MyDataWorkspace from "./components/MyDataWorkspace";
 import TestChartWorkspace from "./components/TestChartWorkspace";
 import NewTestWorkspace from "./components/NewTestWorkspace";
 import AgentsWorkspace from "./components/AgentsWorkspace";
+import QueryLogsWorkspace from "./components/QueryLogsWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import styles from "./dash.module.css";
@@ -139,6 +140,7 @@ type ActiveItem =
   | "My Data"
   | "Test chart"
   | "New test"
+  | "Logs"
   | "Connections"
   | "Admin"
   | "BusinessContext"
@@ -830,6 +832,7 @@ export default function DashPage() {
     role: "owner" | "manager" | "bookkeeper" | "internal_operator" | null;
   }>({ name: "Organisation", role: null });
   const [isInternalOperator, setIsInternalOperator] = useState(false);
+  const [canViewQueryLogs, setCanViewQueryLogs] = useState(false);
   const [oauthNotice, setOAuthNotice] = useState<OAuthNotice | null>(null);
   const [connectionsData, setConnectionsData] = useState<ConnectionsWorkspaceData>(emptyConnectionsWorkspace);
   const [connectionsStatus, setConnectionsStatus] = useState<{
@@ -1430,6 +1433,7 @@ export default function DashPage() {
         error?: string;
         needsBootstrap?: boolean;
         internalOperator?: boolean;
+        queryLogsViewer?: boolean;
         deletionReceipt?: unknown;
         user?: {
           email?: string | null;
@@ -1443,6 +1447,11 @@ export default function DashPage() {
       };
       if (!sessionResponse.ok) throw new Error(sessionPayload.error || "Your organisation could not be loaded.");
       setIsInternalOperator(sessionPayload.internalOperator === true);
+      const queryLogsViewer = sessionPayload.queryLogsViewer === true;
+      setCanViewQueryLogs(queryLogsViewer);
+      if (!queryLogsViewer) {
+        setActiveItem((current) => current === "Logs" ? "Chat" : current);
+      }
       const nextDeletionReceipt = sessionPayload.deletionReceipt === null
         || sessionPayload.deletionReceipt === undefined
         ? null
@@ -4354,6 +4363,18 @@ export default function DashPage() {
             <Icon name="chat" />
             <span className={styles.sidebarActionLabel}>New test</span>
           </button>
+          {canViewQueryLogs ? (
+            <button
+              className={styles.sidebarAction}
+              type="button"
+              aria-label="Logs"
+              aria-current={activeItem === "Logs" ? "page" : undefined}
+              onClick={() => setActiveItem("Logs")}
+            >
+              <Icon name="logs" />
+              <span className={styles.sidebarActionLabel}>Logs</span>
+            </button>
+          ) : null}
           <label className={`${styles.sidebarAction} ${styles.sidebarSearchAction} ${sidebarSearchOpen || query ? styles.sidebarSearchActionOpen : ""}`}>
             <Icon name="search" />
             <input
@@ -5481,6 +5502,8 @@ export default function DashPage() {
           />
         ) : activeItem === "New test" ? (
           <NewTestWorkspace />
+        ) : activeItem === "Logs" && canViewQueryLogs ? (
+          <QueryLogsWorkspace onOpenConversation={(conversationId) => void openSavedConversation(conversationId)} />
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}

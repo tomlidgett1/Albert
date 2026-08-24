@@ -9,6 +9,7 @@ import {
   sanitizeTraceText,
   type AgentRunPreferences,
   type AnalyticalBrief,
+  type AnalyticalQueryRecorder,
   type AnswerState,
   type PresentedTableDigest,
 } from "../../../shared/src/index.js";
@@ -152,6 +153,8 @@ export type AlbertV3TurnOptions = Readonly<{
   openaiTracingEnabled?: boolean;
   signal?: AbortSignal;
   emit: EmitV3Trace;
+  /** Host-owned durable ledger; query execution fails closed when start logging fails. */
+  queryRecorder?: AnalyticalQueryRecorder;
   onProviderUsage?: (
     usage: ProviderRunUsage,
     providerResponseId: string | null,
@@ -563,6 +566,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
       specialist_agent_id: specialistAgent.id,
       specialist_agent_version: specialistAgent.version,
     },
+    ...(options.queryRecorder ? { queryRecorder: options.queryRecorder } : {}),
   });
   // Live Shopify reports contain Level-2 protected customer data. Until a
   // field-level entitlement policy exists, no signed client is installed for
@@ -896,6 +900,7 @@ export async function runAlbertV3Turn(options: AlbertV3TurnOptions): Promise<Alb
     promptCachePartition,
     toolRoute,
     emit,
+    ...(options.queryRecorder ? { queryRecorder: options.queryRecorder } : {}),
     signal: options.signal,
     budget: { maxQueries: budget.maxQueries, executed: 0 },
     connectorFreshness,

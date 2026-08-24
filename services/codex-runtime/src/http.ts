@@ -7,6 +7,7 @@ import {
 } from "../../../packages/albert-codex/src/app-server.js";
 import {
   codexServiceTurnSchema,
+  type CodexQueryAuditEvent,
   type CodexServiceTurn,
 } from "../../../packages/albert-codex/src/contracts.js";
 import {
@@ -14,6 +15,7 @@ import {
   type CodexSemanticTurnResult,
   type CodexTraceEventInput,
 } from "../../../packages/albert-codex/src/semantic-runtime.js";
+import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
 
 const TURN_PATH = "/v1/codex/turn";
@@ -27,9 +29,11 @@ const MAX_JOB_EVENT_BYTES = 1_500_000;
 const MAX_JOB_BUFFER_BYTES = 32 * 1024 * 1024;
 const encoder = new TextEncoder();
 
+type CodexRuntimeBufferedEvent = CodexTraceEventInput | CodexQueryAuditEvent;
+
 type CodexBackgroundJob = {
   readonly id: string;
-  readonly events: CodexTraceEventInput[];
+  readonly events: CodexRuntimeBufferedEvent[];
   readonly waiters: Set<() => void>;
   readonly abort: AbortController;
   createdAt: number;
@@ -251,6 +255,10 @@ export class CodexRuntimeHttpHandler {
           codexBinaryPath: this.config.binaryPath,
           signal: runAbort.signal,
           emit: (event: CodexTraceEventInput) => write({ kind: "event", event }),
+          queryRecorder: {
+            start: async (attempt) => write({ kind: "query_audit", event: { type: "query_audit", phase: "start", attempt } }),
+            finish: async (outcome) => write({ kind: "query_audit", event: { type: "query_audit", phase: "finish", outcome } }),
+          },
         }).then((result) => {
           write({ kind: "complete", result });
         }).catch((error) => {
@@ -319,7 +327,7 @@ export class CodexRuntimeHttpHandler {
     this.beginJob(job, turn);
   }
 
-  private publishJobEvent(job: CodexBackgroundJob, event: CodexTraceEventInput): void {
+  private publishJobEvent(job: CodexBackgroundJob, event: CodexRuntimeBufferedEvent): void {
     const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
     if (
       bytes > MAX_JOB_EVENT_BYTES
@@ -336,6 +344,23 @@ export class CodexRuntimeHttpHandler {
 
   private beginJob(job: CodexBackgroundJob, turn: CodexServiceTurn): void {
     this.activeTurns += 1;
+    const queryRecorder: AnalyticalQueryRecorder = {
+      start: async (attempt) => {
+        if (attempt.runtime !== "codex-app-server") {
+          throw new Error("The isolated Codex runtime emitted an invalid query-audit runtime.");
+        }
+        this.publishJobEvent(job, {
+          type: "query_audit",
+          phase: "start",
+          attempt: { ...attempt, runtime: "codex-app-server" },
+        });
+      },
+      finish: async (outcome) => this.publishJobEvent(job, {
+        type: "query_audit",
+        phase: "finish",
+        outcome,
+      }),
+    };
     void runCodexSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
@@ -343,6 +368,7 @@ export class CodexRuntimeHttpHandler {
       codexBinaryPath: this.config.binaryPath,
       signal: job.abort.signal,
       emit: (event) => this.publishJobEvent(job, event),
+      queryRecorder,
     }).then((result) => {
       job.result = result;
     }).catch((error) => {

@@ -1,5 +1,10 @@
 import { signInternalRequest } from "../../security/src/index.js";
-import { codexSemanticTurnResultSchema, type CodexServiceTurn } from "./contracts.js";
+import {
+  codexQueryAuditEventSchema,
+  codexSemanticTurnResultSchema,
+  type CodexQueryAuditEvent,
+  type CodexServiceTurn,
+} from "./contracts.js";
 import type {
   CodexSemanticTurnResult,
   CodexTraceEventInput,
@@ -78,9 +83,10 @@ export class CodexRuntimeServiceClient {
     turn: CodexServiceTurn,
     emit: EmitCodexTrace,
     signal?: AbortSignal,
+    emitQueryAudit?: (event: CodexQueryAuditEvent) => Promise<void>,
   ): Promise<CodexSemanticTurnResult> {
     const body = JSON.stringify(turn);
-    return this.runJob(turn.requestId, body, emit, signal);
+    return this.runJob(turn.requestId, body, emit, signal, emitQueryAudit);
   }
 
   private async runJob(
@@ -88,6 +94,7 @@ export class CodexRuntimeServiceClient {
     body: string,
     emit: EmitCodexTrace,
     signal?: AbortSignal,
+    emitQueryAudit?: (event: CodexQueryAuditEvent) => Promise<void>,
   ): Promise<CodexSemanticTurnResult> {
     const requestJson = async (path: string, requestBody: string): Promise<Record<string, unknown>> => {
       const signed = await signInternalRequest({
@@ -140,7 +147,21 @@ export class CodexRuntimeServiceClient {
       if (!Array.isArray(payload.events) || payload.events.some((event) => !isObject(event))) {
         throw new CodexRuntimeServiceError("The Codex job events were invalid.", 502, "codex_stream_invalid");
       }
-      for (const event of payload.events) await emit(event as CodexTraceEventInput);
+      for (const event of payload.events) {
+        if ((event as Record<string, unknown>).type === "query_audit") {
+          const parsedAudit = codexQueryAuditEventSchema.safeParse(event);
+          if (!parsedAudit.success || !emitQueryAudit) {
+            throw new CodexRuntimeServiceError(
+              "The Codex query audit stream was invalid or had no durable sink.",
+              502,
+              "codex_stream_invalid",
+            );
+          }
+          await emitQueryAudit(parsedAudit.data);
+          continue;
+        }
+        await emit(event as CodexTraceEventInput);
+      }
       cursor = Number(payload.cursor);
       if (isObject(payload.error)) {
         throw new CodexRuntimeServiceError(

@@ -3,6 +3,10 @@ import { ulid } from "ulid";
 import { z } from "zod";
 import { tool, type Tool } from "@openai/agents";
 import {
+  beginAnalyticalQueryAttempt,
+  finishAnalyticalQueryAttempt,
+  recordRejectedAnalyticalQuery,
+  sanitizeQueryFailureMessage,
   sanitizeTraceText,
   TRACE_DERIVED_CALCULATION_OPERATORS,
   type TraceCell,
@@ -340,10 +344,33 @@ async function executeGovernedShopifyQLQuery(
   context: V3TurnContext,
   input: z.infer<typeof shopifyQLToolQueryInputSchema>,
 ): Promise<Record<string, unknown>> {
+  const queryDocument = { ...input };
   if (!context.shopifyQL) {
+    await recordRejectedAnalyticalQuery(context.queryRecorder, {
+      runtime: "albert-v3",
+      source: "shopifyql",
+      operation: "run_shopifyql_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      queryDocument,
+    }, {
+      code: "shopifyql_unavailable",
+      message: "Live Shopify reports require owner or manager access.",
+    });
     return { ok: false, error: "Live Shopify reports require owner or manager access." };
   }
   if (context.budget.executed >= context.budget.maxQueries) {
+    await recordRejectedAnalyticalQuery(context.queryRecorder, {
+      runtime: "albert-v3",
+      source: "shopifyql",
+      operation: "run_shopifyql_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      queryDocument,
+    }, {
+      code: "query_budget_exhausted",
+      message: "The query budget for this turn is spent.",
+    });
     return { ok: false, error: "The query budget for this turn is spent. Answer with the evidence already gathered." };
   }
   await context.emit({
@@ -353,6 +380,14 @@ async function executeGovernedShopifyQLQuery(
     label: sanitizeTraceText(`Checking Shopify: ${input.topic}`, 160),
     detail: sanitizeTraceText(`${input.schema}: ${input.fields.join(", ")}`, 300),
   });
+  const audit = await beginAnalyticalQueryAttempt(context.queryRecorder, {
+    runtime: "albert-v3",
+    source: "shopifyql",
+    operation: "run_shopifyql_query",
+    topic: input.topic,
+    ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+    queryDocument,
+  });
   let output;
   try {
     const { connectionId, ...queryInput } = input;
@@ -361,6 +396,11 @@ async function executeGovernedShopifyQLQuery(
       signal: context.signal,
     });
   } catch (error) {
+    await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+      status: context.signal?.aborted ? "cancelled" : "failed",
+      failureCode: context.signal?.aborted ? "shopifyql_query_cancelled" : "shopifyql_query_failed",
+      failureMessage: sanitizeQueryFailureMessage(error, "The governed Shopify report failed."),
+    });
     await context.emit({
       type: "progress",
       status: "warning",
@@ -376,6 +416,17 @@ async function executeGovernedShopifyQLQuery(
   }
   context.budget.executed += 1;
   if (output.parseErrors.length > 0) {
+    await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+      status: "failed",
+      executionMs: output.durationMs,
+      failureCode: "shopifyql_parse_failed",
+      failureMessage: sanitizeQueryFailureMessage(output.parseErrors.join("; "), "Shopify returned parse errors."),
+      resultMetadata: {
+        requestId: output.requestId,
+        queryDigest: output.queryDigest,
+        parseErrorCount: output.parseErrors.length,
+      },
+    });
     await context.emit({
       type: "progress",
       status: "warning",
@@ -397,6 +448,17 @@ async function executeGovernedShopifyQLQuery(
       guidance: "Use exact fields from search_shopifyql_catalogue, simplify the typed request, and retry once. Never send raw ShopifyQL or GraphQL.",
     };
   }
+  await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+    status: "succeeded",
+    executionMs: output.durationMs,
+    rowCount: output.rows.length,
+    resultMetadata: {
+      requestId: output.requestId,
+      apiVersion: output.apiVersion,
+      queryDigest: output.queryDigest,
+      responseDigest: output.responseDigest,
+    },
+  });
   const timeRange: TraceTimeRange = {
     label: `${output.timeWindow.since} to ${output.timeWindow.until}`,
     start: output.timeWindow.since,
@@ -549,8 +611,33 @@ async function executeGovernedShopifyAdminQuery(
   context: V3TurnContext,
   input: z.infer<typeof shopifyAdminToolQueryInputSchema>,
 ): Promise<Record<string, unknown>> {
-  if (!context.shopifyAdmin) return { ok: false, error: "Live Shopify store lookups require owner or manager access." };
+  const queryDocument = { ...input };
+  if (!context.shopifyAdmin) {
+    await recordRejectedAnalyticalQuery(context.queryRecorder, {
+      runtime: "albert-v3",
+      source: "shopify_admin",
+      operation: "run_shopify_admin_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      queryDocument,
+    }, {
+      code: "shopify_admin_unavailable",
+      message: "Live Shopify store lookups require owner or manager access.",
+    });
+    return { ok: false, error: "Live Shopify store lookups require owner or manager access." };
+  }
   if (context.budget.executed >= context.budget.maxQueries) {
+    await recordRejectedAnalyticalQuery(context.queryRecorder, {
+      runtime: "albert-v3",
+      source: "shopify_admin",
+      operation: "run_shopify_admin_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      queryDocument,
+    }, {
+      code: "query_budget_exhausted",
+      message: "The query budget for this turn is spent.",
+    });
     return { ok: false, error: "The query budget for this turn is spent. Answer with the evidence already gathered." };
   }
   await context.emit({
@@ -560,6 +647,14 @@ async function executeGovernedShopifyAdminQuery(
     label: sanitizeTraceText(`Checking Shopify: ${input.topic}`, 160),
     detail: sanitizeTraceText(`${input.rootField}: registry-selected fields`, 300),
   });
+  const audit = await beginAnalyticalQueryAttempt(context.queryRecorder, {
+    runtime: "albert-v3",
+    source: "shopify_admin",
+    operation: "run_shopify_admin_query",
+    topic: input.topic,
+    ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+    queryDocument,
+  });
   let output;
   try {
     const { connectionId, ...queryInput } = input;
@@ -568,6 +663,11 @@ async function executeGovernedShopifyAdminQuery(
       signal: context.signal,
     });
   } catch (error) {
+    await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+      status: context.signal?.aborted ? "cancelled" : "failed",
+      failureCode: context.signal?.aborted ? "shopify_admin_query_cancelled" : "shopify_admin_query_failed",
+      failureMessage: sanitizeQueryFailureMessage(error, "The governed Shopify store lookup failed."),
+    });
     await context.emit({
       type: "progress",
       status: "warning",
@@ -581,6 +681,18 @@ async function executeGovernedShopifyAdminQuery(
       guidance: "Correct exact registry fields with search_shopify_admin_catalogue. Never replace this with raw GraphQL, ShopifyQL, SQL, a URL, or a generic HTTP call.",
     };
   }
+  await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+    status: "succeeded",
+    executionMs: output.durationMs,
+    rowCount: flattenShopifyAdminResult(output.data).length,
+    resultMetadata: {
+      requestId: output.requestId,
+      apiVersion: output.apiVersion,
+      queryDigest: output.queryDigest,
+      responseDigest: output.responseDigest,
+      protected: Boolean(output.approvalEvidenceDigest),
+    },
+  });
   context.budget.executed += 1;
   const leaves = flattenShopifyAdminResult(output.data);
   const timeRange: TraceTimeRange = {
@@ -950,17 +1062,39 @@ export async function executeGovernedCubeQuery(
   context: V3TurnContext,
   input: CubeQueryToolInput,
 ): Promise<Record<string, unknown>> {
+  const rejectAttempt = async (
+    code: string,
+    message: string,
+    response: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    await recordRejectedAnalyticalQuery(context.queryRecorder, {
+      runtime: "albert-v3",
+      source: "cube",
+      operation: "run_cube_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      queryDocument: { ...input },
+    }, { code, message });
+    return response;
+  };
   if (context.budget.executed >= context.budget.maxQueries) {
-    return {
+    return rejectAttempt("query_budget_exhausted", "The query budget for this turn is spent.", {
       ok: false,
       error: "The query budget for this turn is spent. Answer with the evidence already gathered.",
-    };
+    });
   }
   const outside = viewsOutsideRoute(context, memberViews(input));
-  if (outside.length > 0) return outOfScopeError(context, outside);
+  if (outside.length > 0) {
+    const response = outOfScopeError(context, outside);
+    return rejectAttempt("cube_view_outside_route", String(response.error), response);
+  }
   const timeProblem = timeDimensionProblems(input.timeDimensions, context.config.timezone);
   if (timeProblem) {
-    return { ok: false, error: timeProblem, guidance: "Fix the time dimension and run the query again; this attempt did not use the query budget." };
+    return rejectAttempt("cube_time_dimension_invalid", timeProblem, {
+      ok: false,
+      error: timeProblem,
+      guidance: "Fix the time dimension and run the query again; this attempt did not use the query budget.",
+    });
   }
   const query = toCubeQuery(input, context.config.timezone);
   const label = context.branchLabel ? `${context.branchLabel} · ${input.topic}` : input.topic;
@@ -985,13 +1119,13 @@ export async function executeGovernedCubeQuery(
           label: sanitizeTraceText(`Skipped ${label} — ${preValidated.cubes.join(", ")} already returned no rows at all this turn`, 160),
           detail: sanitizeTraceText(`Albert's copy of the ${connector} data is empty; the sync has not landed`, 200),
         });
-        return {
+        return rejectAttempt("cube_known_empty_requery", `${preValidated.cubes.join(", ")} already returned zero rows with no filters this turn.`, {
           ok: false,
           error: `${preValidated.cubes.join(", ")} already returned zero rows with no filters this turn; re-running cannot change that.`,
           guidance: connectorLooksUnpopulated(context, connector)
             ? unpopulatedConnectorGuidance(connector, [...emptyCubes])
             : `Do not re-query ${preValidated.cubes.join(", ")}. If the owner's question genuinely needs this data, say plainly that Albert holds no ${connector} rows for it yet.`,
-        };
+        });
       }
     }
   }
@@ -1007,13 +1141,27 @@ export async function executeGovernedCubeQuery(
     ),
   });
 
-  let { validated, result } = await context.cube.loadQuery(query, { signal: context.signal });
+  let { validated, result } = await context.cube.loadQuery(query, {
+    signal: context.signal,
+    audit: {
+      operation: "run_cube_query",
+      topic: input.topic,
+      ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+    },
+  });
   // A saturated database pool ("ResourceRequest timed out", 53300) is a
   // transient fault, not a bad query: one short pause and retry saves a whole
   // model round-trip that would otherwise be spent re-planning the same query.
   if (!result.ok && TRANSIENT_CUBE_ERROR.test(result.error) && !context.signal?.aborted) {
     await new Promise((resolve) => setTimeout(resolve, 4_000));
-    ({ validated, result } = await context.cube.loadQuery(query, { signal: context.signal }));
+    ({ validated, result } = await context.cube.loadQuery(query, {
+      signal: context.signal,
+      audit: {
+        operation: "run_cube_query_retry",
+        topic: input.topic,
+        ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+      },
+    }));
   }
 
   if (!result.ok || !validated) {
@@ -1740,7 +1888,19 @@ export function createV3Tools(
     execute: async (raw, runContext) => {
       const input = raw as z.infer<TSchema>;
       const context = contextOf(runContext);
+      const queryDocument = { tool: spec.mcpTool, arguments: spec.toArgs(input) };
       if (!context.xeroMcp) {
+        await recordRejectedAnalyticalQuery(context.queryRecorder, {
+          runtime: "albert-v3",
+          source: "xero_mcp",
+          operation: spec.name,
+          topic: sanitizeTraceText(spec.runningLabel(input), 160),
+          ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+          queryDocument,
+        }, {
+          code: "xero_mcp_unavailable",
+          message: "Live Xero reports need a connected Xero organisation and owner or manager access.",
+        });
         return { ok: false, error: "Live Xero reports need a connected Xero organisation and owner or manager access." };
       }
       await context.emit({
@@ -1751,8 +1911,26 @@ export function createV3Tools(
         detail: sanitizeTraceText(spec.detail(input), 80),
       });
       const startedAt = Date.now();
+      const audit = await beginAnalyticalQueryAttempt(context.queryRecorder, {
+        runtime: "albert-v3",
+        source: "xero_mcp",
+        operation: spec.name,
+        topic: sanitizeTraceText(spec.runningLabel(input), 160),
+        ...(context.branchLabel ? { branchLabel: context.branchLabel } : {}),
+        queryDocument,
+      });
+      let auditFinished = false;
       try {
         const result = await context.xeroMcp.callTool(spec.mcpTool, spec.toArgs(input), context.signal);
+        if (result.isError) {
+          await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+            status: "failed",
+            failureCode: "xero_mcp_query_failed",
+            failureMessage: sanitizeQueryFailureMessage(result.text ?? spec.failure, spec.failure),
+            resultMetadata: { tool: spec.mcpTool },
+          });
+          auditFinished = true;
+        }
         await context.emit({
           type: "progress",
           status: result.isError ? "error" : "complete",
@@ -1788,6 +1966,17 @@ export function createV3Tools(
         const parsed = spec.tabular
           ? parseXeroReportTable(result.text ?? "", topic)
           : undefined;
+        await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+          status: "succeeded",
+          executionMs,
+          rowCount: parsed ? parsed.rows.length : 1,
+          resultMetadata: {
+            tool: spec.mcpTool,
+            organisation: result.organisation?.displayName ?? null,
+            tabular: Boolean(parsed),
+          },
+        });
+        auditFinished = true;
         const queryEvent = await context.emit({
           type: "query",
           status: "complete",
@@ -1892,6 +2081,13 @@ export function createV3Tools(
           statement: result.text ?? "",
         };
       } catch (error) {
+        if (!auditFinished) {
+          await finishAnalyticalQueryAttempt(context.queryRecorder, audit, {
+            status: context.signal?.aborted ? "cancelled" : "failed",
+            failureCode: context.signal?.aborted ? "xero_mcp_query_cancelled" : "xero_mcp_query_failed",
+            failureMessage: sanitizeQueryFailureMessage(error, spec.failure),
+          });
+        }
         if (process.env.ALBERT_DEBUG_XERO_TOOL) console.error("[xero tool]", error);
         return { ok: false, error: error instanceof Error ? error.message : spec.failure };
       }

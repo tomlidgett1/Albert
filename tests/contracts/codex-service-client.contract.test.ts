@@ -123,3 +123,68 @@ test("localhost uses short signed background-job polls instead of one long fetch
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Codex query-audit wire events reach the durable sink and never enter the owner trace", async () => {
+  const originalFetch = globalThis.fetch;
+  const attemptId = "01J00000000000000000000055";
+  globalThis.fetch = (async (input) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    if (url.pathname === "/v1/codex/jobs") {
+      return Response.json({ jobId: turn.requestId }, { status: 202 });
+    }
+    return Response.json({
+      jobId: turn.requestId,
+      cursor: 3,
+      events: [
+        {
+          type: "query_audit",
+          phase: "start",
+          attempt: {
+            queryAttemptId: attemptId,
+            runtime: "codex-app-server",
+            source: "cube",
+            operation: "codex_semantic_query",
+            topic: "Sales review",
+            queryDocument: { measures: ["sales_analytics.sales"] },
+          },
+        },
+        { type: "progress", status: "running", stage: "query", label: "Querying sales" },
+        {
+          type: "query_audit",
+          phase: "finish",
+          outcome: {
+            queryAttemptId: attemptId,
+            status: "succeeded",
+            executionMs: 12,
+            rowCount: 1,
+            resultMetadata: { view: "sales_analytics" },
+          },
+        },
+      ],
+      result: {
+        answerState: "Verified",
+        queriesExecuted: 1,
+        codexThreadId: "thr_audit_fixture",
+        codexTurnId: "turn_audit_fixture",
+        durationMs: 20,
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const traceEvents: unknown[] = [];
+    const auditEvents: unknown[] = [];
+    const client = new CodexRuntimeServiceClient("https://codex.example.test", secret);
+    await client.runTurn(
+      turn,
+      (event) => traceEvents.push(event),
+      undefined,
+      async (event) => { auditEvents.push(event); },
+    );
+    assert.equal(traceEvents.length, 1);
+    assert.equal((traceEvents[0] as { type: string }).type, "progress");
+    assert.equal(auditEvents.length, 2);
+    assert.deepEqual(auditEvents.map((event) => (event as { phase: string }).phase), ["start", "finish"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

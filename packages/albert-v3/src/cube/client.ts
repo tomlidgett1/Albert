@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { dump as dumpYaml } from "js-yaml";
+import {
+  beginAnalyticalQueryAttempt,
+  finishAnalyticalQueryAttempt,
+  normalizeQueryFailureCode,
+  sanitizeQueryFailureMessage,
+  type AnalyticalQueryRecorder,
+} from "../../../shared/src/query-audit.js";
 import { signCubeJwt } from "./jwt.js";
 import {
   CUBE_GRANULARITIES,
@@ -21,6 +28,13 @@ export type CubeClientOptions = Readonly<{
   apiSecret: string;
   securityContext: CubeSecurityContext;
   fetcher?: typeof fetch;
+  queryRecorder?: AnalyticalQueryRecorder;
+}>;
+
+export type CubeQueryAuditContext = Readonly<{
+  operation?: string;
+  topic?: string;
+  branchLabel?: string;
 }>;
 
 export type ValidatedCubeQuery = Readonly<{
@@ -500,6 +514,7 @@ export class CubeClient {
   private readonly apiUrl: string;
   private readonly token: string;
   private readonly fetcher: typeof fetch;
+  private readonly queryRecorder: AnalyticalQueryRecorder | undefined;
   private cataloguePromise: Promise<CubeCatalogue> | undefined;
   private readonly resultCache = new Map<string, CubeLoadResponse>();
 
@@ -510,6 +525,7 @@ export class CubeClient {
       securityContext: options.securityContext,
     });
     this.fetcher = options.fetcher ?? fetch;
+    this.queryRecorder = options.queryRecorder;
   }
 
   async fetchCatalogue(signal?: AbortSignal): Promise<CubeCatalogue> {
@@ -533,10 +549,62 @@ export class CubeClient {
    */
   async loadQuery(
     query: CubeQuery,
-    options: Readonly<{ signal?: AbortSignal }> = {},
+    options: Readonly<{ signal?: AbortSignal; audit?: CubeQueryAuditContext }> = {},
+  ): Promise<Readonly<{ validated: ValidatedCubeQuery | undefined; result: CubeLoadResponse }>> {
+    const begun = await beginAnalyticalQueryAttempt(this.queryRecorder, {
+      runtime: "albert-v3",
+      source: "cube",
+      operation: options.audit?.operation ?? "cube_load",
+      ...(options.audit?.topic ? { topic: options.audit.topic } : {}),
+      ...(options.audit?.branchLabel ? { branchLabel: options.audit.branchLabel } : {}),
+      queryDocument: { ...query },
+    });
+    let loaded: Readonly<{ validated: ValidatedCubeQuery | undefined; result: CubeLoadResponse }>;
+    try {
+      loaded = await this.loadQueryCore(query, options.signal);
+    } catch (error) {
+      await finishAnalyticalQueryAttempt(this.queryRecorder, begun, {
+        status: options.signal?.aborted ? "cancelled" : "failed",
+        failureCode: options.signal?.aborted ? "cube_query_cancelled" : "cube_query_exception",
+        failureMessage: sanitizeQueryFailureMessage(error, "Cube could not execute the governed query."),
+      });
+      throw error;
+    }
+
+    if (loaded.result.ok) {
+      await finishAnalyticalQueryAttempt(this.queryRecorder, begun, {
+        status: "succeeded",
+        rowCount: loaded.result.rows.length,
+        ...(loaded.result.cached ? {} : { executionMs: loaded.result.executionMs }),
+        resultMetadata: {
+          cached: loaded.result.cached,
+          view: loaded.validated?.view ?? null,
+          cubes: loaded.validated?.cubes ?? [],
+        },
+      });
+    } else {
+      const cancelled = options.signal?.aborted || /cancelled|aborted/iu.test(loaded.result.error);
+      const rejected = loaded.validated === undefined
+        && !/down|could not be reached|HTTP 5|timed out|timeout|cancelled|aborted/iu.test(loaded.result.error);
+      await finishAnalyticalQueryAttempt(this.queryRecorder, begun, {
+        status: cancelled ? "cancelled" : rejected ? "rejected" : "failed",
+        executionMs: loaded.result.executionMs,
+        failureCode: normalizeQueryFailureCode(
+          cancelled ? "cube_query_cancelled" : rejected ? "cube_query_rejected" : "cube_query_failed",
+        ),
+        failureMessage: sanitizeQueryFailureMessage(loaded.result.error),
+        resultMetadata: { validated: Boolean(loaded.validated) },
+      });
+    }
+    return loaded;
+  }
+
+  private async loadQueryCore(
+    query: CubeQuery,
+    signal?: AbortSignal,
   ): Promise<Readonly<{ validated: ValidatedCubeQuery | undefined; result: CubeLoadResponse }>> {
     const started = Date.now();
-    const catalogue = await this.fetchCatalogue(options.signal);
+    const catalogue = await this.fetchCatalogue(signal);
     const validated = validateCubeQuery(query, catalogue);
     if ("error" in validated) {
       return {
@@ -553,7 +621,7 @@ export class CubeClient {
 
     const selectedView = catalogue.views.find(({ name }) => name === validated.view)!;
     const result = enforceCubeResultPrivacy(
-      await this.executeLoad(validated.query, started, options.signal),
+      await this.executeLoad(validated.query, started, signal),
       selectedView,
     );
     if (result.ok) this.resultCache.set(cacheKey, result);

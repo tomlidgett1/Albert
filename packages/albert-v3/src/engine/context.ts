@@ -16,6 +16,7 @@ import type { V3CommentaryState } from "./commentary.js";
 import type { V3ToolRoute } from "./connector-routing.js";
 import type { PriorTurnResult } from "./prior-results.js";
 import type { BusinessContextForTurn } from "../context-layer/schema.js";
+import type { AnalyticalQueryRecorder } from "../../../shared/src/query-audit.js";
 
 type TraceEventInput = TraceEvent extends infer Event
   ? Event extends TraceEvent
@@ -119,6 +120,8 @@ export type V3TurnContext = {
   /** Deterministic execution planes resolved before model tool exposure. */
   readonly toolRoute: V3ToolRoute;
   readonly emit: EmitV3Trace;
+  /** Durable start/outcome sink for every analytical query attempt. */
+  readonly queryRecorder?: AnalyticalQueryRecorder;
   readonly signal?: AbortSignal;
   readonly budget: { maxQueries: number; executed: number };
   /** Per-connector-domain sync watermarks resolved at turn start; empty when unavailable. */

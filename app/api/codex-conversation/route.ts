@@ -59,6 +59,7 @@ import {
   routeCodexMessage,
 } from "@/services/conversation/src";
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
+import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import { loadLatestSalesBriefing } from "@/services/control-plane/src/swarm-repository";
 import { readSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
 import { salesBriefingContextBlock } from "@/services/swarm/src/sales-deep";
@@ -313,6 +314,12 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError("The Codex conversation could not be started.", status, correlationId);
   }
   const conversationId = begun.conversationId;
+  const queryRecorder = createSupabaseAnalyticalQueryRecorder({
+    supabase: auth.supabase,
+    conversationId,
+    turnId,
+    correlationId,
+  });
   const localConversationResponse = (
     text: string,
     followUps: readonly string[],
@@ -666,7 +673,15 @@ export async function POST(request: Request): Promise<Response> {
           }
           await deliverRuntimeEvent(event);
         };
-        const runtimeOutcome = client.runTurn(serviceTurn, emitRuntimeEvent, streamSignal).then(
+        const runtimeOutcome = client.runTurn(
+          serviceTurn,
+          emitRuntimeEvent,
+          streamSignal,
+          async (event) => {
+            if (event.phase === "start") await queryRecorder.start(event.attempt);
+            else await queryRecorder.finish(event.outcome);
+          },
+        ).then(
           (result) => ({ ok: true as const, result }),
           (error: unknown) => ({ ok: false as const, error }),
         );

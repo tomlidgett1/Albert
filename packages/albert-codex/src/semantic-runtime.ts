@@ -31,7 +31,9 @@ import {
 } from "../../albert-v3/src/recipes/runtime.js";
 import {
   sanitizeAnswerText,
+  recordRejectedAnalyticalQuery,
   sanitizeTraceText,
+  type AnalyticalQueryRecorder,
   type TraceCell,
   type TraceEvent,
   type TraceProvenance,
@@ -108,6 +110,7 @@ export type CodexSemanticTurnOptions = Readonly<{
   sufficiencyReviewClient?: OpenAI;
   signal?: AbortSignal;
   emit: EmitCodexTrace;
+  queryRecorder?: AnalyticalQueryRecorder;
 }>;
 
 export type CodexSemanticTurnResult = Readonly<{
@@ -2841,7 +2844,10 @@ async function runCodexDeterministicRecipeFastPath(
     label: sanitizeTraceText(`Recognised question · ${matched.recipe.name.replace(/^recipe-/u, "").replace(/-/gu, " ")}`, 160),
     detail: period ? sanitizeTraceText(`Period: ${period}`, 120) : undefined,
   });
-  const loaded = await cube.loadQuery(prevalidated.query, { signal: options.signal });
+  const loaded = await cube.loadQuery(prevalidated.query, {
+    signal: options.signal,
+    audit: { operation: "codex_recipe_query", topic },
+  });
   const isList = matched.recipe.recipe?.presentation === "list";
   const rowCount = loaded.result.ok ? loaded.result.rows.length : 0;
   if (!loaded.result.ok || !loaded.validated || (!isList && rowCount !== 1) || (isList && rowCount > 200)) {
@@ -3110,7 +3116,11 @@ export async function runCodexSemanticTurn(
       });
     }
   }
-  const cube = new CubeBearerClient({ apiUrl: options.cubeApiUrl, bearer: turn.cubeBearer });
+  const cube = new CubeBearerClient({
+    apiUrl: options.cubeApiUrl,
+    bearer: turn.cubeBearer,
+    ...(options.queryRecorder ? { queryRecorder: options.queryRecorder } : {}),
+  });
   const config = loadAgentConfig();
   const descriptors = scopedDescriptors(config.accessibleViews, turn.activeConnectors);
   // With the feature enabled, every substantive analytical question reaches
@@ -3517,12 +3527,31 @@ export async function runCodexSemanticTurn(
     }
     const parsed = codexQueryToolInputSchema.safeParse(call.arguments);
     if (!parsed.success) {
+      await recordRejectedAnalyticalQuery(options.queryRecorder, {
+        runtime: "codex-app-server",
+        source: "cube",
+        operation: "codex_semantic_query",
+        queryDocument: { validation: "tool_schema_mismatch" },
+      }, {
+        code: "codex_query_schema_invalid",
+        message: parsed.error.issues[0]?.message ?? "The semantic query tool input was invalid.",
+      });
       return { success: false, text: `Invalid semantic query: ${parsed.error.issues[0]?.message ?? "schema mismatch"}.` };
     }
+    const recordRejectedQuery = async (code: string, message: string): Promise<void> => {
+      await recordRejectedAnalyticalQuery(options.queryRecorder, {
+        runtime: "codex-app-server",
+        source: "cube",
+        operation: "codex_semantic_query",
+        topic: parsed.data.topic,
+        queryDocument: { ...parsed.data.query },
+      }, { code, message });
+    };
     const priorChartAvailable = priorEvidence.some((result) => /\bchart data\b/iu.test(result.topic));
     if (priorChartAvailable && isCodexChartReformatRequest(turn.message)) {
       const allowance = codexChartReformatQueryAllowance(turn.message);
       if (queriesExecuted >= allowance) {
+        await recordRejectedQuery("codex_chart_requery_blocked", "A chart-only reformat may not run another analytical query.");
         return {
           success: false,
           text: JSON.stringify({
@@ -3545,6 +3574,7 @@ export async function runCodexSemanticTurn(
       const nextPending = codexPlanState?.steps.find((step) => (
         step.kind === "evidence" && step.status === "pending"
       ));
+      await recordRejectedQuery("codex_plan_step_saturated", "The active evidence plan step already has its maximum governed results.");
       return {
         success: false,
         text: JSON.stringify({
@@ -3559,6 +3589,7 @@ export async function runCodexSemanticTurn(
     // genuinely broad question but forces composition eventually; derive,
     // re-aggregate and re-project existing results instead of re-querying.
     if (queriesExecuted >= queryBudget.hard) {
+      await recordRejectedQuery("codex_query_budget_exhausted", `The governed query budget of ${queryBudget.hard} is exhausted.`);
       return {
         success: false,
         text: `The governed query budget for this brief (${queryBudget.hard}) is exhausted. Do not investigate another surface. Complete or settle the plan and compose now from the evidence already gathered; use albert.derive_result only for arithmetic over existing cells.`,
@@ -3566,6 +3597,7 @@ export async function runCodexSemanticTurn(
     }
     const prevalidated = validateCubeQuery(parsed.data.query, scopedCatalogue);
     if ("error" in prevalidated) {
+      await recordRejectedQuery("codex_cube_validation_rejected", prevalidated.error);
       return { success: false, text: JSON.stringify({ ok: false, error: prevalidated.error }) };
     }
     if (!codexPlanState && shouldCreateCodexFallbackPlan(turn.message)) {
@@ -3584,6 +3616,7 @@ export async function runCodexSemanticTurn(
       .update(JSON.stringify(canonicalQueryValue(orderlessShape)))
       .digest("hex");
     if (successfulQueryDigests.has(queryDigest) || untruncatedOrderlessDigests.has(orderlessDigest)) {
+      await recordRejectedQuery("codex_duplicate_query_rejected", "An equivalent governed query already succeeded in this turn.");
       return {
         success: false,
         text: "This equivalent governed query already succeeded (same members and period; ordering does not change the cells). Reuse its prior resultId instead of repeating it.",
@@ -3596,7 +3629,10 @@ export async function runCodexSemanticTurn(
       label: sanitizeTraceText(`Querying ${parsed.data.topic}`, 160),
       detail: sanitizeTraceText(prevalidated.members.join(", "), 300),
     });
-    const loaded = await cube.loadQuery(prevalidated.query, { signal: options.signal });
+    const loaded = await cube.loadQuery(prevalidated.query, {
+      signal: options.signal,
+      audit: { operation: "codex_semantic_query", topic: parsed.data.topic },
+    });
     if (!loaded.result.ok || !loaded.validated) {
       await options.emit({
         type: "progress",
