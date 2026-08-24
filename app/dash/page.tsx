@@ -15,11 +15,13 @@ import {
   type AgentRunPreferences,
   type AlbertModelId,
   type ReasoningEffort,
+  type AnswerState,
   type TraceAnswerEvent,
   type TraceClarificationEvent,
   type TraceEvent,
   type TraceTableEvent,
 } from "@/packages/shared/src";
+import { swarmEmptyProvenance, swarmPlanSteps } from "@/services/swarm/src/parent-events";
 import {
   getPublicSpecialistAgentDefinition,
   normalizeSpecialistAgentId,
@@ -70,7 +72,16 @@ import TenantDeletionWorkspace, {
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
 import ProactiveWorkspace from "./components/ProactiveWorkspace";
+import SwarmPanel from "./components/SwarmPanel";
 import RecommendedAnalysis from "./components/RecommendedAnalysis";
+import {
+  hydrateSwarmFromRun,
+  startSwarmFleet,
+  stopSwarmFleet,
+  subscribeSwarmRun,
+  swarmRunSnapshot,
+  type SwarmAgentLiveState,
+} from "./lib/swarm-run-controller";
 import MyDataWorkspace from "./components/MyDataWorkspace";
 import TestChartWorkspace from "./components/TestChartWorkspace";
 import NewTestWorkspace from "./components/NewTestWorkspace";
@@ -415,6 +426,49 @@ function buildStoppedTraceEvent(
 }
 
 /** End any live-looking assistant rows. Used when leaving a chat or replacing a turn. */
+function swarmAgentPhase(status: string): SwarmAgentLiveState["phase"] {
+  if (status === "completed") return "done";
+  if (status === "failed") return "failed";
+  if (status === "stopped") return "stopped";
+  if (status === "running") return "researching";
+  return "pending";
+}
+
+function swarmAgentsFromPersisted(
+  agents: readonly Readonly<{
+    agentKey: string;
+    title: string;
+    tagline: string;
+    role: string;
+    status: string;
+    headline: string | null;
+    answerState: string | null;
+    conversationId: string | null;
+    turnId: string | null;
+    failureNote: string | null;
+  }>[],
+): SwarmAgentLiveState[] {
+  return agents.map((agent) => ({
+    key: agent.agentKey,
+    title: agent.title,
+    tagline: agent.tagline,
+    role: agent.role,
+    phase: swarmAgentPhase(agent.status),
+    statusLine: agent.headline
+      ?? (agent.status === "failed"
+        ? (agent.failureNote ?? "Failed")
+        : agent.status === "running"
+          ? "Working…"
+          : "Queued"),
+    queriesSeen: 0,
+    headline: agent.headline,
+    answerState: agent.answerState,
+    conversationId: agent.conversationId,
+    turnId: agent.turnId,
+    error: agent.failureNote,
+  }));
+}
+
 function finalizeStreamingMessages(
   messages: readonly ChatMessage[],
   message = "This analysis was interrupted.",
@@ -809,6 +863,13 @@ export default function DashPage() {
     }
   });
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
+  const [swarmEnabled, setSwarmEnabled] = useState(false);
+  const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
+  const [swarmConversationIds, setSwarmConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const swarmEnabledRef = useRef(false);
+  const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
   const codexPromptMenuId = useId();
   const codexPromptMenuRef = useRef<HTMLDivElement>(null);
@@ -959,6 +1020,9 @@ export default function DashPage() {
     activeChatRuntimeRef.current = activeChatRuntime;
   }, [activeChatRuntime]);
   useEffect(() => {
+    swarmEnabledRef.current = swarmEnabled;
+  }, [swarmEnabled]);
+  useEffect(() => {
     specialistAgentIdRef.current = specialistAgentId;
   }, [specialistAgentId]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
@@ -988,6 +1052,13 @@ export default function DashPage() {
   const keyInsights = deriveKeyInsights(keyInsightTurns);
   const keyInsightsStreaming = keyInsightTurns.some((turn) => turn.streaming);
   const keyInsightActivity = latestInsightActivity(keyInsightTurns);
+  const sidePanelOpen = takeawaysOpen || swarmPanelOpen;
+  const chatBusy = isChatResponding
+    || (
+      swarmSnapshot.active
+      && Boolean(swarmSnapshot.parentConversationId)
+      && swarmSnapshot.parentConversationId === (activeConversationId ?? null)
+    );
   // Empty "New Analysis" keeps the Ask-me-anything title, but uses the same
   // compact input height as an active conversation. Tall hero sizing only runs
   // briefly after the first send while the docked transition finishes.
@@ -1134,6 +1205,39 @@ export default function DashPage() {
       cancelled = true;
     };
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/swarm", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setSwarmConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [swarmSnapshot.settledCount, swarmSnapshot.runId]);
+  useEffect(() => {
+    const ids = swarmSnapshot.agents
+      .map((agent) => agent.conversationId)
+      .filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return;
+    setSwarmConversationIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const id of ids) {
+        if (next.has(id)) continue;
+        next.add(id);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [swarmSnapshot.agents]);
   const pinnedConversationIds = useMemo(
     () => conversationSidebarPrefs.pinnedIds,
     [conversationSidebarPrefs.pinnedIds],
@@ -1148,12 +1252,13 @@ export default function DashPage() {
       if (archivedConversationIds.has(conversation.conversationId)) return false;
       // Proactive research conversations live in the control panel, not history.
       if (proactiveConversationIds.has(conversation.conversationId)) return false;
+      if (swarmConversationIds.has(conversation.conversationId)) return false;
       if (!needle) return true;
       return conversation.title.toLowerCase().includes(needle)
         || conversation.lastMessage.toLowerCase().includes(needle)
         || conversation.status.toLowerCase().includes(needle);
     });
-  }, [archivedConversationIds, conversationSummaries, proactiveConversationIds, query]);
+  }, [archivedConversationIds, conversationSummaries, proactiveConversationIds, query, swarmConversationIds]);
   const conversationGroups = useMemo(() => {
     const byId = new Map(
       filteredConversations.map((conversation) => [conversation.conversationId, conversation]),
@@ -1193,6 +1298,7 @@ export default function DashPage() {
     && conversationSummaries.some((conversation) => (
       !archivedConversationIds.has(conversation.conversationId)
       && !proactiveConversationIds.has(conversation.conversationId)
+      && !swarmConversationIds.has(conversation.conversationId)
     ));
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
@@ -1761,6 +1867,88 @@ export default function DashPage() {
     });
   };
 
+  const hydrateSwarmConversation = useCallback((conversationId: string) => {
+    void fetch(`/api/swarm?conversationId=${encodeURIComponent(conversationId)}`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (!payload || typeof payload !== "object") return;
+        const run = (payload as {
+          run?: {
+            runId: string;
+            parentConversationId: string;
+            parentTurnId: string;
+            question: string;
+            status: string;
+            plan?: { periodLabel?: string };
+            synthesis?: {
+              answer?: string;
+              answerState?: string;
+              followUps?: string[];
+            } | null;
+            agents?: readonly {
+              agentKey: string;
+              title: string;
+              tagline: string;
+              role: string;
+              status: string;
+              headline: string | null;
+              answerState: string | null;
+              conversationId: string | null;
+              turnId: string | null;
+              failureNote: string | null;
+            }[];
+          };
+        }).run;
+        if (!run || run.parentConversationId !== conversationId || !run.agents) return;
+        const agents = swarmAgentsFromPersisted(run.agents);
+        hydrateSwarmFromRun({
+          runId: run.runId,
+          parentConversationId: run.parentConversationId,
+          parentTurnId: run.parentTurnId,
+          question: run.question,
+          periodLabel: run.plan?.periodLabel ?? "As asked",
+          agents,
+          answer: run.synthesis?.answer ?? null,
+          answerState: run.synthesis?.answerState ?? null,
+          followUps: run.synthesis?.followUps,
+        });
+        if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
+          setSwarmPanelOpen(true);
+          setTakeawaysOpen(false);
+        }
+        const settled = run.agents.every((agent) => (
+          agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
+        ));
+        if (!settled || run.synthesis || run.status === "stopped" || run.status === "abandoned") {
+          return;
+        }
+        void fetch("/api/swarm/synthesis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId: run.runId }),
+        }).then((response) => (response.ok ? response.json() : null)).then((result: unknown) => {
+          const synthesis = result && typeof result === "object"
+            ? (result as {
+              synthesis?: { answer?: string; answerState?: string; followUps?: string[] };
+            }).synthesis
+            : null;
+          if (!synthesis?.answer) return;
+          hydrateSwarmFromRun({
+            runId: run.runId,
+            parentConversationId: run.parentConversationId,
+            parentTurnId: run.parentTurnId,
+            question: run.question,
+            periodLabel: run.plan?.periodLabel ?? "As asked",
+            agents,
+            answer: synthesis.answer,
+            answerState: synthesis.answerState ?? null,
+            followUps: synthesis.followUps,
+          });
+        }).catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, []);
+
   const openSavedConversation = async (conversationId: string) => {
     if (conversationId === activeConversationId && activeItem === "Chat" && !openingConversationId) {
       return;
@@ -1809,6 +1997,12 @@ export default function DashPage() {
 
     // A live background turn already owns the freshest transcript.
     if (liveTurnsRef.current.has(conversationId)) {
+      if (swarmRunSnapshot().parentConversationId === conversationId) {
+        setSwarmPanelOpen(true);
+        setTakeawaysOpen(false);
+      } else {
+        hydrateSwarmConversation(conversationId);
+      }
       return;
     }
 
@@ -1842,11 +2036,13 @@ export default function DashPage() {
       // Keep local follow-ups that are ahead of the persisted server history.
       if (local && localUserCount > serverUserCount) {
         applyCachedConversation(conversationId, local);
+        hydrateSwarmConversation(conversationId);
         return;
       }
 
       conversationCacheRef.current.set(conversationId, restored);
       applyCachedConversation(conversationId, restored);
+      hydrateSwarmConversation(conversationId);
     } catch (error) {
       if (controller.signal.aborted || requestId !== openConversationRequestIdRef.current) return;
       setOpeningConversationId(null);
@@ -2339,6 +2535,14 @@ export default function DashPage() {
     const requestConversationId = options && "conversationId" in options
       ? (options.conversationId ?? undefined)
       : activeConversationId;
+    const liveSwarm = swarmRunSnapshot();
+    if (
+      liveSwarm.active
+      && liveSwarm.parentConversationId
+      && liveSwarm.parentConversationId === requestConversationId
+    ) {
+      stopSwarmFleet();
+    }
     let turnKey = requestConversationId && ulidPattern.test(requestConversationId)
       ? requestConversationId
       : `draft:${Date.now().toString(36)}`;
@@ -2375,7 +2579,9 @@ export default function DashPage() {
       : null;
     const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
     const runSpecialistAgentId = specialistAgentIdRef.current;
-    const runRuntime = options?.forceRuntime
+    const runRuntime = swarmEnabledRef.current
+      ? "codex"
+      : options?.forceRuntime
       ? options.forceRuntime
       : activeChatRuntimeRef.current === "codex"
       ? "codex"
@@ -2528,7 +2734,119 @@ export default function DashPage() {
       if (current) commitMessages(apply(current));
     };
 
+    let swarmFleetStarted = false;
     try {
+      if (swarmEnabledRef.current) {
+        debug.request("/api/swarm", { message: text, preferences: runPreferences });
+        const response = await fetch("/api/swarm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            preferences: runPreferences,
+            ...(requestConversationId ? { conversationId: requestConversationId } : {}),
+            ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
+          }),
+          signal: controller.signal,
+        });
+        if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null) as { error?: string } | null;
+          throw new Error(describeChatFailure(payload?.error || `HTTP ${response.status}`, {
+            runtime: "codex",
+            httpStatus: response.status,
+            phase: "start",
+          }));
+        }
+        const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
+        const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+        const payload = await response.json() as {
+          run?: { runId?: string; plan?: { periodLabel?: string } };
+          agents?: readonly {
+            key: string;
+            title: string;
+            tagline: string;
+            role: string;
+            prompt: string;
+          }[];
+          preferences?: { model: string; reasoningEffort: string; fastMode: boolean };
+          concurrency?: number;
+        };
+        if (
+          !responseConversationId || !ulidPattern.test(responseConversationId)
+          || !responseTurnId || !ulidPattern.test(responseTurnId)
+          || !payload.run?.runId
+          || !payload.agents
+        ) {
+          throw new Error("The swarm did not return its conversation or agents.");
+        }
+        if (trackedConversationId && computingToken && trackedConversationId !== responseConversationId) {
+          clearConversationComputing(trackedConversationId, computingToken);
+        }
+        const previousKey = turnKey;
+        trackedConversationId = responseConversationId;
+        turnKey = responseConversationId;
+        computingToken = markConversationComputing(responseConversationId);
+        const live = liveTurnsRef.current.get(previousKey);
+        if (live) {
+          liveTurnsRef.current.delete(previousKey);
+          liveTurnsRef.current.set(turnKey, { ...live, turnId: responseTurnId });
+        }
+        const draftCache = conversationCacheRef.current.get(previousKey);
+        if (draftCache) {
+          conversationCacheRef.current.delete(previousKey);
+          conversationCacheRef.current.set(turnKey, draftCache);
+        }
+        if (viewingKeyRef.current === previousKey) viewingKeyRef.current = turnKey;
+        if (
+          !activeConversationIdRef.current
+          || activeConversationIdRef.current === requestConversationId
+          || viewingKeyRef.current === turnKey
+        ) {
+          setActiveConversationId(responseConversationId);
+          activeConversationIdRef.current = responseConversationId;
+        }
+        setActiveChatRuntime("codex");
+        activeChatRuntimeRef.current = "codex";
+        const now = new Date().toISOString();
+        setConversationSummaries((current) => {
+          const existingSummary = current.find((item) => item.conversationId === responseConversationId);
+          return [{
+            conversationId: responseConversationId,
+            title: existingSummary?.title || formatConversationTitle(text),
+            titlePending: existingSummary?.titlePending ?? true,
+            status: existingSummary?.status || "active",
+            updatedAt: now,
+            lastMessage: text,
+            lastTurnStatus: "running",
+            runtime: "codex",
+            specialistAgentId: runSpecialistAgentId,
+          }, ...current.filter((item) => item.conversationId !== responseConversationId)];
+        });
+        updateAssistant({
+          runtime: "codex",
+          conversationId: responseConversationId,
+          turnId: responseTurnId,
+        });
+        startSwarmFleet({
+          runId: payload.run.runId,
+          parentConversationId: responseConversationId,
+          parentTurnId: responseTurnId,
+          question: text,
+          periodLabel: payload.run.plan?.periodLabel ?? "As asked",
+          agents: payload.agents,
+          preferences: payload.preferences ?? {
+            model: runPreferences.model,
+            reasoningEffort: runPreferences.reasoningEffort,
+            fastMode: runPreferences.fastMode,
+          },
+          concurrency: payload.concurrency ?? 3,
+        });
+        swarmFleetStarted = true;
+        setSwarmPanelOpen(true);
+        setTakeawaysOpen(false);
+        return;
+      }
       const requestBody = {
         message: text,
         ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
@@ -2856,6 +3174,9 @@ export default function DashPage() {
           : entry
       )));
     } finally {
+      if (swarmFleetStarted) {
+        return;
+      }
       if (options?.observer && !observerNotified) {
         observerNotified = true;
         const answer = [...receivedEvents]
@@ -2912,16 +3233,144 @@ export default function DashPage() {
     }
   };
 
+  useEffect(() => {
+    const snap = swarmSnapshot;
+    if (!snap.parentConversationId || !snap.runId) return;
+    const cacheKey = snap.parentConversationId;
+    const cache = conversationCacheRef.current.get(cacheKey);
+    const live = liveTurnsRef.current.get(cacheKey);
+    if (!cache && !live) return;
+
+    const planEvent: TraceEvent = {
+      id: `swarm_plan_${snap.runId}`,
+      sequence: 2,
+      type: "plan",
+      occurredAt: new Date().toISOString(),
+      steps: swarmPlanSteps({
+        agents: snap.agents.map((agent) => ({
+          key: agent.key,
+          title: agent.title,
+          status: agent.phase,
+        })),
+        synthesising: snap.synthesising,
+        synthesised: Boolean(snap.answer),
+      }),
+    };
+    const ackEvent: TraceEvent = {
+      id: `swarm_ack_${snap.runId}`,
+      sequence: 1,
+      type: "narrative",
+      purpose: "acknowledgement",
+      occurredAt: new Date().toISOString(),
+      text: snap.periodLabel
+        ? `I'll split this across ${snap.agents.length} specialists for ${snap.periodLabel}.`
+        : `I'll split this across ${snap.agents.length} specialists, then combine what they find.`,
+    };
+    const events: TraceEvent[] = [ackEvent, planEvent];
+    if (snap.answer) {
+      const answerState: AnswerState = (
+        snap.answerState === "Verified"
+        || snap.answerState === "Derived"
+        || snap.answerState === "Qualified"
+        || snap.answerState === "Exploratory"
+        || snap.answerState === "Clarification"
+        || snap.answerState === "No data"
+        || snap.answerState === "Unavailable"
+      ) ? snap.answerState : "Derived";
+      events.push({
+        id: `swarm_answer_${snap.runId}`,
+        sequence: 3,
+        type: "answer",
+        status: answerState === "Unavailable" ? "warning" : "complete",
+        occurredAt: new Date().toISOString(),
+        state: answerState,
+        text: snap.answer,
+        provenance: swarmEmptyProvenance("Australia/Melbourne"),
+        followUps: [...snap.followUps],
+        presentedResultIds: [],
+        claims: [],
+      });
+    } else if (snap.error) {
+      events.push({
+        id: `swarm_error_${snap.runId}`,
+        sequence: 3,
+        type: "error",
+        status: "error",
+        occurredAt: new Date().toISOString(),
+        message: snap.error,
+        recoverable: true,
+      });
+    }
+
+    const patch = (messages: ChatMessage[]): ChatMessage[] => messages.map((message) => {
+      if (message.role !== "assistant") return message;
+      if (snap.parentTurnId && message.turnId && message.turnId !== snap.parentTurnId) return message;
+      if (!snap.parentTurnId && !message.isStreaming && !message.turnId) return message;
+      return {
+        ...message,
+        isStreaming: !snap.answer && !snap.error && snap.active,
+        conversationId: snap.parentConversationId ?? message.conversationId,
+        turnId: snap.parentTurnId ?? message.turnId,
+        runtime: "codex",
+        events,
+      };
+    });
+
+    if (cache) {
+      const next = { ...cache, messages: patch(cache.messages) };
+      conversationCacheRef.current.set(cacheKey, next);
+      if (
+        activeConversationIdRef.current === cacheKey
+        || viewingKeyRef.current === cacheKey
+      ) {
+        setChatMessages(next.messages);
+      }
+    } else if (
+      activeConversationIdRef.current === cacheKey
+      || viewingKeyRef.current === cacheKey
+    ) {
+      setChatMessages((current) => patch(current));
+    }
+
+    if (!snap.answer && !snap.error) return;
+    if (live && liveTurnsRef.current.get(cacheKey) === live) {
+      liveTurnsRef.current.delete(cacheKey);
+    }
+    if (computingTokensRef.current.has(cacheKey)) {
+      computingTokensRef.current.delete(cacheKey);
+      setComputingConversationIds(new Set(computingTokensRef.current.keys()));
+    }
+    if (
+      activeConversationIdRef.current === cacheKey
+      || viewingKeyRef.current === cacheKey
+    ) {
+      setIsChatResponding(false);
+    }
+    void loadConversationSummaries();
+  }, [loadConversationSummaries, swarmSnapshot]);
+
   const stopChatResponse = useCallback(() => {
     const key = viewingKeyRef.current
       ?? (activeConversationId && ulidPattern.test(activeConversationId) ? activeConversationId : null);
+    const swarm = swarmRunSnapshot();
+    const swarmHere = Boolean(
+      swarm.active
+      && swarm.parentConversationId
+      && key
+      && swarm.parentConversationId === key,
+    );
+    if (swarmHere) stopSwarmFleet();
     if (!key) return;
     const live = liveTurnsRef.current.get(key);
-    if (!live || live.controller.signal.aborted) return;
-    const continuesInBackground = live.runtime === "codex";
-    live.controller.abort();
-    liveTurnsRef.current.delete(key);
+    if ((!live || live.controller.signal.aborted) && !swarmHere) return;
+    if (live && !live.controller.signal.aborted) {
+      live.controller.abort();
+      liveTurnsRef.current.delete(key);
+    } else if (live) {
+      liveTurnsRef.current.delete(key);
+    }
     setIsChatResponding(false);
+    const continuesInBackground = Boolean(live && live.runtime === "codex" && !swarmHere);
     setChatMessages((messages) => {
       const next = finalizeStreamingMessages(
         messages,
@@ -2933,13 +3382,13 @@ export default function DashPage() {
         messages: next,
         preferences: agentPreferencesRef.current,
         messageSequence: chatMessageSequenceRef.current,
-        runtime: live.runtime,
-        specialistAgentId: live.specialistAgentId,
+        runtime: live?.runtime ?? "codex",
+        specialistAgentId: live?.specialistAgentId ?? specialistAgentIdRef.current,
       });
       return next;
     });
     if (activeConversationId) {
-      if (!continuesInBackground && computingTokensRef.current.has(activeConversationId)) {
+      if ((!continuesInBackground || swarmHere) && computingTokensRef.current.has(activeConversationId)) {
         computingTokensRef.current.delete(activeConversationId);
         setComputingConversationIds(new Set(computingTokensRef.current.keys()));
       }
@@ -2953,7 +3402,7 @@ export default function DashPage() {
 
   const answerClarification = (answer: string, offeredTurnId?: string, optionId?: string) => {
     const text = answer.trim();
-    if (!text || isChatResponding) return;
+    if (!text || chatBusy) return;
     setChatClarification(null);
     setClarifyDraft("");
     void sendChatMessage(text, offeredTurnId && optionId ? { offeredTurnId, optionId } : undefined);
@@ -3228,6 +3677,8 @@ export default function DashPage() {
     setIsChatResponding(false);
     setComposerExpanded(false);
     setTakeawaysOpen(false);
+    setSwarmPanelOpen(false);
+    if (runtime !== "codex") setSwarmEnabled(false);
     setChatClarification(null);
     setClarifyDraft("");
     setEditingMessageId(null);
@@ -4217,7 +4668,7 @@ export default function DashPage() {
             onConversationsChanged={loadConversationSummaries}
           />
         ) : activeItem === "Chat" ? (
-          <div className={`${styles.chatShell} ${takeawaysOpen ? styles.chatShellTakeawaysOpen : ""}`}>
+          <div className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""}`}>
           <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
               <div className={styles.chatTopIdentity}>
@@ -4275,14 +4726,34 @@ export default function DashPage() {
                     <Icon name="terminal" />
                   </button>
                 ) : null}
-                {!takeawaysOpen ? (
+                {swarmSnapshot.runId || swarmEnabled ? (
+                  <button
+                    className={`${styles.chatTakeawaysToggle} ${swarmPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
+                    type="button"
+                    aria-label="Swarm progress"
+                    aria-pressed={swarmPanelOpen}
+                    title={swarmPanelOpen ? "Hide swarm" : "Show swarm"}
+                    onClick={() => {
+                      setSwarmPanelOpen((open) => {
+                        if (!open) setTakeawaysOpen(false);
+                        return !open;
+                      });
+                    }}
+                  >
+                    <Icon name="agents" />
+                  </button>
+                ) : null}
+                {!takeawaysOpen && !swarmPanelOpen ? (
                   <button
                     className={styles.chatTakeawaysToggle}
                     type="button"
                     aria-label={`Expand key insights${keyInsights.length > 0 ? `, ${keyInsights.length} available` : ""}`}
                     aria-pressed={false}
                     aria-controls="analysis-takeaways"
-                    onClick={() => setTakeawaysOpen(true)}
+                    onClick={() => {
+                      setSwarmPanelOpen(false);
+                      setTakeawaysOpen(true);
+                    }}
                   >
                     <Icon name="sidebarRight" />
                   </button>
@@ -4604,15 +5075,23 @@ export default function DashPage() {
                 ) : (
                   <textarea
                     ref={chatTextareaRef}
-                    aria-label={activeChatRuntime === "xero_mcp"
-                      ? "Ask Xero anything"
-                      : activeChatRuntime === "codex"
-                        ? "Ask Codex about your business"
-                      : isCustomerAgent
-                        ? "Ask the Customer Agent"
-                        : "Ask me anything"}
+                    aria-label={
+                      swarmEnabled
+                        ? "Ask a harder question for Swarm"
+                        : activeChatRuntime === "xero_mcp"
+                        ? "Ask Xero anything"
+                        : activeChatRuntime === "codex"
+                          ? "Ask Codex about your business"
+                        : isCustomerAgent
+                          ? "Ask the Customer Agent"
+                          : "Ask me anything"
+                    }
                     placeholder={
-                      activeChatRuntime === "codex"
+                      swarmEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask a harder follow-up. Swarm will split the work…"
+                          : "Ask a bigger question. Swarm will split the work across specialists…"
+                      : activeChatRuntime === "codex"
                         ? chatMessages.length > 0
                           ? "Ask Codex a follow-up…"
                           : "Ask Codex anything about your connected data…"
@@ -4657,6 +5136,26 @@ export default function DashPage() {
                     onClick={() => voice.stop()}
                   >
                     <Icon name="voice" />
+                  </button>
+                ) : null}
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                  <button
+                    className={`${styles.swarmToggle} ${swarmEnabled ? styles.swarmToggleActive : ""}`}
+                    type="button"
+                    aria-pressed={swarmEnabled}
+                    aria-label="Swarm"
+                    title="Split a hard question across specialists, then combine their findings"
+                    onClick={() => {
+                      if (activeChatRuntime !== "codex") {
+                        startCodexChat();
+                        setSwarmEnabled(true);
+                        return;
+                      }
+                      setSwarmEnabled((current) => !current);
+                    }}
+                  >
+                    <Icon name="agents" />
+                    Swarm
                   </button>
                 ) : null}
                 {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" && (
@@ -4753,7 +5252,7 @@ export default function DashPage() {
                   >
                     <Icon name="arrowUp" />
                   </motion.button>
-                ) : isChatResponding ? (
+                ) : chatBusy ? (
                   <motion.button
                     className={`${styles.chatSendButton} ${styles.chatStopButton}`}
                     type="button"
@@ -4821,31 +5320,35 @@ export default function DashPage() {
 
           <aside
             id="analysis-takeaways"
-            className={`${styles.takeawaysPanel} ${takeawaysOpen ? styles.takeawaysPanelOpen : ""}`}
-            aria-label="Key insights"
-            aria-hidden={!takeawaysOpen}
-            inert={!takeawaysOpen || undefined}
+            className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""}`}
+            aria-label={swarmPanelOpen ? "Swarm" : "Key insights"}
+            aria-hidden={!sidePanelOpen}
+            inert={!sidePanelOpen || undefined}
           >
-            <div className={styles.takeawaysPanelInner}>
-              <div className={styles.takeawaysHeader}>
-                <h2>Key Insights</h2>
-                <button
-                  className={styles.takeawaysClose}
-                  type="button"
-                  aria-label="Collapse key insights"
-                  onClick={() => setTakeawaysOpen(false)}
-                >
-                  <Icon name="chevron" />
-                </button>
+            {swarmPanelOpen ? (
+              <SwarmPanel onClose={() => setSwarmPanelOpen(false)} />
+            ) : (
+              <div className={styles.takeawaysPanelInner}>
+                <div className={styles.takeawaysHeader}>
+                  <h2>Key Insights</h2>
+                  <button
+                    className={styles.takeawaysClose}
+                    type="button"
+                    aria-label="Collapse key insights"
+                    onClick={() => setTakeawaysOpen(false)}
+                  >
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className={styles.takeawaysBody}>
+                  <KeyInsightsPanel
+                    insights={keyInsights}
+                    streaming={keyInsightsStreaming}
+                    activity={keyInsightActivity}
+                  />
+                </div>
               </div>
-              <div className={styles.takeawaysBody}>
-                <KeyInsightsPanel
-                  insights={keyInsights}
-                  streaming={keyInsightsStreaming}
-                  activity={keyInsightActivity}
-                />
-              </div>
-            </div>
+            )}
           </aside>
 
           </div>

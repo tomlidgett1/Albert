@@ -169,6 +169,8 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "connection.fivetran_status": Object.freeze({ limit: 30, windowSeconds: 60 }),
   // A proactive run is a whole research fleet; far below click speed.
   "proactive.run": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  // A swarm starts 2-5 Codex turns; keep it well below click speed.
+  "swarm.run": Object.freeze({ limit: 10, windowSeconds: 3_600 }),
   // Luna rewrite of homepage next questions; cache hits never consume this.
   "conversation.recommended_analysis": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
 } as const);

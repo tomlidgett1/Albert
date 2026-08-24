@@ -7729,6 +7729,43 @@
   color: var(--dash-text-heading);
 }
 
+.swarmToggle {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.chatComposerBar .swarmToggle {
+  width: auto;
+  min-width: 0;
+}
+
+.swarmToggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+.swarmToggle:hover {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.swarmToggleActive {
+  background: var(--dash-surface-active);
+  color: var(--dash-text-heading);
+}
+
 .composerIconButton svg {
   width: 19px;
   height: 19px;
