@@ -2,10 +2,18 @@
  * Client orchestrator for a Codex Swarm run (ADR 0120).
  *
  * Lives at module scope so switching dash tabs never aborts the fleet.
- * Each agent is one POST to /api/codex-conversation. When every agent
- * settles, the controller asks /api/swarm/synthesis to write the parent
- * answer.
+ * Each agent is one POST to /api/codex-conversation. Measure and explain
+ * agents run first; challenge and reconcile agents run as a second wave
+ * briefed with the first wave's distilled findings, so they argue against
+ * a real story. When every agent settles, the controller asks
+ * /api/swarm/synthesis to write the parent answer.
  */
+import {
+  appendSwarmBrief,
+  buildSwarmWaveBrief,
+  splitSwarmWaves,
+  type SwarmWaveFinding,
+} from "@/services/swarm/src/worker-brief";
 
 export type SwarmAgentPhase =
   | "pending"
@@ -80,17 +88,18 @@ const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
 let snapshot: SwarmRunSnapshot = EMPTY_SNAPSHOT;
 let agentStates = new Map<string, SwarmAgentLiveState>();
 let agentOrder: string[] = [];
-let inFlight = 0;
+let fleetActive = false;
 let currentRunToken = 0;
 let heartbeatTimer: number | undefined;
 const listeners = new Set<() => void>();
 const abortByAgent = new Map<string, AbortController>();
+const waveFindings = new Map<string, SwarmWaveFinding>();
 
 function publish(patch: Partial<SwarmRunSnapshot> = {}, settledDelta = 0): void {
   snapshot = Object.freeze({
     ...snapshot,
     ...patch,
-    active: inFlight > 0 || Boolean(patch.synthesising ?? snapshot.synthesising),
+    active: fleetActive || Boolean(patch.synthesising ?? snapshot.synthesising),
     agents: Object.freeze(agentOrder
       .map((key) => agentStates.get(key))
       .filter((state): state is SwarmAgentLiveState => Boolean(state))),
@@ -119,7 +128,13 @@ function setAgent(
   publish({}, settledDelta);
 }
 
-async function recordAgent(body: Record<string, unknown>): Promise<void> {
+type RecordedFinding = Readonly<{
+  headline: string | null;
+  answerState: string | null;
+  keyNumbers: readonly Readonly<{ label: string; value: string }>[];
+}>;
+
+async function recordAgent(body: Record<string, unknown>): Promise<RecordedFinding | null> {
   const response = await fetch("/api/swarm/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -129,6 +144,24 @@ async function recordAgent(body: Record<string, unknown>): Promise<void> {
     const payload = await response.json().catch(() => null) as { error?: string } | null;
     throw new Error(payload?.error || `Recording failed (${response.status}).`);
   }
+  const payload = await response.json().catch(() => null) as {
+    agent?: { headline?: unknown; answerState?: unknown; keyNumbers?: unknown };
+  } | null;
+  const agent = payload?.agent;
+  if (!agent) return null;
+  return {
+    headline: typeof agent.headline === "string" ? agent.headline : null,
+    answerState: typeof agent.answerState === "string" ? agent.answerState : null,
+    keyNumbers: Array.isArray(agent.keyNumbers)
+      ? agent.keyNumbers
+        .filter((item): item is { label: string; value: string } => (
+          typeof item === "object" && item !== null
+          && typeof (item as { label?: unknown }).label === "string"
+          && typeof (item as { value?: unknown }).value === "string"
+        ))
+        .slice(0, 6)
+      : [],
+  };
 }
 
 type ParsedSseBlock = Readonly<{ event: string; data: string }>;
@@ -260,7 +293,7 @@ async function runAgent(
       throw new Error(streamError || "The analysis ended before an answer arrived.");
     }
     setAgent(agent.key, { phase: "recording", statusLine: "Recording the finding…" });
-    await recordAgent({
+    const recorded = await recordAgent({
       action: "completed",
       runId,
       agentKey: agent.key,
@@ -268,12 +301,22 @@ async function runAgent(
       answer: outcome.answer.slice(0, 8_000),
       followUps: outcome.followUps.map((question) => question.slice(0, 200)),
     });
+    const headline = recorded?.headline
+      ?? outcome.answer.split("\n").find((line) => line.trim())?.replace(/^#+\s*/u, "").slice(0, 200)
+      ?? null;
+    waveFindings.set(agent.key, {
+      title: agent.title,
+      headline,
+      answerState: recorded?.answerState ?? outcome.answerState,
+      keyNumbers: recorded?.keyNumbers ?? [],
+      failed: false,
+    });
     if (runToken !== currentRunToken) return;
     setAgent(agent.key, {
       phase: "done",
       statusLine: "Done",
       answerState: outcome.answerState,
-      headline: outcome.answer.split("\n").find((line) => line.trim())?.replace(/^#+\s*/u, "").slice(0, 200) ?? null,
+      headline,
     }, 1);
   } catch (error) {
     if (controller.signal.aborted || runToken !== currentRunToken) {
@@ -298,6 +341,13 @@ async function runAgent(
       agentKey: agent.key,
       failureNote: message,
     }).catch(() => undefined);
+    waveFindings.set(agent.key, {
+      title: agent.title,
+      headline: null,
+      answerState: null,
+      keyNumbers: [],
+      failed: true,
+    });
     setAgent(agent.key, { phase: "failed", statusLine: "Failed", error: message }, 1);
   } finally {
     abortByAgent.delete(agent.key);
@@ -354,6 +404,28 @@ function startHeartbeat(runId: string, runToken: number): void {
   }, 90_000);
 }
 
+async function runWave(
+  runToken: number,
+  runId: string,
+  agents: readonly SwarmFleetAgent[],
+  preferences: SwarmFleetPreferences,
+  concurrency: number,
+): Promise<void> {
+  if (agents.length === 0) return;
+  const queue = [...agents];
+  const worker = async () => {
+    for (;;) {
+      const agent = queue.shift();
+      if (!agent || runToken !== currentRunToken) break;
+      await runAgent(runToken, runId, agent, preferences);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.max(1, Math.min(concurrency, agents.length)) },
+    () => worker(),
+  ));
+}
+
 export function startSwarmFleet(input: Readonly<{
   runId: string;
   parentConversationId: string;
@@ -368,8 +440,11 @@ export function startSwarmFleet(input: Readonly<{
   const runToken = currentRunToken;
   agentStates = new Map();
   agentOrder = [];
+  waveFindings.clear();
   abortByAgent.forEach((controller) => controller.abort());
   abortByAgent.clear();
+  const { firstWave, secondWave } = splitSwarmWaves(input.agents);
+  const secondWaveKeys = new Set(secondWave.map((agent) => agent.key));
   for (const agent of input.agents) {
     agentOrder.push(agent.key);
     agentStates.set(agent.key, Object.freeze({
@@ -378,7 +453,7 @@ export function startSwarmFleet(input: Readonly<{
       tagline: agent.tagline,
       role: agent.role,
       phase: "pending" as const,
-      statusLine: "Queued",
+      statusLine: secondWaveKeys.has(agent.key) ? "Waiting on the first wave" : "Queued",
       queriesSeen: 0,
       headline: null,
       answerState: null,
@@ -387,9 +462,7 @@ export function startSwarmFleet(input: Readonly<{
       error: null,
     }));
   }
-  const queue = [...input.agents];
-  const width = Math.max(1, Math.min(input.concurrency, queue.length));
-  inFlight = width;
+  fleetActive = true;
   snapshot = Object.freeze({
     ...EMPTY_SNAPSHOT,
     runId: input.runId,
@@ -401,27 +474,27 @@ export function startSwarmFleet(input: Readonly<{
   });
   publish();
   startHeartbeat(input.runId, runToken);
-  const worker = async () => {
-    for (;;) {
-      const agent = queue.shift();
-      if (!agent || runToken !== currentRunToken) break;
-      await runAgent(runToken, input.runId, agent, input.preferences);
-    }
-  };
-  const finished = Array.from({ length: width }, () => (
-    worker().finally(() => {
-      inFlight -= 1;
-      if (runToken === currentRunToken) publish();
-    })
-  ));
-  void Promise.all(finished).then(() => {
+  void (async () => {
+    await runWave(runToken, input.runId, firstWave, input.preferences, input.concurrency);
     if (runToken !== currentRunToken) return;
+    if (secondWave.length > 0) {
+      const brief = buildSwarmWaveBrief(firstWave
+        .map((agent) => waveFindings.get(agent.key))
+        .filter((finding): finding is SwarmWaveFinding => Boolean(finding)));
+      const briefed = secondWave.map((agent) => ({
+        ...agent,
+        prompt: appendSwarmBrief(agent.prompt, brief),
+      }));
+      await runWave(runToken, input.runId, briefed, input.preferences, input.concurrency);
+      if (runToken !== currentRunToken) return;
+    }
+    fleetActive = false;
     if (heartbeatTimer !== undefined) {
       window.clearInterval(heartbeatTimer);
       heartbeatTimer = undefined;
     }
-    return synthesise(runToken, input.runId);
-  });
+    await synthesise(runToken, input.runId);
+  })();
 }
 
 export function stopSwarmFleet(): void {
@@ -429,7 +502,7 @@ export function stopSwarmFleet(): void {
   currentRunToken += 1;
   abortByAgent.forEach((controller) => controller.abort());
   abortByAgent.clear();
-  inFlight = 0;
+  fleetActive = false;
   if (heartbeatTimer !== undefined) {
     window.clearInterval(heartbeatTimer);
     heartbeatTimer = undefined;

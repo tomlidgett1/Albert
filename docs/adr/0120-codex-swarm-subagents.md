@@ -34,9 +34,12 @@ Cube-backed.
    planner (no Cube, no lease) reads the question, active connectors, and
    a short business-context excerpt, then emits 2-5 work packages. Each
    package has a role, a must-cover assignment, and an explicit exclude
-   list so agents do not duplicate. A deterministic fallback splits by
-   connected domain (sales, labour, cash) and adds a challenge agent on
-   causal questions when the model plan is missing or invalid.
+   list so agents do not duplicate. A shared period is used only when the
+   question names one or is a movement/KPI question; snapshot briefs stay
+   "As asked" and must not invent a 13-week window. A deterministic
+   fallback splits by connected domain (sales, labour, cash) and adds a
+   challenge agent on causal questions when the model plan is missing or
+   invalid.
 3. **Every worker is a real Codex conversation.** The browser fans the
    packages through `/api/codex-conversation` with bounded concurrency
    (3). Each child owns its own conversation, turn, Cube orchestrator,
@@ -81,3 +84,44 @@ discloses that Swarm runs several governed turns.
 Automatic delegation without the Swarm button. Nested swarms. Agent-to-
 agent chat. V3 workers. A durable cross-device live pair beyond the
 persisted run row (reload resumes from that row).
+
+## Update — 2026-08-24: staged waves, grounded periods, governed synthesis
+
+Five hardening changes, still within the original decision:
+
+1. **Challenge and reconcile run as a second wave.** Measure and explain
+   agents go first; when they settle, the browser briefs the second wave
+   with their distilled findings (headline, key numbers, confidence) so a
+   challenge argues against the real story. Still hub-and-spoke, depth 1:
+   the brief is one-way and marked untrusted evidence.
+2. **The shared window is resolved once into ISO dates.** When a plan
+   carries a shared window (`plan.period`), workers are told the exact
+   query and comparison dates instead of re-deriving a label — period
+   grounding is Codex's biggest measured failure mode (ADR 0114). Snapshot
+   briefs keep `period: null` and the "As asked" rule. The parent answer's
+   provenance time range now carries the resolved dates.
+3. **Model plans are validated, not trusted.** Paraphrased-overlapping
+   assignments (token-Jaccard, not string equality) and work naming a
+   source the tenant has not connected reject the plan to the fallback;
+   an invalid period alone is salvaged with the computed default.
+4. **Allocation and synthesis are observable.** The plan jsonb records
+   `source`, `periodSource`, and `issue`; the stored synthesis records
+   `source` and `unsupportedFigures`; fallbacks log at warn with the
+   reason instead of being swallowed.
+5. **Synthesis figures are enforced, not just instructed.** Every dollar
+   and percentage figure in the draft must match a finding (by magnitude,
+   0.5% tolerance). Unsupported figures get one named repair attempt;
+whatever survives demotes the parent answer from Derived to
+Exploratory and is persisted for review.
+
+## Update — 2026-08-24: sales-deep test briefing
+
+A Swarm button on the Sales agent card starts a test-only deep sales
+fleet. It is still hub-and-spoke and still five Codex workers, but the
+allocation stays inside sales (trajectory, mix, channels, leakage,
+challenge), the workers are forced to Luna at max effort with Fast
+mode off, and the synthesised findings are written to
+`evals/albert/context/sales-agent.md` plus `swarm_runs.briefing_markdown`.
+Later Codex turns load that briefing as untrusted reference context so
+the owner can ask questions against what the fleet learned. Ordinary
+composer Swarm sends are unchanged.

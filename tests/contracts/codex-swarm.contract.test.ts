@@ -3,14 +3,45 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  SWARM_ASSIGNMENT_OVERLAP_LIMIT,
   SWARM_CLIENT_CONCURRENCY,
+  SWARM_DEFAULT_COMPARISON_PERIOD,
   SWARM_MAX_AGENTS,
   SWARM_MIN_AGENTS,
+  SWARM_UNBOUNDED_PERIOD,
+  assignmentOverlapRatio,
   fallbackSwarmPlan,
+  inferSwarmPeriodLabel,
   prepareSwarmAgents,
+  swarmPlanIssue,
+  type SwarmPlan,
 } from "../../services/swarm/src/planner.ts";
-import { conservativeSwarmAnswerState } from "../../services/swarm/src/synthesis.ts";
+import { validSwarmPeriod } from "../../services/swarm/src/period.ts";
+import {
+  appendSwarmBrief,
+  buildSwarmWaveBrief,
+  splitSwarmWaves,
+} from "../../services/swarm/src/worker-brief.ts";
+import {
+  conservativeSwarmAnswerState,
+  extractSwarmFigures,
+  governedSwarmAnswerState,
+  unsupportedSwarmFigures,
+  type SwarmSynthesisFinding,
+} from "../../services/swarm/src/synthesis.ts";
 import { swarmPlanSteps } from "../../services/swarm/src/parent-events.ts";
+import {
+  SALES_DEEP_BRIEFING_PATH,
+  SALES_DEEP_FAST_MODE,
+  SALES_DEEP_KIND,
+  SALES_DEEP_MODEL,
+  SALES_DEEP_OWNER_QUESTION,
+  SALES_DEEP_PREFERENCES,
+  SALES_DEEP_REASONING_EFFORT,
+  buildSalesBriefingMarkdown,
+  prepareSalesDeepAgents,
+  salesDeepPlan,
+} from "../../services/swarm/src/sales-deep.ts";
 
 function read(path: string): string {
   return readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -22,18 +53,22 @@ const controller = read("app/dash/lib/swarm-run-controller.ts");
 const route = read("app/api/swarm/route.ts");
 const agentRoute = read("app/api/swarm/agent/route.ts");
 const synthesisRoute = read("app/api/swarm/synthesis/route.ts");
+const codexRoute = read("app/api/codex-conversation/route.ts");
 const stopRoute = read("app/api/swarm/stop/route.ts");
 const heartbeatRoute = read("app/api/swarm/heartbeat/route.ts");
 const repository = read("services/control-plane/src/swarm-repository.ts");
 const webRepository = read("services/control-plane/src/web-repository.ts");
 const migration = read("infra/migrations/control-plane/0168_m8_codex_swarm.sql");
+const briefingMigration = read("infra/migrations/control-plane/0169_m8_sales_deep_briefing.sql");
 const adr = read("docs/adr/0120-codex-swarm-subagents.md");
+const agentsWorkspace = read("app/dash/components/AgentsWorkspace.tsx");
+const salesDeepStore = read("services/swarm/src/sales-deep-store.ts");
 
 test("dash wires a Swarm button, progress slide-out, and hidden child threads", () => {
-  assert.match(page, /import SwarmPanel from "\.\/components\/SwarmPanel"/u);
+  assert.match(page, /import SwarmPanel(?:, \{ SWARM_PANEL_DEFAULT_WIDTH \})? from "\.\/components\/SwarmPanel"/u);
   assert.match(page, /aria-label="Swarm"/u);
-  assert.match(page, /Swarm\s*\n\s*<\/button>/u);
-  assert.match(page, /<SwarmPanel onClose=/u);
+  assert.match(page, /swarmToggleLabel\}>Swarm<\/span>/u);
+  assert.match(page, /<SwarmPanel[\s\S]*?onClose=/u);
   assert.match(page, /startSwarmFleet\(/u);
   assert.match(page, /hydrateSwarmFromRun\(/u);
   assert.match(page, /stopSwarmFleet\(\)/u);
@@ -43,6 +78,8 @@ test("dash wires a Swarm button, progress slide-out, and hidden child threads", 
   assert.match(panel, /Done ·/u);
   assert.match(panel, /InsightsStyleTrace/u);
   assert.match(panel, /Stop swarm/u);
+  assert.match(panel, /Resize swarm panel/u);
+  assert.match(page, /onWidenPastDefault=\{\(\) => setCollapsed\(true\)\}/u);
 });
 
 test("the planner allocates 2-5 disjoint agents and never clones the question", () => {
@@ -75,6 +112,29 @@ test("the planner allocates 2-5 disjoint agents and never clones the question", 
     connectors: ["xero"],
   });
   assert.ok(accounting.agents.length >= 2);
+});
+
+test("the planner does not invent a 13-week window for snapshot briefs", () => {
+  assert.equal(
+    inferSwarmPeriodLabel("I want to understand everything about the employees of Ashburton Cycles"),
+    SWARM_UNBOUNDED_PERIOD,
+  );
+  assert.equal(
+    inferSwarmPeriodLabel("Why did profit fall last quarter?"),
+    "Last quarter",
+  );
+  assert.equal(
+    inferSwarmPeriodLabel("Why did profit fall?"),
+    SWARM_DEFAULT_COMPARISON_PERIOD,
+  );
+  assert.equal(
+    fallbackSwarmPlan({
+      question: "I want to understand everything about the employees of Ashburton Cycles",
+      connectors: ["deputy", "lightspeed-r"],
+    }).periodLabel,
+    SWARM_UNBOUNDED_PERIOD,
+  );
+  assert.match(adr, /As asked/u);
 });
 
 test("synthesis stays conservative and does not invent a verified number", () => {
@@ -169,4 +229,300 @@ test("the migration carries tables, RLS, RPCs, deletion, and NOTIFY", () => {
       fn,
     );
   }
+});
+
+test("a shared window resolves once into ISO dates every worker must query", () => {
+  const now = new Date("2026-08-24T03:00:00Z");
+  const plan = fallbackSwarmPlan({
+    question: "Why did profit fall?",
+    connectors: ["lightspeed-r", "deputy", "xero"],
+    timezone: "Australia/Sydney",
+    now,
+  });
+  assert.equal(plan.periodLabel, SWARM_DEFAULT_COMPARISON_PERIOD);
+  assert.ok(plan.period);
+  assert.match(plan.period.start, /^\d{4}-\d{2}-\d{2}$/u);
+  assert.ok(validSwarmPeriod(plan.period, now, "Australia/Sydney"));
+  assert.ok(plan.period.compareEnd < plan.period.start);
+  for (const agent of prepareSwarmAgents(plan, "Why did profit fall?")) {
+    assert.ok(agent.prompt.includes(`Query window: ${plan.period.start} to ${plan.period.end}`), agent.key);
+    assert.match(agent.prompt, /Do not re-derive the period/u);
+  }
+
+  const snapshot = fallbackSwarmPlan({
+    question: "I want to understand everything about the employees",
+    connectors: ["deputy"],
+    now,
+  });
+  assert.equal(snapshot.periodLabel, SWARM_UNBOUNDED_PERIOD);
+  assert.equal(snapshot.period, null);
+  assert.ok(!validSwarmPeriod({
+    start: "2026-08-01", end: "2026-08-23",
+    compareStart: "2026-08-10", compareEnd: "2026-08-20",
+  }, now, "Australia/Sydney"), "overlapping comparison windows must be rejected");
+});
+
+test("the worker format contract survives a long question and a full fleet", () => {
+  const base = fallbackSwarmPlan({
+    question: "Why did profit fall?",
+    connectors: ["lightspeed-r", "deputy", "xero"],
+    now: new Date("2026-08-24T03:00:00Z"),
+  });
+  const crowded: SwarmPlan = {
+    ...base,
+    agents: [
+      ...base.agents,
+      {
+        key: "customers",
+        title: "Customers",
+        tagline: "Repeat and new customer behaviour",
+        role: "explain",
+        assignment: "Quantify repeat versus new customer counts and their spend for the shared period.",
+        exclude: "Everything the other agents own.",
+      },
+    ].slice(0, SWARM_MAX_AGENTS),
+  };
+  const longQuestion = `Why did profit fall? ${"x".repeat(2_000)}`;
+  for (const agent of prepareSwarmAgents(crowded, longQuestion)) {
+    assert.ok(agent.prompt.length <= 4_000, agent.key);
+    assert.match(agent.prompt, /Key numbers/u, agent.key);
+    assert.match(agent.prompt, /under 400 words/u, agent.key);
+  }
+});
+
+test("challenge and reconcile run as a second wave briefed with real findings", () => {
+  const { firstWave, secondWave } = splitSwarmWaves([
+    { role: "measure", key: "a" },
+    { role: "explain", key: "b" },
+    { role: "reconcile", key: "c" },
+    { role: "challenge", key: "d" },
+  ] as const);
+  assert.deepEqual(firstWave.map((agent) => agent.key), ["a", "b"]);
+  assert.deepEqual(secondWave.map((agent) => agent.key), ["c", "d"]);
+
+  const soloChallenge = splitSwarmWaves([{ role: "challenge", key: "x" }] as const);
+  assert.equal(soloChallenge.firstWave.length, 1);
+  assert.equal(soloChallenge.secondWave.length, 0);
+
+  const brief = buildSwarmWaveBrief([
+    {
+      title: "Sales",
+      headline: "Sales fell $8,200",
+      answerState: "Derived",
+      keyNumbers: [{ label: "Net sales", value: "$96,400" }],
+      failed: false,
+    },
+    { title: "Labour", headline: null, answerState: null, keyNumbers: [], failed: true },
+  ]);
+  assert.match(brief, /Sales \[Derived\]: Sales fell \$8,200/u);
+  assert.match(brief, /Net sales \$96,400/u);
+  assert.match(brief, /Did not finish: Labour/u);
+  assert.match(brief, /untrusted evidence/u);
+  assert.ok(appendSwarmBrief("p".repeat(7_000), brief).length <= 7_600);
+
+  assert.match(controller, /splitSwarmWaves\(/u);
+  assert.match(controller, /buildSwarmWaveBrief\(/u);
+  assert.match(controller, /appendSwarmBrief\(/u);
+  assert.match(controller, /Waiting on the first wave/u);
+});
+
+test("model plans that overlap or name disconnected sources are rejected", () => {
+  const paraphrasedA = "Quantify total sales, product mix and basket size for the shared period.";
+  const paraphrasedB = "Measure the sales, product mix and basket size over the shared period.";
+  assert.ok(assignmentOverlapRatio(paraphrasedA, paraphrasedB) > SWARM_ASSIGNMENT_OVERLAP_LIMIT);
+
+  const overlapping: SwarmPlan = {
+    periodLabel: "As asked",
+    period: null,
+    rationale: "Two paraphrased clones of one job.",
+    agents: [
+      {
+        key: "one", title: "One", tagline: "first cut", role: "measure",
+        assignment: paraphrasedA, exclude: "Everything else.",
+      },
+      {
+        key: "two", title: "Two", tagline: "second cut", role: "explain",
+        assignment: paraphrasedB, exclude: "Everything else.",
+      },
+    ],
+  };
+  assert.match(swarmPlanIssue(overlapping, ["square"]) ?? "", /^overlapping-assignments/u);
+
+  const disconnected: SwarmPlan = {
+    periodLabel: "As asked",
+    period: null,
+    rationale: "Labour work with no roster source connected.",
+    agents: [
+      {
+        key: "sales", title: "Sales", tagline: "what sold", role: "measure",
+        assignment: "Quantify sales and basket for the shared period from the register.",
+        exclude: "Everything else.",
+      },
+      {
+        key: "labour", title: "Labour", tagline: "wage cost", role: "explain",
+        assignment: "Pull rostered hours from Deputy and cost the wage bill.",
+        exclude: "Everything else.",
+      },
+    ],
+  };
+  assert.match(swarmPlanIssue(disconnected, ["square"]) ?? "", /^roster-not-connected/u);
+
+  const reconcileWithoutBooks: SwarmPlan = {
+    ...disconnected,
+    agents: [
+      disconnected.agents[0]!,
+      {
+        key: "books", title: "Books", tagline: "the ledgers", role: "reconcile",
+        assignment: "Reconcile takings against banked receipts and the ledger for the period.",
+        exclude: "Everything else.",
+      },
+    ],
+  };
+  assert.match(swarmPlanIssue(reconcileWithoutBooks, ["square"]) ?? "", /^reconcile-without-accounting/u);
+
+  const healthy = fallbackSwarmPlan({
+    question: "Why did profit fall?",
+    connectors: ["lightspeed-r", "deputy", "xero"],
+  });
+  assert.equal(swarmPlanIssue(healthy, ["lightspeed-r", "deputy", "xero"]), null);
+
+  const negatedRoster = fallbackSwarmPlan({
+    question: "Why did profit fall?",
+    connectors: ["square", "xero"],
+  });
+  assert.equal(
+    swarmPlanIssue(negatedRoster, ["square", "xero"]),
+    null,
+    "a 'Do not roster staff' exclusion must not read as needing a roster source",
+  );
+});
+
+test("allocation and synthesis outcomes are persisted and logged, not swallowed", () => {
+  assert.match(route, /swarm\.plan_allocated/u);
+  assert.match(route, /source: allocation\.source/u);
+  assert.match(route, /periodSource: allocation\.periodSource/u);
+  assert.match(route, /issue: allocation\.issue/u);
+  assert.match(route, /period: plan\.period/u);
+  assert.match(synthesisRoute, /source: result\.source/u);
+  assert.match(synthesisRoute, /unsupportedFigures/u);
+  assert.match(synthesisRoute, /governedSwarmAnswerState/u);
+  assert.match(repository, /periodSource/u);
+  assert.match(repository, /unsupportedFigures/u);
+});
+
+test("synthesis figures must trace to a finding or the answer is demoted", () => {
+  const findings: SwarmSynthesisFinding[] = [{
+    agentKey: "sales-measure",
+    title: "Sales",
+    role: "measure",
+    answerState: "Verified",
+    headline: "Sales were $12,000",
+    keyNumbers: [
+      { label: "Sales", value: "$12,000" },
+      { label: "Growth", value: "8.2%" },
+    ],
+    summaryExcerpt: "Net sales $12,000 for the window, up 8.2% on the prior window.",
+    failed: false,
+    failureNote: null,
+  }];
+
+  assert.deepEqual([...unsupportedSwarmFigures({
+    headline: "Sales were $12k",
+    answer: "Sales rose 8.2% to $12,000 across the window.",
+    findings,
+  })], []);
+  assert.deepEqual([...unsupportedSwarmFigures({
+    headline: "Sales were $13,500",
+    answer: "Margin fell 3% on the quarter.",
+    findings,
+  })], ["$13,500", "3%"]);
+
+  const figures = extractSwarmFigures("Sales hit $1.2m, up 4.5%");
+  assert.deepEqual(figures.map((figure) => [figure.kind, figure.value]), [
+    ["currency", 1_200_000],
+    ["percent", 4.5],
+  ]);
+
+  assert.equal(governedSwarmAnswerState(findings, []), "Derived");
+  assert.equal(governedSwarmAnswerState(findings, ["$13,500"]), "Exploratory");
+});
+
+test("the sales-deep test fleet stays inside sales and writes a briefing", () => {
+  assert.equal(SALES_DEEP_KIND, "sales-deep");
+  assert.equal(SALES_DEEP_MODEL, "gpt-5.6-luna");
+  assert.equal(SALES_DEEP_REASONING_EFFORT, "max");
+  assert.equal(SALES_DEEP_FAST_MODE, false);
+  assert.equal(SALES_DEEP_PREFERENCES.fastMode, false);
+  assert.equal(SALES_DEEP_BRIEFING_PATH, "evals/albert/context/sales-agent.md");
+  assert.match(SALES_DEEP_OWNER_QUESTION, /complete sales brief/u);
+
+  const plan = salesDeepPlan({
+    now: new Date("2026-08-24T03:00:00Z"),
+    timezone: "Australia/Sydney",
+  });
+  assert.equal(plan.agents.length, 5);
+  assert.equal(new Set(plan.agents.map((agent) => agent.key)).size, 5);
+  assert.ok(plan.agents.every((agent) => agent.key.startsWith("sales-")));
+  assert.ok(plan.agents.some((agent) => agent.role === "challenge"));
+  assert.equal(swarmPlanIssue(plan, ["lightspeed-r", "xero"]), null);
+  for (let index = 0; index < plan.agents.length; index += 1) {
+    for (let other = index + 1; other < plan.agents.length; other += 1) {
+      const left = plan.agents[index];
+      const right = plan.agents[other];
+      if (!left || !right) continue;
+      assert.ok(
+        assignmentOverlapRatio(left.assignment, right.assignment) <= SWARM_ASSIGNMENT_OVERLAP_LIMIT,
+        `${left.key}+${right.key}`,
+      );
+    }
+  }
+
+  const prepared = prepareSalesDeepAgents(plan, SALES_DEEP_OWNER_QUESTION);
+  for (const agent of prepared) {
+    assert.ok(agent.prompt.length >= 80 && agent.prompt.length <= 4000, agent.key);
+    assert.match(agent.prompt, /Investigate thoroughly/u);
+  }
+
+  const markdown = buildSalesBriefingMarkdown({
+    generatedAt: "2026-08-24T03:00:00.000Z",
+    businessName: "Ashburton Cycles",
+    question: SALES_DEEP_OWNER_QUESTION,
+    periodLabel: plan.periodLabel,
+    period: plan.period,
+    headline: "Takings held at $12,000",
+    answer: "Sales were $12,000 across the window.",
+    answerState: "Derived",
+    followUps: ["Which products are pulling the mix down?"],
+    disagreements: [],
+    findings: [{
+      agentKey: "sales-trajectory",
+      title: "Trajectory",
+      role: "measure",
+      answerState: "Derived",
+      headline: "Takings held at $12,000",
+      keyNumbers: [{ label: "Takings", value: "$12,000" }],
+      summaryExcerpt: "Company-wide takings were $12,000.",
+      failed: false,
+      failureNote: null,
+    }],
+  });
+  assert.match(markdown, /^# Sales agent briefing/u);
+  assert.match(markdown, /Ashburton Cycles/u);
+  assert.match(markdown, /\$12,000/u);
+
+  assert.match(agentsWorkspace, /agent\.id === "sales"/u);
+  assert.match(agentsWorkspace, /onStartSalesSwarm/u);
+  assert.match(page, /swarmKind: "sales-deep"/u);
+  assert.match(page, /kind: options\.swarmKind/u);
+  assert.match(route, /kind: z\.enum\(\["question", "sales-deep"\]\)/u);
+  assert.match(route, /SALES_DEEP_PREFERENCES/u);
+  assert.match(synthesisRoute, /buildSalesBriefingMarkdown/u);
+  assert.match(synthesisRoute, /writeSalesBriefingFile/u);
+  assert.match(codexRoute, /readSalesBriefingFile/u);
+  assert.match(salesDeepStore, /node:fs\/promises/u);
+  assert.match(briefingMigration, /briefing_markdown/u);
+  assert.match(briefingMigration, /albert_swarm_save_briefing/u);
+  assert.match(briefingMigration, /albert_swarm_latest_briefing/u);
+  assert.match(briefingMigration, /GRANT EXECUTE ON FUNCTION public\.albert_swarm_save_briefing\(text, text\) TO authenticated/u);
+  assert.match(adr, /sales-deep test briefing/u);
 });

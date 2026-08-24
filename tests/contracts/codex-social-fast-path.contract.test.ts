@@ -62,8 +62,11 @@ test("nice one returns without catalogue, Cube, acknowledgement, or Codex startu
       fastMode: true,
     },
     cubeApiUrl: "http://127.0.0.1:1",
-    openaiApiKey: "not-used",
-    openaiBaseUrl: "https://au.api.openai.com/v1",
+    authentication: {
+      mode: "api",
+      apiKey: "not-used",
+      baseUrl: "https://au.api.openai.com/v1",
+    },
     codexBinaryPath: "/not-used",
     emit: (event) => events.push(event),
   });

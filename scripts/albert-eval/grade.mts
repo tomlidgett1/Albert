@@ -16,6 +16,7 @@ import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { QUESTIONS } from "./questions.js";
+import { FAILURE_TAGS } from "./grade-rubric.js";
 import { appendJsonl, loadEnv, readJsonl, runDir, type EvalTurnRecord, type GoldenResult } from "./lib.js";
 
 type Args = { run: string; concurrency: number; resume: boolean; ids?: Set<string> };
@@ -55,15 +56,6 @@ if (args.resume && existing.some((g) => g.error)) {
 }
 const byId = new Map(results.map((r) => [r.id, r] as const));
 const questionById = new Map(QUESTIONS.map((q) => [q.id, q] as const));
-
-export const FAILURE_TAGS = [
-  "wrong_number", "unsupported_number", "wrong_period", "wrong_entity", "false_zero", "stale_data_claim",
-  "hallucinated_source", "missed_facet", "over_investigated", "padded", "too_thin", "jargon", "methodology_dump",
-  "no_chart_when_needed", "chart_when_not_needed", "wrong_chart_type", "table_missing", "markdown_table",
-  "unnecessary_clarification", "assumption_not_stated", "ignored_prior_result", "re_ran_pipeline_for_reformat",
-  "reformat_not_applied", "did_not_use_conversation_context", "unavailable_or_error", "timeout", "escalated_needlessly",
-  "not_connected_not_disclosed", "format_broken",
-] as const;
 
 const gradeSchema = {
   type: "object",

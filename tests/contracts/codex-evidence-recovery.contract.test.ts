@@ -167,8 +167,11 @@ test("a late Codex process failure cannot discard successful governed evidence",
         fastMode: true,
       },
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: binary,
       emit: (event) => events.push(event),
     });

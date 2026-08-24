@@ -3,11 +3,16 @@
  *
  * After every worker has settled, one structured call reads only the
  * distilled findings and writes the owner's single answer. It must not
- * invent figures. No Cube, no lease.
+ * invent figures — and that is enforced, not just instructed: every
+ * dollar and percentage figure in the draft is checked against the
+ * findings, one repair attempt names the unsupported figures, and
+ * anything still unsourced demotes the answer below Derived.
+ * No Cube, no lease.
  */
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
+import type { SwarmPeriodWindow } from "./period";
 
 export const SWARM_SYNTHESIS_MODEL = "gpt-5.6-terra" as const;
 export const SWARM_SYNTHESIS_REASONING_EFFORT = "medium" as const;
@@ -21,6 +26,14 @@ export const swarmSynthesisSchema = z.object({
 }).strict();
 
 export type SwarmSynthesis = z.infer<typeof swarmSynthesisSchema>;
+
+export type SwarmSynthesisResult = Readonly<{
+  synthesis: SwarmSynthesis;
+  source: "model" | "model-repaired" | "fallback";
+  /** Figures in the final answer that no finding contains, after repair. */
+  unsupportedFigures: readonly string[];
+  failure: string | null;
+}>;
 
 const SYNTHESIS_INSTRUCTIONS = `You are Albert, writing the owner's single answer after several specialists investigated different slices of the same question.
 
@@ -45,6 +58,73 @@ export type SwarmSynthesisFinding = Readonly<{
   failed: boolean;
   failureNote: string | null;
 }>;
+
+const CURRENCY_PATTERN = /\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|bn|b|million|thousand)?\b/giu;
+const PERCENT_PATTERN = /\d[\d,]*(?:\.\d+)?\s?%/gu;
+
+export type SwarmFigure = Readonly<{
+  kind: "currency" | "percent";
+  value: number;
+  raw: string;
+}>;
+
+function currencyValue(raw: string): number {
+  const suffix = /(k|m|bn|b|million|thousand)\s*$/iu.exec(raw.trim())?.[1]?.toLowerCase();
+  const digits = Number.parseFloat(raw.replace(/[^0-9.]/gu, ""));
+  const multiplier = suffix === "k" || suffix === "thousand"
+    ? 1e3
+    : suffix === "m" || suffix === "million"
+      ? 1e6
+      : suffix === "bn" || suffix === "b"
+        ? 1e9
+        : 1;
+  return digits * multiplier;
+}
+
+export function extractSwarmFigures(text: string): readonly SwarmFigure[] {
+  const figures: SwarmFigure[] = [];
+  for (const match of text.matchAll(CURRENCY_PATTERN)) {
+    const value = currencyValue(match[0]);
+    if (Number.isFinite(value)) {
+      figures.push({ kind: "currency", value: Math.abs(value), raw: match[0].trim() });
+    }
+  }
+  for (const match of text.matchAll(PERCENT_PATTERN)) {
+    const value = Number.parseFloat(match[0].replace(/[^0-9.]/gu, ""));
+    if (Number.isFinite(value)) {
+      figures.push({ kind: "percent", value: Math.abs(value), raw: match[0].trim() });
+    }
+  }
+  return figures;
+}
+
+function figureSupported(figure: SwarmFigure, corpus: readonly SwarmFigure[]): boolean {
+  // Signs and formatting vary ("down $3k" vs "-$3,000"), the values may not:
+  // a figure matches only when some finding carries the same magnitude.
+  return corpus.some((candidate) => candidate.kind === figure.kind
+    && Math.abs(candidate.value - figure.value) <= Math.max(Math.abs(candidate.value) * 0.005, 0.005));
+}
+
+export function unsupportedSwarmFigures(input: Readonly<{
+  headline: string;
+  answer: string;
+  findings: readonly SwarmSynthesisFinding[];
+}>): readonly string[] {
+  const corpusText = input.findings
+    .filter((finding) => !finding.failed)
+    .flatMap((finding) => [
+      finding.headline ?? "",
+      finding.summaryExcerpt,
+      ...finding.keyNumbers.flatMap((item) => [item.label, item.value]),
+    ])
+    .join("\n");
+  const corpus = extractSwarmFigures(corpusText);
+  const unsupported = new Set<string>();
+  for (const figure of extractSwarmFigures(`${input.headline}\n${input.answer}`)) {
+    if (!figureSupported(figure, corpus)) unsupported.add(figure.raw);
+  }
+  return Object.freeze([...unsupported].slice(0, 8));
+}
 
 function fallbackAnswer(input: Readonly<{
   question: string;
@@ -97,9 +177,20 @@ export function conservativeSwarmAnswerState(
   return "Exploratory";
 }
 
+/** The parent answer only keeps Derived when every quoted figure traces to a finding. */
+export function governedSwarmAnswerState(
+  findings: readonly SwarmSynthesisFinding[],
+  unsupportedFigures: readonly string[],
+): "Derived" | "Exploratory" | "No data" | "Unavailable" {
+  const state = conservativeSwarmAnswerState(findings);
+  if (state === "Derived" && unsupportedFigures.length > 0) return "Exploratory";
+  return state;
+}
+
 export async function buildSwarmSynthesis(options: Readonly<{
   question: string;
   periodLabel: string;
+  period?: SwarmPeriodWindow | null;
   businessName: string;
   findings: readonly SwarmSynthesisFinding[];
   apiKey: string;
@@ -107,13 +198,13 @@ export async function buildSwarmSynthesis(options: Readonly<{
   safetyIdentifier: string;
   signal?: AbortSignal;
   client?: OpenAI;
-}>): Promise<SwarmSynthesis> {
+}>): Promise<SwarmSynthesisResult> {
   const fallback = fallbackAnswer({
     question: options.question,
     findings: options.findings,
   });
   if (options.findings.filter((finding) => finding.headline && !finding.failed).length === 0) {
-    return fallback;
+    return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: "no-completed-findings" };
   }
   try {
     const client = options.client ?? new OpenAI({
@@ -125,7 +216,15 @@ export async function buildSwarmSynthesis(options: Readonly<{
     const payload = {
       business: options.businessName,
       question: options.question.slice(0, 2_000),
-      period: options.periodLabel,
+      period: options.period
+        ? {
+            label: options.periodLabel,
+            start: options.period.start,
+            end: options.period.end,
+            compareStart: options.period.compareStart,
+            compareEnd: options.period.compareEnd,
+          }
+        : options.periodLabel,
       findings: options.findings.map((finding) => ({
         key: finding.agentKey,
         area: finding.title,
@@ -138,27 +237,63 @@ export async function buildSwarmSynthesis(options: Readonly<{
         failure: finding.failureNote,
       })),
     };
-    const response = await client.responses.create({
-      model: SWARM_SYNTHESIS_MODEL,
-      store: false,
-      max_output_tokens: 4_000,
-      reasoning: { effort: SWARM_SYNTHESIS_REASONING_EFFORT },
-      service_tier: "fast",
-      safety_identifier: options.safetyIdentifier,
-      text: {
-        verbosity: "low",
-        format: zodTextFormat(swarmSynthesisSchema, "swarm_answer"),
-      },
-      input: [
-        { role: "developer", content: SYNTHESIS_INSTRUCTIONS },
-        { role: "user", content: JSON.stringify(payload) },
-      ],
-    }, { signal: options.signal });
-    const raw = typeof response.output_text === "string" ? response.output_text : "";
-    const parsed = swarmSynthesisSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) return fallback;
-    return parsed.data;
-  } catch {
-    return fallback;
+    const attempt = async (repairNote?: string): Promise<SwarmSynthesis | null> => {
+      const response = await client.responses.create({
+        model: SWARM_SYNTHESIS_MODEL,
+        store: false,
+        max_output_tokens: 4_000,
+        reasoning: { effort: SWARM_SYNTHESIS_REASONING_EFFORT },
+        service_tier: "fast",
+        safety_identifier: options.safetyIdentifier,
+        text: {
+          verbosity: "low",
+          format: zodTextFormat(swarmSynthesisSchema, "swarm_answer"),
+        },
+        input: [
+          {
+            role: "developer",
+            content: repairNote ? `${SYNTHESIS_INSTRUCTIONS}\n\n${repairNote}` : SYNTHESIS_INSTRUCTIONS,
+          },
+          { role: "user", content: JSON.stringify(payload) },
+        ],
+      }, { signal: options.signal });
+      const raw = typeof response.output_text === "string" ? response.output_text : "";
+      const parsed = swarmSynthesisSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    };
+
+    const first = await attempt();
+    if (!first) {
+      return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: "invalid-structured-output" };
+    }
+    let synthesis = first;
+    let source: SwarmSynthesisResult["source"] = "model";
+    let unsupported = unsupportedSwarmFigures({
+      headline: first.headline,
+      answer: first.answer,
+      findings: options.findings,
+    });
+    if (unsupported.length > 0) {
+      const repaired = await attempt([
+        `A previous draft quoted figures that do not appear in the findings: ${unsupported.join(", ")}.`,
+        `Every dollar and percentage figure must be copied exactly from the findings. Leave out any figure you cannot source.`,
+      ].join(" ")).catch(() => null);
+      if (repaired) {
+        const repairedUnsupported = unsupportedSwarmFigures({
+          headline: repaired.headline,
+          answer: repaired.answer,
+          findings: options.findings,
+        });
+        if (repairedUnsupported.length < unsupported.length) {
+          synthesis = repaired;
+          source = "model-repaired";
+          unsupported = repairedUnsupported;
+        }
+      }
+    }
+    return { synthesis, source, unsupportedFigures: unsupported, failure: null };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.replace(/\s+/gu, " ").slice(0, 160) : "unknown";
+    return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: `synthesis-error:${detail}` };
   }
 }

@@ -7,11 +7,18 @@
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import { z } from "zod";
-import { buildSwarmSynthesis, conservativeSwarmAnswerState } from "@/services/swarm/src/synthesis";
+import { buildSwarmSynthesis, governedSwarmAnswerState } from "@/services/swarm/src/synthesis";
 import { swarmParentAnswerEvent, swarmPlanSteps } from "@/services/swarm/src/parent-events";
+import { writeSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
+import {
+  SALES_DEEP_BRIEFING_PATH,
+  SALES_DEEP_KIND,
+  buildSalesBriefingMarkdown,
+} from "@/services/swarm/src/sales-deep";
 import {
   loadSwarmRun,
   recordSwarmSynthesis,
+  saveSwarmBriefing,
 } from "@/services/control-plane/src/swarm-repository";
 import {
   ControlPlaneError,
@@ -92,9 +99,18 @@ export async function POST(request: Request): Promise<Response> {
       failed: agent.status === "failed" || agent.status === "stopped",
       failureNote: agent.failureNote,
     }));
-    const synthesis = await buildSwarmSynthesis({
+    const period = run.plan.period
+      ? {
+          start: run.plan.period.start,
+          end: run.plan.period.end,
+          compareStart: run.plan.period.compareStart,
+          compareEnd: run.plan.period.compareEnd,
+        }
+      : null;
+    const result = await buildSwarmSynthesis({
       question: run.question,
       periodLabel: run.plan.periodLabel,
+      period,
       businessName: tenant.tenant_name ?? "the business",
       findings,
       apiKey,
@@ -104,7 +120,8 @@ export async function POST(request: Request): Promise<Response> {
         .digest("hex"),
       signal: request.signal,
     });
-    const answerState = conservativeSwarmAnswerState(findings);
+    const synthesis = result.synthesis;
+    const answerState = governedSwarmAnswerState(findings, result.unsupportedFigures);
     const stored = await recordSwarmSynthesis({
       runId: run.runId,
       synthesis: {
@@ -113,6 +130,8 @@ export async function POST(request: Request): Promise<Response> {
         answerState,
         followUps: synthesis.followUps,
         disagreements: synthesis.disagreements,
+        source: result.source,
+        unsupportedFigures: [...result.unsupportedFigures],
       },
     });
 
@@ -147,6 +166,7 @@ export async function POST(request: Request): Promise<Response> {
         answerState,
         followUps: synthesis.followUps,
         timezone: tenant.timezone,
+        period: period ? { label: run.plan.periodLabel, start: period.start, end: period.end } : null,
       }),
     }).catch(() => undefined);
     await failConversationTurn({
@@ -156,11 +176,41 @@ export async function POST(request: Request): Promise<Response> {
       supabase: auth.supabase,
     }).catch(() => undefined);
 
-    logger.info("swarm.synthesis_recorded", {
+    let briefingMarkdown: string | null = null;
+    if (run.plan.kind === SALES_DEEP_KIND) {
+      briefingMarkdown = buildSalesBriefingMarkdown({
+        generatedAt: new Date().toISOString(),
+        businessName: tenant.tenant_name ?? "the business",
+        question: run.question,
+        periodLabel: run.plan.periodLabel,
+        period,
+        headline: synthesis.headline,
+        answer: synthesis.answer,
+        answerState,
+        followUps: synthesis.followUps,
+        disagreements: synthesis.disagreements,
+        findings,
+      });
+      await saveSwarmBriefing({
+        runId: run.runId,
+        briefing: briefingMarkdown,
+      }).catch((error) => {
+        logger.warn("swarm.briefing_save_failed", safeErrorEvidence(error), correlationId);
+      });
+      await writeSalesBriefingFile(briefingMarkdown).catch((error) => {
+        logger.warn("swarm.briefing_file_failed", safeErrorEvidence(error), correlationId);
+      });
+    }
+
+    const logSynthesis = result.source === "fallback" ? logger.warn : logger.info;
+    logSynthesis("swarm.synthesis_recorded", {
       tenantId: tenant.tenant_id,
       runId: run.runId,
       answerState,
       completedAgents: completed.length,
+      source: result.source,
+      unsupportedFigureCount: result.unsupportedFigures.length,
+      failure: result.failure,
     }, correlationId);
 
     return Response.json({
@@ -173,6 +223,7 @@ export async function POST(request: Request): Promise<Response> {
       },
       conversationId: run.parentConversationId,
       turnId: run.parentTurnId,
+      briefingPath: briefingMarkdown ? SALES_DEEP_BRIEFING_PATH : undefined,
     }, { headers: { "Cache-Control": "no-store", "x-request-id": correlationId } });
   } catch (error) {
     if (error instanceof z.ZodError) return jsonError("Invalid swarm synthesis request.", 400, correlationId);

@@ -1,8 +1,9 @@
 import { spawn, execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import {
@@ -36,11 +37,28 @@ export type CodexAppServerTurnResult = Readonly<{
   durationMs: number | null;
 }>;
 
+/**
+ * The model identity is explicit so a local ChatGPT-subscription run cannot
+ * silently fall back to API billing (or vice versa). ChatGPT credentials stay
+ * owned by Codex in its existing state directory; Albert never reads or copies
+ * the stored OAuth material.
+ */
+export type CodexAppServerAuthentication = Readonly<
+  | { mode: "api"; apiKey: string; baseUrl: string }
+  | {
+      mode: "chatgpt";
+      codexHome: string;
+      /** Exact local instruction files reviewed for this evaluation identity. */
+      reviewedInstructionSources?: readonly Readonly<{ path: string; sha256: string }>[];
+    }
+>;
+
 export type CodexAppServerTurnOptions = Readonly<{
-  apiKey: string;
-  baseUrl: string;
+  authentication: CodexAppServerAuthentication;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Optional shorter deadline for bounded preflight turns. */
+  timeoutMs?: number;
   /**
    * Effort for validator-driven repair turns on the same thread. Repairs
    * rebind citations over evidence that already exists, so a lighter effort
@@ -51,6 +69,10 @@ export type CodexAppServerTurnOptions = Readonly<{
   input: string;
   baseInstructions: string;
   developerInstructions: string;
+  /** Defaults to Albert's governed analytical tools; graders may pass []. */
+  dynamicTools?: readonly Readonly<Record<string, unknown>>[];
+  /** Defaults to Albert's final-answer schema; bounded eval graders may override it. */
+  outputSchema?: Readonly<Record<string, unknown>>;
   binaryPath?: string;
   signal?: AbortSignal;
   onNotification?: (method: string, params: unknown) => void | Promise<void>;
@@ -70,6 +92,7 @@ export type CodexAppServerTurnOptions = Readonly<{
 }>;
 
 const versionChecks = new Map<string, Promise<string>>();
+const chatGPTLoginChecks = new Map<string, Promise<void>>();
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -79,7 +102,12 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-export function codexAppServerArguments(openaiBaseUrl?: string): readonly string[] {
+export function codexAppServerArguments(
+  authentication: CodexAppServerAuthentication,
+  fastMode = false,
+  runtimeStateHome?: string,
+): readonly string[] {
+  const openaiBaseUrl = authentication.mode === "api" ? authentication.baseUrl : undefined;
   return Object.freeze([
     "app-server",
     "--listen", "stdio://",
@@ -104,15 +132,26 @@ export function codexAppServerArguments(openaiBaseUrl?: string): readonly string
     "--disable", "code_mode_only",
     "-c", "analytics.enabled=false",
     "-c", "history.persistence=\"none\"",
+    ...(runtimeStateHome ? [
+      "-c", `sqlite_home=${JSON.stringify(runtimeStateHome)}`,
+      "-c", `log_dir=${JSON.stringify(join(runtimeStateHome, "logs"))}`,
+    ] : []),
     "-c", "web_search=\"disabled\"",
     "-c", "approval_policy=\"never\"",
     "-c", "sandbox_mode=\"read-only\"",
-    "-c", "forced_login_method=\"api\"",
+    "-c", `forced_login_method=${JSON.stringify(authentication.mode)}`,
+    ...(fastMode ? ["-c", "features.fast_mode=true"] : []),
+    ...(fastMode && authentication.mode === "chatgpt" ? ["-c", "service_tier=\"fast\""] : []),
     "-c", "tools.update_plan.enabled=true",
     "-c", "agents.enabled=false",
     "-c", "project_doc_max_bytes=0",
     "-c", "project_doc_fallback_filenames=[]",
     "-c", "mcp_servers={}",
+    // The desktop-managed Codex home contributes these built-in MCP entries
+    // above the ordinary user mcp_servers table. Disable them explicitly so
+    // subscription evaluation retains the same zero-MCP boundary as API mode.
+    "-c", "mcp_servers.openaiDeveloperDocs.enabled=false",
+    "-c", "mcp_servers.node_repl.enabled=false",
     ...(openaiBaseUrl ? ["-c", `openai_base_url=${JSON.stringify(openaiBaseUrl)}`] : []),
   ]);
 }
@@ -124,12 +163,12 @@ export function codexAppServerArguments(openaiBaseUrl?: string): readonly string
  * Codex state path is a fresh private directory deleted after this turn.
  */
 export function codexChildEnvironment(input: Readonly<{
-  baseUrl: string;
+  baseUrl?: string;
   codexHome?: string;
 }>): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     NODE_ENV: "production",
-    OPENAI_BASE_URL: input.baseUrl,
+    ...(input.baseUrl ? { OPENAI_BASE_URL: input.baseUrl } : {}),
     ...(input.codexHome ? { CODEX_HOME: input.codexHome } : {}),
   };
   for (const key of ["PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"] as const) {
@@ -176,6 +215,40 @@ async function authenticateCodexApiKey(input: Readonly<{
     });
     child.stdin?.end(`${input.apiKey}\n`);
   });
+}
+
+/** Verify the Codex-owned OAuth session without reading its credential files. */
+export async function assertCodexChatGPTLogin(input: Readonly<{
+  binaryPath: string;
+  codexHome: string;
+  environment: NodeJS.ProcessEnv;
+  cwd: string;
+}>): Promise<void> {
+  const key = `${input.binaryPath}\u0000${input.codexHome}`;
+  let check = chatGPTLoginChecks.get(key);
+  if (!check) {
+    check = execFileAsync(input.binaryPath, [
+      "login",
+      "status",
+      "-c", "forced_login_method=\"chatgpt\"",
+    ], {
+      cwd: input.cwd,
+      env: input.environment,
+      timeout: 10_000,
+      maxBuffer: 4_096,
+    }).then(({ stdout, stderr }) => {
+      if (!/Logged in using ChatGPT/iu.test(`${stdout}\n${stderr}`)) {
+        throw new Error("Codex is not signed in with ChatGPT for subscription access.");
+      }
+    });
+    chatGPTLoginChecks.set(key, check);
+  }
+  try {
+    await check;
+  } catch (error) {
+    chatGPTLoginChecks.delete(key);
+    throw error;
+  }
 }
 
 async function executable(path: string): Promise<boolean> {
@@ -466,9 +539,13 @@ class CodexJsonRpcSession {
   }
 }
 
-function threadIdFromResponse(value: unknown): string {
+function threadIdFromResponse(value: unknown, allowedInstructionSources: ReadonlySet<string>): string {
   if (!isObject(value) || !isObject(value.thread)) throw new Error("Codex returned no thread.");
-  if (Array.isArray(value.instructionSources) && value.instructionSources.length > 0) {
+  const instructionSources = Array.isArray(value.instructionSources)
+    ? value.instructionSources.filter((source): source is string => typeof source === "string")
+    : [];
+  const unexpectedInstructionSources = instructionSources.filter((source) => !allowedInstructionSources.has(source));
+  if (unexpectedInstructionSources.length > 0) {
     throw new Error("Codex loaded an external instruction source; the analytical thread was rejected.");
   }
   if (Array.isArray(value.runtimeWorkspaceRoots) && value.runtimeWorkspaceRoots.length > 0) {
@@ -503,24 +580,64 @@ function isTransientModelTurnFailure(error: unknown): boolean {
 export async function runCodexAppServerTurn(
   options: CodexAppServerTurnOptions,
 ): Promise<CodexAppServerTurnResult> {
-  if (!options.apiKey.trim()) throw new Error("The Codex runtime requires an OpenAI API key.");
+  const { authentication } = options;
+  if (authentication.mode === "api") {
+    if (!authentication.apiKey.trim()) throw new Error("The Codex runtime requires an OpenAI API key.");
+    if (!authentication.baseUrl.trim()) throw new Error("The Codex runtime requires an OpenAI API base URL.");
+  } else {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("ChatGPT subscription authentication is local-evaluation only.");
+    }
+    if (!authentication.codexHome.trim() || !isAbsolute(authentication.codexHome)) {
+      throw new Error("The ChatGPT-authenticated Codex home must be an absolute path.");
+    }
+  }
   const workspace = await mkdtemp(join(tmpdir(), "albert-codex-turn-"));
-  const codexHome = join(workspace, "codex-home");
-  await mkdir(codexHome, { mode: 0o700 });
+  const runtimeStateHome = join(workspace, "runtime-state");
+  await mkdir(runtimeStateHome, { mode: 0o700 });
+  const codexHome = authentication.mode === "api"
+    ? join(workspace, "codex-home")
+    : authentication.codexHome;
+  if (authentication.mode === "api") await mkdir(codexHome, { mode: 0o700 });
   const environment = codexChildEnvironment({
-    baseUrl: options.baseUrl,
+    ...(authentication.mode === "api" ? { baseUrl: authentication.baseUrl } : {}),
     codexHome,
   });
   const binaryPath = await resolveCodexBinary(options.binaryPath);
   await assertPinnedCodexVersion(binaryPath, environment);
-  await authenticateCodexApiKey({
-    binaryPath,
-    apiKey: options.apiKey,
-    baseUrl: options.baseUrl,
-    environment,
-    cwd: workspace,
-  });
-  const child = spawn(binaryPath, [...codexAppServerArguments(options.baseUrl)], {
+  const allowedInstructionSources = new Set<string>();
+  if (authentication.mode === "api") {
+    await authenticateCodexApiKey({
+      binaryPath,
+      apiKey: authentication.apiKey,
+      baseUrl: authentication.baseUrl,
+      environment,
+      cwd: workspace,
+    });
+  } else {
+    for (const reviewed of authentication.reviewedInstructionSources ?? []) {
+      if (!isAbsolute(reviewed.path) || resolve(reviewed.path) !== resolve(authentication.codexHome, "AGENTS.md")) {
+        throw new Error("A reviewed Codex instruction source must be the authenticated home AGENTS.md file.");
+      }
+      if (!/^[a-f0-9]{64}$/u.test(reviewed.sha256)) {
+        throw new Error("A reviewed Codex instruction source requires a SHA-256 digest.");
+      }
+      const digest = createHash("sha256").update(await readFile(reviewed.path)).digest("hex");
+      if (digest !== reviewed.sha256) {
+        throw new Error("The reviewed Codex instruction source changed; subscription evaluation was rejected.");
+      }
+      allowedInstructionSources.add(reviewed.path);
+    }
+    await assertCodexChatGPTLogin({
+      binaryPath,
+      codexHome,
+      environment,
+      cwd: workspace,
+    });
+  }
+  const child = spawn(binaryPath, [
+    ...codexAppServerArguments(authentication, options.fastMode, runtimeStateHome),
+  ], {
     cwd: workspace,
     env: environment,
     stdio: ["pipe", "pipe", "pipe"],
@@ -543,7 +660,7 @@ export async function runCodexAppServerTurn(
         // retained by the isolated analytical runtime.
         optOutNotificationMethods: ["item/agentMessage/delta"],
       },
-    });
+    }, 90_000);
     session.notify("initialized");
     if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
     const thread = await session.request("thread/start", {
@@ -559,11 +676,14 @@ export async function runCodexAppServerTurn(
       selectedCapabilityRoots: [],
       baseInstructions: options.baseInstructions,
       developerInstructions: options.developerInstructions,
-      dynamicTools: CODEX_DYNAMIC_TOOL_SPECS,
-    });
-    threadId = threadIdFromResponse(thread);
+      dynamicTools: options.dynamicTools ?? CODEX_DYNAMIC_TOOL_SPECS,
+    }, 60_000);
+    threadId = threadIdFromResponse(thread, allowedInstructionSources);
     session.setExpectedThread(threadId);
-    const deadlineAt = Date.now() + ANALYSIS_TIMEOUT_MS;
+    const timeoutMs = Number.isFinite(options.timeoutMs)
+      ? Math.max(1_000, Math.min(ANALYSIS_TIMEOUT_MS, Math.floor(options.timeoutMs!)))
+      : ANALYSIS_TIMEOUT_MS;
+    const deadlineAt = Date.now() + timeoutMs;
     let nextInput = options.input;
     let totalDurationMs = 0;
     // A transient stream resume continues the investigation at full effort;
@@ -588,7 +708,7 @@ export async function runCodexAppServerTurn(
           // drops it, leaving the request on the default tier. Verified by
           // capturing the binary's /v1/responses payloads (2026-08-23).
           serviceTier: options.fastMode ? "priority" : null,
-          outputSchema: CODEX_FINAL_OUTPUT_JSON_SCHEMA,
+          outputSchema: options.outputSchema ?? CODEX_FINAL_OUTPUT_JSON_SCHEMA,
         });
         turnId = turnIdFromResponse(started);
         session.setExpectedTurn(turnId);

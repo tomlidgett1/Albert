@@ -81,12 +81,14 @@ const server = createServer((incoming, outgoing) => {
   });
 });
 
-server.listen(config.port, "0.0.0.0", () => {
+server.listen(config.port, config.listenHost, () => {
   process.stdout.write(`${JSON.stringify({
     event: "codex_runtime_started",
     port: config.port,
+    listenHost: config.listenHost,
     buildSha: releaseSha,
     pinnedCliVersion: config.pinnedCliVersion,
+    authenticationMode: config.authentication.mode,
   })}\n`);
 });
 

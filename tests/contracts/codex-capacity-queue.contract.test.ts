@@ -8,10 +8,14 @@ import type { CodexServiceTurn } from "../../packages/albert-codex/src/contracts
 const secret = "q".repeat(48);
 const config = {
   port: 0,
+  listenHost: "127.0.0.1" as const,
   signingSecret: secret,
   cubeApiUrl: "http://127.0.0.1:1",
-  openaiApiKey: "sk-fixture",
-  openaiBaseUrl: "https://au.api.openai.com/v1",
+  authentication: {
+    mode: "api" as const,
+    apiKey: "sk-fixture",
+    baseUrl: "https://au.api.openai.com/v1",
+  },
   maxConcurrentTurns: 1,
   pinnedCliVersion: "0.148.0",
   releaseSha: "test",

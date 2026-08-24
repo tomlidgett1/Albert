@@ -29,6 +29,9 @@ type ModelRunControlsProps = {
   onChange: (value: AgentRunPreferences) => void;
   allowedModelIds?: readonly AlbertModelId[];
   allowedReasoningEfforts?: readonly ReasoningEffort[];
+  /** Codex-only planning preflight. Omit for Albert/V3 and comparison controls. */
+  solPlannerEnabled?: boolean;
+  onSolPlannerChange?: (enabled: boolean) => void;
   disabled?: boolean;
   runActive?: boolean;
   popoverPlacement?: "above" | "below";
@@ -90,6 +93,8 @@ export function ModelRunControls({
   onChange,
   allowedModelIds,
   allowedReasoningEfforts,
+  solPlannerEnabled = false,
+  onSolPlannerChange,
   disabled = false,
   popoverPlacement = "above",
   popoverAlign = "trigger-end",
@@ -98,10 +103,12 @@ export function ModelRunControls({
   const [popoverEntered, setPopoverEntered] = useState(false);
   const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
   const [popoverCoords, setPopoverCoords] = useState<PopoverCoords | null>(null);
+  const [flipPopoverBelow, setFlipPopoverBelow] = useState(false);
   const reduceMotion = useReducedMotion();
   const popoverId = useId().replaceAll(":", "");
   const areaRef = useRef<HTMLDivElement>(null);
   const modelTabsRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const summaryMeasureRef = useRef<HTMLSpanElement>(null);
   const selectedEffortRef = useRef<HTMLButtonElement>(null);
@@ -117,6 +124,7 @@ export function ModelRunControls({
   const closePopover = useCallback(() => {
     clearCloseTimer();
     setPopoverEntered(false);
+    setFlipPopoverBelow(false);
     closeTimerRef.current = window.setTimeout(() => {
       setOpen(false);
       setPopoverCoords(null);
@@ -127,6 +135,7 @@ export function ModelRunControls({
   const openPopover = useCallback(() => {
     clearCloseTimer();
     setPopoverEntered(false);
+    setFlipPopoverBelow(false);
     setOpen(true);
   }, [clearCloseTimer]);
 
@@ -162,9 +171,12 @@ export function ModelRunControls({
 
   const effortLabel = EFFORT_LABELS[value.reasoningEffort] ?? value.reasoningEffort;
 
-  const triggerSummary = value.fastMode
-    ? `${selectedModel.label} · ${effortLabel} · Fast mode`
-    : `${selectedModel.label} · ${effortLabel}`;
+  const triggerSummary = [
+    selectedModel.label,
+    effortLabel,
+    value.fastMode ? "Fast mode" : null,
+    onSolPlannerChange && solPlannerEnabled ? "Sol planner" : null,
+  ].filter(Boolean).join(" · ");
 
   useLayoutEffect(() => {
     const summary = summaryMeasureRef.current;
@@ -182,7 +194,7 @@ export function ModelRunControls({
     measure();
     const frame = window.requestAnimationFrame(measure);
     return () => window.cancelAnimationFrame(frame);
-  }, [effortLabel, selectedModel.label, value.fastMode]);
+  }, [effortLabel, onSolPlannerChange, selectedModel.label, solPlannerEnabled, value.fastMode]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -192,6 +204,13 @@ export function ModelRunControls({
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const width = Math.min(POPOVER_WIDTH, window.innerWidth - 24);
+      const popoverHeight = popoverRef.current?.scrollHeight ?? 0;
+      const aboveSpace = Math.max(0, rect.top - 12);
+      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - 12);
+      const shouldFlipBelow = popoverPlacement === "above"
+        && popoverHeight > aboveSpace
+        && belowSpace > aboveSpace;
+      setFlipPopoverBelow((current) => (current === shouldFlipBelow ? current : shouldFlipBelow));
       const shell =
         popoverAlign === "shell-start"
           ? trigger.closest<HTMLElement>('[data-edit-open="true"]')
@@ -200,7 +219,7 @@ export function ModelRunControls({
       const left = shellRect
         ? Math.max(12, Math.min(shellRect.left, window.innerWidth - width - 12))
         : Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
-      if (popoverPlacement === "below") {
+      if (popoverPlacement === "below" || shouldFlipBelow) {
         setPopoverCoords({ top: rect.bottom + 10, left, width });
       } else {
         setPopoverCoords({
@@ -222,9 +241,11 @@ export function ModelRunControls({
     open,
     popoverAlign,
     popoverPlacement,
+    flipPopoverBelow,
     triggerWidth,
     effortLabel,
     selectedModel.label,
+    solPlannerEnabled,
     value.fastMode,
   ]);
 
@@ -322,7 +343,7 @@ export function ModelRunControls({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={popoverId}
-        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning`}
+        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
         data-testid="model-run-controls-trigger"
         title={triggerSummary}
         style={triggerWidth ? { width: triggerWidth } : undefined}
@@ -363,10 +384,11 @@ export function ModelRunControls({
       </button>
 
       <div
+        ref={popoverRef}
         id={popoverId}
         className={[
           styles.modelControlsPopover,
-          popoverPlacement === "below" ? styles.modelControlsPopoverBelow : "",
+          popoverPlacement === "below" || flipPopoverBelow ? styles.modelControlsPopoverBelow : "",
           popoverAlign === "shell-start" ? styles.modelControlsPopoverShellStart : "",
           popoverEntered ? styles.modelControlsPopoverOpen : "",
           open && popoverCoords ? styles.modelControlsPopoverFixed : "",
@@ -419,30 +441,57 @@ export function ModelRunControls({
           </div>
         </section>
 
-        {showFastMode ? (
+        {showFastMode || onSolPlannerChange ? (
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-options`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-options`}>
             Options
           </p>
           <div className={styles.modelControlsMenuList}>
-            <button
-              className={styles.modelControlsMenuRow}
-              type="button"
-              role="switch"
-              aria-checked={value.fastMode}
-              aria-label="Fast mode"
-              title="Fast mode"
-              data-processing-speed={value.fastMode ? "fast" : "standard"}
-              onClick={() => onChange(normalizeAgentPreferences({ ...value, fastMode: !value.fastMode }))}
-            >
-              <span>Fast</span>
-              <span
-                className={`${styles.modelControlsToggle} ${value.fastMode ? styles.modelControlsToggleOn : ""}`}
-                aria-hidden="true"
+            {showFastMode ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={value.fastMode}
+                aria-label="Fast mode"
+                title="Fast mode"
+                data-processing-speed={value.fastMode ? "fast" : "standard"}
+                onClick={() => onChange(normalizeAgentPreferences({ ...value, fastMode: !value.fastMode }))}
               >
-                <i />
-              </span>
-            </button>
+                <span>Fast</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${value.fastMode ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onSolPlannerChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={solPlannerEnabled}
+                aria-label="Sol planner"
+                title="Use GPT-5.6 Sol at Max to outline each Codex analysis before the selected model answers"
+                data-sol-planner={solPlannerEnabled ? "on" : "off"}
+                onClick={() => onSolPlannerChange(!solPlannerEnabled)}
+              >
+                <span>Sol · Max planner</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${solPlannerEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onSolPlannerChange ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Uses GPT-5.6 Sol at Max for a short checklist, then hands the question to the selected model.
+              </p>
+            ) : null}
           </div>
         </section>
         ) : null}

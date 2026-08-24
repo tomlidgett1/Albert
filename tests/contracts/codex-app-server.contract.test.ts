@@ -15,6 +15,10 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 if (process.argv.includes("login")) {
+  if (process.argv.includes("status")) {
+    process.stdout.write("Logged in using ChatGPT\\n");
+    process.exit(0);
+  }
   process.stdin.resume();
   process.stdin.on("end", () => process.exit(0));
   return;
@@ -44,7 +48,8 @@ lines.on("line", (line) => {
       && message.params.dynamicTools?.[0]?.tools?.some((tool) => tool.name === "report_evidence_update")
       && message.params.dynamicTools?.[0]?.tools?.some((tool) => tool.name === "make_chart")
       && rawCommentaryOptedOut
-      && process.env.CODEX_HOME?.includes("/albert-codex-turn-")
+      && (process.env.CODEX_HOME?.includes("/albert-codex-turn-")
+        || process.env.CODEX_HOME?.includes("/albert-codex-subscription-"))
       && !process.env.CUBEJS_API_SECRET
       && !process.env.ALBERT_CODEX_RUNTIME_SIGNING_SECRET
       && !process.env.CONTROL_PLANE_DATABASE_URL;
@@ -123,6 +128,10 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 if (process.argv.includes("login")) {
+  if (process.argv.includes("status")) {
+    process.stdout.write("Logged in using ChatGPT\\n");
+    process.exit(0);
+  }
   process.stdin.resume();
   process.stdin.on("end", () => process.exit(0));
   return;
@@ -163,6 +172,10 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 if (process.argv.includes("login")) {
+  if (process.argv.includes("status")) {
+    process.stdout.write("Logged in using ChatGPT\\n");
+    process.exit(0);
+  }
   process.stdin.resume();
   process.stdin.on("end", () => process.exit(0));
   return;
@@ -225,6 +238,15 @@ test("Codex child environment contains no API key and uses an isolated Codex hom
   }
 });
 
+test("ChatGPT child environment contains no API endpoint or API credential", () => {
+  const environment = codexChildEnvironment({
+    codexHome: "/tmp/albert-codex-subscription-fixture",
+  });
+  assert.equal(environment.OPENAI_API_KEY, undefined);
+  assert.equal(environment.OPENAI_BASE_URL, undefined);
+  assert.equal(environment.CODEX_HOME, "/tmp/albert-codex-subscription-fixture");
+});
+
 test("Codex app-server is pinned, environmentless, and handles one namespaced host tool", async () => {
   const directory = await mkdtemp(join(tmpdir(), "albert-codex-fake-"));
   const binary = join(directory, "codex-fixture");
@@ -241,8 +263,11 @@ test("Codex app-server is pinned, environmentless, and handles one namespaced ho
   try {
     let calls = 0;
     const result = await runCodexAppServerTurn({
-      apiKey: "sk-test",
-      baseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-test",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       model: "gpt-5.6-sol",
       effort: "high",
       fastMode: true,
@@ -262,8 +287,11 @@ test("Codex app-server is pinned, environmentless, and handles one namespaced ho
     assert.equal(result.durationMs, 7);
     assert.match(result.finalMessage, /protocol test/u);
     await assert.rejects(() => runCodexAppServerTurn({
-      apiKey: "sk-test",
-      baseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-test",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       model: "gpt-5.6-sol",
       effort: "high",
       fastMode: true,
@@ -284,8 +312,36 @@ test("Codex app-server is pinned, environmentless, and handles one namespaced ho
   }
 });
 
+test("Codex app-server can use an existing ChatGPT subscription login without an API key", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "albert-codex-subscription-"));
+  const binary = join(directory, "codex-fixture");
+  await writeFile(binary, fakeServerSource, "utf8");
+  await chmod(binary, 0o755);
+  try {
+    const result = await runCodexAppServerTurn({
+      authentication: { mode: "chatgpt", codexHome: directory },
+      model: "gpt-5.6-luna",
+      effort: "max",
+      fastMode: true,
+      input: "fixture",
+      baseInstructions: "fixture",
+      developerInstructions: "fixture",
+      binaryPath: binary,
+      onToolCall: async () => ({ success: true, text: JSON.stringify({ ok: true }) }),
+    });
+    assert.equal(result.threadId, "thr_fixture");
+    assert.match(result.finalMessage, /protocol test/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Codex startup disables coding, browser, plugin and multi-agent capabilities", () => {
-  const argumentsList = codexAppServerArguments().join(" ");
+  const argumentsList = codexAppServerArguments({
+    mode: "api",
+    apiKey: "not-rendered",
+    baseUrl: "https://au.api.openai.com/v1",
+  }).join(" ");
   for (const feature of [
     "shell_tool", "unified_exec", "multi_agent", "apps", "plugins", "browser_use",
     "computer_use", "image_generation", "goals", "hooks", "workspace_dependencies", "code_mode",
@@ -296,6 +352,19 @@ test("Codex startup disables coding, browser, plugin and multi-agent capabilitie
   assert.match(argumentsList, /approval_policy="never"/u);
   assert.match(argumentsList, /sandbox_mode="read-only"/u);
   assert.match(argumentsList, /tools\.update_plan\.enabled=true/u);
+  assert.match(argumentsList, /mcp_servers\.openaiDeveloperDocs\.enabled=false/u);
+  assert.match(argumentsList, /mcp_servers\.node_repl\.enabled=false/u);
+  assert.doesNotMatch(argumentsList, /not-rendered/u);
+  const subscriptionFast = codexAppServerArguments({
+    mode: "chatgpt",
+    codexHome: "/tmp/albert-codex-subscription-fixture",
+  }, true, "/tmp/albert-codex-turn-fixture/runtime-state").join(" ");
+  assert.match(subscriptionFast, /forced_login_method="chatgpt"/u);
+  assert.match(subscriptionFast, /features\.fast_mode=true/u);
+  assert.match(subscriptionFast, /service_tier="fast"/u);
+  assert.match(subscriptionFast, /sqlite_home="\/tmp\/albert-codex-turn-fixture\/runtime-state"/u);
+  assert.match(subscriptionFast, /log_dir="\/tmp\/albert-codex-turn-fixture\/runtime-state\/logs"/u);
+  assert.doesNotMatch(subscriptionFast, /OPENAI_BASE_URL|api\.openai/u);
 });
 
 test("Codex keeps the same ephemeral thread alive to repair a rejected final candidate", async () => {
@@ -306,8 +375,11 @@ test("Codex keeps the same ephemeral thread alive to repair a rejected final can
   const candidates: string[] = [];
   try {
     const result = await runCodexAppServerTurn({
-      apiKey: "sk-test",
-      baseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-test",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       model: "gpt-5.6-sol",
       effort: "high",
       fastMode: true,
@@ -339,8 +411,11 @@ test("Codex resumes the same thread after a transient model response closes", as
   await chmod(binary, 0o755);
   try {
     const result = await runCodexAppServerTurn({
-      apiKey: "sk-test",
-      baseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-test",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       model: "gpt-5.6-luna",
       effort: "max",
       fastMode: true,

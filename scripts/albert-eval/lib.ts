@@ -10,6 +10,10 @@ import { businessContextDocumentSchema, renderBusinessContext, type BusinessCont
 import { fileURLToPath } from "node:url";
 import { CubeClient } from "../../packages/albert-v3/src/cube/client.js";
 import { priorResultsFromTraceEvents, type PriorTurnResult } from "../../packages/albert-v3/src/engine/prior-results.js";
+import {
+  codexPriorResultSchema,
+  type CodexPriorResult,
+} from "../../packages/albert-codex/src/contracts.js";
 import type { GoldenSpec } from "./questions.js";
 
 export const here = path.dirname(fileURLToPath(import.meta.url));
@@ -207,6 +211,9 @@ export async function computeGolden(cube: CubeClient, spec: GoldenSpec, tokens: 
 export type EvalTurnRecord = {
   runId: string;
   id: string;
+  /** Durable control-plane ids used to continue a resumable eval thread. */
+  conversationId?: string;
+  turnId?: string;
   thread?: string;
   turn?: number;
   question: string;
@@ -243,7 +250,11 @@ export type EvalTurnRecord = {
   /** Whether the business context document was injected for this turn. */
   businessContext?: boolean;
   specialistAgentId?: "general" | "customers";
+  model?: string;
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   fastMode?: boolean;
+  /** Non-secret provider identity boundary used for this model-backed turn. */
+  authenticationMode?: "api" | "chatgpt";
 };
 
 const MAX_GOVERNED_QUERIES_PER_ANSWER = 8;
@@ -357,6 +368,63 @@ export function priorResultsFromRecords(prior: readonly EvalTurnRecord[]): Prior
     ],
   }));
   return priorResultsFromTraceEvents(turns);
+}
+
+/** Rebuilds the bounded prior-result envelope expected by the Codex route. */
+export function codexPriorResultsFromRecords(prior: readonly EvalTurnRecord[]): CodexPriorResult[] {
+  const recent = prior.slice(-2);
+  const selected: CodexPriorResult[] = [];
+  let bytes = 0;
+  for (const [index, record] of recent.entries()) {
+    const turnsAgo = recent.length - index;
+    const orderedTables = [...record.tables].sort((left, right) => (
+      Number(right.presentation === "answer") - Number(left.presentation === "answer")
+    ));
+    for (const table of orderedTables) {
+      const columns = table.columns.slice(0, 16);
+      if (columns.length === 0) continue;
+      const allowedKeys = new Set(columns.map((column) => column.key));
+      const rows = table.rows.slice(0, 20).map((row) => Object.fromEntries(
+        Object.entries(row).filter(([key]) => allowedKeys.has(key)).slice(0, 16),
+      ));
+      const query = record.queries.find((candidate) => candidate.view === table.view)
+        ?? record.queries[0];
+      const connector = query?.connector || "lightspeed-r";
+      const candidate = {
+        resultId: table.resultId,
+        turnsAgo,
+        caption: table.caption.slice(0, 160),
+        presentation: table.presentation,
+        columns,
+        rows,
+        rowCount: table.rowCount,
+        ...(table.view ? { view: table.view } : {}),
+        connector,
+        sources: [{ connector, label: table.caption.slice(0, 160), dataThrough: "unknown" }],
+        timeRange: {
+          label: query?.timeRange || "As previously retrieved",
+          start: "unknown",
+          end: "unknown",
+          timezone: TIMEZONE,
+        },
+        definitions: (record.provenanceDefinitions ?? []).slice(0, 12).map((definition) => ({
+          metric: definition.metric.slice(0, 160),
+          label: definition.label.slice(0, 160),
+          definition: definition.definition.slice(0, 500),
+        })),
+        semanticBundleHash: "albert-codex-eval-prior",
+        identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+      };
+      const parsed = codexPriorResultSchema.safeParse(candidate);
+      if (!parsed.success) continue;
+      const nextBytes = Buffer.byteLength(JSON.stringify(parsed.data), "utf8");
+      if (bytes + nextBytes > 48_000) return selected;
+      selected.push(parsed.data);
+      bytes += nextBytes;
+      if (selected.length >= 4) return selected;
+    }
+  }
+  return selected;
 }
 
 

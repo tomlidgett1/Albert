@@ -3,8 +3,8 @@
  *
  * Drives the codex-runtime service job API with production-shaped turns for
  * Ashburton Cycles: one freshly minted control-plane lease per question (so
- * per-turn Cube cold start is measured exactly as production pays it), model
- * gpt-5.6-luna at max effort, fast mode OFF unless --fast.
+ * per-turn Cube cold start is measured exactly as production pays it). The
+ * subscription300 corpus is locked to ChatGPT auth + Luna + Max + Fast.
  *
  * Requires a private codex-runtime instance (never the shared --watch one):
  *   PORT=8799 ALBERT_CODEX_MAX_CONCURRENT_TURNS=6 \
@@ -13,6 +13,8 @@
  * Usage:
  *   npx tsx scripts/albert-eval/run-codex.mts --run codex-baseline
  *   npx tsx scripts/albert-eval/run-codex.mts --run smoke --ids CE-01,CA-01
+ *   npx tsx scripts/albert-eval/run-codex.mts --run subscription-300 \
+ *     --corpus subscription300 --auth chatgpt --fast --resume
  * Options: --concurrency N (default 4), --timeout-ms (default 780000),
  *   --limit N, --resume, --fast, --service-url URL (default 127.0.0.1:8799).
  *
@@ -21,6 +23,7 @@
  * per turn go to evals/albert/runs/<run>/events/<id>.jsonl.
  */
 import path from "node:path";
+import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import pg from "pg";
@@ -29,12 +32,20 @@ import { signCubeJwt } from "../../packages/albert-v3/src/cube/jwt.js";
 import {
   ALBERT_CODEX_LOCAL_SIGNING_SECRET,
   CodexRuntimeServiceClient,
+  assertCodexChatGPTLogin,
+  assertPinnedCodexVersion,
+  codexChildEnvironment,
   createCodexTraceTransportState,
   projectCodexRuntimeEvent,
+  resolveCodexBinary,
+  runCodexSemanticTurn,
 } from "../../packages/albert-codex/src/index.js";
 import type { CodexServiceTurn } from "../../packages/albert-codex/src/contracts.js";
 import { buildSharedAnalyticalBrief } from "../../services/conversation/src/analytical-brief.js";
-import { CODEX_QUESTIONS, type CodexEvalQuestion } from "./questions-codex-bikeshop.js";
+import { CODEX_300_QUESTIONS } from "./questions-codex-300.js";
+import { CODEX_QUESTIONS } from "./questions-codex-bikeshop.js";
+import type { EvalQuestion } from "./questions.js";
+import { subscriptionAuthentication } from "./subscription-auth.js";
 import {
   ACTIVE_CONNECTORS,
   ACTOR_ID,
@@ -42,6 +53,11 @@ import {
   SOURCE_FINDINGS,
   TENANT_ID,
   appendJsonl,
+  codexPriorResultsFromRecords,
+  computeGolden,
+  conversationFromPriorTurns,
+  createEvalCube,
+  dateTokens,
   loadEnv,
   loadEvalBusinessContext,
   readJsonl,
@@ -61,6 +77,10 @@ type Args = {
   serviceUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
+  corpus: "codex56" | "subscription300";
+  authMode: "api" | "chatgpt";
+  transport: "service" | "in-process";
+  workerStaggerMs: number;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -73,6 +93,10 @@ function parseArgs(argv: string[]): Args {
     serviceUrl: process.env.REPRO_SERVICE_URL ?? "http://127.0.0.1:8799",
     model: "gpt-5.6-luna",
     effort: "max",
+    corpus: "codex56",
+    authMode: "api",
+    transport: "service",
+    workerStaggerMs: 0,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -88,6 +112,30 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--service-url") args.serviceUrl = next();
     else if (a === "--model") args.model = next();
     else if (a === "--effort") args.effort = next() as Args["effort"];
+    else if (a === "--corpus") args.corpus = next() as Args["corpus"];
+    else if (a === "--auth") args.authMode = next() as Args["authMode"];
+    else if (a === "--transport") args.transport = next() as Args["transport"];
+    else if (a === "--worker-stagger-ms") args.workerStaggerMs = Number(next());
+  }
+  if (args.corpus !== "codex56" && args.corpus !== "subscription300") {
+    throw new Error("--corpus must be codex56 or subscription300");
+  }
+  if (args.authMode !== "api" && args.authMode !== "chatgpt") {
+    throw new Error("--auth must be api or chatgpt");
+  }
+  if (args.transport !== "service" && args.transport !== "in-process") {
+    throw new Error("--transport must be service or in-process");
+  }
+  if (!Number.isFinite(args.workerStaggerMs) || args.workerStaggerMs < 0 || args.workerStaggerMs > 30_000) {
+    throw new Error("--worker-stagger-ms must be between 0 and 30000");
+  }
+  if (args.corpus === "subscription300" && (
+    args.authMode !== "chatgpt"
+    || args.model !== "gpt-5.6-luna"
+    || args.effort !== "max"
+    || !args.fastMode
+  )) {
+    throw new Error("subscription300 requires --auth chatgpt --model gpt-5.6-luna --effort max --fast");
   }
   return args;
 }
@@ -95,6 +143,56 @@ function parseArgs(argv: string[]): Args {
 const args = parseArgs(process.argv.slice(2));
 const env = loadEnv();
 if (!env.CUBEJS_API_SECRET) throw new Error("CUBEJS_API_SECRET missing");
+const subscriptionCodexHome = process.env.ALBERT_CODEX_CHATGPT_HOME?.trim()
+  || process.env.CODEX_HOME?.trim()
+  || path.join(homedir(), ".codex");
+let resolvedInProcessBinary: string | undefined;
+
+async function assertRuntimeAuthentication(): Promise<void> {
+  if (args.transport === "in-process") {
+    if (args.authMode !== "chatgpt") {
+      throw new Error("In-process eval transport is restricted to ChatGPT subscription auth.");
+    }
+    if (!path.isAbsolute(subscriptionCodexHome)) {
+      throw new Error("ChatGPT-authenticated Codex home must be absolute.");
+    }
+    const environment = codexChildEnvironment({ codexHome: subscriptionCodexHome });
+    resolvedInProcessBinary = await resolveCodexBinary(
+      process.env.ALBERT_CODEX_BINARY_PATH?.trim() || undefined,
+    );
+    const runtime = await assertPinnedCodexVersion(resolvedInProcessBinary, environment);
+    await assertCodexChatGPTLogin({
+      binaryPath: resolvedInProcessBinary,
+      codexHome: subscriptionCodexHome,
+      environment,
+      cwd: process.cwd(),
+    });
+    console.log(`[codex-eval] runtime=${runtime} auth=chatgpt transport=in-process`);
+    return;
+  }
+  const response = await fetch(`${args.serviceUrl.replace(/\/+$/u, "")}/readyz`, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => null) as null | {
+    ready?: boolean;
+    authenticationMode?: string;
+    runtime?: string;
+  };
+  if (!response.ok || payload?.ready !== true) {
+    throw new Error(`Codex runtime is not ready (${response.status}).`);
+  }
+  if (payload.authenticationMode !== args.authMode) {
+    throw new Error(
+      `Codex runtime auth mismatch: requested ${args.authMode}, runtime reports ${payload.authenticationMode ?? "unknown"}.`,
+    );
+  }
+  if (args.authMode === "chatgpt" && payload.authenticationMode !== "chatgpt") {
+    throw new Error("Subscription evaluation refused an API-authenticated Codex runtime.");
+  }
+  console.log(`[codex-eval] runtime=${payload.runtime ?? "unknown"} auth=${payload.authenticationMode}`);
+}
+
+await assertRuntimeAuthentication();
 
 // Control-plane pooler URL for lease minting: the direct db.<ref> host is
 // IPv6-only from this Mac, so rewrite to the Sydney session pooler.
@@ -112,7 +210,12 @@ function leaseDbUrl(): string {
 }
 
 const TOM_UID = ACTOR_ID;
-const pool = new pg.Pool({ connectionString: leaseDbUrl(), ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 30_000 });
+const pool = new pg.Pool({
+  connectionString: leaseDbUrl(),
+  ssl: { rejectUnauthorized: false },
+  max: Math.min(Math.max(args.concurrency, 3), 8),
+  idleTimeoutMillis: 30_000,
+});
 pool.on("error", (error) => console.error("[pool]", error.message));
 const initialized = new WeakSet<object>();
 async function db(text: string, values?: unknown[]): Promise<pg.QueryResult> {
@@ -133,21 +236,33 @@ async function db(text: string, values?: unknown[]): Promise<pg.QueryResult> {
 }
 
 const BUSINESS_CONTEXT = loadEvalBusinessContext();
-const client = new CodexRuntimeServiceClient(
-  args.serviceUrl,
-  env.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim() || ALBERT_CODEX_LOCAL_SIGNING_SECRET,
-);
+const client = args.transport === "service"
+  ? new CodexRuntimeServiceClient(
+      args.serviceUrl,
+      env.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim() || ALBERT_CODEX_LOCAL_SIGNING_SECRET,
+    )
+  : null;
 
 const dir = runDir(args.run);
 const eventsDir = path.join(dir, "events");
 mkdirSync(eventsDir, { recursive: true });
 const resultsFile = path.join(dir, "results.jsonl");
-const existing = new Set(args.resume ? readJsonl<EvalTurnRecord>(resultsFile).map((r) => r.id) : []);
+const priorRunRecords = args.resume ? readJsonl<EvalTurnRecord>(resultsFile) : [];
+const existingRecords = new Map<string, EvalTurnRecord>();
+// Resume retries failed/aborted turns. Only a completed record can satisfy a
+// corpus id or provide trusted context to the rest of its thread.
+for (const record of priorRunRecords) {
+  if (!record.failed) existingRecords.set(record.id, record);
+}
+const existing = new Set(existingRecords.keys());
 let engineVersion = "unknown";
 try { engineVersion = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* ignore */ }
 engineVersion = `codex-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${process.env.EVAL_ENGINE_LABEL}` : ""}`;
 
-let selected: CodexEvalQuestion[] = args.question
+const corpus: readonly EvalQuestion[] = args.corpus === "subscription300"
+  ? CODEX_300_QUESTIONS
+  : CODEX_QUESTIONS;
+let selected: EvalQuestion[] = args.question
   ? [{
     id: "ADHOC",
     tier: "easy",
@@ -156,14 +271,39 @@ let selected: CodexEvalQuestion[] = args.question
     pattern: "cold",
     question: args.question,
   }]
-  : CODEX_QUESTIONS.filter((q) => !args.ids || args.ids.has(q.id));
-if (args.limit) selected = selected.slice(0, args.limit);
-const runnable = selected.filter((q) => !existing.has(q.id));
-console.log(`[codex-eval] run=${args.run} engine=${engineVersion} model=${args.model} fast=${args.fastMode} service=${args.serviceUrl} turns=${runnable.length}/${selected.length} concurrency=${args.concurrency}`);
+  : corpus.filter((question) => !args.ids || args.ids.has(question.id));
+if (args.ids) {
+  const selectedThreads = new Set(selected.flatMap((question) => question.thread ? [question.thread] : []));
+  selected = corpus.filter((question) => (
+    args.ids!.has(question.id)
+    || Boolean(question.thread && selectedThreads.has(question.thread))
+  ));
+}
+
+type Unit = { key: string; turns: EvalQuestion[] };
+const units: Unit[] = [];
+const byThread = new Map<string, EvalQuestion[]>();
+for (const question of selected) {
+  if (!question.thread) {
+    units.push({ key: question.id, turns: [question] });
+    continue;
+  }
+  const turns = byThread.get(question.thread) ?? [];
+  turns.push(question);
+  byThread.set(question.thread, turns);
+}
+for (const [thread, turns] of byThread) {
+  units.push({ key: thread, turns: turns.sort((left, right) => (left.turn ?? 0) - (right.turn ?? 0)) });
+}
+units.sort((left, right) => (right.turns.length - left.turns.length) || left.key.localeCompare(right.key));
+const selectedUnits = args.limit ? units.slice(0, args.limit) : units;
+selected = selectedUnits.flatMap((unit) => unit.turns);
+const runnableCount = selected.filter((question) => !existing.has(question.id)).length;
+console.log(`[codex-eval] run=${args.run} corpus=${args.corpus} engine=${engineVersion} model=${args.model} effort=${args.effort} fast=${args.fastMode} auth=${args.authMode} transport=${args.transport} service=${args.serviceUrl} turns=${runnableCount}/${selected.length} units=${selectedUnits.length} concurrency=${args.concurrency}`);
 
 type Lease = { conversationId: string; turnId: string };
 
-async function mintLease(question: CodexEvalQuestion): Promise<Lease> {
+async function mintLease(question: EvalQuestion, existingConversationId?: string): Promise<Lease> {
   const turnId = ulid();
   const runtimeProfile = {
     provider: "openai",
@@ -173,8 +313,8 @@ async function mintLease(question: CodexEvalQuestion): Promise<Lease> {
     kind: "codex_eval",
   };
   const begun = await db(
-    "select conversation_id from public.begin_albert_turn(null, $1, $2, $3::jsonb, null, null)",
-    [turnId, question.question, JSON.stringify(runtimeProfile)],
+    "select conversation_id from public.begin_albert_turn($1, $2, $3, $4::jsonb, null, null)",
+    [existingConversationId ?? null, turnId, question.question, JSON.stringify(runtimeProfile)],
   );
   const conversationId = String(begun.rows[0]?.conversation_id ?? "");
   if (!conversationId) throw new Error("begin_albert_turn returned no conversation id");
@@ -195,11 +335,21 @@ async function completeLease(lease: Lease, answerState: string | undefined): Pro
   ]).catch(() => undefined);
 }
 
-async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord> {
+const cube = createEvalCube(env);
+
+type TurnAttempt = Readonly<{ record: EvalTurnRecord; conversationId?: string }>;
+
+async function runTurnOnce(
+  question: EvalQuestion,
+  prior: readonly EvalTurnRecord[],
+  existingConversationId?: string,
+): Promise<TurnAttempt> {
   const startedAt = new Date();
+  const tokens = dateTokens(startedAt);
   const record: EvalTurnRecord = {
     runId: args.run,
     id: question.id,
+    ...(question.thread ? { thread: question.thread, turn: question.turn } : {}),
     question: question.question,
     tier: question.tier,
     scope: question.scope,
@@ -219,7 +369,10 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
     engineVersion,
     businessContext: Boolean(BUSINESS_CONTEXT),
     specialistAgentId: "general",
+    model: args.model,
+    reasoningEffort: args.effort,
     fastMode: args.fastMode,
+    authenticationMode: args.authMode,
   };
   const eventsFile = path.join(eventsDir, `${question.id}.jsonl`);
   const t0 = Date.now();
@@ -227,7 +380,9 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
   const timer = setTimeout(() => controller.abort(new Error("eval timeout")), args.timeoutMs);
   let lease: Lease | undefined;
   try {
-    lease = await mintLease(question);
+    lease = await mintLease(question, existingConversationId);
+    record.conversationId = lease.conversationId;
+    record.turnId = lease.turnId;
     const cubeBearer = signCubeJwt({
       secret: env.CUBEJS_API_SECRET!,
       expiresInSeconds: 2_700,
@@ -246,6 +401,10 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
       connectorFreshness: [],
       includeGeneric: true,
     });
+    const history = conversationFromPriorTurns(prior, question.question).slice(0, -1).map((message) => ({
+      role: message.role as "user" | "assistant",
+      text: String(message.text ?? "").slice(0, 8_000),
+    }));
     const turn: CodexServiceTurn = {
       protocolVersion: 1,
       requestId: ulid(),
@@ -255,8 +414,8 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
       conversationId: lease.conversationId,
       turnId: lease.turnId,
       message: question.question,
-      priorConversation: [],
-      priorResults: [],
+      priorConversation: history.slice(-12),
+      priorResults: codexPriorResultsFromRecords(prior),
       activeConnectors: [...ACTIVE_CONNECTORS],
       connectorFreshness: [],
       ...(BUSINESS_CONTEXT ? { businessContext: BUSINESS_CONTEXT.rendered.slice(0, 20_000) } : {}),
@@ -268,7 +427,7 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
       fastMode: args.fastMode,
     };
     let transport = createCodexTraceTransportState();
-    const result = await client.runTurn(turn, async (raw) => {
+    const receiveEvent = async (raw: Parameters<typeof projectCodexRuntimeEvent>[1]) => {
       const at = Date.now() - t0;
       appendJsonl(eventsFile, { atMs: at, ...raw });
       const projected = projectCodexRuntimeEvent(transport, raw);
@@ -330,7 +489,17 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
             break;
         }
       }
-    }, controller.signal);
+    };
+    const result = args.transport === "service"
+      ? await client!.runTurn(turn, receiveEvent, controller.signal)
+      : await runCodexSemanticTurn({
+          turn,
+          cubeApiUrl: env.CUBE_API_URL!,
+          authentication: subscriptionAuthentication(subscriptionCodexHome),
+          codexBinaryPath: resolvedInProcessBinary,
+          signal: controller.signal,
+          emit: receiveEvent,
+        });
     record.queriesExecuted = result.queriesExecuted;
     if (!record.answerState) record.answerState = result.answerState;
   } catch (error) {
@@ -340,31 +509,63 @@ async function runTurnOnce(question: CodexEvalQuestion): Promise<EvalTurnRecord>
     record.durationMs = Date.now() - t0;
     if (lease) await completeLease(lease, record.failed ? undefined : record.answerState);
   }
-  return record;
+  if (question.golden?.length) {
+    record.golden = [];
+    for (const spec of question.golden) record.golden.push(await computeGolden(cube, spec, tokens));
+  }
+  return { record, ...(lease ? { conversationId: lease.conversationId } : {}) };
 }
 
-const TRANSIENT = /overloaded|429|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up/iu;
+const TRANSIENT = /overloaded|429|rate limit|usage limit|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up/iu;
 
 let done = 0;
-const queue = [...runnable];
-async function worker(): Promise<void> {
-  for (;;) {
-    const question = queue.shift();
-    if (!question) return;
-    console.log(`[${done + 1}/${runnable.length}] START ${question.id} (${question.tier}) "${question.question.slice(0, 80)}"`);
-    let record = await runTurnOnce(question);
-    if (record.failed && TRANSIENT.test(record.failed)) {
-      console.log(`[codex-eval] ${question.id} transient failure (${record.failed}); retrying in 20s`);
-      await new Promise((resolve) => setTimeout(resolve, 20_000));
-      record = await runTurnOnce(question);
+const queue = [...selectedUnits];
+async function runUnit(unit: Unit): Promise<void> {
+  const prior: EvalTurnRecord[] = [];
+  let conversationId: string | undefined;
+  for (const question of unit.turns) {
+    const previous = existingRecords.get(question.id);
+    if (previous) {
+      prior.push(previous);
+      conversationId = previous.conversationId ?? conversationId;
+      done += 1;
+      continue;
     }
+    console.log(`[${done + 1}/${selected.length}] START ${question.id} (${question.pattern}/${question.tier}) "${question.question.slice(0, 80)}"`);
+    let attempt = await runTurnOnce(question, prior, conversationId);
+    if (attempt.record.failed && TRANSIENT.test(attempt.record.failed)) {
+      console.log(`[codex-eval] ${question.id} transient/subscription-limit failure (${attempt.record.failed}); retrying once in 20s`);
+      await new Promise((resolve) => setTimeout(resolve, 20_000));
+      attempt = await runTurnOnce(question, prior, attempt.conversationId ?? conversationId);
+    }
+    const { record } = attempt;
     appendJsonl(resultsFile, record);
+    prior.push(record);
+    conversationId = attempt.conversationId ?? conversationId;
     done += 1;
-    console.log(`[${done}/${runnable.length}] DONE  ${question.id}: state=${record.answerState ?? "FAILED"} q=${record.queries.length} charts=${record.charts.length} ${(record.durationMs / 1000).toFixed(0)}s${record.failed ? ` FAILED: ${record.failed.slice(0, 160)}` : ""}`);
+    console.log(`[${done}/${selected.length}] DONE  ${question.id}: state=${record.answerState ?? "FAILED"} q=${record.queries.length} charts=${record.charts.length} ${(record.durationMs / 1000).toFixed(0)}s${record.failed ? ` FAILED: ${record.failed.slice(0, 160)}` : ""}`);
   }
 }
 
-await Promise.all(Array.from({ length: Math.min(args.concurrency, runnable.length) }, () => worker()));
-console.log(`[codex-eval] finished ${done} turns → ${resultsFile}`);
+async function worker(index: number): Promise<void> {
+  if (index > 0 && args.workerStaggerMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, index * args.workerStaggerMs));
+  }
+  for (;;) {
+    const unit = queue.shift();
+    if (!unit) return;
+    try {
+      await runUnit(unit);
+    } catch (error) {
+      console.error(`[codex-eval] unit ${unit.key} crashed:`, error);
+    }
+  }
+}
+
+await Promise.all(Array.from(
+  { length: Math.min(args.concurrency, selectedUnits.length) },
+  (_, index) => worker(index),
+));
+console.log(`[codex-eval] finished ${done}/${selected.length} turns → ${resultsFile}`);
 await pool.end();
 process.exit(0);

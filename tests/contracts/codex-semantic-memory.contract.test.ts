@@ -260,8 +260,11 @@ test("remember_term captures vocabulary proposals and injected rules reach the t
     const result = await runCodexSemanticTurn({
       turn,
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: binary,
       emit: (event) => events.push(event),
     });

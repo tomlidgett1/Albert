@@ -1,5 +1,6 @@
 import { verifyInternalRequest } from "../../../packages/security/src/index.js";
 import {
+  assertCodexChatGPTLogin,
   assertPinnedCodexVersion,
   codexChildEnvironment,
   resolveCodexBinary,
@@ -143,15 +144,27 @@ export class CodexRuntimeHttpHandler {
     if (request.method === "GET" && url.pathname === "/readyz") {
       try {
         const binary = await resolveCodexBinary(this.config.binaryPath);
-        const runtime = await assertPinnedCodexVersion(binary, codexChildEnvironment({
-          baseUrl: this.config.openaiBaseUrl,
-        }));
+        const authentication = this.config.authentication;
+        const environment = codexChildEnvironment({
+          ...(authentication.mode === "api" ? { baseUrl: authentication.baseUrl } : {}),
+          ...(authentication.mode === "chatgpt" ? { codexHome: authentication.codexHome } : {}),
+        });
+        const runtime = await assertPinnedCodexVersion(binary, environment);
+        if (authentication.mode === "chatgpt") {
+          await assertCodexChatGPTLogin({
+            binaryPath: binary,
+            codexHome: authentication.codexHome,
+            environment,
+            cwd: process.cwd(),
+          });
+        }
         return Response.json({
           ready: true,
           status: "ready",
           releaseSha: this.config.releaseSha,
           deploymentId: this.config.deploymentId,
           runtime,
+          authenticationMode: authentication.mode,
           activeTurns: this.activeTurns,
         }, { headers: { "cache-control": "no-store" } });
       } catch {
@@ -230,8 +243,7 @@ export class CodexRuntimeHttpHandler {
         void runCodexSemanticTurn({
           turn: parsed.data,
           cubeApiUrl: this.config.cubeApiUrl,
-          openaiApiKey: this.config.openaiApiKey,
-          openaiBaseUrl: this.config.openaiBaseUrl,
+          authentication: this.config.authentication,
           codexBinaryPath: this.config.binaryPath,
           signal: runAbort.signal,
           emit: (event: CodexTraceEventInput) => write({ kind: "event", event }),
@@ -323,8 +335,7 @@ export class CodexRuntimeHttpHandler {
     void runCodexSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
-      openaiApiKey: this.config.openaiApiKey,
-      openaiBaseUrl: this.config.openaiBaseUrl,
+      authentication: this.config.authentication,
       codexBinaryPath: this.config.binaryPath,
       signal: job.abort.signal,
       emit: (event) => this.publishJobEvent(job, event),

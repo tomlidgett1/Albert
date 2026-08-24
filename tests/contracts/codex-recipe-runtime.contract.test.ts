@@ -127,8 +127,11 @@ test("Codex executes a certified sales-period recipe without starting the app-se
     const result = await runCodexSemanticTurn({
       turn: fixtureTurn("Show me sales this week", token),
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: "/this/path/must/not/be-started",
       emit: (event) => events.push(event),
     });
@@ -233,8 +236,11 @@ test("Codex executes a certified roster list recipe without starting the app-ser
     const result = await runCodexSemanticTurn({
       turn: fixtureTurn("Schedule tomorrow?", token),
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: "/this/path/must-not-be-started",
       emit: (event) => events.push(event),
     });

@@ -132,8 +132,11 @@ try {
       fastMode: true,
     },
     cubeApiUrl: `http://127.0.0.1:${address.port}`,
-    openaiApiKey: apiKey,
-    openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    authentication: {
+      mode: "api",
+      apiKey,
+      baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    },
     emit: (event) => events.push(event),
   });
   const queryEvents = events.filter((event) => event.type === "query");

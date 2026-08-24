@@ -4,19 +4,32 @@
  */
 import type { AnswerState, TraceEvent, TracePlanStep, TraceProvenance } from "@/packages/shared/src";
 
-export function swarmEmptyProvenance(timezone: string): TraceProvenance {
+export type SwarmProvenancePeriod = Readonly<{
+  label: string;
+  start: string;
+  end: string;
+}>;
+
+export function swarmParentProvenance(input: Readonly<{
+  timezone: string;
+  period?: SwarmProvenancePeriod | null;
+}>): TraceProvenance {
   return {
     sources: [],
     timeRange: {
-      label: "As investigated by the swarm",
-      start: "unknown",
-      end: "unknown",
-      timezone,
+      label: input.period?.label ?? "As investigated by the swarm",
+      start: input.period?.start ?? "unknown",
+      end: input.period?.end ?? "unknown",
+      timezone: input.timezone,
     },
     definitions: [],
     semanticBundleHash: "albert-swarm-no-direct-query",
     identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
   };
+}
+
+export function swarmEmptyProvenance(timezone: string): TraceProvenance {
+  return swarmParentProvenance({ timezone });
 }
 
 export function swarmPlanSteps(input: Readonly<{
@@ -70,6 +83,7 @@ export function swarmParentAnswerEvent(input: Readonly<{
   answerState: AnswerState;
   followUps: readonly string[];
   timezone: string;
+  period?: SwarmProvenancePeriod | null;
 }>): TraceEvent {
   return {
     id: input.id,
@@ -79,7 +93,7 @@ export function swarmParentAnswerEvent(input: Readonly<{
     status: input.answerState === "Unavailable" ? "warning" : "complete",
     state: input.answerState,
     text: input.answer,
-    provenance: swarmEmptyProvenance(input.timezone),
+    provenance: swarmParentProvenance({ timezone: input.timezone, period: input.period }),
     followUps: [...input.followUps],
     presentedResultIds: [],
     claims: [],

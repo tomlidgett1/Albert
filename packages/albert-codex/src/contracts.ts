@@ -31,6 +31,8 @@ const traceColumnSchema = z.object({
 export const codexConversationRequestSchema = z.object({
   message: z.string().trim().min(1).max(8_000),
   preferences: z.unknown().optional(),
+  /** Run the optional GPT-5.6 Sol / Max planning preflight for Codex turns. */
+  solPlanner: z.boolean().optional(),
   comparisonMode: z.boolean().optional(),
   conversationId: ulidSchema.optional(),
   replaceTurnId: ulidSchema.optional(),
@@ -148,6 +150,8 @@ export const codexServiceTurnSchema = z.object({
   model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
   fastMode: z.boolean(),
+  /** Optional Codex-only Sol/Max decomposition preflight. */
+  solPlanner: z.boolean().optional(),
 }).strict();
 
 export type CodexServiceTurn = Omit<z.infer<typeof codexServiceTurnSchema>, "analysisBrief"> & Readonly<{
@@ -312,6 +316,36 @@ export const codexFinalAnswerSchema = z.object({
 }).strict();
 
 export type CodexFinalAnswer = z.infer<typeof codexFinalAnswerSchema>;
+
+/** The bounded, tool-free checklist returned by the optional Sol preflight. */
+export const codexSolPlannerOutputSchema = z.object({
+  steps: z.array(z.object({
+    label: z.string().trim().min(3).max(180),
+  }).strict()).min(2).max(6),
+}).strict();
+
+export type CodexSolPlannerOutput = z.infer<typeof codexSolPlannerOutputSchema>;
+
+export const CODEX_SOL_PLANNER_OUTPUT_JSON_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  required: ["steps"],
+  properties: {
+    steps: {
+      type: "array",
+      minItems: 2,
+      maxItems: 6,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["label"],
+        properties: {
+          label: { type: "string", minLength: 3, maxLength: 180 },
+        },
+      },
+    },
+  },
+});
 
 export const codexSemanticTurnResultSchema = z.object({
   answerState: z.enum(["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"]),

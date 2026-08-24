@@ -14,7 +14,7 @@
  * Fixed configuration: Ashburton Cycles (lightspeed-r, xero, deputy only).
  */
 
-export type Tier = "easy" | "medium" | "hard" | "xhard" | "ambiguous" | "meta";
+export type Tier = "easy" | "medium" | "hard" | "xhard" | "ambiguous" | "meta" | "theory" | "goal";
 export type Scope = "lightspeed" | "xero" | "deputy" | "multi" | "meta";
 export type Surface =
   | "sales"

@@ -57,7 +57,7 @@ test("Codex service has no database or Cube signing credential", async () => {
   assert.match(joined, /codexServiceTurnSchema/u);
 });
 
-test("Codex analytical work is deadline-driven rather than stopped by lookup or turn counts", async () => {
+test("Codex analytical work combines the hard deadline with brief-aware query ceilings", async () => {
   const [appServer, semanticRuntime] = await Promise.all([
     read("packages/albert-codex/src/app-server.ts"),
     read("packages/albert-codex/src/semantic-runtime.ts"),
@@ -65,8 +65,13 @@ test("Codex analytical work is deadline-driven rather than stopped by lookup or 
   assert.equal(ALBERT_CODEX_ANALYSIS_TIMEOUT_MS, 720_000);
   assert.match(appServer, /ANALYSIS_TIMEOUT_MS = ALBERT_CODEX_ANALYSIS_TIMEOUT_MS/u);
   assert.doesNotMatch(appServer, /MAX_VALIDATION_REPAIRS/u);
-  assert.doesNotMatch(semanticRuntime, /MAX_(?:QUERY|EXECUTED|CATALOGUE|SCHEMA)/u);
-  assert.doesNotMatch(semanticRuntime, /query budget is exhausted|schema-load budget is exhausted|catalogue-search budget is exhausted/iu);
+  assert.match(semanticRuntime, /codexQueryBudgetForTurn/u);
+  assert.match(semanticRuntime, /testable_opportunity_v2[\s\S]*\? 16/u);
+  assert.match(semanticRuntime, /general_analysis_v1[\s\S]*\? 10/u);
+  assert.match(semanticRuntime, /CODEX_PLAN_STEP_RESULT_BUDGET = 3/u);
+  assert.match(semanticRuntime, /error: "plan_step_saturated"/u);
+  assert.doesNotMatch(semanticRuntime, /MAX_(?:EXECUTED|CATALOGUE|SCHEMA)/u);
+  assert.doesNotMatch(semanticRuntime, /schema-load budget is exhausted|catalogue-search budget is exhausted/iu);
   assert.match(semanticRuntime, /successfulQueryDigests\.has/u);
 });
 

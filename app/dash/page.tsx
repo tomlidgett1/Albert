@@ -23,6 +23,10 @@ import {
 } from "@/packages/shared/src";
 import { swarmEmptyProvenance, swarmPlanSteps } from "@/services/swarm/src/parent-events";
 import {
+  SALES_DEEP_OWNER_QUESTION,
+  SALES_DEEP_PREFERENCES,
+} from "@/services/swarm/src/sales-deep";
+import {
   getPublicSpecialistAgentDefinition,
   normalizeSpecialistAgentId,
   parseSpecialistAgentId,
@@ -72,7 +76,7 @@ import TenantDeletionWorkspace, {
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
 import ProactiveWorkspace from "./components/ProactiveWorkspace";
-import SwarmPanel from "./components/SwarmPanel";
+import SwarmPanel, { SWARM_PANEL_DEFAULT_WIDTH } from "./components/SwarmPanel";
 import RecommendedAnalysis from "./components/RecommendedAnalysis";
 import {
   hydrateSwarmFromRun,
@@ -85,6 +89,7 @@ import {
 import MyDataWorkspace from "./components/MyDataWorkspace";
 import TestChartWorkspace from "./components/TestChartWorkspace";
 import NewTestWorkspace from "./components/NewTestWorkspace";
+import AgentsWorkspace from "./components/AgentsWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import styles from "./dash.module.css";
@@ -128,6 +133,7 @@ type IconName =
 
 type ActiveItem =
   | "Chat"
+  | "Agents"
   | "Proactive"
   | "Dashboard"
   | "My Data"
@@ -188,6 +194,8 @@ const CODEX_REASONING_EFFORTS = Object.freeze([
   "xhigh",
   "max",
 ] as const satisfies readonly ReasoningEffort[]);
+/** Codex quality preflight is on by default, with an explicit per-session off switch. */
+const DEFAULT_CODEX_SOL_PLANNER = true;
 
 const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
   { value: "system", label: "System theme", icon: "monitor" },
@@ -852,6 +860,7 @@ export default function DashPage() {
   const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("codex");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
+  const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [chatDetailedMode, setChatDetailedMode] = useState(() => {
@@ -865,6 +874,8 @@ export default function DashPage() {
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
   const [swarmEnabled, setSwarmEnabled] = useState(false);
   const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
+  const [swarmPanelWidth, setSwarmPanelWidth] = useState(SWARM_PANEL_DEFAULT_WIDTH);
+  const [swarmPanelResizing, setSwarmPanelResizing] = useState(false);
   const [swarmConversationIds, setSwarmConversationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1002,6 +1013,8 @@ export default function DashPage() {
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
   agentPreferencesRef.current = agentPreferences;
+  const codexSolPlannerEnabledRef = useRef(codexSolPlannerEnabled);
+  codexSolPlannerEnabledRef.current = codexSolPlannerEnabled;
   const openConversationAbortRef = useRef<AbortController | null>(null);
   const openConversationRequestIdRef = useRef(0);
   const conversationCacheRef = useRef(new Map<string, {
@@ -1342,6 +1355,7 @@ export default function DashPage() {
       && requestedView !== "TestChart"
       && requestedView !== "NewTest"
       && requestedView !== "Proactive"
+      && requestedView !== "Agents"
       && !nextOAuthNotice
     ) return;
     if (requestedView === "NewTest") setActiveItem("New test");
@@ -1350,6 +1364,7 @@ export default function DashPage() {
       else if (requestedView === "TestChart") setActiveItem("Test chart");
       else if (requestedView === "NewTest") setActiveItem("New test");
       else if (requestedView === "Proactive") setActiveItem("Proactive");
+      else if (requestedView === "Agents") setActiveItem("Agents");
       else if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
       setOAuthNotice(nextOAuthNotice);
     }, 0);
@@ -1372,6 +1387,12 @@ export default function DashPage() {
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
   }, [collapsed]);
+
+  useEffect(() => {
+    if (swarmPanelOpen) return;
+    setSwarmPanelWidth(SWARM_PANEL_DEFAULT_WIDTH);
+    setSwarmPanelResizing(false);
+  }, [swarmPanelOpen]);
 
   useEffect(() => {
     if (collapsed) {
@@ -2517,6 +2538,7 @@ export default function DashPage() {
       preferencesOverride?: AgentRunPreferences;
       /** Voice narration listens to the turn without owning the chat UI. */
       observer?: VoiceTurnObserver;
+      swarmKind?: "sales-deep";
     }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
@@ -2591,9 +2613,12 @@ export default function DashPage() {
       ? "xero_mcp"
       : isXaiModel(runPreferences.model)
         ? "v3"
-        : (requestConversationId && lastConversationRuntime)
+    : (requestConversationId && lastConversationRuntime)
           ? lastConversationRuntime
           : activeChatRuntimeRef.current;
+    const runSolPlanner = runRuntime === "codex"
+      ? codexSolPlannerEnabledRef.current
+      : false;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -2746,6 +2771,7 @@ export default function DashPage() {
             preferences: runPreferences,
             ...(requestConversationId ? { conversationId: requestConversationId } : {}),
             ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
+            ...(options?.swarmKind ? { kind: options.swarmKind } : {}),
           }),
           signal: controller.signal,
         });
@@ -2850,6 +2876,7 @@ export default function DashPage() {
       const requestBody = {
         message: text,
         ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
+        ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
         ...(runRuntime === "v3" ? { specialistAgentId: runSpecialistAgentId } : {}),
@@ -3262,7 +3289,7 @@ export default function DashPage() {
       type: "narrative",
       purpose: "acknowledgement",
       occurredAt: new Date().toISOString(),
-      text: snap.periodLabel
+      text: snap.periodLabel && snap.periodLabel !== "As asked"
         ? `I'll split this across ${snap.agents.length} specialists for ${snap.periodLabel}.`
         : `I'll split this across ${snap.agents.length} specialists, then combine what they find.`,
     };
@@ -3694,6 +3721,8 @@ export default function DashPage() {
     }
     setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
     agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
     resetChat("codex", "general");
   };
   const startCustomerChat = () => {
@@ -3703,11 +3732,33 @@ export default function DashPage() {
   const startCodexChat = () => {
     setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
     agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
     resetChat("codex", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
   const startCompareChat = () => {
     resetChat("compare", "general");
+  };
+  const startSalesDeepSwarm = () => {
+    if (swarmRunSnapshot().active) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === "Agents") {
+      url.searchParams.delete("view");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    setAgentPreferences(SALES_DEEP_PREFERENCES);
+    agentPreferencesRef.current = SALES_DEEP_PREFERENCES;
+    resetChat("codex", "general");
+    swarmEnabledRef.current = true;
+    setSwarmEnabled(true);
+    void sendChatMessage(SALES_DEEP_OWNER_QUESTION, undefined, {
+      conversationId: null,
+      priorMessageCount: 0,
+      allowWhileResponding: true,
+      preferencesOverride: SALES_DEEP_PREFERENCES,
+      swarmKind: "sales-deep",
+    });
   };
   const selectConversationRuntime = (tab: ConversationRuntimeTab) => {
     if (tab === "compare") {
@@ -3957,6 +4008,8 @@ export default function DashPage() {
                               onChange={setAgentPreferences}
                               allowedModelIds={CODEX_MODEL_IDS}
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              solPlannerEnabled={codexSolPlannerEnabled}
+                              onSolPlannerChange={setCodexSolPlannerEnabled}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -4154,6 +4207,19 @@ export default function DashPage() {
           >
             <Icon name="plus" />
             <span className={styles.sidebarActionLabel}>New Analysis</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Agents"
+            aria-current={activeItem === "Agents" ? "page" : undefined}
+            onClick={() => {
+              setAgentsOpen(false);
+              setActiveItem("Agents");
+            }}
+          >
+            <Icon name="agents" />
+            <span className={styles.sidebarActionLabel}>Agents</span>
           </button>
           {canUseCustomerAgent ? (
             <div hidden className={styles.sidebarAgents} ref={agentsAreaRef}>
@@ -4668,7 +4734,10 @@ export default function DashPage() {
             onConversationsChanged={loadConversationSummaries}
           />
         ) : activeItem === "Chat" ? (
-          <div className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""}`}>
+          <div
+            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${swarmPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
+            style={swarmPanelOpen ? { ["--takeaways-panel-width" as string]: `${swarmPanelWidth}px` } : undefined}
+          >
           <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
               <div className={styles.chatTopIdentity}>
@@ -5155,7 +5224,7 @@ export default function DashPage() {
                     }}
                   >
                     <Icon name="agents" />
-                    Swarm
+                    <span className={styles.swarmToggleLabel}>Swarm</span>
                   </button>
                 ) : null}
                 {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" && (
@@ -5165,6 +5234,8 @@ export default function DashPage() {
                       onChange={setAgentPreferences}
                       allowedModelIds={CODEX_MODEL_IDS}
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                      solPlannerEnabled={codexSolPlannerEnabled}
+                      onSolPlannerChange={setCodexSolPlannerEnabled}
                     />
                   ) : activeChatRuntime === "anthropic" ? (
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
@@ -5326,7 +5397,13 @@ export default function DashPage() {
             inert={!sidePanelOpen || undefined}
           >
             {swarmPanelOpen ? (
-              <SwarmPanel onClose={() => setSwarmPanelOpen(false)} />
+              <SwarmPanel
+                onClose={() => setSwarmPanelOpen(false)}
+                width={swarmPanelWidth}
+                onWidthChange={setSwarmPanelWidth}
+                onResizeActiveChange={setSwarmPanelResizing}
+                onWidenPastDefault={() => setCollapsed(true)}
+              />
             ) : (
               <div className={styles.takeawaysPanelInner}>
                 <div className={styles.takeawaysHeader}>
@@ -5352,6 +5429,11 @@ export default function DashPage() {
           </aside>
 
           </div>
+        ) : activeItem === "Agents" ? (
+          <AgentsWorkspace
+            onStartSalesSwarm={startSalesDeepSwarm}
+            salesSwarmBusy={swarmSnapshot.active}
+          />
         ) : activeItem === "Proactive" ? (
           <ProactiveWorkspace
             onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}

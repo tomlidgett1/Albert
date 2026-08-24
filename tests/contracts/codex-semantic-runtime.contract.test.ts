@@ -366,8 +366,11 @@ test("isolated Codex runtime reaches the existing Cube semantic layer and return
     const result = await runCodexSemanticTurn({
       turn,
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: binary,
       emit: (event) => events.push(event),
     });
@@ -610,7 +613,7 @@ lines.on("line", (line) => {
         model: "gpt-5.6-luna", effort: "max", fastMode: true,
       },
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture", openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: { mode: "api", apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1" },
       codexBinaryPath: binary, emit: (event) => events.push(event),
     });
     assert.equal(result.answerState, "Qualified", JSON.stringify(events));
@@ -694,8 +697,11 @@ test("referential period follow-ups answer immediately from the previous governe
       fastMode: true,
     },
     cubeApiUrl: "http://127.0.0.1:1",
-    openaiApiKey: "not-used",
-    openaiBaseUrl: "https://au.api.openai.com/v1",
+    authentication: {
+      mode: "api",
+      apiKey: "not-used",
+      baseUrl: "https://au.api.openai.com/v1",
+    },
     codexBinaryPath: "/not-used",
     emit: (event) => events.push(event),
   });
@@ -837,8 +843,11 @@ lines.on("line", (line) => {
         fastMode: true,
       },
       cubeApiUrl: `http://127.0.0.1:${address.port}`,
-      openaiApiKey: "sk-fixture",
-      openaiBaseUrl: "https://au.api.openai.com/v1",
+      authentication: {
+        mode: "api",
+        apiKey: "sk-fixture",
+        baseUrl: "https://au.api.openai.com/v1",
+      },
       codexBinaryPath: binary,
       emit: (event) => events.push(event),
     });

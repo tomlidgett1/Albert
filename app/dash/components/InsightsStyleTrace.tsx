@@ -2800,10 +2800,25 @@ export default function InsightsStyleTrace({
     && !model.answer
     && !model.clarification
     && !model.error;
+  const swarmLoading = streaming
+    && !model.answer
+    && !model.clarification
+    && !model.error
+    && events.some((event) => event.type === "plan" && event.id.startsWith("swarm_"));
 
   return (
     <div className={styles.root}>
-      {detailedMode ? (
+      {swarmLoading ? (
+        <AnimatePresence initial={false}>
+          {acknowledgementLive && model.initialAcknowledgement ? (
+            <InitialAcknowledgement
+              key={model.initialAcknowledgement.id}
+              acknowledgement={model.initialAcknowledgement}
+              reduceMotion={reduceMotion}
+            />
+          ) : null}
+        </AnimatePresence>
+      ) : detailedMode ? (
         <DetailedTrail model={model} streaming={streaming} reduceMotion={reduceMotion} onAddToDashboard={onAddToDashboard} />
       ) : (
         <>
@@ -2841,7 +2856,7 @@ export default function InsightsStyleTrace({
           </AnimatePresence>
         </>
       )}
-      {detailedMode && model.plan ? (
+      {(detailedMode || swarmLoading) && model.plan ? (
         <PlanChecklist
           plan={model.plan}
           animateIn={animateAnswerReveal}

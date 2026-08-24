@@ -93,8 +93,11 @@ try {
   const result = await runCodexSemanticTurn({
     turn,
     cubeApiUrl: env.CUBE_API_URL!,
-    openaiApiKey: env.OPENAI_API_KEY!,
-    openaiBaseUrl: env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    authentication: {
+      mode: "api",
+      apiKey: env.OPENAI_API_KEY!,
+      baseUrl: env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    },
     emit: (event) => {
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
       console.log(`[${elapsed}s] ${summarise(event as unknown as Record<string, unknown>)}`);

@@ -46,8 +46,11 @@ async function runCase(testCase: typeof cases[number]) {
   let toolCalls = 0;
   const startedAt = Date.now();
   const result = await runCodexAppServerTurn({
-    apiKey,
-    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    authentication: {
+      mode: "api",
+      apiKey,
+      baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    },
     model: "gpt-5.6-luna",
     effort: "max",
     fastMode: true,

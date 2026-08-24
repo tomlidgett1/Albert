@@ -2578,6 +2578,11 @@
   --takeaways-panel-width: 320px;
 }
 
+.chatShellTakeawaysResizing .takeawaysPanel,
+.chatShellTakeawaysResizing .chatWorkspace {
+  transition: none;
+}
+
 .chatWorkspace {
   display: flex;
   position: relative;
@@ -6714,8 +6719,10 @@
   position: relative;
   z-index: 2;
   display: flex;
+  box-sizing: border-box;
   width: min(100%, 56rem);
-  max-width: 56rem;
+  min-width: 0;
+  max-width: 100%;
   flex: 0 0 auto;
   flex-direction: column;
   align-items: stretch;
@@ -6727,6 +6734,8 @@
   margin-left: auto;
   margin-right: auto;
   overflow: visible;
+  container-type: inline-size;
+  container-name: composer;
 }
 
 .chatComposerStackHero {
@@ -7405,8 +7414,10 @@
 .chatComposer {
   position: relative;
   display: grid;
+  box-sizing: border-box;
   width: 100%;
-  max-width: none;
+  min-width: 0;
+  max-width: 100%;
   flex: 0 0 auto;
   align-self: stretch;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -7429,8 +7440,10 @@
   box-sizing: border-box;
   grid-template-columns: none;
   grid-template-rows: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   min-height: 0;
   border-radius: 999px;
   padding: 6px;
@@ -7467,14 +7480,17 @@
 
 .chatComposerTrailing {
   display: inline-flex;
-  flex: 0 0 auto;
+  min-width: 0;
+  flex: 0 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  margin-left: auto;
 }
 
 .chatComposerBar .chatComposerInputRow {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 1 12rem;
+  min-width: min(12rem, 100%);
 }
 
 .chatComposerBar .chatSendButton,
@@ -7538,6 +7554,7 @@
   display: block;
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   min-height: 34px;
   max-height: 168px;
   height: 34px;
@@ -7746,14 +7763,72 @@
   letter-spacing: -0.02em;
 }
 
+.swarmToggleLabel {
+  display: inline;
+}
+
 .chatComposerBar .swarmToggle {
   width: auto;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .swarmToggle svg {
   width: 13px;
   height: 13px;
+}
+
+@container composer (max-width: 560px) {
+  .chatComposerBar {
+    border-radius: 20px !important;
+  }
+}
+
+@container composer (max-width: 640px) {
+  .chatComposerBar .swarmToggle {
+    width: 28px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .swarmToggleLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .chatComposerBar .modelControlsTrigger {
+    max-width: 7.5rem;
+  }
+
+  .chatComposerBar .modelControlsSummary,
+  .chatComposerBar .modelControlsSummaryMeasure {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .chatComposerBar .modelControlsModelName,
+  .chatComposerBar .modelControlsSummaryMeta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@container composer (max-width: 520px) {
+  .chatComposerBar .modelControlsSummaryMeta,
+  .chatComposerBar .modelControlsFastSlot {
+    display: none;
+  }
+
+  .chatComposerBar .modelControlsTrigger {
+    max-width: 6.25rem;
+  }
 }
 
 .swarmToggle:hover {
@@ -14248,13 +14323,15 @@
 .modelControls {
   position: relative;
   z-index: 8;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .modelControlsTrigger {
   position: relative;
   display: inline-flex;
   width: auto;
-  max-width: none;
+  max-width: 100%;
   min-width: 52px;
   height: 32px;
   flex: 0 0 auto;

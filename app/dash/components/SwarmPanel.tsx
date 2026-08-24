@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from "react";
+import { useReducedMotion } from "framer-motion";
+import { ThinkingOrb } from "thinking-orbs";
 import type { TraceEvent } from "@/packages/shared/src";
 import InsightsStyleTrace from "./InsightsStyleTrace";
 import {
@@ -10,6 +12,21 @@ import {
   type SwarmAgentLiveState,
 } from "../lib/swarm-run-controller";
 import styles from "./swarm-panel.module.css";
+
+export const SWARM_PANEL_DEFAULT_WIDTH = 320;
+export const SWARM_PANEL_MIN_WIDTH = 320;
+export const SWARM_PANEL_MAX_WIDTH = 720;
+const SWARM_PANEL_CHAT_RESERVE = 420;
+const SWARM_PANEL_RESIZE_STEP = 16;
+const SWARM_PANEL_RESIZE_STEP_LARGE = 40;
+
+export function clampSwarmPanelWidth(width: number, viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth): number {
+  const viewportMax = Math.max(
+    SWARM_PANEL_MIN_WIDTH,
+    Math.min(SWARM_PANEL_MAX_WIDTH, viewportWidth - SWARM_PANEL_CHAT_RESERVE),
+  );
+  return Math.round(Math.min(viewportMax, Math.max(SWARM_PANEL_MIN_WIDTH, width)));
+}
 
 const traceEventTypes = new Set([
   "progress", "narrative", "plan", "query", "table", "chart",
@@ -57,16 +74,24 @@ function AgentRow({
   onOpen: () => void;
 }>): React.ReactNode {
   const live = isActive(agent.phase);
+  const reduceMotion = Boolean(useReducedMotion());
   return (
     <button className={styles.row} type="button" onClick={onOpen}>
-      <span
-        className={`${styles.dot} ${
-          live ? styles.dotLive
-            : agent.phase === "failed" ? styles.dotFailed
-              : styles.dotDone
-        }`}
-        aria-hidden="true"
-      />
+      {live ? (
+        <span className={styles.orb}>
+          <ThinkingOrb
+            state="shaping"
+            size={20}
+            paused={reduceMotion}
+            aria-label={`${agent.title} is working`}
+          />
+        </span>
+      ) : (
+        <span
+          className={`${styles.dot} ${agent.phase === "failed" ? styles.dotFailed : styles.dotDone}`}
+          aria-hidden="true"
+        />
+      )}
       <span className={styles.copy}>
         <span className={styles.title}>{agent.title}</span>
         <span className={styles.status}>
@@ -79,13 +104,87 @@ function AgentRow({
 
 export default function SwarmPanel({
   onClose,
+  width,
+  onWidthChange,
+  onResizeActiveChange,
+  onWidenPastDefault,
 }: Readonly<{
   onClose: () => void;
+  width: number;
+  onWidthChange: (width: number) => void;
+  onResizeActiveChange?: (active: boolean) => void;
+  onWidenPastDefault?: () => void;
 }>): React.ReactNode {
   const snapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   const [inspectKey, setInspectKey] = useState<string | null>(null);
   const [inspectEvents, setInspectEvents] = useState<readonly TraceEvent[]>([]);
   const [inspectState, setInspectState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [resizing, setResizing] = useState(false);
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  const applyWidth = (nextWidth: number) => {
+    const next = clampSwarmPanelWidth(nextWidth);
+    onWidthChange(next);
+    if (next > SWARM_PANEL_DEFAULT_WIDTH) onWidenPastDefault?.();
+  };
+
+  const setResizeActive = (active: boolean) => {
+    setResizing(active);
+    onResizeActiveChange?.(active);
+  };
+
+  const onResizePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: widthRef.current,
+    };
+    setResizeActive(true);
+  };
+
+  const onResizePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    applyWidth(drag.startWidth + (drag.startX - event.clientX));
+  };
+
+  const onResizePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setResizeActive(false);
+  };
+
+  const onResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? SWARM_PANEL_RESIZE_STEP_LARGE : SWARM_PANEL_RESIZE_STEP;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applyWidth(widthRef.current + step);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applyWidth(widthRef.current - step);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      applyWidth(SWARM_PANEL_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      applyWidth(SWARM_PANEL_MAX_WIDTH);
+    }
+  };
 
   const inspect = snapshot.agents.find((agent) => agent.key === inspectKey) ?? null;
   const active = snapshot.agents.filter((agent) => isActive(agent.phase));
@@ -126,8 +225,37 @@ export default function SwarmPanel({
     };
   }, [inspect?.conversationId]);
 
+  useEffect(() => {
+    if (!resizing) return;
+    const { body } = document;
+    const previousCursor = body.style.cursor;
+    const previousUserSelect = body.style.userSelect;
+    body.style.cursor = "col-resize";
+    body.style.userSelect = "none";
+    return () => {
+      body.style.cursor = previousCursor;
+      body.style.userSelect = previousUserSelect;
+    };
+  }, [resizing]);
+
   return (
-    <div className={styles.inner}>
+    <div className={`${styles.inner} ${resizing ? styles.innerResizing : ""}`}>
+      <div
+        className={styles.resizeHandle}
+        role="slider"
+        aria-orientation="vertical"
+        aria-label="Resize swarm panel"
+        aria-controls="analysis-takeaways"
+        aria-valuemin={SWARM_PANEL_MIN_WIDTH}
+        aria-valuemax={SWARM_PANEL_MAX_WIDTH}
+        aria-valuenow={width}
+        tabIndex={0}
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={onResizePointerEnd}
+        onPointerCancel={onResizePointerEnd}
+        onKeyDown={onResizeKeyDown}
+      />
       <header className={styles.header}>
         {inspect ? (
           <button
@@ -160,7 +288,6 @@ export default function SwarmPanel({
             <InsightsStyleTrace
               events={inspectEvents}
               streaming={isActive(inspect.phase)}
-              detailedMode
               runtime="codex"
             />
           )}

@@ -47,11 +47,25 @@ export const swarmStoredSynthesisSchema = z.object({
   answerState: z.enum(["Derived", "Exploratory", "No data", "Unavailable"]),
   followUps: z.array(z.string().max(180)).max(4),
   disagreements: z.array(z.string().max(200)).max(4).catch([]),
+  source: z.enum(["model", "model-repaired", "fallback"]).optional(),
+  unsupportedFigures: z.array(z.string().max(80)).max(8).optional(),
 }).strict();
+
+export const swarmPlanPeriodSchema = z.object({
+  start: z.string().min(1).max(10),
+  end: z.string().min(1).max(10),
+  compareStart: z.string().min(1).max(10),
+  compareEnd: z.string().min(1).max(10),
+}).passthrough();
 
 export const swarmPlanDocumentSchema = z.object({
   periodLabel: z.string().min(1).max(80),
   rationale: z.string().max(280).catch(""),
+  period: swarmPlanPeriodSchema.nullable().catch(null).optional(),
+  source: z.enum(["model", "fallback"]).optional(),
+  periodSource: z.enum(["model", "fallback", "none"]).optional(),
+  issue: z.string().max(200).nullable().optional(),
+  kind: z.enum(["question", "sales-deep"]).optional(),
 }).passthrough();
 
 export const swarmRunSchema = z.object({
@@ -65,6 +79,7 @@ export const swarmRunSchema = z.object({
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]),
   plan: swarmPlanDocumentSchema.catch({ periodLabel: "As asked", rationale: "" }),
   synthesis: swarmStoredSynthesisSchema.nullable().catch(null),
+  briefingMarkdown: z.string().max(100_000).nullable().optional(),
   startedAt: z.string(),
   completedAt: z.string().nullable(),
   agents: z.array(swarmAgentSchema).max(5),
@@ -136,7 +151,15 @@ export async function beginSwarmRun(input: Readonly<{
   question: string;
   model: string;
   reasoningEffort: string;
-  plan: Readonly<{ periodLabel: string; rationale: string }>;
+  plan: Readonly<{
+    periodLabel: string;
+    rationale: string;
+    period: Readonly<{ start: string; end: string; compareStart: string; compareEnd: string }> | null;
+    source: "model" | "fallback";
+    periodSource: "model" | "fallback" | "none";
+    issue: string | null;
+    kind?: "question" | "sales-deep";
+  }>;
   agents: readonly Readonly<{
     key: string;
     title: string;
@@ -217,4 +240,19 @@ export async function recordSwarmSynthesis(input: Readonly<{
 
 export async function stopSwarmRun(runId: string): Promise<SwarmRun> {
   return parseRun(await rpc("albert_swarm_stop", { p_run_id: runId }));
+}
+
+export async function saveSwarmBriefing(input: Readonly<{
+  runId: string;
+  briefing: string;
+}>): Promise<SwarmRun> {
+  return parseRun(await rpc("albert_swarm_save_briefing", {
+    p_run_id: input.runId,
+    p_briefing: input.briefing,
+  }));
+}
+
+export async function loadLatestSalesBriefing(): Promise<string | null> {
+  const data = await rpc("albert_swarm_latest_briefing", {});
+  return typeof data === "string" && data.trim() ? data : null;
 }

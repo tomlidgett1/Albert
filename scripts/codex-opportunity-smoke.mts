@@ -319,10 +319,14 @@ if (!address || typeof address === "string") throw new Error("Synthetic Cube ser
 
 const runtimeHandler = new CodexRuntimeHttpHandler({
   port: 0,
+  listenHost: "127.0.0.1" as const,
   signingSecret: ALBERT_CODEX_LOCAL_SIGNING_SECRET,
   cubeApiUrl: `http://127.0.0.1:${address.port}`,
-  openaiApiKey: apiKey,
-  openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+  authentication: {
+    mode: "api" as const,
+    apiKey,
+    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+  },
   ...(process.env.ALBERT_CODEX_BINARY_PATH?.trim()
     ? { binaryPath: process.env.ALBERT_CODEX_BINARY_PATH.trim() }
     : {}),

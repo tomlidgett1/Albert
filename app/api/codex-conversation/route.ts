@@ -59,6 +59,9 @@ import {
   routeCodexMessage,
 } from "@/services/conversation/src";
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
+import { loadLatestSalesBriefing } from "@/services/control-plane/src/swarm-repository";
+import { readSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
+import { salesBriefingContextBlock } from "@/services/swarm/src/sales-deep";
 import {
   loadSemanticMemory,
   recordSemanticRuleUse,
@@ -250,6 +253,7 @@ export async function POST(request: Request): Promise<Response> {
     reasoningEffort: ALBERT_CODEX_DEFAULT_EFFORT,
     fastMode: ALBERT_CODEX_DEFAULT_FAST_MODE,
   });
+  const solPlanner = parsed.solPlanner === true;
   if (!(ALBERT_CODEX_MODEL_IDS as readonly string[]).includes(preferences.model)) {
     return jsonError("Codex supports GPT-5.6 Luna, Terra, and Sol only.", 400, correlationId);
   }
@@ -283,6 +287,7 @@ export async function POST(request: Request): Promise<Response> {
     model: preferences.model,
     reasoningEffort,
     fastMode: preferences.fastMode,
+    solPlanner,
     codexCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
     codexProtocolVersion: ALBERT_CODEX_PROTOCOL_VERSION,
     analysisTimeoutMs: ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
@@ -468,7 +473,7 @@ export async function POST(request: Request): Promise<Response> {
   let priorResults: readonly CodexPriorResult[] = [];
   let semanticMemory: CodexServiceTurn["semanticMemory"];
   try {
-    const [history, routing, context, findings, memoryRules, reusableResults] = await Promise.all([
+    const [history, routing, context, findings, memoryRules, reusableResults, salesBriefing] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch(() => undefined),
       loadBusinessContext(auth.supabase).catch(() => null),
@@ -482,11 +487,17 @@ export async function POST(request: Request): Promise<Response> {
         }, correlationId);
         return [] as const;
       }),
+      loadLatestSalesBriefing().catch(() => null)
+        .then((briefing) => briefing ?? readSalesBriefingFile()),
     ]);
     priorConversation = history.slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 8_000) }));
     activeConnectors = routing?.activeConnectors ?? [];
     connectorFreshness = routing?.freshness ?? [];
-    businessContext = context?.rendered.slice(0, 20_000);
+    const existingContext = context?.rendered.slice(0, 8_000) ?? "";
+    const briefingBlock = typeof salesBriefing === "string" && salesBriefing.trim()
+      ? salesBriefingContextBlock(salesBriefing)
+      : "";
+    businessContext = [existingContext, briefingBlock].filter(Boolean).join("\n\n").slice(0, 20_000) || undefined;
     sourceFindings = boundedJson(findings, 12_000);
     priorResults = boundedCodexPriorResults(reusableResults);
     // Learned vocabulary rules whose term appears in this question travel with
@@ -545,6 +556,7 @@ export async function POST(request: Request): Promise<Response> {
     conversationId,
     turnId,
     model: preferences.model,
+    solPlanner,
     transport: "signed-job-poll",
   }, correlationId);
 
@@ -612,6 +624,7 @@ export async function POST(request: Request): Promise<Response> {
           model: preferences.model,
           effort: reasoningEffort,
           fastMode: preferences.fastMode,
+          solPlanner,
         };
         const bufferedRuntimeEvents: CodexTraceEventInput[] = [];
         let traceTransportState = createCodexTraceTransportState();

@@ -49,6 +49,12 @@ import {
   allocateSwarmPlan,
   prepareSwarmAgents,
 } from "@/services/swarm/src/planner";
+import {
+  SALES_DEEP_KIND,
+  SALES_DEEP_PREFERENCES,
+  prepareSalesDeepAgents,
+  salesDeepPlan,
+} from "@/services/swarm/src/sales-deep";
 import { swarmPlanSteps } from "@/services/swarm/src/parent-events";
 
 const logger = createServiceLogger("albert-swarm-web");
@@ -58,6 +64,7 @@ const bodySchema = z.object({
   conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   replaceTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   preferences: z.unknown().optional(),
+  kind: z.enum(["question", "sales-deep"]).optional(),
 }).strict();
 
 function jsonError(message: string, status: number, correlationId: string): Response {
@@ -105,7 +112,10 @@ export async function POST(request: Request): Promise<Response> {
     if (!rateLimit.allowed) return rateLimitExceededResponse(rateLimit);
 
     const parsed = bodySchema.parse(await readBoundedJsonBody(request));
-    const preferences = normalizeAgentPreferences(parsed.preferences);
+    const salesDeep = parsed.kind === SALES_DEEP_KIND;
+    const preferences = salesDeep
+      ? SALES_DEEP_PREFERENCES
+      : normalizeAgentPreferences(parsed.preferences);
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
 
@@ -118,18 +128,37 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError("Connect a data source before starting a swarm.", 409, correlationId);
     }
 
-    const plan = await allocateSwarmPlan({
-      question: parsed.message,
-      connectors,
-      businessContextExcerpt: context?.rendered,
-      apiKey,
-      baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-      safetyIdentifier: createHash("sha256")
-        .update(`${tenant.tenant_id}:${auth.user.id}`)
-        .digest("hex"),
-      signal: request.signal,
-    });
-    const agents = prepareSwarmAgents(plan, parsed.message);
+    const allocation = salesDeep
+      ? {
+          plan: salesDeepPlan({ timezone: tenant.timezone }),
+          source: "fallback" as const,
+          periodSource: "fallback" as const,
+          issue: null,
+        }
+      : await allocateSwarmPlan({
+          question: parsed.message,
+          connectors,
+          businessContextExcerpt: context?.rendered,
+          timezone: tenant.timezone,
+          apiKey,
+          baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+          safetyIdentifier: createHash("sha256")
+            .update(`${tenant.tenant_id}:${auth.user.id}`)
+            .digest("hex"),
+          signal: request.signal,
+        });
+    const plan = allocation.plan;
+    const logPlan = allocation.source === "fallback" ? logger.warn : logger.info;
+    logPlan("swarm.plan_allocated", {
+      tenantId: tenant.tenant_id,
+      source: allocation.source,
+      periodSource: allocation.periodSource,
+      issue: allocation.issue,
+      agentCount: plan.agents.length,
+    }, correlationId);
+    const agents = salesDeep
+      ? prepareSalesDeepAgents(plan, parsed.message)
+      : prepareSwarmAgents(plan, parsed.message);
 
     turnId = ulid();
     const runtimeProfile = {
@@ -163,7 +192,15 @@ export async function POST(request: Request): Promise<Response> {
       question: parsed.message,
       model: preferences.model,
       reasoningEffort: preferences.reasoningEffort,
-      plan: { periodLabel: plan.periodLabel, rationale: plan.rationale },
+      plan: {
+        periodLabel: plan.periodLabel,
+        rationale: plan.rationale,
+        period: plan.period,
+        source: allocation.source,
+        periodSource: allocation.periodSource,
+        issue: allocation.issue,
+        ...(salesDeep ? { kind: SALES_DEEP_KIND } : {}),
+      },
       agents: agents.map((agent) => ({
         key: agent.key,
         title: agent.title,
@@ -186,7 +223,9 @@ export async function POST(request: Request): Promise<Response> {
         occurredAt,
         type: "narrative",
         purpose: "acknowledgement",
-        text: `I'll split this across ${agents.length} specialists, then combine what they find.`,
+        text: salesDeep
+          ? `I'll run a deep sales swarm across ${agents.length} specialists. This can take a while. I'll write what they find into a sales briefing you can ask about.`
+          : `I'll split this across ${agents.length} specialists, then combine what they find.`,
       },
     }).catch(() => undefined);
     await appendConversationEvent({
