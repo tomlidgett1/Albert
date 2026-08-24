@@ -22,6 +22,7 @@ import {
   type TurnLineageReference,
 } from "./answer-lineage";
 import { responseVisibleResultIds } from "../lib/answer-presentation";
+import { latestReasoningSummary } from "../lib/reasoning-summary";
 import {
   renderAssistantMarkdown,
   splitAssistantMarkdownLead,
@@ -115,6 +116,8 @@ type TrailCommentaryUpdate = Readonly<{
 
 type TrailModel = Readonly<{
   steps: readonly TrailStep[];
+  /** Provider-authored public summary; never raw reasoning tokens. */
+  reasoningSummary: string;
   reasoning: string;
   status: string;
   /** The substance behind `status` — what the current step is actually reading. */
@@ -552,6 +555,7 @@ export function buildTrailModel(
   const visibleResultIds = responseVisibleResultIds(ordered);
   const steps: TrailStep[] = [];
   const commentary: string[] = [];
+  let reasoningSummary = cleanReasoningSummary(latestReasoningSummary(ordered));
   const commentaryUpdates: TrailCommentaryUpdate[] = [];
   const trace: TraceEntry[] = [];
   const answerTables: TraceTableEvent[] = [];
@@ -657,6 +661,10 @@ export function buildTrailModel(
         if (cleaned && !initialAcknowledgement) {
           initialAcknowledgement = { id: event.id, text: cleaned };
         }
+        continue;
+      }
+      if (event.purpose === "reasoning_summary") {
+        if (cleaned) reasoningSummary = cleaned;
         continue;
       }
       if (cleaned) {
@@ -914,6 +922,7 @@ export function buildTrailModel(
 
   return {
     steps: normalised,
+    reasoningSummary,
     reasoning: commentary.join("\n\n"),
     status,
     statusDetail,
@@ -2347,6 +2356,7 @@ function DetailedTrail({
   onAddToDashboard?: (table: TraceTableEvent) => Promise<void>;
 }) {
   const [showDetailedCommentary, setShowDetailedCommentary] = useState(false);
+  const reasoningSummary = cleanReasoningSummary(model.reasoningSummary);
   const stepsById = useMemo(
     () => new Map(model.steps.map((step) => [step.id, step])),
     [model.steps],
@@ -2363,10 +2373,21 @@ function DetailedTrail({
     return numbers;
   }, [model.trace, stepsById]);
 
-  if (model.trace.length === 0 && !streaming) return null;
+  if (model.trace.length === 0 && !reasoningSummary && !streaming) return null;
 
   return (
     <div className={styles.detailedTrail}>
+      {reasoningSummary ? (
+        <motion.div
+          className={`${styles.reasoningSummary} ${styles.detailedReasoningSummary}`}
+          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduceMotion ? { duration: 0 } : { duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <span className={styles.reasoningSummaryLabel}>Reasoning summary</span>
+          <p className={styles.thinkingReasoning}>{reasoningSummary}</p>
+        </motion.div>
+      ) : null}
       {hasCommentary ? (
         <div className={styles.detailedTrailControls}>
           <button
@@ -2897,7 +2918,7 @@ export default function InsightsStyleTrace({
           animate={{ opacity: 1, clipPath: "inset(0 0 -8% 0)" }}
           transition={{ duration: animateAnswerReveal ? 2.2 : 0, ease: [0.22, 1, 0.36, 1] }}
         >
-          {detailedMode && (model.steps.length > 0 || model.reasoning) ? (
+          {detailedMode && (model.steps.length > 0 || model.reasoningSummary || model.reasoning) ? (
             <div className={styles.answerEyebrow}>
               <span className={styles.answerEyebrowRule} />
               <span>Answer</span>
@@ -2979,7 +3000,11 @@ export default function InsightsStyleTrace({
         </div>
       ) : null}
 
-      {!streaming && model.stopped && model.steps.length === 0 && !model.reasoning.trim() ? (
+      {!streaming
+        && model.stopped
+        && model.steps.length === 0
+        && !(detailedMode && model.reasoningSummary.trim())
+        && !model.reasoning.trim() ? (
         <p className={styles.stoppedNote}>Stopped</p>
       ) : null}
     </div>

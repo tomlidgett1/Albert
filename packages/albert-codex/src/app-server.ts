@@ -12,6 +12,7 @@ import {
   CODEX_DYNAMIC_TOOL_SPECS,
   CODEX_FINAL_OUTPUT_JSON_SCHEMA,
 } from "./contracts.js";
+import { startCodexProModeProxy, type CodexProModeProxy } from "./pro-mode-proxy.js";
 
 const execFileAsync = promisify(execFile);
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -57,6 +58,8 @@ export type CodexAppServerTurnOptions = Readonly<{
   authentication: CodexAppServerAuthentication;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
+  /** GPT-5.6 Responses reasoning mode; independent of `effort`. */
+  proMode?: boolean;
   /** Optional shorter deadline for bounded preflight turns. */
   timeoutMs?: number;
   /**
@@ -106,8 +109,10 @@ export function codexAppServerArguments(
   authentication: CodexAppServerAuthentication,
   fastMode = false,
   runtimeStateHome?: string,
+  openaiBaseUrlOverride?: string,
 ): readonly string[] {
-  const openaiBaseUrl = authentication.mode === "api" ? authentication.baseUrl : undefined;
+  const openaiBaseUrl = openaiBaseUrlOverride
+    ?? (authentication.mode === "api" ? authentication.baseUrl : undefined);
   return Object.freeze([
     "app-server",
     "--listen", "stdio://",
@@ -581,6 +586,9 @@ export async function runCodexAppServerTurn(
   options: CodexAppServerTurnOptions,
 ): Promise<CodexAppServerTurnResult> {
   const { authentication } = options;
+  if (options.proMode && authentication.mode !== "api") {
+    throw new Error("Codex Pro reasoning mode requires API authentication.");
+  }
   if (authentication.mode === "api") {
     if (!authentication.apiKey.trim()) throw new Error("The Codex runtime requires an OpenAI API key.");
     if (!authentication.baseUrl.trim()) throw new Error("The Codex runtime requires an OpenAI API base URL.");
@@ -599,19 +607,19 @@ export async function runCodexAppServerTurn(
     ? join(workspace, "codex-home")
     : authentication.codexHome;
   if (authentication.mode === "api") await mkdir(codexHome, { mode: 0o700 });
-  const environment = codexChildEnvironment({
+  const authenticationEnvironment = codexChildEnvironment({
     ...(authentication.mode === "api" ? { baseUrl: authentication.baseUrl } : {}),
     codexHome,
   });
   const binaryPath = await resolveCodexBinary(options.binaryPath);
-  await assertPinnedCodexVersion(binaryPath, environment);
+  await assertPinnedCodexVersion(binaryPath, authenticationEnvironment);
   const allowedInstructionSources = new Set<string>();
   if (authentication.mode === "api") {
     await authenticateCodexApiKey({
       binaryPath,
       apiKey: authentication.apiKey,
       baseUrl: authentication.baseUrl,
-      environment,
+      environment: authenticationEnvironment,
       cwd: workspace,
     });
   } else {
@@ -631,12 +639,21 @@ export async function runCodexAppServerTurn(
     await assertCodexChatGPTLogin({
       binaryPath,
       codexHome,
-      environment,
+      environment: authenticationEnvironment,
       cwd: workspace,
     });
   }
+  let proModeProxy: CodexProModeProxy | undefined;
+  if (options.proMode && authentication.mode === "api") {
+    proModeProxy = await startCodexProModeProxy(authentication.baseUrl, authentication.apiKey);
+  }
+  const providerBaseUrl = proModeProxy?.baseUrl
+    ?? (authentication.mode === "api" ? authentication.baseUrl : undefined);
+  const environment = proModeProxy
+    ? codexChildEnvironment({ baseUrl: proModeProxy.baseUrl, codexHome })
+    : authenticationEnvironment;
   const child = spawn(binaryPath, [
-    ...codexAppServerArguments(authentication, options.fastMode, runtimeStateHome),
+    ...codexAppServerArguments(authentication, options.fastMode, runtimeStateHome, providerBaseUrl),
   ], {
     cwd: workspace,
     env: environment,
@@ -767,6 +784,7 @@ Continue working in this same thread. Preserve and reuse every governed tool res
   } finally {
     options.signal?.removeEventListener("abort", abort);
     await session.close().catch(() => undefined);
+    await proModeProxy?.close().catch(() => undefined);
     const safeRoot = `${tmpdir().replace(/\/+$/u, "")}/albert-codex-turn-`;
     if (workspace.startsWith(safeRoot)) await rm(workspace, { recursive: true, force: true });
   }

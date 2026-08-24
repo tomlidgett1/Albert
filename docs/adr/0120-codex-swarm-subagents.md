@@ -125,3 +125,18 @@ mode off, and the synthesised findings are written to
 Later Codex turns load that briefing as untrusted reference context so
 the owner can ask questions against what the fleet learned. Ordinary
 composer Swarm sends are unchanged.
+
+## Update — 2026-08-25: paired runtime rollout compatibility
+
+Production diagnosis found the Git-connected Vercel web ahead of the Fly
+Codex runtime. Because the signed runtime validates a strict turn schema, the
+web's new default-valued optional planning field caused every child turn to be
+rejected before analysis. Default optional protocol fields are now omitted
+from the signed turn envelope; paired releases still deploy web and Fly at the
+same Git SHA, but an immediately preceding runtime can safely serve ordinary
+turns while a rolling deployment converges.
+
+Swarm now also carries the selected Sol-planner and Pro-mode switches into
+every worker and records them in the parent run plan. The run-settings label,
+parent runtime profile, and child execution therefore describe the same
+configuration. Sales-deep keeps its reviewed fixed profile.

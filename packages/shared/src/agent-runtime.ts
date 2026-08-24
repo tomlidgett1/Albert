@@ -401,8 +401,8 @@ export interface TraceProgressEvent extends TraceEventBase {
 
 export interface TraceNarrativeEvent extends TraceEventBase {
   type: "narrative";
-  /** Separates the pre-plan acknowledgement from evidence-backed commentary. */
-  purpose?: "acknowledgement";
+  /** Separates acknowledgements and safe model summaries from evidence-backed commentary. */
+  purpose?: "acknowledgement" | "reasoning_summary";
   text: string;
 }
 

@@ -189,6 +189,7 @@ function publicCodexFailure(error: unknown): string {
       codex_cancelled: "The Codex analysis was cancelled before it finished.",
       codex_abandoned: "This analysis was superseded before it finished. Ask the question again.",
       codex_invalid_output: "Codex rejected the analytical output contract before answering.",
+      codex_pro_unavailable: "Codex Pro reasoning is unavailable on this runtime authentication mode.",
       codex_turn_timeout: "The Codex analysis ran out of time before finishing.",
       replayed_request: "This Codex request was already used. Ask the question again.",
     };
@@ -254,6 +255,7 @@ export async function POST(request: Request): Promise<Response> {
     fastMode: ALBERT_CODEX_DEFAULT_FAST_MODE,
   });
   const solPlanner = parsed.solPlanner === true;
+  const reasoningMode = parsed.proMode === true ? "pro" : "standard";
   if (!(ALBERT_CODEX_MODEL_IDS as readonly string[]).includes(preferences.model)) {
     return jsonError("Codex supports GPT-5.6 Luna, Terra, and Sol only.", 400, correlationId);
   }
@@ -286,6 +288,7 @@ export async function POST(request: Request): Promise<Response> {
     analyticalRuntime: ALBERT_CODEX_ANALYTICAL_RUNTIME,
     model: preferences.model,
     reasoningEffort,
+    reasoningMode,
     fastMode: preferences.fastMode,
     solPlanner,
     codexCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
@@ -556,6 +559,7 @@ export async function POST(request: Request): Promise<Response> {
     conversationId,
     turnId,
     model: preferences.model,
+    reasoningMode,
     solPlanner,
     transport: "signed-job-poll",
   }, correlationId);
@@ -624,7 +628,11 @@ export async function POST(request: Request): Promise<Response> {
           model: preferences.model,
           effort: reasoningEffort,
           fastMode: preferences.fastMode,
-          solPlanner,
+          // Optional protocol fields are omitted at their default so a web
+          // rollout remains compatible with the immediately preceding strict
+          // Fly runtime while the paired runtime deployment is converging.
+          ...(solPlanner ? { solPlanner: true } : {}),
+          ...(reasoningMode === "pro" ? { reasoningMode: "pro" as const } : {}),
         };
         const bufferedRuntimeEvents: CodexTraceEventInput[] = [];
         let traceTransportState = createCodexTraceTransportState();

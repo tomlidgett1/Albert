@@ -196,6 +196,8 @@ const CODEX_REASONING_EFFORTS = Object.freeze([
 ] as const satisfies readonly ReasoningEffort[]);
 /** Codex quality preflight is on by default, with an explicit per-session off switch. */
 const DEFAULT_CODEX_SOL_PLANNER = true;
+/** OpenAI recommends Pro selectively; keep the independent mode opt-in. */
+const DEFAULT_CODEX_PRO_MODE = false;
 
 const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
   { value: "system", label: "System theme", icon: "monitor" },
@@ -861,6 +863,7 @@ export default function DashPage() {
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
+  const [codexProModeEnabled, setCodexProModeEnabled] = useState(DEFAULT_CODEX_PRO_MODE);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [chatDetailedMode, setChatDetailedMode] = useState(() => {
@@ -1015,6 +1018,8 @@ export default function DashPage() {
   agentPreferencesRef.current = agentPreferences;
   const codexSolPlannerEnabledRef = useRef(codexSolPlannerEnabled);
   codexSolPlannerEnabledRef.current = codexSolPlannerEnabled;
+  const codexProModeEnabledRef = useRef(codexProModeEnabled);
+  codexProModeEnabledRef.current = codexProModeEnabled;
   const openConversationAbortRef = useRef<AbortController | null>(null);
   const openConversationRequestIdRef = useRef(0);
   const conversationCacheRef = useRef(new Map<string, {
@@ -2619,6 +2624,9 @@ export default function DashPage() {
     const runSolPlanner = runRuntime === "codex"
       ? codexSolPlannerEnabledRef.current
       : false;
+    const runProMode = runRuntime === "codex"
+      ? codexProModeEnabledRef.current
+      : false;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -2762,13 +2770,20 @@ export default function DashPage() {
     let swarmFleetStarted = false;
     try {
       if (swarmEnabledRef.current) {
-        debug.request("/api/swarm", { message: text, preferences: runPreferences });
+        debug.request("/api/swarm", {
+          message: text,
+          preferences: runPreferences,
+          solPlanner: runSolPlanner,
+          proMode: runProMode,
+        });
         const response = await fetch("/api/swarm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             message: text,
             preferences: runPreferences,
+            solPlanner: runSolPlanner,
+            proMode: runProMode,
             ...(requestConversationId ? { conversationId: requestConversationId } : {}),
             ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
             ...(options?.swarmKind ? { kind: options.swarmKind } : {}),
@@ -2795,7 +2810,13 @@ export default function DashPage() {
             role: string;
             prompt: string;
           }[];
-          preferences?: { model: string; reasoningEffort: string; fastMode: boolean };
+          preferences?: {
+            model: string;
+            reasoningEffort: string;
+            fastMode: boolean;
+            solPlanner: boolean;
+            proMode: boolean;
+          };
           concurrency?: number;
         };
         if (
@@ -2865,6 +2886,8 @@ export default function DashPage() {
             model: runPreferences.model,
             reasoningEffort: runPreferences.reasoningEffort,
             fastMode: runPreferences.fastMode,
+            solPlanner: runSolPlanner,
+            proMode: runProMode,
           },
           concurrency: payload.concurrency ?? 3,
         });
@@ -2877,6 +2900,7 @@ export default function DashPage() {
         message: text,
         ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
         ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
+        ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
         ...(runRuntime === "v3" ? { specialistAgentId: runSpecialistAgentId } : {}),
@@ -3723,6 +3747,8 @@ export default function DashPage() {
     agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
     setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
     codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
+    setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
+    codexProModeEnabledRef.current = DEFAULT_CODEX_PRO_MODE;
     resetChat("codex", "general");
   };
   const startCustomerChat = () => {
@@ -3734,6 +3760,8 @@ export default function DashPage() {
     agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
     setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
     codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
+    setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
+    codexProModeEnabledRef.current = DEFAULT_CODEX_PRO_MODE;
     resetChat("codex", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
@@ -4010,6 +4038,8 @@ export default function DashPage() {
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                               solPlannerEnabled={codexSolPlannerEnabled}
                               onSolPlannerChange={setCodexSolPlannerEnabled}
+                              proModeEnabled={codexProModeEnabled}
+                              onProModeChange={setCodexProModeEnabled}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -5236,6 +5266,8 @@ export default function DashPage() {
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                       solPlannerEnabled={codexSolPlannerEnabled}
                       onSolPlannerChange={setCodexSolPlannerEnabled}
+                      proModeEnabled={codexProModeEnabled}
+                      onProModeChange={setCodexProModeEnabled}
                     />
                   ) : activeChatRuntime === "anthropic" ? (
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>

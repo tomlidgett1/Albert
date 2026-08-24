@@ -12,6 +12,16 @@ const LIST_ASK = /\b(?:who|which|list)\b/iu;
 const REFERENTIAL_REFINEMENT = /^(?:also|and|but|now|same|what about)\b|\b(?:again|above|earlier|instead|previous|same|that|those|too)\b/iu;
 const CLAUSE_SPLIT = /\s*(?:,|;|&|\+|\/|\band\b|\bplus\b|\bas well as\b|\balong with\b|\btogether with\b|\balso\b)\s*/iu;
 const PERIOD_ONLY_CLAUSE = /^(?:today|yesterday|tomorrow|this week|last week|next week|this month|last month|next month|this quarter|last quarter|this year|last year|this financial year|last financial year|please|thanks)$/iu;
+/**
+ * Zero-model recipes are for literal facts only. These shapes require
+ * interpretation, entity binding, causal evidence, comparison coverage, or a
+ * privacy/action decision; measured subscription evals showed that forcing
+ * them through a scalar template was fast but wrong or materially incomplete.
+ */
+const FAST_PATH_ANALYSIS_REQUIRED = /\b(?:why|what happened|how did .*\bgo|doing well|how(?:'s| is).*(?:going|doing)|looking like|trend(?:ed|ing)?|improv(?:e|ed|ing)|grow(?:n|ing)?|declin(?:e|ed|ing)|match(?:es|ed|ing)?|line up|compar(?:e|ed|ing|ison)|versus|vs\.?|share|percentage|concentrat(?:e|ed|ion)|best|biggest|largest|smallest|oldest|newest|most|least|across everything|real unique|what can you tell me|worth it|overstaffed)\b/iu;
+const FAST_PATH_SENSITIVE_OR_ACTION = /\b(?:email|phone|birthday|private notes?|pregnant|injured|wealthy|likely to churn|market to|send|write back|contact everyone)\b/iu;
+const FAST_PATH_ABSOLUTE_OR_FISCAL_PERIOD = /\b(?:financial year|fytd|fy\s*\d{2,4}|\d{4}-\d{2}-\d{2}|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+\d{1,2}\s+[a-z]+|\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})\b/iu;
+const FAST_PATH_NAMED_ENTITY = /\b[A-Z][a-z]+(?:\s+&\s+|\s+)[A-Z][A-Za-z]+\b/u;
 /** Top recipe must beat the runner-up by this margin or the path fail-opens. */
 const RECIPE_SCORE_MARGIN = 0.22;
 
@@ -182,6 +192,10 @@ export function matchCodexDeterministicRecipe(
 ): CodexDeterministicRecipeMatch | undefined {
   if (turn.analysisBrief && turn.analysisBrief.id !== "general_analysis_v1") return undefined;
   if (BREAKDOWN_QUESTION.test(turn.message)) return undefined;
+  if (FAST_PATH_ANALYSIS_REQUIRED.test(turn.message)) return undefined;
+  if (FAST_PATH_SENSITIVE_OR_ACTION.test(turn.message)) return undefined;
+  if (FAST_PATH_ABSOLUTE_OR_FISCAL_PERIOD.test(turn.message)) return undefined;
+  if (FAST_PATH_NAMED_ENTITY.test(turn.message)) return undefined;
   if (turn.priorConversation.length > 0 && REFERENTIAL_REFINEMENT.test(turn.message)) return undefined;
 
   const connectors = activeCubeConnectors(turn);

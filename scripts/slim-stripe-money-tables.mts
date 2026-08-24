@@ -19,6 +19,25 @@ const KEEP = new Set([
 ]);
 const RESYNC = ["charge", "customer", "payment_intent"];
 
+type FivetranTableConfig = Readonly<{
+  enabled?: boolean;
+  enabled_patch_settings?: Readonly<{ allowed?: boolean }>;
+}>;
+
+function schemaTables(payload: unknown): Record<string, FivetranTableConfig> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const schemas = (data as { schemas?: unknown }).schemas;
+  if (!schemas || typeof schemas !== "object" || Array.isArray(schemas)) return {};
+  const schema = (schemas as Record<string, unknown>)[SCHEMA];
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return {};
+  const tables = (schema as { tables?: unknown }).tables;
+  return tables && typeof tables === "object" && !Array.isArray(tables)
+    ? tables as Record<string, FivetranTableConfig>
+    : {};
+}
+
 async function main(): Promise<void> {
   const apiKey = process.env.FIVETRAN_API_KEY?.trim();
   const apiSecret = process.env.FIVETRAN_API_SECRET?.trim();
@@ -46,9 +65,9 @@ async function main(): Promise<void> {
     `https://api.fivetran.com/v1/connections/${CONNECTION_ID}/schemas`,
     { headers: { accept: "application/json;version=2", authorization: auth } },
   );
-  const tables = Object.values((await schemaRes.json()).data?.schemas ?? {})[0]?.tables ?? {};
+  const tables = schemaTables(await schemaRes.json());
   const disable: Record<string, { enabled: false }> = {};
-  for (const [name, table] of Object.entries(tables) as Array<[string, { enabled?: boolean; enabled_patch_settings?: { allowed?: boolean } }]>) {
+  for (const [name, table] of Object.entries(tables)) {
     if (KEEP.has(name)) continue;
     if (table.enabled !== true) continue;
     if (table.enabled_patch_settings?.allowed === false) continue;
@@ -115,9 +134,9 @@ async function main(): Promise<void> {
     `https://api.fivetran.com/v1/connections/${CONNECTION_ID}/schemas`,
     { headers: { accept: "application/json;version=2", authorization: auth } },
   );
-  const afterTables = Object.values((await afterSchema.json()).data?.schemas ?? {})[0]?.tables ?? {};
+  const afterTables = schemaTables(await afterSchema.json());
   const stillEnabled = Object.entries(afterTables)
-    .filter(([, table]) => (table as { enabled?: boolean }).enabled)
+    .filter(([, table]) => table.enabled)
     .map(([name]) => name)
     .sort();
 

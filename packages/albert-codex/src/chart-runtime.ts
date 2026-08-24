@@ -89,8 +89,32 @@ function looksLikeTimeAxis(
   return samples.length > 0 && samples.every((value) => /^\d{4}-\d{2}/u.test(value));
 }
 
-function chartIntentAllowed(question: string, purpose: CodexChartToolInput["purpose"]): boolean {
+export function isCodexChartReformatRequest(question: string): boolean {
+  return /\b(?:make it|switch(?: it)?(?: back)?|flip it|go back|sort (?:the|these|it)|show only|show (?:the )?top\s+\d+|show it .*\binstead|now (?:just )?show (?:it|me)|add .*\bcomparison|put .*\baxis|(?:weekly|monthly|daily) instead)\b/iu.test(question);
+}
+
+/**
+ * Pure chart edits must not reopen the analytical pipeline. A changed time
+ * bucket, measure, or comparison period may genuinely need one governed query
+ * when that column or period was not retrieved in the preceding chart turn.
+ */
+export function codexChartReformatQueryAllowance(question: string): 0 | 1 {
+  return /\b(?:(?:weekly|monthly|daily)(?:\s+buckets?)?\s+instead|add .*\b(?:last|prior|previous) year|(?:number|count) of .*\brather than|units?(?: sold)? .*\binstead)\b/iu.test(question)
+    ? 1
+    : 0;
+}
+
+function chartIntentAllowed(
+  question: string,
+  purpose: CodexChartToolInput["purpose"],
+  continuationOfChart: boolean,
+): boolean {
   if (/\b(?:chart|graph|plot|visuali[sz]e|visual)\b/iu.test(question)) return true;
+  // Follow-up chart edits are often phrased without repeating "chart". Keep
+  // these deliberately narrow so ordinary mentions of a product line or bar
+  // do not turn a non-visual question into chart intent.
+  if (/\b(?:make it (?:a )?(?:bar|line)|switch (?:it )?(?:back )?to (?:bars?|a line)|(?:show|render|display) (?:it )?as bars?|go back to .*\bline)\b/iu.test(question)) return true;
+  if (continuationOfChart && isCodexChartReformatRequest(question)) return true;
   const patterns: Readonly<Record<CodexChartToolInput["purpose"], RegExp>> = {
     trend: /\b(?:trend|over time|changed?|movement|trajectory|season|month(?:ly)?|week(?:ly)?|day(?:ly)?|quarter(?:ly)?|year(?:ly)?|ytd)\b/iu,
     ranking: /\b(?:rank|top|bottom|best|worst|highest|lowest|largest|smallest|leading|concentration)\b/iu,
@@ -157,12 +181,13 @@ export function prepareCodexChart(input: Readonly<{
   request: CodexChartToolInput;
   source: CodexChartEvidence;
   state: CodexChartState;
+  continuationOfChart?: boolean;
 }>): CodexChartDecision {
   const { request, source, state } = input;
   if (state.emitted >= state.maxCharts) {
     return rejected("chart_limit", "Two charts are already attached. Finish the answer without another chart.");
   }
-  if (!chartIntentAllowed(input.question, request.purpose)) {
+  if (!chartIntentAllowed(input.question, request.purpose, input.continuationOfChart ?? false)) {
     return rejected(
       "chart_not_useful_for_question",
       "This question does not ask for or materially benefit from a trend, ranking, comparison, or composition chart. Use prose or a table.",
@@ -208,6 +233,7 @@ export function prepareCodexChart(input: Readonly<{
   }
 
   const sourceTimeAxis = looksLikeTimeAxis(xColumn, request.xKey, source.rows);
+  const ownerExplicitlyRequestedLine = /\b(?:line chart|make it (?:a )?line|switch (?:it )?(?:back )?to (?:a )?line|go back to .*\bline)\b/iu.test(input.question);
   let resolved: "bar" | "line" | "stacked_bar";
   if (request.chartType === "auto") {
     resolved = request.purpose === "composition" && seriesColumn
@@ -219,14 +245,14 @@ export function prepareCodexChart(input: Readonly<{
     resolved = request.chartType;
   }
   const notes: string[] = [];
-  if (request.purpose === "ranking" && resolved === "line") {
+  if (request.purpose === "ranking" && resolved === "line" && !ownerExplicitlyRequestedLine) {
     resolved = "bar";
     notes.push("A categorical ranking was rendered as bars rather than a line.");
   }
-  if (resolved === "line" && !sourceTimeAxis) {
+  if (resolved === "line" && !sourceTimeAxis && !ownerExplicitlyRequestedLine) {
     return rejected("line_requires_time", "Lines require an ordered time axis. Use ranked bars for categories.");
   }
-  if (request.purpose === "trend" && !sourceTimeAxis) {
+  if (request.purpose === "trend" && !sourceTimeAxis && !ownerExplicitlyRequestedLine) {
     return rejected("trend_requires_time", "A trend chart requires a governed time bucket in the result.");
   }
   if (resolved === "stacked_bar" && !seriesColumn) {

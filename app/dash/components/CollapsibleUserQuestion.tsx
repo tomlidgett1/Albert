@@ -9,12 +9,9 @@ export function CollapsibleUserQuestion(props: Readonly<{
   onEdit: () => void;
 }>): React.ReactNode {
   const previewRef = useRef<HTMLParagraphElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expandedText, setExpandedText] = useState<string | null>(null);
   const [overflows, setOverflows] = useState(false);
-
-  useLayoutEffect(() => {
-    setExpanded(false);
-  }, [props.text]);
+  const expanded = expandedText === props.text;
 
   useLayoutEffect(() => {
     const node = previewRef.current;
@@ -46,7 +43,7 @@ export function CollapsibleUserQuestion(props: Readonly<{
           className={styles.chatMessageUserMore}
           type="button"
           aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => setExpandedText(expanded ? null : props.text)}
         >
           {expanded ? "Show less" : "Show more"}
         </button>

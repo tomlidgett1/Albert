@@ -45,7 +45,12 @@ import {
   type CodexAppServerAuthentication,
   type CodexDynamicToolCall,
 } from "./app-server.js";
-import { prepareCodexChart, type CodexChartState } from "./chart-runtime.js";
+import {
+  codexChartReformatQueryAllowance,
+  isCodexChartReformatRequest,
+  prepareCodexChart,
+  type CodexChartState,
+} from "./chart-runtime.js";
 import { editCodexAnswerForTightness } from "./answer-editor.js";
 import {
   ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
@@ -444,6 +449,8 @@ Answer quality contract:
 - When the owner names a numeric target ("save $1k a month", "an extra $500 a week", "cut costs 10%", "keep wages under $10k"), the target is the yardstick for the whole answer. Restate it; convert a relative target to dollars from the owner's actual base with the base stated; quantify every candidate lever at the target's cadence (per week, per month) using albert.derive_result for per-period averages and for the combined total of the levers you recommend; and finish with a plain verdict — the named levers reach, approach, or fall short of the target. Never answer a "per month" ask with only an annual pool or a min-to-max range, and never leave the owner to do the closing arithmetic.
 - Recommendations must be executable. Name the specific account, product, category, supplier, subscription, discount rule or roster day and its observed figure; "retender the negotiable cost pool" is not advice, "Insurance cost $10,101.11 over seven months — retender before renewal" is. A recommendation without a named lever and its figure should not survive to the final answer.
 - Match investigation effort to the ask. A narrow question deserves a handful of queries and a fast answer; broad investigation is for genuinely broad questions. Stop querying when additional evidence would no longer change the answer. A single-period total or current-state lookup is one query: do not add neighbouring domains the owner did not ask about.
+- Treat “How is [business area] going/doing?” as a compact operating-health brief, not a single-metric lookup. Use the owner’s business context to identify two or three core facets; compare the latest complete comparable period with the immediately preceding one; cover volume/revenue plus the area’s material labour, product or cost driver; and state any unavailable facet. Never compare a partial current month with a distant peak month unless the owner asked for that comparison.
+- For a narrow lookup, ranking, or one-period question, keep final prose below roughly 600 characters: lead with the answer, add one material caveat at most, and let any presented table carry the rows. Do not add methodology, source-selection narration, or a definitions section unless the owner asked.
 - Present tables to match the ask. A single-figure or two-figure answer usually presents none: leave presentedResultIds empty unless the rows add decision value beyond the prose. When the owner explicitly asks to see three or more totals or metrics ("show me X, Y and Z"), present one compact summary table holding all of them alongside the prose — if the figures live in separate single-row results, first combine them with albert.derive_result alignWith without label keys, then present that combined result. When the owner asks for a per-entity breakdown, list, roster or ranking, present the one table that shows every entity — a tabular question answered without its table is incomplete, and prose must not silently drop entities the table contains. Never present two tables that tell the same story. Before presenting a wide working table, re-project it with albert.derive_result select to just the columns the owner needs — never present a scratchpad. When the owner asks to see periods across the top (months, quarters or dates as columns), finish the derivation with pivot and present the pivoted result — the table renderer never transposes rows itself, so without pivot the owner keeps seeing dates as rows.
 - The presented table carries the rows; the prose carries the reading. Never re-list a presented table's rows as bullets or sentences — a row-by-row recital next to the same table is noise. But stripped rows must be replaced by the reading, not by scope notes: whenever a series or ranking table is presented, the prose must state its peak and trough (or leader and laggard) with their figures and the direction of travel across the window, citing the matching hostGeneratedClaims cells. Definitions, caveats and "the table shows…" sentences are not findings, and a headed section that contains no figures should not exist.
 - keyInsights are the answer's headline stat cards, rendered prominently beside the reply. Fill them (two to four) when the analysis yields standalone headline findings: a level, a change with its direction, a trend or a threshold. value is the figure exactly as it appears in a result or derived cell, or a two-word state ("Trending up"); label names the metric in owner language; detail carries the period or comparison ("Jun 15 – Aug 23", "vs prior 10 weeks"); sentiment says whether the finding is good or bad news for this owner, neutral when neither. Cards must not simply repeat the bold lead sentence's framing — together the lead, cards, tables and prose should each add something. Leave keyInsights empty for simple lookups, clarifications, definitions and Unavailable answers: cards are for findings, not decoration.
@@ -479,6 +486,7 @@ Security and truth contract:
 - sourceFindings are curated corrections from the application about this tenant's data. When a finding says a surface is unreliable, absent or double-counted, that verdict overrides whatever a raw query seems to show: repeat the finding instead of re-deriving the opposite, and never report a figure a finding marks untrustworthy without its caveat.
 - For a seasonality or long-run pattern, first establish how far back the data goes and use the full available history (or the longest few comparable cycles); one recent cycle does not establish a pattern, and if you narrow the window, say why.
 - A comparison ask ("how are we tracking against", "compared to last year") implies the difference and percentage change, not just the two levels: derive both and state them.
+- A cross-source reconciliation is not complete at “the totals differ.” State whether they match, quantify the governed gap, explain any proven difference in scope or timing, and—when totals alone cannot establish the cause—say that explicitly and name the transaction/tax-code detail needed to reconcile it. Never invent the cause of a mismatch.
 - Between tool calls you may narrate the analytical journey through ordinary commentary: one short owner-facing sentence about what was just found or what is being checked next ("June looks unusually strong — checking whether refunds explain it"). Albert forwards only clean narration — a sentence is dropped unless every figure in it already appears in a returned cell and it contains no drafts, JSON, tool names or internal mechanics. Never narrate private reasoning, and never rely on commentary to deliver findings: the answer and report_evidence_update remain the record.
 - After a successful semantic query reveals a material finding, call report_evidence_update before a major investigative shift. State one short concrete fact, copy every figure exactly from the referenced result rows, and pass the exact resultId values returned by run_semantic_query. Skip the update when the answer is ready. Never call it before evidence exists.
 - Charts are optional and presentation-only. Near the end of the analysis, call make_chart only when one governed result shows a material trend, ranking, comparison or composition that a busy owner will understand faster visually than in prose. Use no more than two charts; often use none. Never chart a scalar or one-point lookup, a two-point line, a record/list table, equal values, mixed units, exploratory noise or a finding absent from the final answer. Prefer auto: line for ordered time, ranked horizontal bars for categories, stacked bars only for composition. One case is not optional: when the owner explicitly asks for a per-period series ("each week", "by month", "daily") and the governed series has four or more periods, always call make_chart on that series result (line, the primary requested measure as yKey) before composing — the shape of the series is part of what was asked, and a series answer without its chart is incomplete. For a running total or cumulative series, chart the governed time-series result with transform:"cumulative"; the host accumulates the values, so never compute running totals yourself. Never use a pie chart and never query solely to decorate an answer.
@@ -873,12 +881,92 @@ function resultHasPopulatedMember(result: CodexEvidenceResult, pattern: RegExp):
 export type CodexSufficiencyGap = Readonly<{
   code:
     | "selling_price_recovery_required"
+    | "presented_table_required"
+    | "explicit_chart_required"
     | "required_view_missing"
     | "common_period_alignment_required"
     | "employee_productivity_explanation_required";
   publicDetail: string;
   repairInstruction: string;
 }>;
+
+const EXPLICIT_CHART_REQUEST = /\b(?:chart|graph|plot|bar chart|line chart|as bars?|make it (?:a )?(?:bar|line)|switch (?:it )?(?:back )?to (?:bars?|a line))\b/iu;
+const TABULAR_DELIVERABLE_REQUEST = /\b(?:list|table|break\s*down|breakdown|top\s+\d+|best-selling|highest|lowest|largest|each\s+(?:staff|employee|supplier|customer|product|category|brand|month|day)|by\s+(?:staff|employee|supplier|customer|product|category|brand|month|day|hour)|which\s+(?:bills?|invoices?|products?|customers?|suppliers?|staff(?: member)?|employees?|items?|categories?|brands?)|who\s+(?:worked|sold|contributed|has (?:taken|worked)|are our top))\b/iu;
+
+/**
+ * Presentation-only normalisation over already governed evidence. This avoids
+ * spending a model repair round merely to attach the table referenced by the
+ * draft's own claims, and prevents chart-only answers from duplicating the
+ * same data as owner-visible tables.
+ */
+export function normalizeCodexFinalPresentation(
+  question: string,
+  draft: CodexFinalAnswer,
+  results: readonly CodexEvidenceResult[],
+  options: Readonly<{ chartsEmitted?: number }> = {},
+): CodexFinalAnswer {
+  const priorChartAvailable = results.some((result) => (
+    result.priorTurnsAgo !== undefined
+    && /\bchart data\b/iu.test(result.topic)
+  ));
+  const chartRequested = EXPLICIT_CHART_REQUEST.test(question)
+    || (priorChartAvailable && isCodexChartReformatRequest(question));
+  if (
+    chartRequested
+    && (options.chartsEmitted ?? 0) > 0
+    && !/\btable\b/iu.test(question)
+    && draft.presentedResultIds.length > 0
+  ) {
+    return { ...draft, presentedResultIds: [] };
+  }
+  if (
+    chartRequested
+    || !TABULAR_DELIVERABLE_REQUEST.test(question)
+    || draft.presentedResultIds.length > 0
+  ) {
+    return draft;
+  }
+
+  const candidates = results.filter((result) => result.rows.length > 0);
+  if (candidates.length === 0) return draft;
+  const claimRefs = new Map<string, number>();
+  for (const claim of draft.claims) {
+    for (const ref of claim.refs) {
+      claimRefs.set(ref.resultId, (claimRefs.get(ref.resultId) ?? 0) + 1);
+    }
+  }
+  const selected = [...candidates]
+    .sort((left, right) => (
+      (claimRefs.get(right.resultId) ?? 0) - (claimRefs.get(left.resultId) ?? 0)
+      || Number(left.priorTurnsAgo !== undefined) - Number(right.priorTurnsAgo !== undefined)
+    ))
+    .find((result) => (claimRefs.get(result.resultId) ?? 0) > 0)
+    ?? (candidates.filter((result) => result.priorTurnsAgo === undefined).length === 1
+      ? candidates.find((result) => result.priorTurnsAgo === undefined)
+      : undefined);
+  return selected ? { ...draft, presentedResultIds: [selected.resultId] } : draft;
+}
+
+/**
+ * A totals-only cross-source mismatch is mathematically grounded but not yet
+ * a reconciliation. Add the governed scope limitation without another model
+ * round-trip; no tenant figure or causal claim is introduced here.
+ */
+export function normalizeCodexReconciliationExplanation(
+  question: string,
+  draft: CodexFinalAnswer,
+  results: readonly CodexEvidenceResult[],
+): CodexFinalAnswer {
+  if (!/\b(?:match|reconcile|agree)\b/iu.test(question)) return draft;
+  if (!/\b(?:do(?:es)? not match|doesn't match|not match|mismatch|differ|gap)\b/iu.test(draft.answer)) return draft;
+  if (/\b(?:not like-for-like|totals alone|transaction-level|tax[- ]code|scope (?:difference|mismatch)|directly invoiced sales|tax-blind journals?)\b/iu.test(draft.answer)) return draft;
+
+  const views = new Set(results.map((result) => result.view));
+  const explanation = views.has("sales_analytics") && views.has("xero_finance_analytics")
+    ? "These are not like-for-like scopes: Lightspeed covers completed till sales, while Xero’s GST-collected measure covers directly invoiced sales; register sales can post through tax-blind journals. The totals alone cannot establish any remaining timing or tax-code cause, so a transaction-level reconciliation is still required."
+    : "The totals establish the mismatch, but not its cause. Reconciling it requires like-for-like transaction-level scope, timing and classification detail from both sources.";
+  return { ...draft, answer: `${draft.answer.trim()}\n\n${explanation}` };
+}
 
 function explicitQueryEnd(result: CodexEvidenceResult): string | null {
   for (const dimension of result.query.timeDimensions ?? []) {
@@ -900,7 +988,10 @@ export function codexFinalSufficiencyGap(
   question: string,
   draft: CodexFinalAnswer,
   results: readonly CodexEvidenceResult[],
-  options: Readonly<{ analysisBrief?: CodexServiceTurn["analysisBrief"] }> = {},
+  options: Readonly<{
+    analysisBrief?: CodexServiceTurn["analysisBrief"];
+    chartsEmitted?: number;
+  }> = {},
 ): CodexSufficiencyGap | null {
   if (SELLING_PRICE_QUESTION.test(question) && MISSING_PRICE_CONCLUSION.test(draft.answer)) {
     const catalogueAttempted = results.some((result) => resultAttemptedMember(result, CURRENT_SELLING_PRICE_MEMBER));
@@ -917,6 +1008,35 @@ export function codexFinalSufficiencyGap(
           : "The current R-Series catalogue price path has not been exhausted."} Continue working in the same thread. Load product_sales_analytics and, using the exact item IDs already returned, check completed non-return sale-line normal_unit_price, unit_price, average_selling_price and completed_at. For a small shortlist, retrieve the most recent observed line per item with separate item-scoped queries when necessary. Distinguish current catalogue price, last observed normal price, last charged price and period average. Do not conclude unavailable until the completed sale-line path has also been exhausted.`,
       });
     }
+  }
+
+  const priorChartAvailable = results.some((result) => (
+    result.priorTurnsAgo !== undefined
+    && /\bchart data\b/iu.test(result.topic)
+  ));
+  if (
+    (EXPLICIT_CHART_REQUEST.test(question) || (priorChartAvailable && isCodexChartReformatRequest(question)))
+    && !["Clarification", "Unavailable", "No data"].includes(draft.state)
+    && (options.chartsEmitted ?? 0) === 0
+  ) {
+    return Object.freeze({
+      code: "explicit_chart_required",
+      publicDetail: "The owner requested a chart or a reformat of the prior chart, so Codex is completing the governed visual before answering.",
+      repairInstruction: "The draft did not deliver the chart or chart reformat requested by the owner. Reuse the most relevant current or prior governed result; derive only the requested subset/order/bucket if necessary; call albert.make_chart with the requested chart type; then return the complete answer. Do not substitute a prose description or duplicate table for the chart.",
+    });
+  }
+
+  if (
+    !EXPLICIT_CHART_REQUEST.test(question)
+    && TABULAR_DELIVERABLE_REQUEST.test(question)
+    && draft.presentedResultIds.length === 0
+    && results.some((result) => result.rows.length > 0)
+  ) {
+    return Object.freeze({
+      code: "presented_table_required",
+      publicDetail: "The owner asked for a list, ranking, or breakdown, so Codex is attaching the governed rows before answering.",
+      repairInstruction: "The draft answered a tabular list/ranking/breakdown without presenting its governed rows. Select the one result that directly answers the ask (or use albert.derive_result select/order/limit to create it), put that exact resultId in presentedResultIds, keep only the decision-relevant reading in prose, and return the complete answer.",
+    });
   }
 
   const brief = options.analysisBrief;
@@ -2390,6 +2510,39 @@ export function gatedCodexCommentary(
   return formatCodexAnswerText(cleaned, evidence);
 }
 
+const REASONING_SUMMARY_INTERNAL_SMELL = /(?:https?:\/\/|www\.|[{}`]|\b(?:chain[- ]of[- ]thought|raw reasoning|system message|developer message|sql|cube|columnkey|rowindex|resultid|result id|credential|password|secret|token|draft|json|schema|tool|validat\w*|payload|prompt|instruction|repair|structured)\b)/iu;
+
+/**
+ * Reasoning summaries are provider-authored public summaries, never raw model
+ * reasoning. Keep only plain, owner-safe sentences and require every figure
+ * to ground against evidence already returned when that snapshot is emitted.
+ */
+export function gatedCodexReasoningSummary(
+  text: string,
+  evidence: readonly CodexEvidenceResult[],
+): string | null {
+  const cleaned = sanitizeTraceText(text, 1_400);
+  if (cleaned.length < 12) return null;
+  const allRows = evidence.flatMap((result) => result.rows);
+  const periodEvidence = periodGroundingEvidence(evidence);
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => (
+      sentence.length >= 8
+      && !REASONING_SUMMARY_INTERNAL_SMELL.test(sentence)
+      && findUngroundedNumbers(
+        sentence,
+        allRows,
+        periodEvidence.values,
+        periodEvidence.labels,
+      ).length === 0
+    ))
+    .slice(0, 6);
+  if (sentences.length === 0) return null;
+  return formatCodexAnswerText(sentences.join(" "), evidence).slice(0, 1_200).trim() || null;
+}
+
 /**
  * Key insight cards ship only when every numeric token in them grounds
  * against governed cells (period evidence included), the same bar the answer
@@ -2934,6 +3087,7 @@ export async function runCodexSemanticTurn(
       turn,
       authentication: options.authentication,
       fastMode: turn.fastMode,
+      proMode: turn.reasoningMode === "pro",
       timeoutMs: Math.min(CODEX_SOL_PLANNER_TIMEOUT_MS, remainingMs),
       signal: options.signal,
     });
@@ -3044,6 +3198,13 @@ export async function runCodexSemanticTurn(
   const deriveState = { emitted: 0, maxDerivations: 8, digests: new Set<string>() };
   const queryBudget = codexQueryBudgetForTurn(turn);
   const commentaryState = { emitted: 0, maxForwarded: 6, fingerprints: new Set<string>() };
+  const reasoningSummaryState = {
+    parts: new Map<string, string>(),
+    emitted: 0,
+    maxUpdates: 12,
+    lastEmitted: "",
+    lastEmittedAt: 0,
+  };
   // Turn-local dedupe only: re-proposing a term that already has a stored rule
   // is a legitimate update (the repository upserts on the normalised term).
   const memoryState = {
@@ -3073,7 +3234,7 @@ export async function runCodexSemanticTurn(
           text: JSON.stringify({
             ok: false,
             error: "unknown_evidence",
-            guidance: "Chart only a successful resultId returned during this turn.",
+            guidance: "Chart only a successful resultId returned in this turn or supplied from the recent conversation.",
           }),
         };
       }
@@ -3082,6 +3243,7 @@ export async function runCodexSemanticTurn(
         request: parsed.data,
         source,
         state: chartState,
+        continuationOfChart: priorEvidence.some((result) => /\bchart data\b/iu.test(result.topic)),
       });
       if (!decision.ok) {
         return {
@@ -3357,6 +3519,22 @@ export async function runCodexSemanticTurn(
     if (!parsed.success) {
       return { success: false, text: `Invalid semantic query: ${parsed.error.issues[0]?.message ?? "schema mismatch"}.` };
     }
+    const priorChartAvailable = priorEvidence.some((result) => /\bchart data\b/iu.test(result.topic));
+    if (priorChartAvailable && isCodexChartReformatRequest(turn.message)) {
+      const allowance = codexChartReformatQueryAllowance(turn.message);
+      if (queriesExecuted >= allowance) {
+        return {
+          success: false,
+          text: JSON.stringify({
+            ok: false,
+            error: "chart_reformat_requery_blocked",
+            guidance: allowance === 0
+              ? "This is a pure chart re-render. Reuse or derive from the supplied prior chart/result cells, call albert.make_chart, and do not run a fresh analytical query."
+              : "This chart reformat has already used its one permitted query for a changed bucket, measure, or comparison period. Reuse or derive from the available cells and render the chart now.",
+          }),
+        };
+      }
+    }
     const activeEvidenceStep = codexPlanState?.steps.find((step) => (
       step.kind === "evidence" && step.status === "active"
     ));
@@ -3399,7 +3577,9 @@ export async function runCodexSemanticTurn(
     // A re-run that differs only by sort covers the same cells whenever the
     // earlier result was not truncated by its row limit (a live turn burned a
     // query re-fetching a weekly series with just the order clause dropped).
-    const { order: _dedupeOrder, ...orderlessShape } = prevalidated.query;
+    const orderlessShape = Object.fromEntries(
+      Object.entries(prevalidated.query).filter(([key]) => key !== "order"),
+    );
     const orderlessDigest = createHash("sha256")
       .update(JSON.stringify(canonicalQueryValue(orderlessShape)))
       .digest("hex");
@@ -3587,6 +3767,7 @@ export async function runCodexSemanticTurn(
     // frontier-depth reasoning, and the saved latency goes to the answer.
     repairEffort: (turn.effort === "max" || turn.effort === "xhigh" ? "high" : turn.effort) as typeof turn.effort,
     fastMode: turn.fastMode,
+    proMode: turn.reasoningMode === "pro",
     input: renderTurnInput(turn, solPlannerSteps),
     baseInstructions: instructions.base,
     developerInstructions: instructions.developer,
@@ -3625,6 +3806,10 @@ export async function runCodexSemanticTurn(
           ? `The candidate JSON did not match the output schema (${issues}). Return a complete object with only these keys: state, answer, followUps, keyInsights, presentedResultIds, claims. presentedResultIds and claim refs.resultId must be exact 26-character result ids already returned. refs.rowIndex must be an integer. refs.columnKey must be the exact column key from that result. keyInsights[].value must be at most 24 characters.`
           : "The candidate did not satisfy the required JSON output schema. Return a complete corrected object with state, answer, followUps, presentedResultIds and cell-grounded claims.";
       }
+      draft = normalizeCodexFinalPresentation(turn.message, draft, evidence, {
+        chartsEmitted: chartState.emitted,
+      });
+      draft = normalizeCodexReconciliationExplanation(turn.message, draft, evidence);
       if (/(?:```|~~~)[^\n]*\b(?:mermaid|xychart|vega|plotly|graphviz)\b|xychart-beta/iu.test(draft.answer)) {
         await options.emit({
           type: "progress",
@@ -3651,6 +3836,7 @@ export async function runCodexSemanticTurn(
       });
       const sufficiencyGap = codexFinalSufficiencyGap(turn.message, draft, evidence, {
         analysisBrief: turn.analysisBrief,
+        chartsEmitted: chartState.emitted,
       });
       const groundingPassed = validated.grounded;
       // A single-lookup turn has nothing for the reviewer to weigh; the
@@ -3812,6 +3998,36 @@ export async function runCodexSemanticTurn(
         : "";
       return `${validated.validationDetail}.${repetitionInstruction} Preserve supported conclusions and figures, but repair every rejected claim. ${candidateInstruction} Every number in the answer must appear in an exact returned or derived result cell.`;
   };
+  const updateReasoningSummaryPart = (key: string, text: string, append: boolean): void => {
+    if (!reasoningSummaryState.parts.has(key) && reasoningSummaryState.parts.size >= 8) {
+      const oldest = reasoningSummaryState.parts.keys().next().value;
+      if (typeof oldest === "string") reasoningSummaryState.parts.delete(oldest);
+    }
+    const current = append ? reasoningSummaryState.parts.get(key) ?? "" : "";
+    reasoningSummaryState.parts.set(key, `${current}${text}`.slice(0, 2_400));
+  };
+  const emitReasoningSummary = async (force: boolean): Promise<void> => {
+    const maxBeforeFinal = reasoningSummaryState.maxUpdates - 1;
+    if (reasoningSummaryState.emitted >= (force ? reasoningSummaryState.maxUpdates : maxBeforeFinal)) return;
+    const snapshot = [...reasoningSummaryState.parts.values()].join("\n\n");
+    const safe = gatedCodexReasoningSummary(snapshot, evidence);
+    if (!safe || safe === reasoningSummaryState.lastEmitted) return;
+    const now = Date.now();
+    if (
+      !force
+      && reasoningSummaryState.lastEmittedAt > 0
+      && now - reasoningSummaryState.lastEmittedAt < 400
+      && safe.length - reasoningSummaryState.lastEmitted.length < 160
+    ) return;
+    reasoningSummaryState.emitted += 1;
+    reasoningSummaryState.lastEmitted = safe;
+    reasoningSummaryState.lastEmittedAt = now;
+    await options.emit({
+      type: "narrative",
+      purpose: "reasoning_summary",
+      text: safe,
+    });
+  };
   const appServerRun = runCodexAppServerTurn({
         authentication: options.authentication,
         model: turn.model,
@@ -3824,6 +4040,37 @@ export async function runCodexSemanticTurn(
       }
       const forbidden = forbiddenItemType(method, params);
       if (forbidden) throw new Error(`Codex attempted a forbidden ${forbidden} capability.`);
+      if (
+        method === "item/reasoning/summaryTextDelta"
+        && isObject(params)
+        && typeof params.itemId === "string"
+        && Number.isInteger(params.summaryIndex)
+        && typeof params.delta === "string"
+      ) {
+        updateReasoningSummaryPart(
+          `${params.itemId}:${params.summaryIndex}`,
+          params.delta,
+          true,
+        );
+        await emitReasoningSummary(false);
+      }
+      if (
+        method === "item/completed"
+        && isObject(params)
+        && isObject(params.item)
+        && params.item.type === "reasoning"
+        && typeof params.item.id === "string"
+        && Array.isArray(params.item.summary)
+      ) {
+        const reasoningItem = params.item;
+        const summaries = reasoningItem.summary as unknown[];
+        summaries.slice(0, 8).forEach((summary, index) => {
+          if (typeof summary === "string") {
+            updateReasoningSummaryPart(`${reasoningItem.id}:${index}`, summary, false);
+          }
+        });
+        await emitReasoningSummary(true);
+      }
       // The gated commentary channel: completed commentary sentences that
       // survive the truth gate stream to the owner as the analytical journey.
       if (
@@ -3928,6 +4175,7 @@ export async function runCodexSemanticTurn(
   };
   try {
     appServerResult = await appServerRun;
+    await emitReasoningSummary(true);
   } catch (error) {
     const recovered = recoverableHarnessFailure(error, options.signal)
       ? attemptEvidenceRecovery()

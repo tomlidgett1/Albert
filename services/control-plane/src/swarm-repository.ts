@@ -65,6 +65,9 @@ export const swarmPlanDocumentSchema = z.object({
   source: z.enum(["model", "fallback"]).optional(),
   periodSource: z.enum(["model", "fallback", "none"]).optional(),
   issue: z.string().max(200).nullable().optional(),
+  fastMode: z.boolean().optional(),
+  solPlanner: z.boolean().optional(),
+  reasoningMode: z.enum(["standard", "pro"]).optional(),
   kind: z.enum(["question", "sales-deep"]).optional(),
 }).passthrough();
 
@@ -158,6 +161,9 @@ export async function beginSwarmRun(input: Readonly<{
     source: "model" | "fallback";
     periodSource: "model" | "fallback" | "none";
     issue: string | null;
+    fastMode?: boolean;
+    solPlanner?: boolean;
+    reasoningMode?: "standard" | "pro";
     kind?: "question" | "sales-deep";
   }>;
   agents: readonly Readonly<{

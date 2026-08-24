@@ -192,6 +192,14 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
 
 test("the fleet is client-orchestrated through the real Codex pipeline", () => {
   assert.match(controller, /fetch\("\/api\/codex-conversation"/u);
+  assert.match(controller, /preferences\.solPlanner \? \{ solPlanner: true \} : \{\}/u);
+  assert.match(controller, /preferences\.proMode \? \{ proMode: true \} : \{\}/u);
+  assert.match(page, /solPlanner: runSolPlanner/u);
+  assert.match(page, /proMode: runProMode/u);
+  assert.match(route, /solPlanner: z\.boolean\(\)\.optional\(\)/u);
+  assert.match(route, /proMode: z\.boolean\(\)\.optional\(\)/u);
+  assert.match(codexRoute, /\.\.\.\(solPlanner \? \{ solPlanner: true \} : \{\}\)/u);
+  assert.match(codexRoute, /\.\.\.\(reasoningMode === "pro" \? \{ reasoningMode: "pro" as const \} : \{\}\)/u);
   assert.match(controller, /X-Albert-Conversation-Id/u);
   assert.match(controller, /X-Albert-Turn-Id/u);
   assert.match(controller, /action: "started"/u);

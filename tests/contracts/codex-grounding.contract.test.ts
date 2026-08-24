@@ -7,6 +7,8 @@ import {
   codexClaimCandidates,
   codexFinalSufficiencyGap,
   codexQueryRecoveryGuidance,
+  normalizeCodexFinalPresentation,
+  normalizeCodexReconciliationExplanation,
   validateCodexFinalAnswer,
   type CodexEvidenceResult,
 } from "../../packages/albert-codex/src/semantic-runtime.ts";
@@ -73,6 +75,100 @@ test("Codex comparisons and result references fail closed without proof", () => 
     claims: [],
   }, [], { definitionEvidenceCount: 1 });
   assert.equal(definitionOnly.final.state, "Exploratory");
+});
+
+test("Codex sufficiency requires explicit chart and tabular deliverables", () => {
+  const noPresentation: CodexFinalAnswer = {
+    state: "Verified",
+    answer: "Bikes led net sales at $100.",
+    followUps: [],
+    presentedResultIds: [],
+    claims: [],
+  };
+  assert.equal(
+    codexFinalSufficiencyGap("List the top 5 products", noPresentation, [evidence])?.code,
+    "presented_table_required",
+  );
+  assert.deepEqual(
+    normalizeCodexFinalPresentation(
+      "List the top 5 products",
+      {
+        ...noPresentation,
+        claims: [{
+          statement: "Bikes led net sales at $100.",
+          assertion: "value",
+          refs: [{ resultId: evidence.resultId, rowIndex: 0, columnKey: "sales_analytics.net_sales" }],
+        }],
+      },
+      [evidence],
+    ).presentedResultIds,
+    [evidence.resultId],
+  );
+  assert.deepEqual(
+    normalizeCodexFinalPresentation(
+      "Make it a bar chart",
+      { ...noPresentation, presentedResultIds: [evidence.resultId] },
+      [evidence],
+      { chartsEmitted: 1 },
+    ).presentedResultIds,
+    [],
+  );
+  const xeroEvidence: CodexEvidenceResult = {
+    ...evidence,
+    resultId: "01J00000000000000000000098",
+    topic: "Xero GST collected",
+    view: "xero_finance_analytics",
+    connector: "xero",
+  };
+  assert.match(
+    normalizeCodexReconciliationExplanation(
+      "Does till GST match what Xero shows?",
+      { ...noPresentation, answer: "The two totals do not match." },
+      [evidence, xeroEvidence],
+    ).answer,
+    /not like-for-like scopes.*directly invoiced sales.*transaction-level reconciliation/isu,
+  );
+  const alreadyExplained = "The totals do not match because this is a scope mismatch: Xero covers directly invoiced sales.";
+  assert.equal(
+    normalizeCodexReconciliationExplanation(
+      "Does till GST match what Xero shows?",
+      { ...noPresentation, answer: alreadyExplained },
+      [evidence, xeroEvidence],
+    ).answer,
+    alreadyExplained,
+  );
+  assert.equal(
+    codexFinalSufficiencyGap("Make it a bar chart", noPresentation, [evidence], { chartsEmitted: 0 })?.code,
+    "explicit_chart_required",
+  );
+  assert.equal(
+    codexFinalSufficiencyGap("Make it a bar chart", noPresentation, [evidence], { chartsEmitted: 1 }),
+    null,
+  );
+  const priorChartEvidence: CodexEvidenceResult = {
+    ...evidence,
+    resultId: "01J00000000000000000000099",
+    topic: "Earlier answer · Monthly wage cost — chart data",
+    priorTurnsAgo: 1,
+  };
+  assert.equal(
+    codexFinalSufficiencyGap(
+      "Sort the months from highest to lowest cost.",
+      noPresentation,
+      [priorChartEvidence],
+      { chartsEmitted: 0 },
+    )?.code,
+    "explicit_chart_required",
+  );
+  assert.equal(
+    codexFinalSufficiencyGap(
+      "Make it a line chart",
+      { ...noPresentation, state: "Clarification", answer: "A line would imply a time order. Use bars?" },
+      [evidence],
+      { chartsEmitted: 0 },
+    ),
+    null,
+  );
 });
 
 test("Codex can recover a qualified answer from governed cells after a late harness failure", () => {

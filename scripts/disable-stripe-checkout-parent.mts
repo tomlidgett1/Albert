@@ -12,6 +12,22 @@ const CONNECTION_ID = "running_substratum";
 const SCHEMA = "stripe_01m0pkk041vs507kd00vc6f2p9";
 const DISABLE = ["checkout_session"] as const;
 
+type FivetranTableConfig = Readonly<{ enabled?: boolean }>;
+
+function schemaTables(payload: unknown): Record<string, FivetranTableConfig> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const schemas = (data as { schemas?: unknown }).schemas;
+  if (!schemas || typeof schemas !== "object" || Array.isArray(schemas)) return {};
+  const schema = (schemas as Record<string, unknown>)[SCHEMA];
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return {};
+  const tables = (schema as { tables?: unknown }).tables;
+  return tables && typeof tables === "object" && !Array.isArray(tables)
+    ? tables as Record<string, FivetranTableConfig>
+    : {};
+}
+
 async function main(): Promise<void> {
   const apiKey = process.env.FIVETRAN_API_KEY?.trim();
   const apiSecret = process.env.FIVETRAN_API_SECRET?.trim();
@@ -48,7 +64,7 @@ async function main(): Promise<void> {
     `https://api.fivetran.com/v1/connections/${CONNECTION_ID}/schemas`,
     { headers: { accept: "application/json;version=2", authorization: auth } },
   );
-  const tables = Object.values((await schemaRes.json()).data?.schemas ?? {})[0]?.tables ?? {};
+  const tables = schemaTables(await schemaRes.json());
   const checkout = Object.keys(tables)
     .filter((name) => name.startsWith("checkout_session"))
     .sort()

@@ -33,6 +33,8 @@ export const codexConversationRequestSchema = z.object({
   preferences: z.unknown().optional(),
   /** Run the optional GPT-5.6 Sol / Max planning preflight for Codex turns. */
   solPlanner: z.boolean().optional(),
+  /** Enable GPT-5.6 Responses `reasoning.mode: "pro"`. */
+  proMode: z.boolean().optional(),
   comparisonMode: z.boolean().optional(),
   conversationId: ulidSchema.optional(),
   replaceTurnId: ulidSchema.optional(),
@@ -152,6 +154,8 @@ export const codexServiceTurnSchema = z.object({
   fastMode: z.boolean(),
   /** Optional Codex-only Sol/Max decomposition preflight. */
   solPlanner: z.boolean().optional(),
+  /** Responses reasoning mode, independent of `effort`. */
+  reasoningMode: z.enum(["standard", "pro"]).optional(),
 }).strict();
 
 export type CodexServiceTurn = Omit<z.infer<typeof codexServiceTurnSchema>, "analysisBrief"> & Readonly<{

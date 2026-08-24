@@ -107,6 +107,7 @@ export async function runCodexSolPlanner(options: Readonly<{
   turn: CodexServiceTurn;
   authentication: CodexAppServerAuthentication;
   fastMode: boolean;
+  proMode?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;
 }>): Promise<SolPlannerResult | null> {
@@ -118,6 +119,7 @@ export async function runCodexSolPlanner(options: Readonly<{
       effort: CODEX_SOL_PLANNER_EFFORT,
       repairEffort: CODEX_SOL_PLANNER_EFFORT,
       fastMode: options.fastMode,
+      proMode: options.proMode,
       timeoutMs: Math.min(CODEX_SOL_PLANNER_TIMEOUT_MS, options.timeoutMs ?? CODEX_SOL_PLANNER_TIMEOUT_MS),
       input: renderPlannerInput(options.turn),
       baseInstructions: SOL_PLANNER_INSTRUCTIONS,

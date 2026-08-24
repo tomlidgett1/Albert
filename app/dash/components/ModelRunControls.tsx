@@ -32,6 +32,9 @@ type ModelRunControlsProps = {
   /** Codex-only planning preflight. Omit for Albert/V3 and comparison controls. */
   solPlannerEnabled?: boolean;
   onSolPlannerChange?: (enabled: boolean) => void;
+  /** Codex-only GPT-5.6 Responses Pro mode. Omit outside Codex. */
+  proModeEnabled?: boolean;
+  onProModeChange?: (enabled: boolean) => void;
   disabled?: boolean;
   runActive?: boolean;
   popoverPlacement?: "above" | "below";
@@ -84,6 +87,7 @@ const POPOVER_WIDTH = 252;
 type PopoverCoords = {
   left: number;
   width: number;
+  maxHeight: number;
   top?: number;
   bottom?: number;
 };
@@ -95,6 +99,8 @@ export function ModelRunControls({
   allowedReasoningEfforts,
   solPlannerEnabled = false,
   onSolPlannerChange,
+  proModeEnabled = false,
+  onProModeChange,
   disabled = false,
   popoverPlacement = "above",
   popoverAlign = "trigger-end",
@@ -175,6 +181,7 @@ export function ModelRunControls({
     selectedModel.label,
     effortLabel,
     value.fastMode ? "Fast mode" : null,
+    onProModeChange && proModeEnabled ? "Pro reasoning" : null,
     onSolPlannerChange && solPlannerEnabled ? "Sol planner" : null,
   ].filter(Boolean).join(" · ");
 
@@ -194,7 +201,7 @@ export function ModelRunControls({
     measure();
     const frame = window.requestAnimationFrame(measure);
     return () => window.cancelAnimationFrame(frame);
-  }, [effortLabel, onSolPlannerChange, selectedModel.label, solPlannerEnabled, value.fastMode]);
+  }, [effortLabel, onProModeChange, onSolPlannerChange, proModeEnabled, selectedModel.label, solPlannerEnabled, value.fastMode]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -205,8 +212,8 @@ export function ModelRunControls({
       const rect = trigger.getBoundingClientRect();
       const width = Math.min(POPOVER_WIDTH, window.innerWidth - 24);
       const popoverHeight = popoverRef.current?.scrollHeight ?? 0;
-      const aboveSpace = Math.max(0, rect.top - 12);
-      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - 12);
+      const aboveSpace = Math.max(0, rect.top - 22);
+      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - 22);
       const shouldFlipBelow = popoverPlacement === "above"
         && popoverHeight > aboveSpace
         && belowSpace > aboveSpace;
@@ -220,12 +227,13 @@ export function ModelRunControls({
         ? Math.max(12, Math.min(shellRect.left, window.innerWidth - width - 12))
         : Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
       if (popoverPlacement === "below" || shouldFlipBelow) {
-        setPopoverCoords({ top: rect.bottom + 10, left, width });
+        setPopoverCoords({ top: rect.bottom + 10, left, width, maxHeight: Math.max(120, belowSpace) });
       } else {
         setPopoverCoords({
           bottom: Math.max(12, window.innerHeight - rect.top + 10),
           left,
           width,
+          maxHeight: Math.max(120, aboveSpace),
         });
       }
     };
@@ -244,6 +252,7 @@ export function ModelRunControls({
     flipPopoverBelow,
     triggerWidth,
     effortLabel,
+    proModeEnabled,
     selectedModel.label,
     solPlannerEnabled,
     value.fastMode,
@@ -343,7 +352,7 @@ export function ModelRunControls({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={popoverId}
-        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
+        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onProModeChange ? `, Pro reasoning ${proModeEnabled ? "on" : "off"}` : ""}${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
         data-testid="model-run-controls-trigger"
         title={triggerSummary}
         style={triggerWidth ? { width: triggerWidth } : undefined}
@@ -405,6 +414,7 @@ export function ModelRunControls({
                 left: popoverCoords.left,
                 right: "auto",
                 width: popoverCoords.width,
+                maxHeight: popoverCoords.maxHeight,
               }
             : undefined
         }
@@ -441,7 +451,7 @@ export function ModelRunControls({
           </div>
         </section>
 
-        {showFastMode || onSolPlannerChange ? (
+        {showFastMode || onProModeChange || onSolPlannerChange ? (
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-options`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-options`}>
             Options
@@ -467,6 +477,26 @@ export function ModelRunControls({
                 </span>
               </button>
             ) : null}
+            {onProModeChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={proModeEnabled}
+                aria-label="Pro reasoning"
+                title="Use GPT-5.6 reasoning.mode pro independently of the selected effort"
+                data-pro-reasoning={proModeEnabled ? "on" : "off"}
+                onClick={() => onProModeChange(!proModeEnabled)}
+              >
+                <span>Pro reasoning</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${proModeEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
             {onSolPlannerChange ? (
               <button
                 className={styles.modelControlsMenuRow}
@@ -486,6 +516,11 @@ export function ModelRunControls({
                   <i />
                 </span>
               </button>
+            ) : null}
+            {onProModeChange ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Pro performs more model work for higher reliability. It is independent of effort and can add substantial latency and token usage.
+              </p>
             ) : null}
             {onSolPlannerChange ? (
               <p className={styles.modelControlsDisclosure} role="note">

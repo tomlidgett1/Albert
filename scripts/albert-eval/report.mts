@@ -117,10 +117,16 @@ function singleReport(run: string): string {
   const rows = load(run);
   const graded = rows.filter((r) => r.grade);
   const engine = rows[0]?.record.engineVersion ?? "?";
+  const models = [...new Set(rows.map((row) => row.record.model).filter(Boolean))].join(", ") || "unknown";
+  const efforts = [...new Set(rows.map((row) => row.record.reasoningEffort).filter(Boolean))].join(", ") || "unknown";
+  const fastModes = new Set(rows.map((row) => row.record.fastMode));
+  const fastLabel = fastModes.size === 1
+    ? (fastModes.has(true) ? "on" : "off")
+    : "mixed";
   const out = [
     `# Albert eval report — run \`${run}\``,
     "",
-    `Engine: \`${engine}\` · turns: ${rows.length} (graded ${graded.length}) · model under test: gpt-5.6-luna @ max, fast mode off · judge: ${[...new Set(graded.map((g) => g.grade?.judge_model).filter(Boolean))].join(", ") || "n/a"}`,
+    `Engine: \`${engine}\` · turns: ${rows.length} (graded ${graded.length}) · model under test: ${models} @ ${efforts}, fast mode ${fastLabel} · judge: ${[...new Set(graded.map((g) => g.grade?.judge_model).filter(Boolean))].join(", ") || "n/a"}`,
     "",
     "## Headline",
     "",

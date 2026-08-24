@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  codexChartReformatQueryAllowance,
   prepareCodexChart,
   type CodexChartEvidence,
   type CodexChartState,
@@ -170,6 +171,99 @@ test("Codex uses ranked horizontal bars for category comparisons", () => {
   assert.deepEqual(decision.prepared.table.rows.map((row) => row[category.key]), [
     "Services", "Parts", "Bikes", "Clothing",
   ]);
+});
+
+test("Codex recognises natural chart-reformat follow-ups and honours an explicit line", () => {
+  const temporal = evidence({
+    columns: [month, sales],
+    rows: [
+      { "sales.month": "2026-03-01", "sales.value": 125 },
+      { "sales.month": "2026-01-01", "sales.value": 100 },
+      { "sales.month": "2026-02-01", "sales.value": 140 },
+    ],
+  });
+  const line = prepareCodexChart({
+    question: "Go back to chronological order and make it a line.",
+    source: temporal,
+    state: state(),
+    request: {
+      resultId: temporal.resultId,
+      purpose: "trend",
+      caption: "Monthly sales in chronological order",
+      chartType: "line",
+      xKey: month.key,
+      yKey: sales.key,
+    },
+  });
+  assert.ok(line.ok, JSON.stringify(line));
+  assert.equal(line.prepared.chart.chartType, "line");
+  assert.deepEqual(line.prepared.table.rows.map((row) => row[month.key]), [
+    "2026-01-01", "2026-02-01", "2026-03-01",
+  ]);
+
+  const categorical = evidence({
+    columns: [category, sales],
+    rows: [
+      { "sales.category": "Mon", "sales.value": 100 },
+      { "sales.category": "Tue", "sales.value": 130 },
+      { "sales.category": "Wed", "sales.value": 115 },
+    ],
+  });
+  const explicitCategoricalLine = prepareCodexChart({
+    question: "Make it a line chart.",
+    source: categorical,
+    state: state(),
+    request: {
+      resultId: categorical.resultId,
+      purpose: "trend",
+      caption: "Sales by weekday",
+      chartType: "line",
+      xKey: category.key,
+      yKey: sales.key,
+    },
+  });
+  assert.ok(explicitCategoricalLine.ok, JSON.stringify(explicitCategoricalLine));
+  assert.equal(explicitCategoricalLine.prepared.chart.chartType, "line");
+
+  const bars = prepareCodexChart({
+    question: "Switch it back to bars and sort by value.",
+    source: categorical,
+    state: state(),
+    request: {
+      resultId: categorical.resultId,
+      purpose: "ranking",
+      caption: "Sales by weekday ranked by value",
+      chartType: "bar",
+      xKey: category.key,
+      yKey: sales.key,
+    },
+  });
+  assert.ok(bars.ok, JSON.stringify(bars));
+  assert.equal(bars.prepared.chart.chartType, "bar");
+  assert.deepEqual(bars.prepared.table.rows.map((row) => row[category.key]), ["Tue", "Wed", "Mon"]);
+
+  const implicitSort = prepareCodexChart({
+    question: "Sort the months from highest to lowest cost.",
+    source: temporal,
+    state: state(),
+    continuationOfChart: true,
+    request: {
+      resultId: temporal.resultId,
+      purpose: "ranking",
+      caption: "Monthly sales ranked highest to lowest",
+      chartType: "bar",
+      xKey: month.key,
+      yKey: sales.key,
+    },
+  });
+  assert.ok(implicitSort.ok, JSON.stringify(implicitSort));
+  assert.equal(implicitSort.prepared.chart.chartType, "bar");
+
+  assert.equal(codexChartReformatQueryAllowance("Sort the months from highest to lowest cost."), 0);
+  assert.equal(codexChartReformatQueryAllowance("Now just show me the totals for each year as bars."), 0);
+  assert.equal(codexChartReformatQueryAllowance("Show it weekly instead."), 1);
+  assert.equal(codexChartReformatQueryAllowance("Add last year's monthly refunds as a comparison."), 1);
+  assert.equal(codexChartReformatQueryAllowance("Chart units sold instead of revenue for those five."), 1);
 });
 
 test("Codex overlays like-for-like periods as bounded Flint series", () => {

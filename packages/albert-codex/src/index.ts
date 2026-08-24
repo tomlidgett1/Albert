@@ -1,6 +1,7 @@
 export * from "./app-server.js";
 export * from "./contracts.js";
 export * from "./cube-bearer-client.js";
+export * from "./pro-mode-proxy.js";
 export * from "./recipe-runtime.js";
 export * from "./semantic-memory.js";
 export * from "./semantic-runtime.js";

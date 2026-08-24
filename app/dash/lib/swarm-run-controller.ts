@@ -67,6 +67,8 @@ export type SwarmFleetPreferences = Readonly<{
   model: string;
   reasoningEffort: string;
   fastMode: boolean;
+  solPlanner: boolean;
+  proMode: boolean;
 }>;
 
 const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
@@ -200,7 +202,16 @@ async function runAgent(
       response = await fetch("/api/codex-conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: agent.prompt, preferences }),
+        body: JSON.stringify({
+          message: agent.prompt,
+          preferences: {
+            model: preferences.model,
+            reasoningEffort: preferences.reasoningEffort,
+            fastMode: preferences.fastMode,
+          },
+          ...(preferences.solPlanner ? { solPlanner: true } : {}),
+          ...(preferences.proMode ? { proMode: true } : {}),
+        }),
         signal: controller.signal,
       });
       if (response.ok || attempt >= 8) break;

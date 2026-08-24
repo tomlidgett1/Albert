@@ -70,3 +70,40 @@ billing.
   turn's measured latency; the brief-aware ceiling addresses per-turn latency.
 - A future ceiling change requires paired latency, quality, grounding-repair,
   and missed-facet evidence rather than intuition alone.
+
+## 300-turn quality follow-up
+
+The completed subscription corpus scored 67% pass. Zero-model recipe turns
+passed only 47% versus 71% for model-backed turns. Accordingly, deterministic
+recipes are now limited to literal facts: causal/evaluative language,
+comparisons and shares, ranking superlatives, named entities, sensitive/action
+requests, absolute dates, and financial-year asks fail open to Codex. This
+preserves the measured 2-second path where its semantics are exact without
+trading correctness for speed.
+
+Host sufficiency also makes deliverables explicit. A list/ranking/breakdown
+cannot finalize without a presented governed table, and an explicit chart ask
+cannot finalize without a newly emitted governed chart unless the terminal
+state is Clarification, No data, or Unavailable. Narrow answers receive a
+600-character guidance target and must leave row recital to the table.
+
+Natural chart follow-ups (for example, “sort the months”, “make it a line”, or
+“switch it back to bars”) now carry forward chart intent. Pure type, ordering,
+subset, and axis edits cannot reopen the analytical pipeline; bucket, measure,
+or added-period changes may use at most one new query. The targeted nine-turn
+chart set improved from 4/9 to 9/9 passes, reduced p50 from 142s to 117s and
+p95 from 199s to 161s, and reduced governed queries from seven to four.
+
+Presentation-only repairs are host-owned: claim-referenced rankings/lists get
+their governed table without another model round, while chart-only asks drop
+duplicative answer tables. Cross-source mismatches receive the governed scope
+limitation when the draft reports only differing totals. Broad business-area
+health asks use adjacent complete periods and cover the area's material volume,
+revenue/cost, and labour/product facets.
+
+The iterated 17-turn failure set improved from 4/17 to 17/17 subscription-judge
+passes (mean correctness 3.18 to 5.00). This is targeted verification, not a
+replacement full-corpus score. Its aggregate latency rose because unsafe
+2–4-second recipe answers now route to Max model reasoning; do not describe
+that as a global latency improvement. The completed 300-turn baseline remains
+67% pass, p50 119s and p95 495s until a fresh full-corpus run is completed.

@@ -117,12 +117,18 @@ export default function SwarmPanel({
 }>): React.ReactNode {
   const snapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   const [inspectKey, setInspectKey] = useState<string | null>(null);
-  const [inspectEvents, setInspectEvents] = useState<readonly TraceEvent[]>([]);
-  const [inspectState, setInspectState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [traceLoad, setTraceLoad] = useState<Readonly<{
+    conversationId: string;
+    events: readonly TraceEvent[];
+    state: "ready" | "error";
+  }> | null>(null);
   const [resizing, setResizing] = useState(false);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   const widthRef = useRef(width);
-  widthRef.current = width;
+
+  useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
 
   const applyWidth = (nextWidth: number) => {
     const next = clampSwarmPanelWidth(nextWidth);
@@ -190,16 +196,18 @@ export default function SwarmPanel({
   const active = snapshot.agents.filter((agent) => isActive(agent.phase));
   const done = snapshot.agents.filter((agent) => !isActive(agent.phase));
   const finishedCount = done.length;
+  const inspectConversationId = inspect?.conversationId ?? null;
+  const inspectEvents = traceLoad?.conversationId === inspectConversationId ? traceLoad.events : [];
+  const inspectState = !inspectConversationId
+    ? "idle"
+    : traceLoad?.conversationId === inspectConversationId
+      ? traceLoad.state
+      : "loading";
 
   useEffect(() => {
-    if (!inspect?.conversationId) {
-      setInspectEvents([]);
-      setInspectState(inspect ? "idle" : "idle");
-      return;
-    }
+    if (!inspectConversationId) return;
     let cancelled = false;
-    setInspectState("loading");
-    void fetch(`/api/conversations/${inspect.conversationId}`, { cache: "no-store" })
+    void fetch(`/api/conversations/${inspectConversationId}`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: unknown) => {
         if (cancelled) return;
@@ -214,16 +222,17 @@ export default function SwarmPanel({
           .map(parseTraceEvent)
           .filter((event): event is TraceEvent => event !== null)
           .sort((left, right) => left.sequence - right.sequence);
-        setInspectEvents(events);
-        setInspectState("ready");
+        setTraceLoad({ conversationId: inspectConversationId, events, state: "ready" });
       })
       .catch(() => {
-        if (!cancelled) setInspectState("error");
+        if (!cancelled) {
+          setTraceLoad({ conversationId: inspectConversationId, events: [], state: "error" });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [inspect?.conversationId]);
+  }, [inspectConversationId]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -281,7 +290,7 @@ export default function SwarmPanel({
           {inspectState === "loading" ? (
             <p className={styles.traceState}>Loading this specialist…</p>
           ) : inspectState === "error" ? (
-            <p className={styles.traceState}>This specialist's conversation could not be loaded.</p>
+            <p className={styles.traceState}>This specialist&apos;s conversation could not be loaded.</p>
           ) : inspectEvents.length === 0 ? (
             <p className={styles.traceState}>{inspect.statusLine}</p>
           ) : (

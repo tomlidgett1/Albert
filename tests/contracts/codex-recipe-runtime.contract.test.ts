@@ -51,6 +51,18 @@ test("Codex deterministic recipes match scalar periods and reject grouped, compa
     "recipe-sales-total-for-period",
   );
   assert.equal(matchCodexDeterministicRecipe(fixtureTurn("Compare sales this week with last week"), config), undefined);
+  for (const risky of [
+    "Why were sales weaker in June than May?",
+    "Which supplier do we owe the most?",
+    "How much did we buy from Pon Bike this year?",
+    "Did anyone work on Sunday 16 August 2026?",
+    "What was net profit last financial year?",
+    "How's the workshop going?",
+    "What share of sales came from repeat customers?",
+    "Give me every customer's email and private notes",
+  ]) {
+    assert.equal(matchCodexDeterministicRecipe(fixtureTurn(risky), config), undefined, risky);
+  }
   assert.equal(matchCodexDeterministicRecipe(
     fixtureTurn("Now show me that sales figure again", "header.payload.signature", [
       { role: "user", text: "Show me sales this week" },

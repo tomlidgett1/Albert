@@ -64,6 +64,8 @@ const bodySchema = z.object({
   conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   replaceTurnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   preferences: z.unknown().optional(),
+  solPlanner: z.boolean().optional(),
+  proMode: z.boolean().optional(),
   kind: z.enum(["question", "sales-deep"]).optional(),
 }).strict();
 
@@ -116,6 +118,8 @@ export async function POST(request: Request): Promise<Response> {
     const preferences = salesDeep
       ? SALES_DEEP_PREFERENCES
       : normalizeAgentPreferences(parsed.preferences);
+    const solPlanner = !salesDeep && parsed.solPlanner === true;
+    const reasoningMode = !salesDeep && parsed.proMode === true ? "pro" as const : "standard" as const;
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
 
@@ -167,7 +171,9 @@ export async function POST(request: Request): Promise<Response> {
       analyticalRuntime: ALBERT_CODEX_ANALYTICAL_RUNTIME,
       model: preferences.model,
       reasoningEffort: preferences.reasoningEffort,
+      reasoningMode,
       fastMode: preferences.fastMode,
+      solPlanner,
       codexCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
       codexProtocolVersion: ALBERT_CODEX_PROTOCOL_VERSION,
       analysisTimeoutMs: ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
@@ -199,6 +205,9 @@ export async function POST(request: Request): Promise<Response> {
         source: allocation.source,
         periodSource: allocation.periodSource,
         issue: allocation.issue,
+        fastMode: preferences.fastMode,
+        solPlanner,
+        reasoningMode,
         ...(salesDeep ? { kind: SALES_DEEP_KIND } : {}),
       },
       agents: agents.map((agent) => ({
@@ -276,6 +285,8 @@ export async function POST(request: Request): Promise<Response> {
         model: preferences.model,
         reasoningEffort: preferences.reasoningEffort,
         fastMode: preferences.fastMode,
+        solPlanner,
+        proMode: reasoningMode === "pro",
       },
       concurrency: SWARM_CLIENT_CONCURRENCY,
       conversationId,
