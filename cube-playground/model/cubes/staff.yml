@@ -14,12 +14,8 @@ cubes:
         out yet) are excluded from hours_worked; sales per staff member belong
         in sales_analytics.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_employee_hours ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_employee_hours t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: employees

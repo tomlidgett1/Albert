@@ -1,3 +1,4 @@
+import { isStripeFivetranSecret } from "../../../connectors/stripe/index.js";
 import type { ConnectorContext, WorkerCredentialVault } from "../../../packages/connector-sdk/src/index.js";
 import type { TransactionalPostgres } from "./database.js";
 
@@ -38,8 +39,21 @@ export function deputySubDomain(endpoint: string): string {
   return match[1]!;
 }
 
-/** Native grants a Fivetran path can ride: Deputy (token relay), Xero and Lightspeed R-Series (SDK token broker). */
-export type NativeFivetranConnectorKey = "deputy" | "xero" | "lightspeed-r";
+/** Native grants a Fivetran path can ride: Deputy (token relay), Stripe (Restricted key), Xero and Lightspeed R-Series (SDK token broker). */
+export type NativeFivetranConnectorKey = "deputy" | "xero" | "lightspeed-r" | "stripe";
+
+/** Fivetran Stripe accepts a Restricted Key or a Connect OAuth secret key. */
+export function stripeFivetranAccessToken(
+  metadata: Readonly<Record<string, unknown>>,
+): string {
+  const candidates = [metadata.stripeAccessToken, metadata.access_token];
+  for (const value of candidates) {
+    if (typeof value === "string" && isStripeFivetranSecret(value)) {
+      return value.trim();
+    }
+  }
+  throw new Error("fivetran_stripe_token_missing");
+}
 
 export class NativeFivetranCredentialBridge {
   constructor(private readonly dependencies: Readonly<{
@@ -139,6 +153,63 @@ export class DeputyFivetranCredentialBridge {
       externalAccountReference: credential.externalAccountReference || endpoint,
       endpoint,
       subDomain: deputySubDomain(endpoint),
+    };
+  }
+}
+
+/**
+ * Stripe flavour: Fivetran needs the Connect OAuth secret / Restricted key,
+ * not the account id. Secret keys do not expire, so this path never refreshes
+ * and does not need Albert's Stripe Connect app on the worker.
+ */
+export class StripeFivetranCredentialBridge {
+  constructor(private readonly dependencies: Readonly<{
+    db: TransactionalPostgres;
+    vault: WorkerCredentialVault;
+  }>) {}
+
+  async read(input: Readonly<{ tenantId: string; nativeConnectionId: string; signal?: AbortSignal }>): Promise<NativeFivetranCredential> {
+    const found = await this.dependencies.db.query<{
+      connection_id: string;
+      display_name: string;
+      external_account_reference: string | null;
+      secret_reference: string;
+    }>(
+      `select connection.connection_id,
+              connection.display_name,
+              connection.external_account_reference,
+              token.secret_reference
+         from control_plane.connections connection
+         join lateral (
+           select secret_reference
+             from control_plane.oauth_token_refs
+            where tenant_id = connection.tenant_id
+              and connection_id = connection.connection_id
+            order by updated_at desc
+            limit 1
+         ) token on true
+        where connection.tenant_id = $1
+          and connection.connection_id = $2
+          and connection.connector_key = 'stripe'
+          and connection.status in ('connected', 'degraded')`,
+      [input.tenantId, input.nativeConnectionId],
+    );
+    const row = found.rows[0];
+    if (!row) throw new Error("fivetran_stripe_connection_not_found");
+    const credential = await this.dependencies.vault.read(row.secret_reference);
+    const accessToken = stripeFivetranAccessToken(
+      (credential.secret.metadata ?? {}) as Record<string, unknown>,
+    );
+    const accountId = typeof credential.secret.metadata?.stripeUserId === "string"
+      ? credential.secret.metadata.stripeUserId
+      : row.external_account_reference || credential.secret.accessToken;
+    return {
+      nativeConnectionId: row.connection_id,
+      externalAccountReference: accountId,
+      displayName: row.display_name,
+      accessToken,
+      expiresAt: credential.secret.expiresAt,
+      metadata: (credential.secret.metadata ?? {}) as Record<string, unknown>,
     };
   }
 }

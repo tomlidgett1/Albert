@@ -13,6 +13,7 @@ import type { StoredTableResult, V3TurnContext } from "../../packages/albert-v3/
 import type { LaneRunInput } from "../../packages/albert-v3/src/engine/lanes.js";
 import {
   renderDeterministicRecipeAnswer,
+  renderDeterministicRecipeEmptyAnswer,
   runRecipeLane,
 } from "../../packages/albert-v3/src/engine/recipe-lane.js";
 import { DEFAULT_AGENT_PREFERENCES } from "../../packages/shared/src/index.js";
@@ -96,6 +97,47 @@ test("deterministic recipe renderer formats exact first-row cells and static own
   });
 });
 
+test("deterministic recipe renderer interpolates the trusted row-count placeholder", () => {
+  const answer = renderDeterministicRecipeAnswer(
+    deterministicRecipe({ answerTemplate: `The roster has **{{recipe.rows|integer}} shifts**.` }),
+    deterministicTable(),
+    renderOptions,
+  );
+  assert.equal(answer?.answer, "The roster has **2 shifts**.");
+  const oneRow = renderDeterministicRecipeAnswer(
+    deterministicRecipe({ answerTemplate: `The roster has **{{recipe.rows|integer}} shifts**.` }),
+    { ...deterministicTable(), rows: deterministicTable().rows.slice(0, 1) },
+    renderOptions,
+  );
+  assert.equal(oneRow?.answer, "The roster has **1 shift**.");
+});
+
+test("deterministic recipe empty answer interpolates only the trusted period", () => {
+  const answer = renderDeterministicRecipeEmptyAnswer(
+    deterministicRecipe({ emptyAnswer: "Nobody is rostered for {{period}}." }),
+    { ...renderOptions, periodLabel: "tomorrow" },
+  );
+  assert.equal(answer?.answer, "Nobody is rostered for tomorrow.");
+  assert.equal(renderDeterministicRecipeEmptyAnswer(
+    deterministicRecipe({ emptyAnswer: "Nobody is rostered for {{period}}." }),
+    renderOptions,
+  ), undefined);
+});
+
+test("deterministic recipe renderer binds only a trusted period parameter", () => {
+  const answer = renderDeterministicRecipeAnswer(
+    deterministicRecipe({ answerTemplate: `For {{period}}, value was {{${MEMBER.value}|currency}}.` }),
+    deterministicTable(),
+    { ...renderOptions, periodLabel: "this week" },
+  );
+  assert.equal(answer?.answer, "For this week, value was $12,345.60.");
+  assert.equal(renderDeterministicRecipeAnswer(
+    deterministicRecipe({ answerTemplate: `For {{period}}, value was {{${MEMBER.value}|currency}}.` }),
+    deterministicTable(),
+    renderOptions,
+  ), undefined);
+});
+
 test("deterministic recipe renderer fails closed on missing, null, malformed, or incompatible values", () => {
   const valid = deterministicTable();
   const first = { ...valid.rows[0] };
@@ -144,6 +186,31 @@ test("generator validates template members, formats, lengths, and owner-voice fo
         "fixture.md",
       ),
       "{{customer_analytics.customer_count|integer}} through {{customer_analytics.created_at.month|date}}",
+    );
+    assert.equal(
+      generator.validateRecipeAnswerTemplate(
+        "{{period}}: {{customer_analytics.customer_count|integer}}",
+        query,
+        "fixture.md",
+        "customer_analytics.created_at",
+      ),
+      "{{period}}: {{customer_analytics.customer_count|integer}}",
+    );
+    assert.throws(
+      () => generator.validateRecipeAnswerTemplate(
+        "{{period}}: {{customer_analytics.customer_count|integer}}",
+        query,
+        "fixture.md",
+      ),
+      /requires exactly one recipe date_parameter/,
+    );
+    assert.equal(
+      generator.validateRecipeAnswerTemplate(
+        "The roster has {{recipe.rows|integer}} shifts.",
+        { measures: ["workforce_analytics.rostered_hours"], dimensions: ["workforce_analytics.rostered_staff"] },
+        "fixture.md",
+      ),
+      "The roster has {{recipe.rows|integer}} shifts.",
     );
     assert.throws(() => generator.validateRecipeAnswerTemplate("{{customer_analytics.unknown|integer}}", query, "fixture.md"), /not an exact member/);
     assert.throws(() => generator.validateRecipeAnswerTemplate("{{customer_analytics.customer_count|money}}", query, "fixture.md"), /must be/);

@@ -1,0 +1,25 @@
+cubes:
+  - name: stripe_source_tables
+    title: Stripe source tables (Fivetran ERD)
+    public: false
+    description: >
+      One row per official Fivetran Stripe ERD table, whether or not it has
+      landed in this tenant yet. Use when a curated Stripe view lacks the
+      object; then query the matching source_stripe.st_* view if landed.
+    meta:
+      ai_context: >
+        Completeness backstop for the Fivetran Stripe schema. Filter table_name
+        exactly. landed = true means the union view exists. Do not invent
+        columns that are not on the official ERD.
+    sql: SELECT * FROM source_stripe.st_source_catalog
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: table_name, sql: table_name, type: string, title: Fivetran table }
+      - { name: official_view, sql: official_view, type: string, title: Official view }
+      - { name: landed, sql: landed, type: boolean, title: Landed }
+    measures:
+      - { name: table_count, type: count, title: ERD tables }
+      - name: landed_tables
+        type: count
+        filters: [{ sql: "{CUBE}.landed" }]

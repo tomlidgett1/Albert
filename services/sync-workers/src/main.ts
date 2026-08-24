@@ -20,7 +20,8 @@ import {
   EnvelopeCryptography,
 } from "./credential-vault.js";
 import { FivetranDestinationStore } from "./fivetran-destinations.js";
-import { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
+import { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge, StripeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
+import { FivetranDestinationMaintenance } from "./fivetran-destination-maintenance.js";
 import { FivetranDeputyTokenRelay } from "./fivetran-deputy-relay.js";
 import { FivetranWorkerHttpHandler } from "./fivetran-http.js";
 import { FivetranConnectionStore } from "./fivetran-store.js";
@@ -219,6 +220,10 @@ export async function runSyncWorker(): Promise<void> {
               connector: () => registry.get("deputy"),
             })
           : undefined,
+        stripeCredentials: new StripeFivetranCredentialBridge({
+          db: controlDb,
+          vault: credentialVaults.reader(),
+        }),
         // Xero via Fivetran = Albert's SDK connector fed by this worker's token
         // broker; the grant is the tenant's native Xero connection.
         xeroCredentials: connectorFactory.isConfigured("xero")
@@ -243,6 +248,9 @@ export async function runSyncWorker(): Promise<void> {
     : null;
   const fivetranDeputyRelay = fivetran && connectorFactory.isConfigured("deputy")
     ? new FivetranDeputyTokenRelay(fivetran)
+    : null;
+  const fivetranDestinationMaintenance = fivetran
+    ? new FivetranDestinationMaintenance(fivetran)
     : null;
   const shopifyQLStore = connectorFactory.isConfigured("shopify")
     ? new ShopifyQLRuntimeStore(controlDb)
@@ -337,6 +345,9 @@ export async function runSyncWorker(): Promise<void> {
               activeJobs: health.activeJobs,
               releaseSha,
               deploymentId,
+              fivetranConfigured: Boolean(fivetran),
+              stripeConfigured: connectorFactory.isConfigured("stripe"),
+              destinationMaintenance: fivetranDestinationMaintenance?.health() ?? null,
             });
             return;
           } catch {
@@ -500,6 +511,7 @@ export async function runSyncWorker(): Promise<void> {
         tokenKekRotation.run(abort.signal),
         ...(vendorAttestationRelay ? [vendorAttestationRelay.run(abort.signal)] : []),
         ...(fivetranDeputyRelay ? [fivetranDeputyRelay.run(abort.signal)] : []),
+        ...(fivetranDestinationMaintenance ? [fivetranDestinationMaintenance.run(abort.signal)] : []),
       ]);
     } finally {
       clearInterval(heartbeatTimer);

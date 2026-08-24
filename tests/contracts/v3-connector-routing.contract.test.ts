@@ -45,6 +45,9 @@ test("connector normalization preserves distinct Lightspeed products and rejects
   assert.equal(normalizeV3Connector("lightspeed-r"), "lightspeed");
   assert.equal(normalizeV3Connector("lightspeed-x"), "lightspeed-x");
   assert.equal(normalizeV3Connector(" XERO "), "xero");
+  assert.equal(normalizeV3Connector("fivetran-stripe"), "stripe");
+  assert.equal(normalizeV3Connector("fivetran-xero"), "xero");
+  assert.equal(normalizeV3Connector("fivetran-deputy"), "deputy");
   assert.equal(normalizeV3Connector("future-connector"), undefined);
 });
 

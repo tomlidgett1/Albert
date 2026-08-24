@@ -25,92 +25,48 @@ import { createComposeTableTool, createPresentResultTool, executeGovernedCubeQue
 import { createMakeChartTool } from "./chart-layer.js";
 import { createAggregateResultTool } from "./aggregate-layer.js";
 import { renderBusinessContextForClassifier } from "../context-layer/render.js";
-import type { StoredTableResult, V3TurnContext } from "./context.js";
-import { sanitizeAnswerText, sanitizeTraceText, type TraceCell, type TraceTableColumn } from "../../../shared/src/index.js";
+import type { V3TurnContext } from "./context.js";
+import { sanitizeTraceText } from "../../../shared/src/index.js";
 
-const RELATIVE_RANGE = /^(?:today|yesterday|tomorrow|this (?:week|month|quarter|year)|last (?:week|month|quarter|year)|next (?:week|month)|last \d{1,3} (?:days|weeks|months|quarters|years)|from \d+ (?:days|weeks|months|years) ago to now|\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2}|(?:last |this |in )?[a-z]{3,9}\.?(?: \d{4})?)$/iu;
+import {
+  extractRecipeDateRange,
+  normaliseRecipeDateRange,
+  recipeCubeQuery,
+  recipePeriodLabel,
+  renderDeterministicRecipeAnswer,
+} from "../recipes/runtime.js";
 
-/** Only well-formed period expressions reach Cube; anything else keeps the recipe default. */
-const WORD_NUMBERS: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", twelve: "12" };
-
-export function normaliseRecipeDateRange(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim().replace(/\s+/gu, " ").replace(/\s*,\s*/gu, ",")
-    .replace(/^(last|next) (one|two|three|four|five|six|seven|eight|nine|ten|twelve) /iu, (_m, dir: string, word: string) => `${dir} ${WORD_NUMBERS[word.toLowerCase()]} `)
-    .replace(/^(last|next) (\d+) (day|week|month|quarter|year)$/iu, "$1 $2 $3s");
-  const fiscal = /^(?:this financial year|current financial year|financial year to date|fytd|this fy)$/iu.test(trimmed)
-    ? "current"
-    : /^(?:last financial year|previous financial year|last fy)$/iu.test(trimmed)
-      ? "last"
-      : undefined;
-  if (fiscal) {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Australia/Melbourne",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
-    const part = (type: string) => Number(parts.find((candidate) => candidate.type === type)?.value);
-    const year = part("year");
-    const month = part("month");
-    const day = part("day");
-    const currentStartYear = month >= 7 ? year : year - 1;
-    if (fiscal === "last") return `${currentStartYear - 1}-07-01,${currentStartYear}-06-30`;
-    const today = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    return `${currentStartYear}-07-01,${today}`;
-  }
-  if (!RELATIVE_RANGE.test(trimmed)) return undefined;
-  // Relative expressions are case-insensitive to Cube but explicit month names
-  // reach the engine's named-month resolver, which lowercases too; normalise once.
-  return /^\d{4}-\d{2}-\d{2},/u.test(trimmed) ? trimmed : trimmed.toLowerCase();
-}
-
-type RawFilter = { member: string; operator: string; values?: string[] };
-type LooseTimeDimension = { dimension: string; granularity?: string; dateRange?: string };
+export {
+  extractRecipeDateRange,
+  normaliseRecipeDateRange,
+  recipeCubeQuery,
+  recipePeriodLabel,
+  renderDeterministicRecipeAnswer,
+  renderDeterministicRecipeEmptyAnswer,
+} from "../recipes/runtime.js";
 
 /** Converts a certified query (Cube JSON) into the governed tool input shape. */
-export function recipeToolInput(recipe: CertifiedQuery, dateRange: string | undefined, entity?: string | null): CubeQueryToolInput {
-  const q = recipe.query as Record<string, unknown>;
-  const dateParameter = recipe.recipe?.dateParameter;
-  const timeDimensions: LooseTimeDimension[] = (Array.isArray(q.timeDimensions) ? q.timeDimensions as Array<Record<string, unknown>> : []).map((td) => {
-    const applies = Boolean(dateRange) && (dateParameter ? td.dimension === dateParameter : true);
-    const original = Array.isArray(td.dateRange) ? (td.dateRange as string[]).join(",") : td.dateRange ? String(td.dateRange) : undefined;
-    const safeOriginal = original ? normaliseRecipeDateRange(original) ?? original : undefined;
-    return {
-      dimension: String(td.dimension),
-      ...(td.granularity ? { granularity: String(td.granularity) } : {}),
-      ...(applies ? { dateRange } : safeOriginal ? { dateRange: safeOriginal } : {}),
-    };
-  });
-  // A recipe with a date parameter but no time dimension gains one when the owner named a period.
-  if (dateRange && dateParameter && !timeDimensions.some((td) => td.dimension === dateParameter)) {
-    timeDimensions.push({ dimension: dateParameter, dateRange });
-  }
-  const filters: RawFilter[] = (Array.isArray(q.filters) ? q.filters as RawFilter[] : []).map((f) => ({
-    member: f.member,
-    operator: f.operator,
-    ...(f.values ? { values: f.values } : {}),
-  }));
-  // A named entity (a supplier, a person, a product) narrows the recipe's first name-like dimension.
-  if (entity && Array.isArray(q.dimensions) && q.dimensions.length > 0) {
-    const dims = q.dimensions as string[];
-    const nameDimension = dims.find((d) => /name|contact|staff|customer|supplier|vendor|item/u.test(d)) ?? dims[0]!;
-    filters.push({ member: nameDimension, operator: "contains", values: [entity] });
-  }
-  const order = q.order && typeof q.order === "object" && !Array.isArray(q.order)
-    ? Object.entries(q.order as Record<string, "asc" | "desc">).map(([member, direction]) => ({ member, direction }))
-    : undefined;
-  const loose = {
-    topic: sanitizeTraceText(recipe.userRequest.split(/[.?!]/u)[0]!.trim() || recipe.name, 160),
-    ...(Array.isArray(q.measures) ? { measures: q.measures as string[] } : {}),
-    ...(Array.isArray(q.dimensions) ? { dimensions: q.dimensions as string[] } : {}),
-    ...(Array.isArray(q.segments) ? { segments: q.segments as string[] } : {}),
-    ...(timeDimensions.length ? { timeDimensions } : {}),
-    ...(filters.length ? { filters } : {}),
-    ...(order?.length ? { order } : {}),
-    ...(typeof q.limit === "number" ? { limit: q.limit } : {}),
+export function recipeToolInput(
+  recipe: CertifiedQuery,
+  dateRange: string | undefined,
+  entity?: string | null,
+): CubeQueryToolInput {
+  const { topic, query } = recipeCubeQuery(recipe, dateRange, entity);
+  const order = Object.entries(query.order ?? {}).map(([member, direction]) => ({ member, direction }));
+  return {
+    topic,
+    ...(query.measures?.length ? { measures: [...query.measures] } : {}),
+    ...(query.dimensions?.length ? { dimensions: [...query.dimensions] } : {}),
+    ...(query.segments?.length ? { segments: [...query.segments] } : {}),
+    ...(query.timeDimensions?.length ? {
+      timeDimensions: query.timeDimensions as NonNullable<CubeQueryToolInput["timeDimensions"]>,
+    } : {}),
+    ...(query.filters?.length ? {
+      filters: query.filters as NonNullable<CubeQueryToolInput["filters"]>,
+    } : {}),
+    ...(order.length ? { order } : {}),
+    ...(query.limit ? { limit: query.limit } : {}),
   };
-  return loose as unknown as CubeQueryToolInput;
 }
 
 const PRESENTATION_GUIDANCE: Record<NonNullable<CertifiedQuery["recipe"]>["presentation"], string> = {
@@ -120,137 +76,6 @@ const PRESENTATION_GUIDANCE: Record<NonNullable<CertifiedQuery["recipe"]>["prese
   line: "Attach a line chart with make_chart (chartType auto, x = the time bucket, y = the main measure; extraYKeys for a second measure the owner would want) and write one or two sentences on the trend. Do not also compose a table unless the owner asked for one.",
   bar: "Attach a bar chart with make_chart (chartType bar, sort=y_desc, limit to the N the owner asked for or 10) and write one sentence naming the leader. Compose a table only if the owner asked for shares or a table.",
 };
-
-const RECIPE_TEMPLATE_TOKEN = /\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,2})\s*\|\s*(integer|number|percent|currency|date|text)\s*\}\}/gu;
-const OWNER_FOLLOW_UP = /^(?!\s*(?:i can|i'll|i will|i'd|i would|happy to|want me to|would you like(?: me)? to|shall i|let me|try:)\b).{4,160}$/iu;
-
-type RecipeAnswerFormat = "integer" | "number" | "percent" | "currency" | "date" | "text";
-export type RecipeRenderOptions = Readonly<{
-  currency: string;
-  timezone: string;
-  locale?: string;
-}>;
-
-const FORMAT_COLUMN_TYPES: Readonly<Record<RecipeAnswerFormat, ReadonlySet<TraceTableColumn["type"]>>> = {
-  integer: new Set(["number"]),
-  number: new Set(["number"]),
-  percent: new Set(["percent"]),
-  currency: new Set(["currency"]),
-  date: new Set(["date", "datetime"]),
-  text: new Set(["string"]),
-};
-
-function finiteNumber(value: TraceCell): number | undefined {
-  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
-  if (typeof value !== "string" || !/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/iu.test(value.trim())) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function escapeMarkdownText(value: string): string {
-  return sanitizeTraceText(value, 300).replace(/[\\`*_[\]<>]/gu, "\\$&");
-}
-
-function formatRecipeCell(
-  value: TraceCell,
-  column: TraceTableColumn,
-  format: RecipeAnswerFormat,
-  options: RecipeRenderOptions,
-): string | undefined {
-  if (value === null || !FORMAT_COLUMN_TYPES[format].has(column.type)) return undefined;
-  const locale = options.locale ?? "en-AU";
-  if (format === "text") return typeof value === "string" && value.trim() ? escapeMarkdownText(value) : undefined;
-  if (format === "date") {
-    if (typeof value !== "string") return undefined;
-    const date = /^\d{4}-\d{2}-\d{2}$/u.test(value)
-      ? new Date(`${value}T12:00:00.000Z`)
-      : new Date(value);
-    if (!Number.isFinite(date.getTime())) return undefined;
-    try {
-      return new Intl.DateTimeFormat(locale, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        timeZone: options.timezone,
-      }).format(date);
-    } catch {
-      return undefined;
-    }
-  }
-  const numeric = finiteNumber(value);
-  if (numeric === undefined) return undefined;
-  if (format === "integer") {
-    if (!Number.isSafeInteger(numeric)) return undefined;
-    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(numeric);
-  }
-  if (format === "number") {
-    return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(numeric);
-  }
-  if (format === "percent") {
-    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(numeric)}%`;
-  }
-  const currency = (column.currency ?? options.currency).trim().toUpperCase();
-  if (!/^[A-Z]{3}$/u.test(currency)) return undefined;
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency,
-      currencyDisplay: "narrowSymbol",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(numeric);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Renders a trusted recipe from exact cells in its first governed result row.
- * Any unknown member, incompatible column type, null, malformed placeholder,
- * or invalid static follow-up returns undefined so the existing composer owns
- * the answer instead. No partial deterministic answer is ever emitted.
- */
-export function renderDeterministicRecipeAnswer(
-  recipe: CertifiedQuery,
-  table: Pick<StoredTableResult, "columns" | "rows">,
-  options: RecipeRenderOptions,
-): FinalAnswer | undefined {
-  const template = recipe.recipe?.answerTemplate;
-  const firstRow = table.rows[0];
-  if (!template || !firstRow || template.length > 2_000) return undefined;
-  const columns = new Map(table.columns.map((column) => [column.key, column]));
-  let placeholderCount = 0;
-  let failed = false;
-  const answer = template.replace(RECIPE_TEMPLATE_TOKEN, (_token, member: string, format: RecipeAnswerFormat) => {
-    placeholderCount += 1;
-    const column = columns.get(member);
-    if (!column || !Object.hasOwn(firstRow, member)) {
-      failed = true;
-      return "";
-    }
-    const rendered = formatRecipeCell(firstRow[member] ?? null, column, format, options);
-    if (rendered === undefined) failed = true;
-    return rendered ?? "";
-  });
-  if (failed || placeholderCount < 1 || placeholderCount > 12 || answer.includes("{{") || answer.includes("}}")) {
-    return undefined;
-  }
-  const followUps = recipe.recipe?.followUps ?? [];
-  if (
-    followUps.length > 3
-    || followUps.some((followUp) => !OWNER_FOLLOW_UP.test(followUp.trim()))
-    || new Set(followUps.map((followUp) => followUp.trim().toLowerCase())).size !== followUps.length
-  ) {
-    return undefined;
-  }
-  const parsed = finalAnswerSchema.safeParse({
-    answer: sanitizeAnswerText(answer, 8_000),
-    state: "Verified",
-    followUps: followUps.map((followUp) => followUp.trim()),
-    assumptionsDisclosed: [],
-  });
-  return parsed.success ? parsed.data : undefined;
-}
 
 export async function runRecipeLane(
   input: LaneRunInput,
@@ -287,13 +112,26 @@ export async function runRecipeLane(
 
   const table = [...context.tableResults.values()].find((t) => t.resultId === result.resultId);
   if (!table) return undefined;
+  const periodLabel = recipePeriodLabel(
+    String(recipeCubeQuery(recipe, dateRange, entity).query.timeDimensions?.[0]?.dateRange ?? ""),
+  );
   const deterministicAnswer = !emptyIsAnswer
     ? renderDeterministicRecipeAnswer(recipe, table, {
       currency: input.config.currency,
       timezone: input.config.timezone,
+      ...(periodLabel ? { periodLabel } : {}),
     })
     : undefined;
-  if (deterministicAnswer) return deterministicAnswer;
+  if (deterministicAnswer) {
+    if ((spec.presentation === "list" || spec.presentation === "table") && table.rowCount > 0) {
+      context.tableResults.set(table.resultId, { ...table, presentation: "answer" });
+    }
+    return {
+      ...deterministicAnswer,
+      followUps: [...deterministicAnswer.followUps],
+      assumptionsDisclosed: [...deterministicAnswer.assumptionsDisclosed],
+    };
+  }
   const emptyGuidance = emptyIsAnswer
     ? `The result has NO rows, and for this question that is the answer: ${spec.emptyAnswer}. State it plainly for the period asked (one or two sentences), no table, no chart, no speculation about missing data or sync gaps.`
     : "";

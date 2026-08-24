@@ -311,7 +311,7 @@ export function parseOAuthCredentialSecret(value: unknown): OAuthCredentialSecre
     (candidate.refreshToken !== undefined &&
       (typeof candidate.refreshToken !== "string" || !candidate.refreshToken ||
         Buffer.byteLength(candidate.refreshToken, "utf8") > 65_536)) ||
-    candidate.tokenType !== "Bearer" ||
+    (candidate.tokenType !== "Bearer" && candidate.tokenType !== "StripeAccount") ||
     typeof candidate.expiresAt !== "string" || Number.isNaN(Date.parse(candidate.expiresAt)) ||
     !Array.isArray(candidate.scopes) || candidate.scopes.length > 100 ||
     !candidate.scopes.every((scope) => typeof scope === "string" && scope.length <= 500) ||

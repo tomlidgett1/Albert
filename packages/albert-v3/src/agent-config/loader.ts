@@ -237,13 +237,33 @@ const STOP_WORDS = new Set([
   "we", "what", "which", "who", "with",
 ]);
 
+/** Temporal and interrogative leftovers that must not decide a recipe on their own. */
+const GENERIC_MATCH_TOKENS = new Set([
+  ...STOP_WORDS,
+  "about", "across", "amount", "average", "coming", "count", "currently",
+  "date", "days", "did", "far", "figure", "given", "had", "has", "have",
+  "into", "just", "last", "many", "month", "much", "need", "next", "now",
+  "number", "onto", "over", "period", "please", "quarter", "recipe",
+  "right", "still", "than", "today", "tomorrow", "total", "value", "week",
+  "were", "within", "year", "yesterday", "yet",
+]);
+
 function tokens(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()
       .split(/[^a-z0-9]+/u)
-      .filter((token) => token.length > 2 && !STOP_WORDS.has(token)),
+      .filter((token) => token.length > 2 && !STOP_WORDS.has(token))
+      .map((token) => (
+        token.length > 4 && token.endsWith("s") && !token.endsWith("ss")
+          ? token.slice(0, -1)
+          : token
+      )),
   );
+}
+
+function distinctiveTokens(text: string): Set<string> {
+  return new Set([...tokens(text)].filter((token) => !GENERIC_MATCH_TOKENS.has(token)));
 }
 
 function overlapScore(question: Set<string>, candidate: string): number {
@@ -255,6 +275,59 @@ function overlapScore(question: Set<string>, candidate: string): number {
   }
   return hits / Math.sqrt(candidateTokens.size);
 }
+
+/** A listed phrasing scores only when its distinctive words appear in the question. */
+function matchPhraseScore(question: string, phrase: string): number {
+  const questionTokens = tokens(question);
+  const phraseDistinct = distinctiveTokens(phrase);
+  if (phraseDistinct.size === 0) {
+    const phraseTokens = tokens(phrase);
+    if (phraseTokens.size === 0) return 0;
+    for (const token of phraseTokens) {
+      if (!questionTokens.has(token)) return 0;
+    }
+    return overlapScore(questionTokens, phrase);
+  }
+  const questionDistinct = distinctiveTokens(question);
+  for (const token of phraseDistinct) {
+    if (!questionDistinct.has(token) && !questionTokens.has(token)) return 0;
+  }
+  return overlapScore(questionTokens, phrase);
+}
+
+function certifiedQueryScore(question: string, query: CertifiedQuery): number {
+  const haystack = `${query.name} ${query.userRequest} ${(query.recipe?.matches ?? []).join(" ")}`;
+  const questionDistinct = distinctiveTokens(question);
+  if (questionDistinct.size === 0) {
+    // "Who is on tomorrow?" is only stop/period words. Score listed
+    // phrasings so a who/period roster ask can still match.
+    let phraseBest = 0;
+    for (const phrase of query.recipe?.matches ?? []) {
+      phraseBest = Math.max(phraseBest, matchPhraseScore(question, phrase));
+    }
+    return phraseBest;
+  }
+  const recipeDistinct = distinctiveTokens(haystack);
+  let shared = 0;
+  for (const token of questionDistinct) {
+    if (recipeDistinct.has(token)) shared += 1;
+  }
+  if (shared === 0) return 0;
+  const questionTokens = tokens(question);
+  let best = Math.max(
+    overlapScore(questionTokens, `${query.name} ${query.userRequest}`),
+    overlapScore(questionTokens, query.name),
+  );
+  for (const phrase of query.recipe?.matches ?? []) {
+    best = Math.max(best, matchPhraseScore(question, phrase));
+  }
+  return best;
+}
+
+export type ScoredCertifiedQuery = Readonly<{
+  query: CertifiedQuery;
+  score: number;
+}>;
 
 /**
  * Matches agent_requested rules against the question via token overlap on the
@@ -313,20 +386,29 @@ export function matchAgentRequestedRules(
     .map(({ rule }) => rule);
 }
 
-/** Certified Cube queries whose user_request resembles the incoming question. */
+/** Certified Cube queries scored against the question, highest first. */
+export function scoreCertifiedQueries(
+  question: string,
+  config: AlbertV3AgentConfig,
+  limit = 3,
+  allowedConnectors?: readonly string[],
+): readonly ScoredCertifiedQuery[] {
+  return config.certifiedQueries
+    .filter((query) => usableOnRoute(certifiedQueryConnectors(query, config), allowedConnectors))
+    .map((query) => ({ query, score: certifiedQueryScore(question, query) }))
+    .filter(({ score }) => score >= 0.4)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+/** Certified Cube queries whose name, request, or listed matches resemble the question. */
 export function matchCertifiedQueries(
   question: string,
   config: AlbertV3AgentConfig,
   limit = 3,
   allowedConnectors?: readonly string[],
 ): readonly CertifiedQuery[] {
-  const questionTokens = tokens(question);
-  return config.certifiedQueries
-    .filter((query) => usableOnRoute(certifiedQueryConnectors(query, config), allowedConnectors))
-    .map((query) => ({ query, score: overlapScore(questionTokens, `${query.name} ${query.userRequest}`) }))
-    .filter(({ score }) => score >= 0.4)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
+  return scoreCertifiedQueries(question, config, limit, allowedConnectors)
     .map(({ query }) => query);
 }
 

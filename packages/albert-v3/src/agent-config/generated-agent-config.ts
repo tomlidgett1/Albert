@@ -515,6 +515,90 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "name": "momence_source_explorer",
         "connector": "momence",
         "guidance": "Exhaustive fallback for every scalar returned by every Momence stream. Filter exact parent_stream/source_object_type and field_path, use the typed value, never assume numeric additivity, and protect PII/notes/stream secrets.\n"
+      },
+      {
+        "name": "stripe_payments_analytics",
+        "connector": "stripe",
+        "routing_terms": [
+          "stripe charges this month",
+          "payment intent collections",
+          "succeeded stripe payments"
+        ],
+        "guidance": "Stripe Charge grain from Fivetran's official charge table. collected_amount is succeeded paid charges in major currency units. PaymentIntent members are a parallel grain: never add them to charge totals in one query. Refunds and disputes are separate views.\n"
+      },
+      {
+        "name": "stripe_refunds_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Refund grain. Succeeded refunded_amount over created is money returned. Do not net this into stripe_payments_analytics in one query.\n"
+      },
+      {
+        "name": "stripe_disputes_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Dispute exposure by status and reason. Amount is exposure, not an automatic expense. Open states need a response.\n"
+      },
+      {
+        "name": "stripe_billing_analytics",
+        "connector": "stripe",
+        "routing_terms": [
+          "outstanding stripe invoices",
+          "paid invoices this month"
+        ],
+        "guidance": "Stripe Invoice grain. amount_remaining on open or uncollectible is outstanding. Line members are a different grain from invoice totals.\n"
+      },
+      {
+        "name": "stripe_subscriptions_analytics",
+        "connector": "stripe",
+        "routing_terms": [
+          "active stripe subscriptions",
+          "cancelled subscriptions"
+        ],
+        "guidance": "Current Stripe subscriptions (Fivetran subscription_history active row). active_subscriptions is headcount, not recognised revenue. Invoice money stays in stripe_billing_analytics.\n"
+      },
+      {
+        "name": "stripe_customer_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Customer profiles, delinquency and recorded balance. Lifetime spend is on charges and invoices. Email is PII.\n"
+      },
+      {
+        "name": "stripe_catalogue_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Products, Prices and Coupons. Catalogue grain, not sales.\n"
+      },
+      {
+        "name": "stripe_payouts_analytics",
+        "connector": "stripe",
+        "routing_terms": [
+          "stripe payouts to the bank"
+        ],
+        "guidance": "Stripe Payouts to the merchant bank. payout_amount over created or arrival_date. paid is deposited.\n"
+      },
+      {
+        "name": "stripe_balance_analytics",
+        "connector": "stripe",
+        "routing_terms": [
+          "stripe processing fees",
+          "stripe net and fees"
+        ],
+        "guidance": "Stripe Balance Transaction ledger: gross, fee and net by type and reporting_category. Different grain from charge collections.\n"
+      },
+      {
+        "name": "stripe_checkout_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Checkout Sessions. complete_sessions and checkout_amount use status complete.\n"
+      },
+      {
+        "name": "stripe_connect_analytics",
+        "connector": "stripe",
+        "guidance": "Stripe Connect application fees and transfers. Platform grain, not Standard-account charges.\n"
+      },
+      {
+        "name": "stripe_source_explorer",
+        "connector": "stripe",
+        "routing_terms": [
+          "fivetran stripe table",
+          "official stripe erd"
+        ],
+        "guidance": "Catalogue of every official Fivetran Stripe ERD table and whether it has landed. Use only when curated views lack the object; filter table_name exactly.\n"
       }
     ],
     "lanes": {
@@ -571,6 +655,21 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "connector": "xero",
         "domain": "profit_and_loss",
         "member": "xero_profit_and_loss_analytics.report_updated_at"
+      },
+      {
+        "connector": "stripe",
+        "domain": "payments",
+        "member": "stripe_payments_analytics.created"
+      },
+      {
+        "connector": "stripe",
+        "domain": "invoices",
+        "member": "stripe_billing_analytics.created"
+      },
+      {
+        "connector": "stripe",
+        "domain": "payouts",
+        "member": "stripe_payouts_analytics.created"
       }
     ],
     "context_probes": [
@@ -1082,6 +1181,76 @@ export const ALBERT_V3_AGENT_CONFIG = {
             "xero_finance_analytics.money_out": "desc"
           },
           "limit": 8
+        }
+      },
+      {
+        "connector": "stripe",
+        "key": "charges_by_month_12m",
+        "purpose": "Succeeded Stripe charges and collected amount per month, last 12 months — card collection scale and trend.",
+        "rows": 14,
+        "query": {
+          "measures": [
+            "stripe_payments_analytics.collected_amount",
+            "stripe_payments_analytics.succeeded_charges"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "stripe_payments_analytics.created",
+              "granularity": "month",
+              "dateRange": "last 12 months"
+            }
+          ]
+        }
+      },
+      {
+        "connector": "stripe",
+        "key": "invoice_position",
+        "purpose": "Stripe invoice counts and outstanding versus paid totals.",
+        "rows": 1,
+        "query": {
+          "measures": [
+            "stripe_billing_analytics.invoice_count",
+            "stripe_billing_analytics.paid_invoices",
+            "stripe_billing_analytics.amount_paid",
+            "stripe_billing_analytics.amount_remaining"
+          ]
+        }
+      },
+      {
+        "connector": "stripe",
+        "key": "subscriptions",
+        "purpose": "Current Stripe subscriptions by status.",
+        "rows": 8,
+        "query": {
+          "measures": [
+            "stripe_subscriptions_analytics.subscription_count"
+          ],
+          "dimensions": [
+            "stripe_subscriptions_analytics.status"
+          ],
+          "order": {
+            "stripe_subscriptions_analytics.subscription_count": "desc"
+          },
+          "limit": 8
+        }
+      },
+      {
+        "connector": "stripe",
+        "key": "payouts_12m",
+        "purpose": "Stripe payouts to the bank, last 12 months.",
+        "rows": 14,
+        "query": {
+          "measures": [
+            "stripe_payouts_analytics.payout_amount",
+            "stripe_payouts_analytics.paid_payouts"
+          ],
+          "timeDimensions": [
+            {
+              "dimension": "stripe_payouts_analytics.created",
+              "granularity": "month",
+              "dateRange": "last 12 months"
+            }
+          ]
         }
       }
     ]
@@ -1965,6 +2134,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much cash came in and went out over the last 6 months?",
           "Cash in and out this month",
           "What was our cash flow last month?"
+        ],
+        "answerTemplate": "For {{period}}, **{{xero_finance_analytics.cash_in|currency}}** came into the bank and **{{xero_finance_analytics.cash_out|currency}}** went out, a net movement of **{{xero_finance_analytics.net_cash_movement|currency}}**.",
+        "followUps": [
+          "How much is in the bank right now?",
+          "What was our net profit last month?",
+          "How much is owed to us right now?"
         ]
       }
     },
@@ -2039,6 +2214,42 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How many bills came in each month this year and what were they worth?",
           "Show me monthly bills from suppliers this year as a chart",
           "How many bills did we receive last month?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-cash-at-bank",
+      "userRequest": "How much is in the bank right now (current total bank, cash at bank, Balance in Xero)?",
+      "notes": "Headline Total Bank for the current report month only. Never sum across months.\nFor cash in and out over a period use recipe-bank-money-for-period.",
+      "query": {
+        "measures": [
+          "xero_balance_sheet_analytics.total_bank"
+        ],
+        "filters": [
+          {
+            "member": "xero_balance_sheet_analytics.is_current_period",
+            "operator": "equals",
+            "values": [
+              "true"
+            ]
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: Xero's Total Bank line for the current report month.",
+        "matches": [
+          "How much is in the bank right now?",
+          "What's our bank balance?",
+          "How much cash do we have in the bank?",
+          "Total bank in Xero",
+          "What is the balance in Xero?"
+        ],
+        "answerTemplate": "Total bank in Xero is **{{xero_balance_sheet_analytics.total_bank|currency}}**.",
+        "followUps": [
+          "How much cash came in and went out this month?",
+          "How much is owed to us right now?",
+          "How much do we currently owe suppliers?"
         ]
       }
     },
@@ -2238,6 +2449,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much GST did we collect last month?",
           "GST collected last quarter",
           "GST on sales this financial year"
+        ],
+        "answerTemplate": "For {{period}}, GST collected on sales was **{{sales_analytics.tax_collected|currency}}**, on **{{sales_analytics.gross_takings|currency}}** of gross takings.",
+        "followUps": [
+          "How much did we sell in the same period?",
+          "What was our net profit last month?",
+          "How much did we refund last month?"
         ]
       }
     },
@@ -2300,7 +2517,15 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How many hours did staff work last week?",
           "What did wages cost last month?",
           "How many shifts were worked in July?",
-          "Average shift length last month"
+          "Average shift length last month",
+          "Hours and wages last week",
+          "What did labour cost last week?"
+        ],
+        "answerTemplate": "For {{period}}, staff worked **{{workforce_analytics.hours_worked|number}} hours** across **{{workforce_analytics.worked_shift_count|integer}} shifts**, at a wage cost of **{{workforce_analytics.wage_cost|currency}}**. Average shift length was **{{workforce_analytics.avg_shift_hours|number}} hours**.",
+        "followUps": [
+          "What will next week's roster cost us in wages?",
+          "How many hours did each person work last week?",
+          "Are there any timesheets waiting for approval?"
         ]
       }
     },
@@ -2501,7 +2726,13 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Is anyone on holiday next week?",
           "Who's on leave today?"
         ],
-        "emptyAnswer": "nobody has leave (approved or pending) covering that period"
+        "emptyAnswer": "Nobody has leave covering {{period}}.",
+        "answerTemplate": "**{{recipe.rows|integer}} leave records** cover {{period}}.",
+        "followUps": [
+          "Who is rostered this week?",
+          "Who is on leave next week?",
+          "How many hours did staff work last week?"
+        ]
       }
     },
     {
@@ -2540,7 +2771,56 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Who's in the shop now?",
           "Who is on the floor right now?"
         ],
-        "emptyAnswer": "nobody is rostered today at all, so no one is on shift right now"
+        "emptyAnswer": "nobody is rostered today at all, so no one is on shift right now",
+        "answerTemplate": "Today's roster has **{{recipe.rows|integer}} shifts**.",
+        "followUps": [
+          "Who is rostered tomorrow?",
+          "Who is on leave today?",
+          "How many hours did staff work yesterday?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-open-shift-count-for-period",
+      "userRequest": "How many open (unassigned) rostered shifts are there in a period, and how many hours is that?",
+      "notes": "",
+      "query": {
+        "measures": [
+          "workforce_analytics.open_shift_count",
+          "workforce_analytics.rostered_hours"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "workforce_analytics.rostered_date",
+            "dateRange": "this week"
+          }
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.roster_open_shift",
+            "operator": "equals",
+            "values": [
+              "true"
+            ]
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: open shift count and hours for the period. If the owner asks which shifts, use the list recipe.",
+        "dateParameter": "workforce_analytics.rostered_date",
+        "matches": [
+          "Are there any open shifts this week?",
+          "How many open shifts do we have this week?",
+          "Any unfilled shifts next week?",
+          "How many unassigned shifts this week?"
+        ],
+        "answerTemplate": "For {{period}}, there are **{{workforce_analytics.open_shift_count|integer}} unassigned shifts** totalling **{{workforce_analytics.rostered_hours|number}} hours**.",
+        "followUps": [
+          "Which shifts still need someone?",
+          "What will next week's roster cost us in wages?",
+          "Who is on shift right now?"
+        ]
       }
     },
     {
@@ -2583,12 +2863,46 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "answerHint": "If rows exist: how many open shifts, their dates/times/areas and total hours; if none, say there are no open shifts in that period.",
         "dateParameter": "workforce_analytics.rostered_date",
         "matches": [
-          "Are there any open shifts this week?",
-          "Any unfilled shifts next week?",
-          "Which shifts still need someone?",
-          "Do we have any unassigned shifts?"
+          "Which shifts still need someone this week?",
+          "Which shifts are unassigned this week?",
+          "Show me the unfilled shifts next week",
+          "Which open shifts still need someone?"
         ],
-        "emptyAnswer": "there are no open (unassigned) shifts on the roster for that period - every rostered shift has someone assigned"
+        "emptyAnswer": "There are no open shifts on the roster for {{period}}.",
+        "answerTemplate": "There are **{{recipe.rows|integer}} open shifts** on the roster for {{period}}.",
+        "followUps": [
+          "Who is rostered this week?",
+          "What will this week's roster cost?",
+          "Who is on shift right now?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-open-workshop-jobs",
+      "userRequest": "How many workshop / service jobs are open right now, and how many of those are overdue?",
+      "notes": "Open and overdue job counts are current-state measures. Do not add a time grain.",
+      "query": {
+        "measures": [
+          "workshop_analytics.open_workorders",
+          "workshop_analytics.overdue_workorders"
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: open job count and how many of those are overdue.",
+        "matches": [
+          "How many open workshop jobs do we have?",
+          "How many service jobs are open?",
+          "How many overdue workshop jobs are there?",
+          "Are there any overdue repairs?",
+          "How many jobs are in the workshop?"
+        ],
+        "answerTemplate": "There are **{{workshop_analytics.open_workorders|integer}} open workshop jobs**, of which **{{workshop_analytics.overdue_workorders|integer}}** are overdue.",
+        "followUps": [
+          "Which workshop jobs are overdue?",
+          "How much did we sell last week?",
+          "How many customers do we have?"
+        ]
       }
     },
     {
@@ -2667,7 +2981,14 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much is outstanding to suppliers?",
           "What do we owe to suppliers right now?",
           "Bills to pay",
-          "How much do we have in unpaid bills?"
+          "How much do we have in unpaid bills?",
+          "How many unpaid bills do we have?"
+        ],
+        "answerTemplate": "We owe **{{xero_finance_analytics.payable_outstanding|currency}}** across **{{xero_finance_analytics.payable_open_count|integer}}** approved bills awaiting payment; **{{xero_finance_analytics.payable_overdue|currency}}** (**{{xero_finance_analytics.payable_overdue_count|integer}}** bills) is overdue. Draft bills not yet approved total **{{xero_finance_analytics.draft_bills_total|currency}}** (**{{xero_finance_analytics.draft_bill_count|integer}}**).",
+        "followUps": [
+          "Which bills are overdue?",
+          "How much is owed to us right now?",
+          "What did we spend with suppliers last month?"
         ]
       }
     },
@@ -2780,6 +3101,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much is owed to us by customers?",
           "Invoices owed to us",
           "What are our receivables?"
+        ],
+        "answerTemplate": "**{{xero_finance_analytics.receivable_outstanding|currency}}** is owed to us across **{{xero_finance_analytics.receivable_open_count|integer}}** approved invoices; **{{xero_finance_analytics.receivable_overdue|currency}}** (**{{xero_finance_analytics.receivable_overdue_count|integer}}** invoices) is overdue.",
+        "followUps": [
+          "Who owes us the most right now?",
+          "How much do we currently owe suppliers?",
+          "How much cash came in and went out this month?"
         ]
       }
     },
@@ -2844,6 +3171,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much did we refund last month?",
           "Refunds this year",
           "How many refunds did we give last week?"
+        ],
+        "answerTemplate": "For {{period}}, refunds totalled **{{sales_analytics.refund_value|currency}}** across **{{sales_analytics.refund_transactions|integer}}** refund transactions.",
+        "followUps": [
+          "How much did we sell in the same period?",
+          "How much GST did we collect last month?",
+          "What share of sales have a customer attached?"
         ]
       }
     },
@@ -2875,12 +3208,18 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Planned labour cost this week",
           "How many shifts are rostered this week?",
           "What is the rostered wage cost for this month?"
+        ],
+        "answerTemplate": "For {{period}}, the roster is **{{workforce_analytics.rostered_hours|number}} hours** across **{{workforce_analytics.rostered_shift_count|integer}} shifts**, at a planned wage cost of **{{workforce_analytics.rostered_cost|currency}}**. **{{workforce_analytics.open_shift_count|integer}}** shifts are still unassigned.",
+        "followUps": [
+          "Are there any open shifts this week?",
+          "How many hours did staff work last week?",
+          "Who is on shift right now?"
         ]
       }
     },
     {
       "name": "recipe-roster-for-period",
-      "userRequest": "Who is rostered on today / tomorrow / this week / next week? The roster for a period.",
+      "userRequest": "Who is rostered on today / tomorrow / this week / next week? The roster or schedule for a period.",
       "notes": "",
       "query": {
         "measures": [
@@ -2910,8 +3249,20 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "matches": [
           "Who's rostered on today?",
           "Who is working tomorrow?",
+          "Who is on tomorrow?",
+          "Schedule tomorrow?",
+          "What's the schedule tomorrow?",
+          "What's tomorrow's roster?",
+          "What's the roster tomorrow?",
           "What does next week's roster look like day by day?",
           "Who's on this week?"
+        ],
+        "emptyAnswer": "Nobody is rostered for {{period}}.",
+        "answerTemplate": "The roster for {{period}} has **{{recipe.rows|integer}} shifts**.",
+        "followUps": [
+          "Who is on leave tomorrow?",
+          "Are there any open shifts tomorrow?",
+          "What will tomorrow's roster cost?"
         ]
       }
     },
@@ -3148,7 +3499,7 @@ export const ALBERT_V3_AGENT_CONFIG = {
     },
     {
       "name": "recipe-sales-total-for-period",
-      "userRequest": "How much did we sell yesterday / today / last week / last month / this month / on a given date? Total sales for one period.",
+      "userRequest": "How much did we sell yesterday / today / last week / last month / this month / on a given date? Total sales or takings for one period.",
       "notes": "Lightspeed is the canonical sales source. Set the dateRange from the owner's period; the default is yesterday.",
       "query": {
         "measures": [
@@ -3168,12 +3519,27 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "answerHint": "One or two sentences: the takings for the period (GST inclusive), transactions if useful. No exclusions or source notes.",
         "dateParameter": "sales_analytics.completed_at",
         "matches": [
+          "Show me sales this week",
+          "What were sales this week?",
           "What were my sales yesterday?",
           "How much did we sell last week?",
           "What were total sales last month?",
           "Sales so far this month?",
           "What were sales on 15 August 2026?",
-          "How many sales did we make today?"
+          "How many sales did we make today?",
+          "What's our average sale this week?",
+          "How many transactions today?",
+          "What was AOV yesterday?",
+          "Show me sales and transactions this week",
+          "What were yesterday's takings?",
+          "What were today's takings?",
+          "What were last week's takings?"
+        ],
+        "answerTemplate": "For {{period}}, gross takings were **{{sales_analytics.gross_takings|currency}}** across **{{sales_analytics.transactions|integer}}** transactions, averaging **{{sales_analytics.average_sale_value|currency}}** per sale.",
+        "followUps": [
+          "How did this week compare with last week?",
+          "How much did we refund for the same period?",
+          "How much GST did we collect this week?"
         ]
       }
     },
@@ -3192,7 +3558,15 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "answerHint": "One sentence: active staff, and how many are on file in total.",
         "matches": [
           "How many staff do we have?",
-          "How many employees are active?"
+          "How many employees are active?",
+          "How many employees do we have?",
+          "What's our headcount?"
+        ],
+        "answerTemplate": "There are **{{workforce_analytics.active_staff_count|integer}} active staff** on the books, and **{{workforce_analytics.staff_count|integer}}** people on file in total.",
+        "followUps": [
+          "Who is on shift right now?",
+          "How many hours did staff work last week?",
+          "Who is on leave this week?"
         ]
       }
     },
@@ -3214,7 +3588,15 @@ export const ALBERT_V3_AGENT_CONFIG = {
         "matches": [
           "What's the total value of stock on hand right now?",
           "How many stock lines are below their reorder point?",
-          "How much stock do we have?"
+          "How much stock do we have?",
+          "What's our stock on hand?",
+          "How many items are out of stock?"
+        ],
+        "answerTemplate": "Stock on hand is **{{inventory_analytics.stock_value|currency}}** across **{{inventory_analytics.units_on_hand|number}} units**. **{{inventory_analytics.positions_below_reorder|integer}}** lines are below reorder point and **{{inventory_analytics.out_of_stock_positions|integer}}** are out of stock.",
+        "followUps": [
+          "Which stock lines are below their reorder point?",
+          "What are our top products by units this month?",
+          "How much did we sell last week?"
         ]
       }
     },
@@ -3348,6 +3730,56 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "Top suppliers this year",
           "How much have we bought from Pon Bike this year?",
           "What did we spend with our top 5 suppliers last financial year?"
+        ]
+      }
+    },
+    {
+      "name": "recipe-unapproved-timesheet-count",
+      "userRequest": "How many worked timesheets are waiting for approval, and how many hours is that?",
+      "notes": "Current-state count of finished, non-leave worked shifts that are not yet time-approved.",
+      "query": {
+        "measures": [
+          "workforce_analytics.unapproved_shift_count",
+          "workforce_analytics.hours_worked"
+        ],
+        "filters": [
+          {
+            "member": "workforce_analytics.time_approved",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          },
+          {
+            "member": "workforce_analytics.in_progress",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          },
+          {
+            "member": "workforce_analytics.is_leave",
+            "operator": "equals",
+            "values": [
+              "false"
+            ]
+          }
+        ]
+      },
+      "recipe": {
+        "presentation": "fact",
+        "answerHint": "One sentence: unapproved shift count and hours. If the owner asks which people or which shifts, use the list recipe.",
+        "matches": [
+          "How many timesheets need approving?",
+          "Are there any timesheets waiting for approval?",
+          "How many unapproved timesheets do we have?",
+          "Unapproved timesheet count"
+        ],
+        "answerTemplate": "**{{workforce_analytics.unapproved_shift_count|integer}}** worked shifts are waiting for time approval, totalling **{{workforce_analytics.hours_worked|number}} hours**.",
+        "followUps": [
+          "Which shifts haven't been approved yet?",
+          "How many hours did staff work last week?",
+          "What will next week's roster cost us in wages?"
         ]
       }
     },
@@ -4068,6 +4500,88 @@ export const ALBERT_V3_AGENT_CONFIG = {
       }
     },
     {
+      "name": "stripe-active-subscriptions",
+      "userRequest": "How many active Stripe subscriptions do we have?",
+      "notes": "Current subscription headcount, not recognised revenue.",
+      "query": {
+        "measures": [
+          "stripe_subscriptions_analytics.active_subscriptions",
+          "stripe_subscriptions_analytics.subscription_count"
+        ],
+        "dimensions": [
+          "stripe_subscriptions_analytics.status"
+        ]
+      }
+    },
+    {
+      "name": "stripe-charges-for-period",
+      "userRequest": "How much did Stripe collect yesterday / this week / last month? Succeeded charge collections for one period.",
+      "notes": "Stripe Charge grain. Only succeeded paid charges contribute to collected_amount.",
+      "query": {
+        "measures": [
+          "stripe_payments_analytics.collected_amount",
+          "stripe_payments_analytics.succeeded_charges",
+          "stripe_payments_analytics.average_charge"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "stripe_payments_analytics.created",
+            "dateRange": "yesterday"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stripe-fees-and-net",
+      "userRequest": "How much did Stripe take in fees, and what was net, over a period?",
+      "notes": "Balance-transaction grain. reporting_category can be added for a breakdown.",
+      "query": {
+        "measures": [
+          "stripe_balance_analytics.fee_amount",
+          "stripe_balance_analytics.net_amount",
+          "stripe_balance_analytics.gross_amount"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "stripe_balance_analytics.created",
+            "dateRange": "last 30 days"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stripe-outstanding-invoices",
+      "userRequest": "What Stripe invoices are still outstanding?",
+      "notes": "Open or uncollectible remaining amounts. Do not mix with charge collections.",
+      "query": {
+        "measures": [
+          "stripe_billing_analytics.amount_remaining",
+          "stripe_billing_analytics.open_invoices",
+          "stripe_billing_analytics.invoice_count"
+        ],
+        "dimensions": [
+          "stripe_billing_analytics.status"
+        ]
+      }
+    },
+    {
+      "name": "stripe-refunds-for-period",
+      "userRequest": "How much did we refund through Stripe in a period?",
+      "notes": "Succeeded Stripe refunds over created.",
+      "query": {
+        "measures": [
+          "stripe_refunds_analytics.refunded_amount",
+          "stripe_refunds_analytics.succeeded_refunds"
+        ],
+        "timeDimensions": [
+          {
+            "dimension": "stripe_refunds_analytics.created",
+            "dateRange": "last 30 days"
+          }
+        ]
+      }
+    },
+    {
       "name": "top-customers-lifetime",
       "userRequest": "Who are our best customers of all time by lifetime spend?",
       "notes": "",
@@ -4181,9 +4695,6 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "xero_profit_and_loss_analytics.gross_profit",
           "xero_profit_and_loss_analytics.gross_margin_pct"
         ],
-        "dimensions": [
-          "xero_profit_and_loss_analytics.currency"
-        ],
         "timeDimensions": [
           {
             "dimension": "xero_profit_and_loss_analytics.period_start",
@@ -4199,6 +4710,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "What's my gross profit margin this year?",
           "Gross profit last month",
           "How much did we make after cost of sales?"
+        ],
+        "answerTemplate": "For {{period}}, Gross Profit was **{{xero_profit_and_loss_analytics.gross_profit|currency}}** on **{{xero_profit_and_loss_analytics.sales_revenue|currency}}** sales revenue after **{{xero_profit_and_loss_analytics.cost_of_sales|currency}}** cost of sales (**{{xero_profit_and_loss_analytics.gross_margin_pct|percent}}** gross margin).",
+        "followUps": [
+          "What is our Xero Net Profit this financial year?",
+          "How much did we sell last month?",
+          "How much did wages reduce profit?"
         ]
       }
     },
@@ -4250,9 +4767,6 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "xero_profit_and_loss_analytics.net_profit_margin_pct",
           "xero_profit_and_loss_analytics.report_periods"
         ],
-        "dimensions": [
-          "xero_profit_and_loss_analytics.currency"
-        ],
         "timeDimensions": [
           {
             "dimension": "xero_profit_and_loss_analytics.period_start",
@@ -4269,6 +4783,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "What was our net profit last month?",
           "Did we make a profit this quarter?",
           "How profitable are we year to date?"
+        ],
+        "answerTemplate": "For {{period}}, Xero Net Profit was **{{xero_profit_and_loss_analytics.net_profit|currency}}** on **{{xero_profit_and_loss_analytics.total_income|currency}}** income and **{{xero_profit_and_loss_analytics.total_expenses|currency}}** expenses (**{{xero_profit_and_loss_analytics.net_profit_margin_pct|percent}}** margin). Wage expenses in that result were **{{xero_profit_and_loss_analytics.wage_expenses|currency}}**.",
+        "followUps": [
+          "What's my gross profit margin this year?",
+          "How much did wages reduce profit?",
+          "How much cash came in and went out this month?"
         ]
       }
     },
@@ -4282,9 +4802,6 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "xero_profit_and_loss_analytics.employer_super_expenses",
           "xero_profit_and_loss_analytics.net_profit",
           "xero_profit_and_loss_analytics.net_profit_before_mapped_wages"
-        ],
-        "dimensions": [
-          "xero_profit_and_loss_analytics.currency"
         ],
         "timeDimensions": [
           {
@@ -4302,6 +4819,12 @@ export const ALBERT_V3_AGENT_CONFIG = {
           "How much did wages reduce profit?",
           "What would profit be before wages?",
           "Wages versus net profit this year"
+        ],
+        "answerTemplate": "For {{period}}, mapped wage expenses of **{{xero_profit_and_loss_analytics.wage_expenses|currency}}** (plus **{{xero_profit_and_loss_analytics.employer_super_expenses|currency}}** employer super) are already in Xero Net Profit of **{{xero_profit_and_loss_analytics.net_profit|currency}}**. Profit before those mapped wages would be **{{xero_profit_and_loss_analytics.net_profit_before_mapped_wages|currency}}**.",
+        "followUps": [
+          "What is our Xero Net Profit this financial year?",
+          "What did wages cost last month?",
+          "What's my gross profit margin this year?"
         ]
       }
     }

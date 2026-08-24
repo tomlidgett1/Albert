@@ -10,7 +10,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_shops t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_shops ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -92,7 +91,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_registers t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_registers ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: shops
@@ -157,7 +155,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_employees t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_employees ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -256,7 +253,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_tax_categories t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_categories ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -311,7 +307,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_tax_classes t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_classes ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -351,7 +346,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_tax_category_classes t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tax_category_classes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: tax_categories

@@ -799,6 +799,7 @@ export async function installAppApiRoutes(
     anthropicHistory?: boolean;
     specialistHistory?: boolean;
     codexHistory?: boolean;
+    recentAnalyses?: boolean;
     v3DelayMs?: number;
     codexDelayMs?: number;
     anthropicDelayMs?: number;
@@ -972,10 +973,142 @@ export async function installAppApiRoutes(
     await route.fulfill({ json: { connected: true } });
   });
 
+  await page.route(/\/api\/recommended-analysis(?:\?.*)?$/u, async (route) => {
+    const recommendations = options.recentAnalyses
+      ? [
+          {
+            id: "rec-1-wednesday",
+            question: "Which products dragged Wednesday's sales last week?",
+            why: "Last week's review found sales down 11%, with Wednesday the weak day.",
+            move: "diagnose",
+            domain: "products",
+            fromTitle: "Weekly sales trend",
+            fromConversationId: "01J00000000000000000000021",
+          },
+          {
+            id: "rec-2-parts",
+            question: "What is dragging parts margin: mix, discounting, or cost?",
+            why: "Parts sat at 31% against 44% for workshop in your last category review.",
+            move: "diagnose",
+            domain: "profit",
+            fromTitle: "Margin by category",
+            fromConversationId: "01J00000000000000000000033",
+          },
+          {
+            id: "rec-3-cash",
+            question: "Did last week's takings reach the bank, and what is still outstanding?",
+            why: "You reviewed sales, but not whether that cash actually landed.",
+            move: "close_the_loop",
+            domain: "cash",
+            fromTitle: "Weekly sales trend",
+            fromConversationId: "01J00000000000000000000021",
+          },
+        ]
+      : [];
+    await route.fulfill({
+      json: {
+        verdict: recommendations.length > 0
+          ? "You've looked at sales and customers recently. Cash and labour have gone quiet."
+          : "",
+        recommendations,
+        sourceCount: recommendations.length > 0 ? 12 : 0,
+        source: recommendations.length > 0 ? "cache" : "empty",
+        fingerprint: recommendations.length > 0 ? "a".repeat(64) : "",
+      },
+    });
+  });
+
   await page.route(/\/api\/conversations(?:\?.*)?$/u, async (route) => {
     await route.fulfill({
       json: {
-        conversations: options.anthropicHistory || options.specialistHistory || options.codexHistory
+        conversations: options.recentAnalyses
+          ? [
+              {
+                conversation_id: "01J00000000000000000000021",
+                title: "Weekly sales trend",
+                status: "active",
+                created_at: "2026-08-09T00:00:00.000Z",
+                updated_at: "2026-08-09T04:01:00.000Z",
+                last_turn: {
+                  turn_id: "01J00000000000000000000022",
+                  turn_number: 1,
+                  user_message: "How did this week compare to last week?",
+                  status: "completed",
+                  answer_state: "verified",
+                  runtime_profile: {
+                    model: "gpt-5.6-luna",
+                    runtime: "albert-v3",
+                    analyticalRuntime: "cube-v3",
+                  },
+                  created_at: "2026-08-09T04:00:00.000Z",
+                  completed_at: "2026-08-09T04:01:00.000Z",
+                },
+              },
+              {
+                conversation_id: "01J00000000000000000000031",
+                title: "Top customers this month",
+                status: "active",
+                created_at: "2026-08-08T00:00:00.000Z",
+                updated_at: "2026-08-08T03:01:00.000Z",
+                last_turn: {
+                  turn_id: "01J00000000000000000000032",
+                  turn_number: 1,
+                  user_message: "Who were the top customers this month?",
+                  status: "completed",
+                  answer_state: "verified",
+                  runtime_profile: {
+                    model: "gpt-5.6-luna",
+                    runtime: "albert-v3",
+                    analyticalRuntime: "cube-v3",
+                  },
+                  created_at: "2026-08-08T03:00:00.000Z",
+                  completed_at: "2026-08-08T03:01:00.000Z",
+                },
+              },
+              {
+                conversation_id: "01J00000000000000000000033",
+                title: "Margin by category",
+                status: "active",
+                created_at: "2026-08-07T00:00:00.000Z",
+                updated_at: "2026-08-07T02:01:00.000Z",
+                last_turn: {
+                  turn_id: "01J00000000000000000000034",
+                  turn_number: 1,
+                  user_message: "Which categories are compressing margin?",
+                  status: "completed",
+                  answer_state: "verified",
+                  runtime_profile: {
+                    model: "gpt-5.6-luna",
+                    runtime: "albert-v3",
+                    analyticalRuntime: "cube-v3",
+                  },
+                  created_at: "2026-08-07T02:00:00.000Z",
+                  completed_at: "2026-08-07T02:01:00.000Z",
+                },
+              },
+              {
+                conversation_id: "01J00000000000000000000035",
+                title: "Refunds by store",
+                status: "active",
+                created_at: "2026-08-06T00:00:00.000Z",
+                updated_at: "2026-08-06T01:01:00.000Z",
+                last_turn: {
+                  turn_id: "01J00000000000000000000036",
+                  turn_number: 1,
+                  user_message: "Where are refunds concentrating?",
+                  status: "completed",
+                  answer_state: "verified",
+                  runtime_profile: {
+                    model: "gpt-5.6-luna",
+                    runtime: "albert-v3",
+                    analyticalRuntime: "cube-v3",
+                  },
+                  created_at: "2026-08-06T01:00:00.000Z",
+                  completed_at: "2026-08-06T01:01:00.000Z",
+                },
+              },
+            ]
+          : options.anthropicHistory || options.specialistHistory || options.codexHistory
           ? [
               {
                 conversation_id: "01J00000000000000000000021",
@@ -1036,7 +1169,9 @@ export async function installAppApiRoutes(
               {
                 turn_id: "01J00000000000000000000022",
                 turn_number: 1,
-                user_message: options.specialistHistory
+                user_message: options.recentAnalyses
+                  ? "How did this week compare to last week?"
+                  : options.specialistHistory
                   ? "Review our customer base"
                   : options.codexHistory
                     ? "Review the business"

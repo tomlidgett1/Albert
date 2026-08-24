@@ -139,6 +139,33 @@ test("Deputy OAuth is optional as one atomic provider while Lightspeed and Xero 
   );
 });
 
+test("Stripe Connect is optional as one atomic provider while Lightspeed and Xero remain required", () => {
+  const withoutStripe = { ...valid };
+  delete withoutStripe.STRIPE_CLIENT_ID;
+  delete withoutStripe.STRIPE_SECRET_KEY;
+  const config = loadSyncWorkerConfig(withoutStripe);
+  assert.equal(config.stripeClientId, "");
+  assert.equal(config.stripeSecretKey, "");
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutStripe, STRIPE_CLIENT_ID: "ca_partial" }),
+    /must be configured together/u,
+  );
+
+  const factory = new ProductionConnectorFactory(config);
+  const vault = {} as WorkerCredentialVault;
+  assert.equal(factory.isConfigured("stripe"), false);
+  assert.throws(
+    () => factory.create("stripe", vault),
+    /oauth_provider_not_configured:stripe/u,
+  );
+  const configuredFactory = new ProductionConnectorFactory(loadSyncWorkerConfig(valid));
+  assert.equal(configuredFactory.isConfigured("stripe"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("stripe").id,
+    "stripe",
+  );
+});
+
 test("Square credentials are required in production, atomic in development, and available to sync dispatch", () => {
   const vault = {} as WorkerCredentialVault;
   const configured = loadSyncWorkerConfig(valid);

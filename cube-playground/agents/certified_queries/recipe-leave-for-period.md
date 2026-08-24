@@ -6,8 +6,14 @@ presentation: list
 date_parameter: workforce_analytics.leave_day
 answer_hint: >
   Name who is away and on which dates (collapse consecutive days into a range per person); list approved leave first, mention 'Awaiting approval' requests separately, ignore declined/cancelled. If no rows, say nobody has leave in that period. A request that started before the period still counts if it covers days in it.
+answer_template: >
+  **{{recipe.rows|integer}} leave records** cover {{period}}.
 empty_answer: >
-  nobody has leave (approved or pending) covering that period
+  Nobody has leave covering {{period}}.
+follow_ups:
+  - "Who is rostered this week?"
+  - "Who is on leave next week?"
+  - "How many hours did staff work last week?"
 matches:
   - "Who's on leave this month?"
   - "Any leave coming up next month?"

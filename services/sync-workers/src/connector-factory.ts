@@ -96,6 +96,11 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
         this.config.momenceClientId && this.config.momenceClientSecret,
       );
     }
+    if (provider === "stripe") {
+      return Boolean(
+        this.config.stripeClientId && this.config.stripeSecretKey,
+      );
+    }
     return true;
   }
 
@@ -154,7 +159,7 @@ export class ProductionConnectorFactory implements OAuthConnectorFactory {
       });
     }
     if (provider === "stripe") {
-      if (!this.config.stripeClientId) throw new Error("oauth_provider_not_configured:stripe");
+      if (!this.isConfigured("stripe")) throw new Error("oauth_provider_not_configured:stripe");
       return new StripeConnector({
         clientId: this.config.stripeClientId,
         secretKey: this.config.stripeSecretKey,
@@ -259,6 +264,9 @@ export class ProductionConnectorRegistry implements ConnectorRegistry {
     }
     if (factory.isConfigured("momence")) {
       connectors.push(["momence", factory.create("momence", vault)]);
+    }
+    if (factory.isConfigured("stripe")) {
+      connectors.push(["stripe", factory.create("stripe", vault)]);
     }
     this.connectors = new Map(connectors);
   }

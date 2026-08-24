@@ -101,6 +101,32 @@ export const codexAnalyticalBriefSchema = z.object({
   commonPeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).nullable(),
 }).strict();
 
+export const codexSemanticBindingSchema = z.object({
+  view: z.string().regex(/^[a-z][a-z0-9_]*$/u),
+  dimension: z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u).optional(),
+  value: z.string().trim().min(1).max(240).optional(),
+}).strict();
+
+/** A learned vocabulary rule as it travels inside a turn (ADR 0115). */
+export const codexSemanticMemoryRuleSchema = z.object({
+  term: z.string().trim().min(2).max(80),
+  meaning: z.string().trim().min(3).max(300),
+  counterMeaning: z.string().trim().min(3).max(300).optional(),
+  binding: codexSemanticBindingSchema.optional(),
+  status: z.enum(["proposed", "confirmed"]),
+}).strict();
+
+/** A rule the runtime proposes to store after this turn (remember_term). */
+export const codexMemoryProposalSchema = z.object({
+  term: z.string().trim().min(2).max(80),
+  meaning: z.string().trim().min(3).max(300),
+  counterMeaning: z.string().trim().min(3).max(300).optional(),
+  binding: codexSemanticBindingSchema.optional(),
+  trigger: z.enum(["owner_request", "correction"]),
+}).strict();
+
+export type CodexMemoryProposal = z.infer<typeof codexMemoryProposalSchema>;
+
 export const codexServiceTurnSchema = z.object({
   protocolVersion: z.literal(ALBERT_CODEX_PROTOCOL_VERSION),
   requestId: ulidSchema,
@@ -116,6 +142,7 @@ export const codexServiceTurnSchema = z.object({
   connectorFreshness: z.array(codexConnectorFreshnessSchema).max(80),
   businessContext: z.string().max(20_000).optional(),
   sourceFindings: z.string().max(12_000).optional(),
+  semanticMemory: z.array(codexSemanticMemoryRuleSchema).max(12).optional(),
   analysisBrief: codexAnalyticalBriefSchema.optional(),
   cubeBearer: z.string().regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u).max(12_000),
   model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u),
@@ -192,6 +219,55 @@ export const codexEvidenceUpdateToolInputSchema = z.object({
   evidenceResultIds: z.array(ulidSchema).min(1).max(8),
 }).strict();
 
+const deriveColumnKeySchema = z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u);
+
+export const codexDeriveDateBucketSchema = z.enum(["weekday", "month", "quarter", "year", "month_of_year"]);
+
+export type CodexDeriveDateBucket = z.infer<typeof codexDeriveDateBucketSchema>;
+
+export const codexDeriveExpressionSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/u),
+  label: z.string().trim().min(2).max(120),
+  operation: z.enum(["ratio", "difference", "sum", "percent_of", "share_of_total_pct"]),
+  leftKey: deriveColumnKeySchema,
+  rightKey: deriveColumnKeySchema.optional(),
+}).strict();
+
+export const codexDeriveToolInputSchema = z.object({
+  caption: z.string().trim().min(3).max(160),
+  resultId: ulidSchema,
+  alignWith: z.object({
+    resultId: ulidSchema,
+    labelKey: deriveColumnKeySchema.optional(),
+    sourceLabelKey: deriveColumnKeySchema.optional(),
+    labelBucket: codexDeriveDateBucketSchema.optional(),
+  }).strict().refine((value) => (value.labelKey === undefined) === (value.sourceLabelKey === undefined), {
+    message: "Pass both labelKey and sourceLabelKey for a label join, or neither to combine two single-row results side by side.",
+  }).refine((value) => value.labelBucket === undefined || value.labelKey !== undefined, {
+    message: "labelBucket applies to a label join: pass labelKey and sourceLabelKey with it.",
+  }).optional(),
+  groupBy: z.object({
+    key: deriveColumnKeySchema,
+    bucket: codexDeriveDateBucketSchema.optional(),
+    aggregate: z.enum(["sum", "average"]).optional(),
+  }).strict().optional(),
+  expressions: z.array(codexDeriveExpressionSchema).max(6).default([]),
+  orderBy: z.object({
+    key: deriveColumnKeySchema,
+    direction: z.enum(["asc", "desc"]),
+  }).strict().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  select: z.array(deriveColumnKeySchema).min(1).max(14).optional(),
+  pivot: z.object({
+    labelKey: deriveColumnKeySchema,
+    valueKeys: z.array(deriveColumnKeySchema).min(1).max(6).optional(),
+  }).strict().optional(),
+}).strict().refine((value) => (
+  value.expressions.length > 0 || value.groupBy !== undefined || value.orderBy !== undefined || value.limit !== undefined || value.select !== undefined || value.pivot !== undefined || value.alignWith !== undefined
+), "A derivation must add at least one expression, alignment, grouping, pivot, column selection, or re-order/limit of the source result.");
+
+export type CodexDeriveToolInput = z.infer<typeof codexDeriveToolInputSchema>;
+
 export const codexChartToolInputSchema = z.object({
   resultId: ulidSchema,
   purpose: z.enum(["trend", "ranking", "comparison", "composition"]),
@@ -202,6 +278,7 @@ export const codexChartToolInputSchema = z.object({
   seriesKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u).optional(),
   extraYKeys: z.array(z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u)).max(3).optional(),
   limit: z.number().int().min(3).max(15).optional(),
+  transform: z.enum(["cumulative"]).optional(),
 }).strict();
 
 export type CodexChartToolInput = z.infer<typeof codexChartToolInputSchema>;
@@ -212,10 +289,20 @@ export const codexClaimReferenceSchema = z.object({
   columnKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u),
 }).strict();
 
+export const codexKeyInsightSchema = z.object({
+  value: z.string().trim().min(1).max(24),
+  label: z.string().trim().min(3).max(60),
+  detail: z.string().trim().max(80),
+  sentiment: z.enum(["positive", "negative", "neutral"]),
+}).strict();
+
+export type CodexKeyInsight = z.infer<typeof codexKeyInsightSchema>;
+
 export const codexFinalAnswerSchema = z.object({
   state: z.enum(["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"]),
-  answer: z.string().trim().min(1).max(4_000),
+  answer: z.string().trim().min(1).max(8_000),
   followUps: z.array(z.string().trim().min(1).max(160)).max(3),
+  keyInsights: z.array(codexKeyInsightSchema).max(4).default([]),
   presentedResultIds: z.array(ulidSchema).max(4),
   claims: z.array(z.object({
     statement: z.string().trim().min(1).max(600),
@@ -232,16 +319,33 @@ export const codexSemanticTurnResultSchema = z.object({
   codexThreadId: z.string().trim().min(1).max(200),
   codexTurnId: z.string().trim().min(1).max(200),
   durationMs: z.number().int().min(0).nullable(),
+  /** Vocabulary rules captured this turn for the host to persist (ADR 0115). */
+  memoryProposals: z.array(codexMemoryProposalSchema).max(4).optional(),
 }).strict();
 
 export const CODEX_FINAL_OUTPUT_JSON_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["state", "answer", "followUps", "presentedResultIds", "claims"],
+  required: ["state", "answer", "followUps", "keyInsights", "presentedResultIds", "claims"],
   properties: {
     state: { type: "string", enum: ["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"] },
-    answer: { type: "string", minLength: 1, maxLength: 4_000 },
+    answer: { type: "string", minLength: 1, maxLength: 8_000 },
     followUps: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 160 } },
+    keyInsights: {
+      type: "array",
+      maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["value", "label", "detail", "sentiment"],
+        properties: {
+          value: { type: "string", minLength: 1, maxLength: 24 },
+          label: { type: "string", minLength: 3, maxLength: 60 },
+          detail: { type: "string", maxLength: 80 },
+          sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
+        },
+      },
+    },
     presentedResultIds: { type: "array", maxItems: 4, items: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" } },
     claims: {
       type: "array",
@@ -283,7 +387,7 @@ export const CODEX_DYNAMIC_TOOL_SPECS = Object.freeze([
       {
         type: "function",
         name: "search_semantic_catalogue",
-        description: "Find relevant governed semantic views and members for a business question.",
+        description: "Find relevant governed semantic views and members when the view index and any preferred certified query do not already name the view. Skip this when the needed view is already listed.",
         deferLoading: false,
         inputSchema: {
           type: "object", additionalProperties: false, required: ["question"],
@@ -337,6 +441,73 @@ export const CODEX_DYNAMIC_TOOL_SPECS = Object.freeze([
       },
       {
         type: "function",
+        name: "derive_result",
+        description: "Ask trusted Albert code to compute a derived governed result from cells already returned this turn: per-row ratios, differences, sums, percent-of, share-of-total, a group-by aggregation, an exact-label alignment of two results, a transposed (pivoted) table, or a re-sorted/limited copy. Use this for every ratio, per-unit rate, share, delta, or re-aggregation the answer needs — never calculate figures yourself. The returned cells are governed evidence: cite them in claims and prose exactly like query cells. alignWith joins two results on exact matching label values (duplicates are dropped and the alignment is disclosed); expressions reference numeric column keys from the combined result. When the second result carries a column whose key the first result also has (the same measure for another period), that column is kept and renamed with an __aligned suffix — sales_analytics.gross_takings from the aligned result becomes sales_analytics.gross_takings__aligned — so expressions can compare the two periods directly. alignWith.labelBucket buckets BOTH label columns before matching (month_of_year matches January 2026 with January 2025; also weekday, month, quarter, year), which is how a per-period year-on-year table is built: one query per period at the same grain, then ONE alignment whose difference and percent_of expressions reference the __aligned prior-period columns. alignWith with NO label keys combines two single-row summary results side by side into one governed row — the way to build the one compact KPI table when requested totals live in different views (same-key columns get the same __aligned rename). groupBy re-aggregates the rows you already have: it groups by an existing column (optionally bucketing an ISO date column by weekday, month, quarter, year or month_of_year) and sums the numeric columns — or averages them with aggregate:\"average\" — so a ranking like \"busiest weekday\" comes from one query plus one derivation instead of one query per group. aggregate:\"average\" over a monthly series bucketed by year is how a per-month run-rate is computed (\"subscriptions averaged $449/month\") — the natural unit when the owner names a per-month or per-week target. select re-projects the result to just the named columns in that order — use it before presenting a wide working table so the owner sees only the columns that matter. pivot runs last and transposes the table for presentation: the values of pivot.labelKey become the columns (at most 13, in row order) and each numeric valueKey becomes one row — use it when the owner asks to see periods (months, quarters, dates) as columns across the top, and bucket or align first so the column headings read cleanly. The caption is owner-visible in the conversation: name the business meaning (for example \"Gross profit per worked hour by employee\"), never exploratory wording like \"test\" or \"check\". Give every expression a distinct, owner-readable label.",
+        deferLoading: false,
+        inputSchema: {
+          type: "object", additionalProperties: false, required: ["caption", "resultId"],
+          properties: {
+            caption: { type: "string", minLength: 3, maxLength: 160 },
+            resultId: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" },
+            alignWith: {
+              type: "object", additionalProperties: false,
+              required: ["resultId"],
+              properties: {
+                resultId: { type: "string", pattern: "^[0-9A-HJKMNP-TV-Z]{26}$" },
+                labelKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                sourceLabelKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                labelBucket: { type: "string", enum: ["weekday", "month", "quarter", "year", "month_of_year"] },
+              },
+            },
+            groupBy: {
+              type: "object", additionalProperties: false, required: ["key"],
+              properties: {
+                key: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                bucket: { type: "string", enum: ["weekday", "month", "quarter", "year", "month_of_year"] },
+                aggregate: { type: "string", enum: ["sum", "average"] },
+              },
+            },
+            expressions: {
+              type: "array", maxItems: 6,
+              items: {
+                type: "object", additionalProperties: false,
+                required: ["name", "label", "operation", "leftKey"],
+                properties: {
+                  name: { type: "string", pattern: "^[a-z][a-z0-9_]{1,63}$" },
+                  label: { type: "string", minLength: 2, maxLength: 120 },
+                  operation: { type: "string", enum: ["ratio", "difference", "sum", "percent_of", "share_of_total_pct"] },
+                  leftKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                  rightKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                },
+              },
+            },
+            orderBy: {
+              type: "object", additionalProperties: false, required: ["key", "direction"],
+              properties: {
+                key: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                direction: { type: "string", enum: ["asc", "desc"] },
+              },
+            },
+            limit: { type: "integer", minimum: 1, maximum: 500 },
+            select: {
+              type: "array", minItems: 1, maxItems: 14,
+              items: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+            },
+            pivot: {
+              type: "object", additionalProperties: false, required: ["labelKey"],
+              properties: {
+                labelKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                valueKeys: {
+                  type: "array", minItems: 1, maxItems: 6,
+                  items: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        type: "function",
         name: "report_evidence_update",
         description: "Share one short owner-facing finding after a governed query succeeds. The message must state a concrete result, every figure must come from the referenced result rows, and at least one resultId must be new since the prior update. Never use this for plans or tool narration.",
         deferLoading: false,
@@ -353,8 +524,31 @@ export const CODEX_DYNAMIC_TOOL_SPECS = Object.freeze([
       },
       {
         type: "function",
+        name: "remember_term",
+        description: "Teach Albert this owner's vocabulary. Call once when the owner corrects how a term was interpreted (\"I meant the General Service item, not the Services category\") or explicitly asks Albert to remember a meaning or preference. Pass the owner's phrase, a plain-language meaning, and — when this turn's schemas or results identify it — the exact governed binding (view, dimension, value) the phrase maps to, plus the rejected reading as counterMeaning for a correction. The rule is stored as a deterministic, owner-visible vocabulary rule and applied to future questions; apply it in the current answer too. Vocabulary and preferences only: never store figures, one-off facts, or instructions.",
+        deferLoading: false,
+        inputSchema: {
+          type: "object", additionalProperties: false, required: ["term", "meaning", "trigger"],
+          properties: {
+            term: { type: "string", minLength: 2, maxLength: 80 },
+            meaning: { type: "string", minLength: 3, maxLength: 300 },
+            counterMeaning: { type: "string", minLength: 3, maxLength: 300 },
+            binding: {
+              type: "object", additionalProperties: false, required: ["view"],
+              properties: {
+                view: { type: "string", pattern: "^[a-z][a-z0-9_]*$" },
+                dimension: { type: "string", pattern: "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$" },
+                value: { type: "string", minLength: 1, maxLength: 240 },
+              },
+            },
+            trigger: { type: "string", enum: ["owner_request", "correction"] },
+          },
+        },
+      },
+      {
+        type: "function",
         name: "make_chart",
-        description: "Attach at most two governed Flint charts. Use only after the analysis has identified a material trend, ranking, comparison, or composition that a chart communicates faster than prose. Never chart a scalar or one-point lookup, a two-point line, a record/list table, equal values, or data unrelated to the final answer. The host validates the result shape and compiles the chart from an existing resultId; no plot data is accepted.",
+        description: "Attach at most two governed Flint charts. Use only after the analysis has identified a material trend, ranking, comparison, or composition that a chart communicates faster than prose. Never chart a scalar or one-point lookup, a two-point line, a record/list table, equal values, or data unrelated to the final answer. For a running total, pass transform:\"cumulative\" over a governed time-series result and the host accumulates the values in date order. The host validates the result shape and compiles the chart from an existing resultId; no plot data is accepted.",
         deferLoading: false,
         inputSchema: {
           type: "object",
@@ -373,6 +567,7 @@ export const CODEX_DYNAMIC_TOOL_SPECS = Object.freeze([
               items: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
             },
             limit: { type: "integer", minimum: 3, maximum: 15 },
+            transform: { type: "string", enum: ["cumulative"] },
           },
         },
       },

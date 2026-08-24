@@ -1,0 +1,179 @@
+cubes:
+  - name: stripe_charges
+    title: Charges (Stripe)
+    public: false
+    description: >
+      One row per Stripe Charge from Fivetran's official charge table. Amounts
+      are in major currency units. Succeeded collected money uses status
+      succeeded and paid = true. Refunds are a separate grain.
+    meta:
+      ai_context: >
+        Use for card/charge collections, success versus failure, and refunded
+        charge amounts. Prefer stripe_payment_intents when the question is about
+        PaymentIntents rather than the Charge object. Do not subtract refunds
+        from charge created_at as if they happened that day; use stripe_refunds.
+    sql: SELECT * FROM source_stripe.st_charge
+    joins:
+      - name: stripe_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_customers}.tenant_id AND {CUBE}.customer_id = {stripe_customers}.id"
+      - name: stripe_payment_intents
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_payment_intents}.tenant_id AND {CUBE}.payment_intent_id = {stripe_payment_intents}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: customer_id, sql: customer_id, type: string, public: false }
+      - { name: payment_intent_id, sql: payment_intent_id, type: string, public: false }
+      - { name: invoice_id, sql: invoice_id, type: string, public: false }
+      - { name: payment_method_id, sql: payment_method_id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: Charge status }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: description, sql: description, type: string }
+      - { name: failure_code, sql: failure_code, type: string }
+      - { name: failure_message, sql: failure_message, type: string }
+      - { name: receipt_email, sql: receipt_email, type: string }
+      - { name: receipt_number, sql: receipt_number, type: string }
+      - { name: outcome_type, sql: outcome_type, type: string }
+      - { name: captured, sql: captured, type: boolean }
+      - { name: paid, sql: paid, type: boolean }
+      - { name: refunded, sql: refunded, type: boolean }
+      - { name: disputed, sql: disputed, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time, title: Charged at }
+      - name: is_succeeded
+        sql: "{CUBE}.status = 'succeeded' AND {CUBE}.paid"
+        type: boolean
+    measures:
+      - { name: charge_count, type: count, title: Charges }
+      - name: succeeded_charges
+        type: count
+        title: Succeeded charges
+        filters: [{ sql: "{CUBE}.status = 'succeeded' AND {CUBE}.paid" }]
+      - name: failed_charges
+        type: count
+        title: Failed charges
+        filters: [{ sql: "{CUBE}.status = 'failed'" }]
+      - name: collected_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Collected
+        filters: [{ sql: "{CUBE}.status = 'succeeded' AND {CUBE}.paid" }]
+      - name: refunded_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_refunded, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Refunded on charges
+      - name: average_charge
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: avg
+        format: currency
+        filters: [{ sql: "{CUBE}.status = 'succeeded' AND {CUBE}.paid" }]
+
+  - name: stripe_payment_intents
+    title: Payment intents (Stripe)
+    public: false
+    description: >
+      One row per Stripe PaymentIntent. amount is requested; amount_received is
+      what was collected. Status succeeded is the collection grain.
+    sql: SELECT * FROM source_stripe.st_payment_intent
+    joins:
+      - name: stripe_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_customers}.tenant_id AND {CUBE}.customer_id = {stripe_customers}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: customer_id, sql: customer_id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: PaymentIntent status }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: description, sql: description, type: string }
+      - { name: cancellation_reason, sql: cancellation_reason, type: string }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time, title: Created at }
+      - { name: canceled_at, sql: canceled_at, type: time }
+    measures:
+      - { name: payment_intent_count, type: count, title: Payment intents }
+      - name: succeeded_intents
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'succeeded'" }]
+      - name: requested_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+      - name: received_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_received, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Amount received
+        filters: [{ sql: "{CUBE}.status = 'succeeded'" }]
+
+  - name: stripe_refunds
+    title: Refunds (Stripe)
+    public: false
+    description: >
+      One row per Stripe Refund. Use created for when money moved back. Status
+      succeeded is completed refund money.
+    sql: SELECT * FROM source_stripe.st_refund
+    joins:
+      - name: stripe_charges
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_charges}.tenant_id AND {CUBE}.charge_id = {stripe_charges}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: charge_id, sql: charge_id, type: string, public: false }
+      - { name: payment_intent_id, sql: payment_intent_id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: Refund status }
+      - { name: reason, sql: reason, type: string, title: Refund reason }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: receipt_number, sql: receipt_number, type: string }
+      - { name: created, sql: created, type: time, title: Refunded at }
+    measures:
+      - { name: refund_count, type: count, title: Refunds }
+      - name: succeeded_refunds
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'succeeded'" }]
+      - name: refunded_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Refunded
+        filters: [{ sql: "{CUBE}.status = 'succeeded'" }]
+
+  - name: stripe_disputes
+    title: Disputes (Stripe)
+    public: false
+    description: >
+      One row per Stripe Dispute (chargeback). Amount is exposure, not an
+      automatic expense. evidence_due_by is the response deadline.
+    sql: SELECT * FROM source_stripe.st_dispute
+    joins:
+      - name: stripe_charges
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_charges}.tenant_id AND {CUBE}.charge_id = {stripe_charges}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: charge_id, sql: charge_id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: Dispute status }
+      - { name: reason, sql: reason, type: string, title: Dispute reason }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time, title: Opened at }
+      - { name: evidence_due_by, sql: evidence_due_by, type: time, title: Evidence due }
+    measures:
+      - { name: dispute_count, type: count, title: Disputes }
+      - name: open_disputes
+        type: count
+        filters: [{ sql: "{CUBE}.status IN ('warning_needs_response', 'needs_response', 'under_review')" }]
+      - name: dispute_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Dispute exposure

@@ -81,8 +81,8 @@ test("R-Series customer lifetime SQL aggregates once and refunds never create re
   const customers = cube("customers");
   const sql = String(customers.sql);
 
-  assert.match(sql, /latest_customer_pack AS MATERIALIZED/iu);
-  assert.match(sql, /latest_sales_pack AS MATERIALIZED/iu);
+  assert.match(sql, /latest_customers AS MATERIALIZED/iu);
+  assert.doesNotMatch(sql, /\bmapping_version\b/iu);
   assert.match(sql, /latest_customer_activity AS MATERIALIZED/iu);
   assert.match(sql, /ordered_positive_purchases AS MATERIALIZED/iu);
   assert.match(sql, /ROW_NUMBER\(\) OVER \([\s\S]*PARTITION BY sale\.tenant_id, sale\.customer_id[\s\S]*ORDER BY sale\.complete_time ASC NULLS LAST[\s\S]*sale\.sale_id ASC NULLS LAST[\s\S]*sale\.namespaced_source_key ASC/iu);

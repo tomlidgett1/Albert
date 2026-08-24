@@ -20,26 +20,14 @@ cubes:
         sales have no customer row, so customer-based analyses cover attributed
         sales only and answers should say so when relevant.
     sql: >
-      WITH latest_customer_pack AS MATERIALIZED (
-        SELECT mapping_version
-        FROM source_lightspeed_official.ls_customers
-        ORDER BY ingested_at DESC NULLS LAST
-        LIMIT 1
-      ), latest_sales_pack AS MATERIALIZED (
-        SELECT mapping_version
-        FROM source_lightspeed_official.ls_sales
-        ORDER BY ingested_at DESC NULLS LAST
-        LIMIT 1
-      ), latest_customers AS MATERIALIZED (
+      WITH latest_customers AS MATERIALIZED (
         SELECT customer.*
         FROM source_lightspeed_official.ls_customers customer
         WHERE NOT customer.tombstone
-          AND customer.mapping_version = (SELECT mapping_version FROM latest_customer_pack)
       ), latest_customer_activity AS MATERIALIZED (
         SELECT sale.*
         FROM source_lightspeed_official.ls_sales sale
         WHERE NOT sale.tombstone
-          AND sale.mapping_version = (SELECT mapping_version FROM latest_sales_pack)
           AND sale.completed = true
           AND COALESCE(sale.voided, false) = false
           AND sale.customer_id IS NOT NULL
@@ -441,7 +429,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_customer_types t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_types ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -490,23 +477,12 @@ cubes:
         these address dimensions. no_email/no_mail/no_phone are opt-out flags to
         respect in any marketing-list answer.
     sql: >
-      WITH latest_contact_pack AS MATERIALIZED (
-        SELECT mapping_version
-        FROM source_lightspeed_official.ls_contacts
-        ORDER BY ingested_at DESC NULLS LAST
-        LIMIT 1
-      ), latest_email_pack AS MATERIALIZED (
-        SELECT mapping_version
-        FROM source_lightspeed_official.ls_contact_emails
-        ORDER BY ingested_at DESC NULLS LAST
-        LIMIT 1
-      ), email_flags AS MATERIALIZED (
+      WITH email_flags AS MATERIALIZED (
         SELECT email.tenant_id,
                email.contact_id,
                COUNT(*) AS email_count
         FROM source_lightspeed_official.ls_contact_emails email
         WHERE NOT email.tombstone
-          AND email.mapping_version = (SELECT mapping_version FROM latest_email_pack)
         GROUP BY email.tenant_id, email.contact_id
       )
       SELECT contact.*,
@@ -516,7 +492,6 @@ cubes:
         ON email_flags.tenant_id = contact.tenant_id
        AND email_flags.contact_id = contact.contact_id
       WHERE NOT contact.tombstone
-        AND contact.mapping_version = (SELECT mapping_version FROM latest_contact_pack)
 
     dimensions:
       - name: row_key
@@ -627,7 +602,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_contact_emails t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_emails ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -682,7 +656,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_contact_phones t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_phones ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -737,7 +710,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_contact_websites t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_contact_websites ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: contacts
@@ -791,7 +763,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_credit_accounts t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_credit_accounts ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -893,7 +864,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_ship_tos t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_ship_tos ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -980,7 +950,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_custom_fields t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_custom_fields ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -1026,7 +995,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_custom_field_choices t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_custom_field_choices ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: custom_fields
@@ -1081,7 +1049,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_customer_custom_field_values t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_custom_field_values ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers
@@ -1165,7 +1132,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_customer_notes t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_customer_notes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers

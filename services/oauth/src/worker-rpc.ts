@@ -17,16 +17,26 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-export async function callWorker<T>(path: string, bodyValue: unknown): Promise<T> {
+const DEFAULT_WORKER_TIMEOUT_MS = 45_000;
+/** Fivetran Stripe create runs setup tests, enables the ERD, then starts ALL_TIME sync. */
+const FIVETRAN_START_TIMEOUT_MS = 180_000;
+
+export async function callWorker<T>(
+  path: string,
+  bodyValue: unknown,
+  options?: Readonly<{ timeoutMs?: number }>,
+): Promise<T> {
   const baseUrl = requiredEnvironment("SYNC_WORKER_INTERNAL_URL");
   const secret = requiredEnvironment("ALBERT_OAUTH_WORKER_SIGNING_SECRET");
   const body = JSON.stringify(bodyValue);
   const headers = await signInternalRequest({ method: "POST", path, body, secret });
+  const timeoutMs = options?.timeoutMs
+    ?? (/^\/v1\/fivetran\/[a-z0-9_]+\/start$/u.test(path) ? FIVETRAN_START_TIMEOUT_MS : DEFAULT_WORKER_TIMEOUT_MS);
   const response = await fetch(new URL(path, baseUrl), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body,
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const payload = await response.json().catch(() => null) as {
     result?: T;

@@ -664,6 +664,87 @@ accessible_views:
       Exhaustive fallback for every scalar returned by every Momence stream.
       Filter exact parent_stream/source_object_type and field_path, use the typed
       value, never assume numeric additivity, and protect PII/notes/stream secrets.
+  - name: stripe_payments_analytics
+    connector: stripe
+    routing_terms:
+      - stripe charges this month
+      - payment intent collections
+      - succeeded stripe payments
+    guidance: >
+      Stripe Charge grain from Fivetran's official charge table. collected_amount
+      is succeeded paid charges in major currency units. PaymentIntent members
+      are a parallel grain: never add them to charge totals in one query.
+      Refunds and disputes are separate views.
+  - name: stripe_refunds_analytics
+    connector: stripe
+    guidance: >
+      Stripe Refund grain. Succeeded refunded_amount over created is money
+      returned. Do not net this into stripe_payments_analytics in one query.
+  - name: stripe_disputes_analytics
+    connector: stripe
+    guidance: >
+      Stripe Dispute exposure by status and reason. Amount is exposure, not an
+      automatic expense. Open states need a response.
+  - name: stripe_billing_analytics
+    connector: stripe
+    routing_terms:
+      - outstanding stripe invoices
+      - paid invoices this month
+    guidance: >
+      Stripe Invoice grain. amount_remaining on open or uncollectible is
+      outstanding. Line members are a different grain from invoice totals.
+  - name: stripe_subscriptions_analytics
+    connector: stripe
+    routing_terms:
+      - active stripe subscriptions
+      - cancelled subscriptions
+    guidance: >
+      Current Stripe subscriptions (Fivetran subscription_history active row).
+      active_subscriptions is headcount, not recognised revenue. Invoice money
+      stays in stripe_billing_analytics.
+  - name: stripe_customer_analytics
+    connector: stripe
+    guidance: >
+      Stripe Customer profiles, delinquency and recorded balance. Lifetime spend
+      is on charges and invoices. Email is PII.
+  - name: stripe_catalogue_analytics
+    connector: stripe
+    guidance: >
+      Stripe Products, Prices and Coupons. Catalogue grain, not sales.
+  - name: stripe_payouts_analytics
+    connector: stripe
+    routing_terms:
+      - stripe payouts to the bank
+    guidance: >
+      Stripe Payouts to the merchant bank. payout_amount over created or
+      arrival_date. paid is deposited.
+  - name: stripe_balance_analytics
+    connector: stripe
+    routing_terms:
+      - stripe processing fees
+      - stripe net and fees
+    guidance: >
+      Stripe Balance Transaction ledger: gross, fee and net by type and
+      reporting_category. Different grain from charge collections.
+  - name: stripe_checkout_analytics
+    connector: stripe
+    guidance: >
+      Stripe Checkout Sessions. complete_sessions and checkout_amount use
+      status complete.
+  - name: stripe_connect_analytics
+    connector: stripe
+    guidance: >
+      Stripe Connect application fees and transfers. Platform grain, not
+      Standard-account charges.
+  - name: stripe_source_explorer
+    connector: stripe
+    routing_terms:
+      - fivetran stripe table
+      - official stripe erd
+    guidance: >
+      Catalogue of every official Fivetran Stripe ERD table and whether it has
+      landed. Use only when curated views lack the object; filter table_name
+      exactly.
 
 # Cube's "plain" runtime maps to the quick/analytical lanes, "reasoning" to deep.
 lanes:
@@ -709,6 +790,15 @@ freshness_probes:
   - connector: xero
     domain: profit_and_loss
     member: xero_profit_and_loss_analytics.report_updated_at
+  - connector: stripe
+    domain: payments
+    member: stripe_payments_analytics.created
+  - connector: stripe
+    domain: invoices
+    member: stripe_billing_analytics.created
+  - connector: stripe
+    domain: payouts
+    member: stripe_payouts_analytics.created
 
 # Business-context probes: the small governed queries the context-layer
 # generator runs (once per tenant, refreshed when stale) to learn what THIS
@@ -905,3 +995,32 @@ context_probes:
       timeDimensions: [{ dimension: xero_finance_analytics.bank_occurred_on, dateRange: last 12 months }]
       order: { xero_finance_analytics.money_out: desc }
       limit: 8
+  - connector: stripe
+    key: charges_by_month_12m
+    purpose: "Succeeded Stripe charges and collected amount per month, last 12 months — card collection scale and trend."
+    rows: 14
+    query:
+      measures: [stripe_payments_analytics.collected_amount, stripe_payments_analytics.succeeded_charges]
+      timeDimensions: [{ dimension: stripe_payments_analytics.created, granularity: month, dateRange: last 12 months }]
+  - connector: stripe
+    key: invoice_position
+    purpose: "Stripe invoice counts and outstanding versus paid totals."
+    rows: 1
+    query:
+      measures: [stripe_billing_analytics.invoice_count, stripe_billing_analytics.paid_invoices, stripe_billing_analytics.amount_paid, stripe_billing_analytics.amount_remaining]
+  - connector: stripe
+    key: subscriptions
+    purpose: "Current Stripe subscriptions by status."
+    rows: 8
+    query:
+      measures: [stripe_subscriptions_analytics.subscription_count]
+      dimensions: [stripe_subscriptions_analytics.status]
+      order: { stripe_subscriptions_analytics.subscription_count: desc }
+      limit: 8
+  - connector: stripe
+    key: payouts_12m
+    purpose: "Stripe payouts to the bank, last 12 months."
+    rows: 14
+    query:
+      measures: [stripe_payouts_analytics.payout_amount, stripe_payouts_analytics.paid_payouts]
+      timeDimensions: [{ dimension: stripe_payouts_analytics.created, granularity: month, dateRange: last 12 months }]

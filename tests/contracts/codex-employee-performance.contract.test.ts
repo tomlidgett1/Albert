@@ -225,6 +225,7 @@ test("Codex uses an independent structured reviewer against the frozen brief", a
     model: "gpt-5.6-luna",
     fastMode: true,
     safetyIdentifier: "fixture-user",
+    question: "Which employee has performed the best this month?",
     brief,
     draft: draft("Leigh led POS sales."),
     evidence: [{
@@ -251,6 +252,7 @@ test("Codex uses an independent structured reviewer against the frozen brief", a
   assert.deepEqual(review, {
     verdict: "investigate",
     missing: ["Deputy worked hours and common-period productivity"],
+    excess: [],
   });
   const body = calls[0] as {
     model: string;
@@ -264,4 +266,38 @@ test("Codex uses an independent structured reviewer against the frozen brief", a
   assert.equal(body.reasoning.effort, "low");
   assert.equal(body.service_tier, "fast");
   assert.equal(body.text.format.type, "json_schema");
+});
+
+// A goal-seek ask names its own numeric yardstick. Both halves of the trigger
+// must hold — an amount AND a goal verb — so lookups with numbers and vague
+// money questions keep their own briefs.
+test("a named numeric target builds the goal-seek brief; lookalikes do not", () => {
+  const brief = buildSharedAnalyticalBrief({
+    message: "can we save 1k per month somehow?",
+    activeConnectors: ["lightspeed-r", "deputy", "xero"],
+    connectorFreshness: [],
+    includeGeneric: true,
+  });
+  assert.ok(brief);
+  assert.equal(brief.id, "target_goal_v1");
+  assert.match(brief.answerMustCover.join(" "), /yardstick/iu);
+  assert.match(brief.answerMustCover.join(" "), /reach, approach or fall short/iu);
+  assert.match(brief.digest, /^[a-f0-9]{24}$/u);
+
+  for (const [message, expected] of [
+    ["How could I make an extra $500 a week?", "target_goal_v1"],
+    ["We need to cut costs by 10%. Where should that come from?", "target_goal_v1"],
+    ["I want to get my wage bill under $10k a month.", "target_goal_v1"],
+    ["What were my top 10 products by revenue last month?", "general_analysis_v1"],
+    ["How do I save money?", "general_analysis_v1"],
+    ["What was my net profit in July?", "general_analysis_v1"],
+  ] as const) {
+    const built = buildSharedAnalyticalBrief({
+      message,
+      activeConnectors: ["lightspeed-r", "deputy", "xero"],
+      connectorFreshness: [],
+      includeGeneric: true,
+    });
+    assert.equal(built?.id, expected, message);
+  }
 });

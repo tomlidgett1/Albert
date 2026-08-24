@@ -18,6 +18,7 @@ export const FIVETRAN_XERO_SERVICE = "xero";
  *    (Lightspeed, with Fivetran's own OAuth app).
  *  - `api`: Albert obtains the credential itself and creates the connection
  *    fully via the REST API — no card (Deputy: sub_domain + access token;
+ *    Stripe: Restricted / secret key from Albert's Connect grant;
  *    Xero: Albert's SDK connector + token broker).
  */
 export const FIVETRAN_SERVICES = Object.freeze({
@@ -47,6 +48,17 @@ export const FIVETRAN_SERVICES = Object.freeze({
     connectorKey: "fivetran-deputy",
     displayName: "Deputy (Fivetran)",
     schemaPrefix: "deputy",
+    authorization: "api",
+  }),
+  // Stripe uses Fivetran's native connector and official ERD table names
+  // (charge, invoice, subscription_history, …). Albert takes Stripe Connect
+  // OAuth itself, then creates the Fivetran connection with the granted
+  // Restricted / secret key. No Stripe Admin API connector and no SDK reshape.
+  stripe: Object.freeze({
+    service: "stripe",
+    connectorKey: "fivetran-stripe",
+    displayName: "Stripe (Fivetran)",
+    schemaPrefix: "stripe",
     authorization: "api",
   }),
 } as const);

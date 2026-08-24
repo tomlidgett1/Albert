@@ -141,6 +141,14 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
   assert.equal(shared.providerForModel("claude-haiku-4-5-20251001"), "anthropic");
   assert.equal(shared.providerForModel("gpt-5.6-sol"), "openai");
   assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "gemini-3.7-flash",
+      reasoningEffort: "max",
+      fastMode: true,
+    }),
+    shared.DEFAULT_AGENT_PREFERENCES,
+  );
+  assert.deepEqual(
     shared.resolveAlbertModelTransport({
       model: "grok-4.6",
       xaiApiKey: "xai-test",

@@ -467,11 +467,10 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
     <div className={styles.compareShell}>
       <header className={styles.compareTopBar}>
         <div className={styles.compareTopIdentity}>
-          <ConversationRuntimeTabs value="compare" onChange={props.onSelectRuntime} />
-          <span className={styles.chatSpecialistContextDivider} aria-hidden="true" />
           <h1 id="dash-title">Compare · {props.organisationName}</h1>
         </div>
         <div className={styles.compareTopActions}>
+          <ConversationRuntimeTabs value="compare" onChange={props.onSelectRuntime} />
           {hasRun && !isRunning ? (
             <button type="button" onClick={resetComparison}>New comparison</button>
           ) : null}

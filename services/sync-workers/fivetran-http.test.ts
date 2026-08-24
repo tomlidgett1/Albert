@@ -5,6 +5,7 @@ import { signInternalRequest } from "../../packages/security/src/index.js";
 import { FivetranClient } from "../../packages/fivetran/src/index.js";
 import type { FivetranDestinationStore } from "./src/fivetran-destinations.js";
 import { FivetranWorkerHttpHandler } from "./src/fivetran-http.js";
+import { stripeFivetranAccessToken } from "./src/fivetran-native-credentials.js";
 import type { FivetranConnectionStore } from "./src/fivetran-store.js";
 
 const secret = "s".repeat(48);
@@ -526,6 +527,454 @@ test("Fivetran start for Deputy hands Albert's own grant to Fivetran with no Con
   assert.equal(connected[0]?.displayName, "Acme Cycles (Fivetran)");
 });
 
+test("Fivetran Stripe only accepts a Restricted or Connect secret key", () => {
+  assert.equal(
+    stripeFivetranAccessToken({ stripeAccessToken: "rk_live_abc123" }),
+    "rk_live_abc123",
+  );
+  assert.equal(
+    stripeFivetranAccessToken({ access_token: "sk_test_abc123" }),
+    "sk_test_abc123",
+  );
+  assert.throws(() => stripeFivetranAccessToken({ stripeUserId: "acct_123" }), /fivetran_stripe_token_missing/u);
+});
+
+test("Fivetran start for Stripe hands the Connect grant to the native ERD connector", async () => {
+  const bodies: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+  const connected: Record<string, unknown>[] = [];
+  const store = {
+    async findByNativeConnection() { return null; },
+    async createConnected(input: Record<string, unknown>) { connected.push(input); },
+  } as unknown as FivetranConnectionStore;
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      bodies.push({ url, method, body });
+      if (method === "GET" && /\/schemas$/u.test(url)) {
+        return Response.json({
+          code: "Success",
+          data: {
+            schemas: {
+              stripe: {
+                enabled: true,
+                tables: { charge: { enabled: true }, invoice: { enabled: true }, customer: { enabled: true } },
+              },
+            },
+          },
+        });
+      }
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "stripe_live",
+          service: "stripe",
+          schema: body.config?.schema ?? "stripe_x",
+          group_id: "group",
+          paused: false,
+          status: { setup_state: "connected", sync_state: "scheduled" },
+        },
+      });
+    },
+  });
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store,
+    destinations: { async bind() {}, async stamp() { return 0; }, async inventory() { return []; } } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "rk_live_restrictedkey",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client,
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  const { result } = await response.json() as { result: Record<string, unknown> };
+  assert.equal(result.fivetranConnectionId, "stripe_live");
+  const create = bodies.find((call) => call.method === "POST" && /\/v1\/connections$/u.test(call.url));
+  assert.ok(create);
+  assert.equal(create.body.service, "stripe");
+  assert.equal(create.body.connect_card_config, undefined);
+  assert.equal(create.body.run_setup_tests, true);
+  assert.equal(create.body.paused, true);
+  assert.equal(create.body.sync_frequency, 1440);
+  assert.equal(create.body.daily_sync_time, "08:00");
+  assert.equal(create.body.schedule_type, "auto");
+  assert.equal(create.body.is_historical_sync, undefined);
+  assert.deepEqual(create.body.config, {
+    schema: (create.body.config as Record<string, unknown>).schema,
+    access_token: "rk_live_restrictedkey",
+    api_key: "rk_live_restrictedkey",
+    historical_sync_time_frame: "ALL_TIME",
+    support_connected_accounts_sync: false,
+  });
+  assert.match(String((create.body.config as Record<string, unknown>).schema), /^stripe_[0-9a-z]{26}$/u);
+  assert.equal(connected[0]?.service, "stripe");
+  assert.equal(connected[0]?.externalAccountReference, "acct_testmerchant");
+  assert.ok(bodies.some((call) => call.method === "PATCH" && /\/schemas$/u.test(call.url)
+    && call.body.schema_change_handling === "ALLOW_ALL"
+    && call.body.enable_new_by_default === true));
+  assert.ok(bodies.some((call) => call.method === "POST" && /\/schemas\/reload$/u.test(call.url)));
+  const enableIdx = bodies.findIndex((call) => call.method === "PATCH" && /\/schemas$/u.test(call.url));
+  const unpauseIdx = bodies.findIndex((call) => call.method === "PATCH" && /\/v1\/connections\/stripe_live$/u.test(call.url)
+    && call.body.paused === false);
+  const syncIdx = bodies.findIndex((call) => call.method === "POST" && /\/sync$/u.test(call.url));
+  assert.ok(enableIdx >= 0 && unpauseIdx > enableIdx);
+  assert.equal(syncIdx, -1);
+});
+
+test("Fivetran Stripe start does not force-sync an already running historical job", async () => {
+  const bodies: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      bodies.push({ url, method, body });
+      if (method === "GET" && /\/schemas$/u.test(url)) {
+        return Response.json({
+          code: "Success",
+          data: {
+            schemas: {
+              stripe: {
+                enabled: true,
+                tables: { charge: { enabled: true }, customer: { enabled: true } },
+              },
+            },
+          },
+        });
+      }
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "running_substratum",
+          service: "stripe",
+          schema: "stripe_01j00000000000000000000099",
+          group_id: "group",
+          paused: false,
+          status: { setup_state: "connected", sync_state: "syncing" },
+        },
+      });
+    },
+  });
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store: {
+      async findByNativeConnection() {
+        return {
+          tenantId: "01J00000000000000000000000",
+          connectionId: "01J00000000000000000000099",
+          fivetranConnectionId: "running_substratum",
+          lastSyncState: "syncing",
+        };
+      },
+      async recordSyncState() {},
+    } as unknown as FivetranConnectionStore,
+    destinations: { async bind() {}, async stamp() { return 0; }, async inventory() { return []; } } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "rk_live_restrictedkey",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client,
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(bodies.filter((call) => call.method === "POST" && /\/sync$/u.test(call.url)).length, 0);
+});
+
+test("Fivetran Stripe start syncs once after unpausing a manual schedule", async () => {
+  const bodies: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+  let paused = true;
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      bodies.push({ url, method, body });
+      if (method === "PATCH" && body.paused === false) paused = false;
+      if (method === "GET" && /\/schemas$/u.test(url)) {
+        return Response.json({
+          code: "Success",
+          data: { schemas: { stripe: { enabled: true, tables: { charge: { enabled: true } } } } },
+        });
+      }
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "running_substratum",
+          service: "stripe",
+          schema: "stripe_01j00000000000000000000099",
+          group_id: "group",
+          paused,
+          schedule_type: "manual",
+          status: { setup_state: "connected", sync_state: paused ? "paused" : "scheduled" },
+        },
+      });
+    },
+  });
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store: {
+      async findByNativeConnection() {
+        return {
+          tenantId: "01J00000000000000000000000",
+          connectionId: "01J00000000000000000000099",
+          fivetranConnectionId: "running_substratum",
+          lastSyncState: "paused",
+        };
+      },
+      async recordSyncState() {},
+    } as unknown as FivetranConnectionStore,
+    destinations: { async bind() {}, async stamp() { return 0; }, async inventory() { return []; } } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "rk_live_restrictedkey",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client,
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(bodies.filter((call) => call.method === "PATCH" && call.body.paused === false).length, 1);
+  assert.equal(bodies.filter((call) => call.method === "POST" && /\/sync$/u.test(call.url)).length, 1);
+});
+
+test("Fivetran Stripe start unwinds the destination bind when create fails", async () => {
+  const retired: string[] = [];
+  const purged: string[] = [];
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store: { async findByNativeConnection() { return null; } } as unknown as FivetranConnectionStore,
+    destinations: {
+      async bind() {},
+      async stamp() { return 0; },
+      async inventory() { return []; },
+      async retire(input: { destinationSchema: string }) { retired.push(input.destinationSchema); },
+      async purge(input: { destinationSchema: string }) { purged.push(input.destinationSchema); },
+    } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "rk_live_restrictedkey",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client: new FivetranClient({
+      apiKey: "key",
+      apiSecret: "secret",
+      fetcher: async () => Response.json({ code: "InvalidInput", message: "bad stripe key" }, { status: 400 }),
+    }),
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 409);
+  assert.equal(retired.length, 1);
+  assert.equal(purged.length, 1);
+  assert.match(retired[0] ?? "", /^stripe_[0-9a-z]{26}$/u);
+});
+
+test("Fivetran Stripe start rejects a test-mode Connect key", async () => {
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store: { async findByNativeConnection() { return null; } } as unknown as FivetranConnectionStore,
+    destinations: { async bind() {}, async stamp() { return 0; }, async inventory() { return []; } } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "sk_test_notforfivetran",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client: new FivetranClient({
+      apiKey: "key",
+      apiSecret: "secret",
+      fetcher: async () => Response.json({ code: "Success", data: { id: "unused" } }),
+    }),
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 409);
+  const payload = await response.json() as { error: string };
+  assert.equal(payload.error, "fivetran_stripe_live_key_required");
+});
+
+test("Fivetran Stripe enable-all retries when the catalogue is only partly selected", async () => {
+  let schemaReads = 0;
+  const bodies: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      bodies.push({ url, method, body });
+      if (method === "GET" && /\/schemas$/u.test(url)) {
+        schemaReads += 1;
+        const tables = schemaReads === 1
+          ? { charge: { enabled: true }, invoice: { enabled: false }, customer: { enabled: false } }
+          : { charge: { enabled: true }, invoice: { enabled: true }, customer: { enabled: true } };
+        return Response.json({
+          code: "Success",
+          data: { schemas: { stripe: { enabled: true, tables } } },
+        });
+      }
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "stripe_live",
+          service: "stripe",
+          schema: body.config?.schema ?? "stripe_x",
+          group_id: "group",
+          paused: true,
+          status: { setup_state: "connected", sync_state: "scheduled" },
+        },
+      });
+    },
+  });
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store: {
+      async findByNativeConnection() { return null; },
+      async createConnected() {},
+    } as unknown as FivetranConnectionStore,
+    destinations: { async bind() {}, async stamp() { return 0; }, async inventory() { return []; } } as unknown as FivetranDestinationStore,
+    stripeCredentials: {
+      async read() {
+        return {
+          nativeConnectionId: "01J00000000000000000000088",
+          externalAccountReference: "acct_testmerchant",
+          displayName: "Ashburton Cycles",
+          accessToken: "rk_live_restrictedkey",
+          expiresAt: new Date(Date.now() + 20 * 60 * 60_000).toISOString(),
+          metadata: { stripeUserId: "acct_testmerchant" },
+        };
+      },
+    } as never,
+    client,
+  });
+  const body = JSON.stringify({
+    tenantId: "01J00000000000000000000000",
+    userId: "11111111-1111-4111-8111-111111111111",
+    nativeConnectionId: "01J00000000000000000000088",
+  });
+  const path = "/v1/fivetran/stripe/start";
+  const signed = await signInternalRequest({ method: "POST", path, body, secret });
+  const response = await worker.handle(new Request(`https://worker.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(schemaReads, 2);
+  assert.ok(bodies.filter((call) => call.method === "PATCH" && /\/schemas$/u.test(call.url)).length >= 2);
+});
+
 test("a concurrent Deputy start converges on the winner instead of duplicating", async () => {
   const deleted: string[] = [];
   const store = {
@@ -676,4 +1125,111 @@ test("disconnect deletes the Fivetran connection and erases the destination sche
   assert.match(deleted[0] ?? "", /live_conn/u);
   assert.deepEqual(retired, ["xero_01j00000000000000000000001"]);
   assert.deepEqual(purged, ["xero_01j00000000000000000000001"], "the schema is erased on disconnect");
+});
+
+test("destination maintenance walks Stripe rows and rebuilds official views", async () => {
+  const rebuilt: string[] = [];
+  const stamped: string[] = [];
+  const enabled: string[] = [];
+  const store = {
+    async listConnectedByService(input: { service: string }) {
+      if (input.service !== "stripe") return [];
+      return [{
+        tenantId: "01J00000000000000000000000",
+        connectionId: "01J00000000000000000000099",
+        fivetranConnectionId: "stripe_live",
+        destinationSchema: "stripe_01j00000000000000000000099",
+        service: "stripe",
+        displayName: "Stripe (Fivetran)",
+        status: "connected",
+        authHealth: "healthy",
+        lastSyncState: "syncing",
+      }];
+    },
+    async readMaintenance() { return { unionTables: 0 }; },
+    async recordMaintenance() {},
+  } as unknown as FivetranConnectionStore;
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store,
+    destinations: {
+      async bind() {},
+      async inventory() { return [{ table: "charge", rows: 12 }]; },
+      async stamp(input: { destinationSchema: string }) {
+        stamped.push(input.destinationSchema);
+        return 1;
+      },
+      async rebuildSourceViews(prefix: string) {
+        rebuilt.push(prefix);
+        return 1;
+      },
+    } as unknown as FivetranDestinationStore,
+    client: {
+      async enableAllSchemas() { enabled.push("stripe_live"); },
+      async getSchemaSummary() {
+        return { loaded: true, enabledTables: 3, totalTables: 3 };
+      },
+      async getConnection() {
+        return {
+          paused: false,
+          status: { syncState: "succeeded", isHistoricalSync: false },
+        };
+      },
+    } as unknown as FivetranClient,
+  });
+  const maintained = await worker.maintainConnectedDestinations();
+  assert.equal(maintained, 1);
+  assert.deepEqual(enabled, []);
+  assert.deepEqual(stamped, ["stripe_01j00000000000000000000099"]);
+  assert.deepEqual(rebuilt, ["stripe"]);
+});
+
+test("destination maintenance skips enable-all on SDK connectors", async () => {
+  const enabled: string[] = [];
+  const stamped: string[] = [];
+  const store = {
+    async listConnectedByService(input: { service: string }) {
+      if (input.service !== "xero") return [];
+      return [{
+        tenantId: "01J00000000000000000000000",
+        connectionId: "01J00000000000000000000001",
+        fivetranConnectionId: "xero_sdk",
+        destinationSchema: "xero_01j00000000000000000000001",
+        service: "xero",
+        displayName: "Xero (Fivetran)",
+        status: "connected",
+        authHealth: "healthy",
+        lastSyncState: "succeeded",
+      }];
+    },
+    async readMaintenance() { return { unionTables: 0 }; },
+    async recordMaintenance() {},
+  } as unknown as FivetranConnectionStore;
+  const worker = new FivetranWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set([redirectUri]),
+    config: { apiKey: "key", apiSecret: "secret", groupId: "group", destinationSchema: "xero" },
+    store,
+    destinations: {
+      async bind() {},
+      async inventory() { return [{ table: "xero_account", rows: 4 }]; },
+      async stamp(input: { destinationSchema: string }) {
+        stamped.push(input.destinationSchema);
+        return 1;
+      },
+      async rebuildSourceViews() { return 1; },
+    } as unknown as FivetranDestinationStore,
+    client: {
+      async enableAllSchemas() { enabled.push("xero_sdk"); },
+      async getSchemaSummary() {
+        return { loaded: false, enabledTables: 0, totalTables: 0 };
+      },
+    } as unknown as FivetranClient,
+  });
+  const maintained = await worker.maintainConnectedDestinations();
+  assert.equal(maintained, 1);
+  assert.deepEqual(enabled, []);
+  assert.deepEqual(stamped, ["xero_01j00000000000000000000001"]);
 });

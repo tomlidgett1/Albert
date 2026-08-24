@@ -33,10 +33,19 @@ type CodexBackgroundJob = {
   readonly abort: AbortController;
   createdAt: number;
   updatedAt: number;
+  lastPolledAt: number;
   eventBytes: number;
   result?: CodexSemanticTurnResult;
   failure?: Readonly<{ code: string; message: string }>;
 };
+
+/** Capacity means waiting, never failure: jobs beyond the concurrency cap
+ * queue here (bounded) and start as running turns release their slots. */
+const MAX_WAITING_JOBS = 32;
+/** A job nobody has polled for this long has lost its caller (a web deploy or
+ * crash mid-turn); reaping it frees the slot instead of leaking it for the
+ * full analysis timeout. Live callers poll every few seconds. */
+const ABANDONED_JOB_MS = 120_000;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -86,6 +95,12 @@ function publicFailure(error: unknown): Readonly<{ code: string; message: string
 }
 
 function diagnosticFailureCode(error: unknown): string {
+  // A defect in our own code is its own diagnosis; message regexes below can
+  // mislabel it (a ReferenceError naming an identifier that contains "model"
+  // once read as a rejected model request).
+  if (error instanceof ReferenceError || error instanceof TypeError || error instanceof RangeError) {
+    return "runtime_defect";
+  }
   const message = unknownErrorMessage(error);
   if (/completed without a final structured answer/iu.test(message)) return "missing_final_answer";
   if (/malformed structured output|output schema/iu.test(message)) return "invalid_structured_output";
@@ -113,8 +128,12 @@ export class CodexRuntimeHttpHandler {
   private activeTurns = 0;
   private readonly requestIds = new Map<string, number>();
   private readonly jobs = new Map<string, CodexBackgroundJob>();
+  private readonly waitingJobs: Array<Readonly<{ job: CodexBackgroundJob; turn: CodexServiceTurn }>> = [];
 
-  constructor(private readonly config: CodexRuntimeConfig) {}
+  constructor(private readonly config: CodexRuntimeConfig) {
+    const reaper = setInterval(() => this.reapAbandonedJobs(), 30_000);
+    (reaper as { unref?: () => void }).unref?.();
+  }
 
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -175,17 +194,26 @@ export class CodexRuntimeHttpHandler {
     if (this.requestIds.has(parsed.data.requestId) || this.jobs.has(parsed.data.requestId)) {
       return jsonError("replayed_request", 409, "This Codex turn request has already been used.");
     }
-    if (this.activeTurns >= this.config.maxConcurrentTurns) {
-      return jsonError("codex_overloaded", 429, "The Codex experiment is at capacity. Try again shortly.");
-    }
-    this.requestIds.set(parsed.data.requestId, Date.now());
     if (url.pathname === JOBS_PATH) {
+      // Background jobs queue when the runtime is busy instead of failing the
+      // owner's question; only a full waiting queue is a genuine overload.
+      if (
+        this.activeTurns >= this.config.maxConcurrentTurns
+        && this.waitingJobs.length >= MAX_WAITING_JOBS
+      ) {
+        return jsonError("codex_overloaded", 429, "Albert is unusually busy right now. Try again in a minute.");
+      }
+      this.requestIds.set(parsed.data.requestId, Date.now());
       this.startJob(parsed.data);
       return Response.json({ jobId: parsed.data.requestId }, {
         status: 202,
         headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
       });
     }
+    if (this.activeTurns >= this.config.maxConcurrentTurns) {
+      return jsonError("codex_overloaded", 429, "Albert is unusually busy right now. Try again in a minute.");
+    }
+    this.requestIds.set(parsed.data.requestId, Date.now());
     this.activeTurns += 1;
     const runAbort = new AbortController();
     const abort = () => runAbort.abort(request.signal.reason);
@@ -254,24 +282,44 @@ export class CodexRuntimeHttpHandler {
       abort: new AbortController(),
       createdAt: now,
       updatedAt: now,
+      lastPolledAt: now,
       eventBytes: 0,
     };
     this.jobs.set(job.id, job);
+    if (this.activeTurns >= this.config.maxConcurrentTurns) {
+      this.waitingJobs.push({ job, turn });
+      const ahead = this.waitingJobs.length - 1;
+      this.publishJobEvent(job, {
+        type: "progress",
+        status: "running",
+        stage: "planning",
+        label: "Waiting for a free analysis slot",
+        detail: ahead > 0
+          ? `${this.activeTurns} analyses are running and ${ahead} ${ahead === 1 ? "is" : "are"} queued ahead; this one starts automatically.`
+          : `${this.activeTurns} analyses are running; this one starts automatically as soon as a slot frees.`,
+      });
+      return;
+    }
+    this.beginJob(job, turn);
+  }
+
+  private publishJobEvent(job: CodexBackgroundJob, event: CodexTraceEventInput): void {
+    const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
+    if (
+      bytes > MAX_JOB_EVENT_BYTES
+      || job.events.length >= MAX_JOB_EVENTS
+      || job.eventBytes + bytes > MAX_JOB_BUFFER_BYTES
+    ) {
+      throw new Error("The Codex background job exceeded its bounded event buffer.");
+    }
+    job.events.push(event);
+    job.eventBytes += bytes;
+    job.updatedAt = Date.now();
+    this.notifyJob(job);
+  }
+
+  private beginJob(job: CodexBackgroundJob, turn: CodexServiceTurn): void {
     this.activeTurns += 1;
-    const publish = (event: CodexTraceEventInput) => {
-      const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
-      if (
-        bytes > MAX_JOB_EVENT_BYTES
-        || job.events.length >= MAX_JOB_EVENTS
-        || job.eventBytes + bytes > MAX_JOB_BUFFER_BYTES
-      ) {
-        throw new Error("The Codex background job exceeded its bounded event buffer.");
-      }
-      job.events.push(event);
-      job.eventBytes += bytes;
-      job.updatedAt = Date.now();
-      this.notifyJob(job);
-    };
     void runCodexSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
@@ -279,7 +327,7 @@ export class CodexRuntimeHttpHandler {
       openaiBaseUrl: this.config.openaiBaseUrl,
       codexBinaryPath: this.config.binaryPath,
       signal: job.abort.signal,
-      emit: publish,
+      emit: (event) => this.publishJobEvent(job, event),
     }).then((result) => {
       job.result = result;
     }).catch((error) => {
@@ -296,13 +344,67 @@ export class CodexRuntimeHttpHandler {
       job.updatedAt = Date.now();
       this.activeTurns -= 1;
       this.notifyJob(job);
+      this.startNextWaitingJob();
     });
+  }
+
+  private startNextWaitingJob(): void {
+    while (this.activeTurns < this.config.maxConcurrentTurns) {
+      const next = this.waitingJobs.shift();
+      if (!next) return;
+      if (next.job.abort.signal.aborted || next.job.failure) continue;
+      try {
+        this.publishJobEvent(next.job, {
+          type: "progress",
+          status: "running",
+          stage: "planning",
+          label: "A slot opened — starting the analysis",
+        });
+      } catch {
+        continue;
+      }
+      this.beginJob(next.job, next.turn);
+    }
+  }
+
+  /** Frees slots held by jobs whose caller stopped polling (deploy, crash),
+   * and keeps queued owners informed that their analysis is still waiting. */
+  private reapAbandonedJobs(): void {
+    this.waitingJobs.forEach((waiting, index) => {
+      try {
+        this.publishJobEvent(waiting.job, {
+          type: "progress",
+          status: "running",
+          stage: "planning",
+          label: "Still waiting for a free analysis slot",
+          detail: index === 0
+            ? `${this.activeTurns} ${this.activeTurns === 1 ? "analysis is" : "analyses are"} running; this one is next.`
+            : `${index} ${index === 1 ? "analysis is" : "analyses are"} queued ahead.`,
+        });
+      } catch { /* buffer bounds reached; the queue position still resolves */ }
+    });
+    const cutoff = Date.now() - ABANDONED_JOB_MS;
+    for (let index = this.waitingJobs.length - 1; index >= 0; index -= 1) {
+      const waiting = this.waitingJobs[index]!;
+      if (waiting.job.lastPolledAt >= cutoff) continue;
+      this.waitingJobs.splice(index, 1);
+      waiting.job.failure = { code: "codex_abandoned", message: "The Codex analysis was abandoned by its caller." };
+      waiting.job.updatedAt = Date.now();
+      this.notifyJob(waiting.job);
+    }
+    for (const job of this.jobs.values()) {
+      if (job.result || job.failure || job.abort.signal.aborted) continue;
+      if (job.lastPolledAt >= cutoff) continue;
+      process.stdout.write(`${JSON.stringify({ event: "codex_job_reaped", jobId: job.id, idleMs: Date.now() - job.lastPolledAt })}\n`);
+      job.abort.abort(new Error("The Codex analysis was abandoned by its caller."));
+    }
   }
 
   private async pollJob(jobId: string, cursor: number, signal: AbortSignal): Promise<Response> {
     this.pruneReplayIds();
     const job = this.jobs.get(jobId);
     if (!job) return jsonError("job_not_found", 404, "The Codex background job is unavailable.");
+    job.lastPolledAt = Date.now();
     if (cursor > job.events.length) return jsonError("invalid_cursor", 409, "The Codex job cursor is invalid.");
     if (cursor === job.events.length && !job.result && !job.failure) {
       await this.waitForJobChange(job, signal);

@@ -14,12 +14,8 @@ cubes:
         employee joined here is the one who closed / performed the count. Cash
         over/short lives in register_count_amounts (variance members).
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_counts ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_register_counts t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers
@@ -96,12 +92,8 @@ cubes:
         = over). Group by payment_types_name for per-tender reconciliation and
         by register_counts members for the session and date.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_count_amounts ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_register_count_amounts t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: register_counts
@@ -210,12 +202,8 @@ cubes:
         amount_withdrawn here. occurred_at is the business date; the employee
         joined is who made the withdrawal.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_withdraws ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_register_withdraws t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers
@@ -302,12 +290,8 @@ cubes:
         no time dimension; for end-of-day reconciliation history use the
         register count members instead.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_register_calculated ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_register_calculated t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: registers

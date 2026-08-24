@@ -52,6 +52,46 @@ test("OAuth worker stores the web-bound state hash and encrypted-PKCE input cont
   assert.equal(captured[0]?.codeVerifier, payload.codeVerifier);
 });
 
+test("OAuth start refuses Stripe when the Connect app is not configured", async () => {
+  const secret = "s".repeat(48);
+  let created = 0;
+  const handler = new OAuthWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set(["https://albert.example/api/oauth/stripe/callback"]),
+    sessions: {
+      async create() {
+        created += 1;
+        return "01J00000000000000000000001";
+      },
+    } as unknown as OAuthSessionStore,
+    connectors: {
+      scopes() { return ["read_write"]; },
+      create() { throw new Error("not_used_during_start"); },
+      isConfigured(provider: string) { return provider !== "stripe"; },
+    } as OAuthConnectorFactory,
+  });
+  const payload = {
+    tenantId: "01J00000000000000000000002",
+    userId: "00000000-0000-4000-8000-000000000001",
+    provider: "stripe",
+    redirectUri: "https://albert.example/api/oauth/stripe/callback",
+    stateNonceHash: "a".repeat(64),
+    codeVerifier: "v".repeat(64),
+    expiresAt: new Date(Date.now() + 9 * 60_000).toISOString(),
+  };
+  const body = JSON.stringify(payload);
+  const signed = await signInternalRequest({ method: "POST", path: "/v1/oauth/start", body, secret });
+  const response = await handler.handle(new Request("https://worker.internal/v1/oauth/start", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 503);
+  const bodyJson = await response.json() as { error?: string };
+  assert.equal(bodyJson.error, "oauth_provider_not_configured");
+  assert.equal(created, 0);
+});
+
 test("OAuth worker rejects unsigned internal calls", async () => {
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: "s".repeat(48),

@@ -76,12 +76,13 @@ export type ConnectionProviderId =
   | "servicem8"
   | "fivetran-xero"
   | "fivetran-lightspeed"
-  | "fivetran-deputy";
+  | "fivetran-deputy"
+  | "fivetran-stripe";
 export type MatchDecision = "proposed" | "accepted" | "rejected";
 export type ConnectableProviderId =
   | "lightspeed" | "lightspeed-x" | "xero" | "deputy" | "square"
   | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads"
-  | "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy";
+  | "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy" | "fivetran-stripe";
 
 /**
  * Providers whose ingestion Fivetran runs. `handoff` describes the hosted
@@ -93,7 +94,7 @@ export type FivetranHandoffCopy = Readonly<{
   note: string;
 }>;
 export const FIVETRAN_PROVIDERS: Readonly<Record<
-  "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy",
+  "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy" | "fivetran-stripe",
   Readonly<{ sourceName: string; dataNoun: string; handoff: FivetranHandoffCopy | null }>
 >> = Object.freeze({
   // Xero: Albert takes the grant itself (single Xero consent) and hands it to
@@ -115,6 +116,11 @@ export const FIVETRAN_PROVIDERS: Readonly<Record<
     dataNoun: "rosters, timesheets, and leave",
     handoff: null,
   }),
+  "fivetran-stripe": Object.freeze({
+    sourceName: "Stripe",
+    dataNoun: "charges, invoices, subscriptions, and payouts",
+    handoff: null,
+  }),
 } as const);
 export type FivetranProviderId = keyof typeof FIVETRAN_PROVIDERS;
 export function isFivetranProviderId(value: string): value is FivetranProviderId {
@@ -126,6 +132,7 @@ export const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set<ConnectionProviderId>([
   "lightspeed",
   "xero",
   "deputy",
+  "stripe",
 ]);
 export function isVisibleConnectionProvider(
   provider: Pick<ConnectionProviderData, "id" | "connections">,
@@ -398,6 +405,14 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
       description: "Full Deputy ingest through Fivetran, into a tenant-isolated native schema.",
       logo: "/logos/deputy.png",
       connectDetail: "Approve Deputy. Albert hands the grant to Fivetran and the sync starts in the background.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "fivetran-stripe" as const,
+      name: "Stripe (Fivetran)",
+      description: "Full Stripe ingest through Fivetran's official schema, into a tenant-isolated native schema.",
+      logo: "/logos/stripe.svg",
+      connectDetail: "Approve Stripe. Albert hands the grant to Fivetran and the official Stripe ERD syncs in the background.",
       connections: Object.freeze([]),
     }),
     Object.freeze({

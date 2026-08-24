@@ -33,6 +33,7 @@ test("Test chart is a first-class dash view that posts invented questions to Fli
   assert.match(page, /type ActiveItem =[^;]*"Test chart"/su);
   assert.match(page, /requestedView === "TestChart"[\s\S]*setActiveItem\("Test chart"\)/u);
   assert.match(page, /aria-label="Test chart"[\s\S]*aria-current=\{activeItem === "Test chart" \? "page"/u);
+  assert.match(page, /<button\s+hidden[\s\S]{0,300}aria-label="Test chart"/u);
   assert.match(page, /activeItem === "Test chart"[\s\S]*<TestChartWorkspace/u);
 
   assert.match(workspace, /aria-label="Test chart"/u);

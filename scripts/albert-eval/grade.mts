@@ -210,7 +210,10 @@ function buildJudgeInput(record: EvalTurnRecord, checks: GoldenCheck[]) {
       .map((r) => ({ question: r.question, answer: (r.answerText ?? r.clarification ?? "").slice(0, 1200), charts: r.charts.map((c) => `${c.chartType} x=${c.xKey} y=${c.yKey}${c.orientation ? ` orientation=${c.orientation}` : ""}${c.series?.length ? ` series=${c.series.join("|")}` : ""}`), tables: r.tables.filter((t) => t.presentation === "answer").map((t) => `${t.caption} (${t.rowCount} rows; ${t.columns.map((c) => c.label).join(", ")})`) }))
     : [];
   return {
-    today: record.startedAt.slice(0, 10),
+    // "Today" from the tenant's clock, not UTC: the runtime resolves relative
+    // periods ("yesterday", "this week") in the tenant timezone, so a run that
+    // straddles UTC midnight must be judged against the tenant date.
+    today: new Date(record.startedAt).toLocaleDateString("en-CA", { timeZone: process.env.EVAL_TENANT_TIMEZONE ?? "Australia/Melbourne" }),
     turn: {
       id: record.id,
       tier: record.tier,
@@ -233,8 +236,8 @@ function buildJudgeInput(record: EvalTurnRecord, checks: GoldenCheck[]) {
       // What the owner actually sees: the client renders only the tables the
       // answer event presents (latest composition per caption, at most three)
       // plus any table a chart plots. Everything else is trace evidence.
-      answer_tables: ownerVisibleTables(record).map((t) => ({ caption: t.caption, columns: t.columns.map((c) => c.label), rowCount: t.rowCount, rows: trimRows(t.rows, 15) })),
-      evidence_tables_not_shown_to_owner: record.tables.filter((t) => !ownerVisibleTables(record).includes(t)).map((t) => ({ caption: t.caption, columns: t.columns.map((c) => c.label), rowCount: t.rowCount, rows: trimRows(t.rows, 6) })),
+      answer_tables: ownerVisibleTables(record).map((t) => ({ caption: t.caption, columns: t.columns.map((c) => c.label), rowCount: t.rowCount, rows: trimRows(t.rows, 40) })),
+      evidence_tables_not_shown_to_owner: record.tables.filter((t) => !ownerVisibleTables(record).includes(t)).map((t) => ({ caption: t.caption, columns: t.columns.map((c) => c.label), rowCount: t.rowCount, rows: trimRows(t.rows, 30) })),
       queries_run: record.queries.map((q) => ({ topic: q.topic, view: q.view, rows: q.rowCount, timeRange: q.timeRange })),
       queries_executed: record.queriesExecuted ?? record.queries.length,
       latency_seconds: Math.round(record.durationMs / 1000),

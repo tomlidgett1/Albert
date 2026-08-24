@@ -79,6 +79,66 @@ test("Codex compiles an ordered governed trend into the existing Flint chart con
   assert.equal(decision.prepared.table.provenance.definitions.at(-1)?.metric, "albert.chart_transform");
 });
 
+test("Codex derives a governed cumulative running total as a line chart", () => {
+  const source = evidence({
+    columns: [month, sales],
+    rows: [
+      { "sales.month": "2026-01-01", "sales.value": 30280.46 },
+      { "sales.month": "2026-02-01", "sales.value": 34706.96 },
+      { "sales.month": "2026-03-01", "sales.value": 32775.48 },
+      { "sales.month": "2026-04-01", "sales.value": 28032.9 },
+    ],
+  });
+  const decision = prepareCodexChart({
+    question: "Chart cumulative gross profit for the year so far",
+    source,
+    state: state(),
+    request: {
+      resultId: source.resultId,
+      purpose: "trend",
+      caption: "Cumulative gross takings reached $125,795.80 by April",
+      chartType: "auto",
+      xKey: month.key,
+      yKey: sales.key,
+      transform: "cumulative",
+    },
+  });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  assert.equal(decision.prepared.chart.chartType, "line");
+  assert.deepEqual(decision.prepared.table.rows.map((row) => row[sales.key]), [
+    30280.46, 64987.42, 97762.9, 125795.8,
+  ]);
+  assert.equal(decision.prepared.table.columns.find((column) => column.key === sales.key)?.label, "Cumulative Gross takings");
+  assert.equal(decision.prepared.notes.some((note) => /running totals/iu.test(note)), true);
+
+  const categorical = evidence({
+    columns: [category, sales],
+    rows: [
+      { "sales.category": "Bikes", "sales.value": 100 },
+      { "sales.category": "Parts", "sales.value": 200 },
+      { "sales.category": "Services", "sales.value": 300 },
+    ],
+  });
+  const rejectedCumulative = prepareCodexChart({
+    question: "Chart cumulative sales by category",
+    source: categorical,
+    state: state(),
+    request: {
+      resultId: categorical.resultId,
+      purpose: "comparison",
+      caption: "Cumulative sales",
+      chartType: "auto",
+      xKey: category.key,
+      yKey: sales.key,
+      transform: "cumulative",
+    },
+  });
+  assert.equal(rejectedCumulative.ok, false);
+  if (rejectedCumulative.ok) return;
+  assert.equal(rejectedCumulative.error, "cumulative_requires_time");
+});
+
 test("Codex uses ranked horizontal bars for category comparisons", () => {
   const source = evidence({
     columns: [category, sales],
@@ -210,4 +270,42 @@ test("the Codex tool surface accepts chart intent and keys, never model-authored
   assert.equal("rows" in chart.inputSchema.properties, false);
   assert.equal("data" in chart.inputSchema.properties, false);
   assert.match(chart.description, /Never chart a scalar/u);
+});
+
+test("an identical chart from a cloned result is rejected as a duplicate", () => {
+  const rows = [
+    { "sales.month": "2026-01-01T00:00:00.000", "sales.value": 100 },
+    { "sales.month": "2026-02-01T00:00:00.000", "sales.value": 140 },
+    { "sales.month": "2026-03-01T00:00:00.000", "sales.value": 120 },
+  ];
+  const shared = state();
+  const request = {
+    resultId: "01J00000000000000000000901",
+    purpose: "trend" as const,
+    caption: "Monthly gross takings",
+    chartType: "line" as const,
+    xKey: "sales.month",
+    yKey: "sales.value",
+  };
+  const first = prepareCodexChart({ question: "Chart my monthly takings trend", request, source: evidence({ columns: [month, sales], rows }), state: shared });
+  assert.ok(first.ok, JSON.stringify(first));
+  shared.emitted += 1;
+  shared.signatures.add(first.prepared.signature);
+
+  // Same plotted values from a different resultId (a re-derived clone of the
+  // same data) must still count as the same chart the owner already has.
+  const clone = { ...evidence({ columns: [month, sales], rows }), resultId: "01J00000000000000000000902" };
+  const second = prepareCodexChart({ question: "Chart my monthly takings trend", request: { ...request, resultId: clone.resultId }, source: clone, state: shared });
+  assert.equal(second.ok, false);
+  assert.equal(!second.ok && second.error, "duplicate_chart");
+
+  // Different data is a genuinely different chart and stays allowed.
+  const differentRows = rows.map((row) => ({ ...row, "sales.value": (row["sales.value"] as number) + 5 }));
+  const third = prepareCodexChart({
+    question: "Chart my monthly takings trend",
+    request: { ...request, resultId: "01J00000000000000000000903" },
+    source: { ...evidence({ columns: [month, sales], rows: differentRows }), resultId: "01J00000000000000000000903" },
+    state: shared,
+  });
+  assert.ok(third.ok, JSON.stringify(third));
 });

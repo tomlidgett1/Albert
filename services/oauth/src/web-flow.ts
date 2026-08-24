@@ -29,7 +29,7 @@ export { disconnectFivetranXero, OAuthFlowError, syncFivetranXero };
 export const oauthProviders = [
   "lightspeed", "lightspeed-x", "xero", "deputy", "square",
   "shopify", "stripe", "momence", "meta-ads", "google-ads",
-  "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
+  "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy", "fivetran-stripe",
 ] as const;
 export type OAuthWebProvider = (typeof oauthProviders)[number];
 
@@ -43,6 +43,7 @@ export const fivetranProviders = {
   "fivetran-xero": "xero",
   "fivetran-lightspeed": "light_speed_retail",
   "fivetran-deputy": "deputy",
+  "fivetran-stripe": "stripe",
 } as const;
 export type FivetranWebProvider = keyof typeof fivetranProviders;
 export function isFivetranWebProvider(value: string): value is FivetranWebProvider {
@@ -93,13 +94,15 @@ const providerToConnector = {
   "fivetran-deputy": "deputy",
   "fivetran-xero": "xero",
   "fivetran-lightspeed": "lightspeed-r",
+  "fivetran-stripe": "stripe",
 } as const;
 
 /** Fivetran providers whose grant Albert takes itself (no Connect Card). */
-const NATIVE_GRANT_FIVETRAN: Readonly<Partial<Record<FivetranWebProvider, "deputy" | "xero" | "lightspeed">>> = {
+const NATIVE_GRANT_FIVETRAN: Readonly<Partial<Record<FivetranWebProvider, "deputy" | "xero" | "lightspeed" | "stripe">>> = {
   "fivetran-deputy": "deputy",
   "fivetran-xero": "xero",
   "fivetran-lightspeed": "lightspeed",
+  "fivetran-stripe": "stripe",
 };
 
 /** The browser-facing provider whose cookie + callback route a flow uses. */
@@ -327,8 +330,15 @@ export async function beginOAuthFlow(input: Readonly<{
     });
   }
   if (nativeProvider === "stripe") {
+    const stripeClientId = (result.clientId && result.clientId.trim()) || process.env.STRIPE_CLIENT_ID?.trim();
+    if (!stripeClientId) {
+      throw new OAuthFlowError(
+        "Stripe Connect is not configured on the sync worker yet. Add STRIPE_CLIENT_ID and STRIPE_SECRET_KEY, then try again.",
+        503,
+      );
+    }
     return buildStripeAuthorizationUrl({
-      clientId: clientId("STRIPE_CLIENT_ID"),
+      clientId: stripeClientId,
       state,
       redirectUri,
       scopes: result.scopes,

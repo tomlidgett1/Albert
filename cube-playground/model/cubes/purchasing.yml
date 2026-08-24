@@ -10,12 +10,8 @@ cubes:
     meta:
       ai_context: '"Supplier", "vendor", "distributor" all mean vendors.name.'
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_vendors ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_vendors t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     dimensions:
       - name: row_key
@@ -91,12 +87,8 @@ cubes:
         Merchandise spend by item lives in purchase_order_lines (ordered_value);
         header ship/other costs are freight and fees, not merchandise.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_purchase_orders ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_purchase_orders t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: vendors
@@ -296,12 +288,8 @@ cubes:
         flags stock ordered but not yet received. price is the per-unit cost
         to the business (ex tax), not the retail price.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_purchase_order_lines ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_purchase_order_lines t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: purchase_orders
@@ -428,12 +416,8 @@ cubes:
         received_at as the business date. total_cost is the receipt's landed
         cost in the shop currency.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_order_shipments ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_order_shipments t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: purchase_orders
@@ -542,12 +526,8 @@ cubes:
         Landed cost per item per receipt. Use for "what did we receive and at
         what cost" by item; join up to order_shipments for the receipt date.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_order_shipment_items ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_order_shipment_items t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: order_shipments
@@ -641,12 +621,8 @@ cubes:
         going back to suppliers, not customer refunds). Use sent_at as the
         business date and return_value for the value returned.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_vendor_returns ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_vendor_returns t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: vendors
@@ -758,12 +734,8 @@ cubes:
         Answers "who supplies this item and at what cost" and maps supplier
         part numbers to catalogue items.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_vendor_nums ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_item_vendor_nums t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -832,12 +804,8 @@ cubes:
         Supplier price-list reference only. The shop's own products are in
         items; do not mix the two when counting catalogue size.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_catalog_vendor_items ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_catalog_vendor_items t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: vendors

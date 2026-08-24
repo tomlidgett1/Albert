@@ -59,6 +59,9 @@ export class FivetranDestinationStore {
       `select ingestion.rebuild_fivetran_source_views($1) as rebuild_fivetran_source_views`,
       [prefix],
     );
+    if (prefix === "stripe") {
+      await this.db.query(`select ingestion.rebuild_stripe_official_views()`);
+    }
     return Number(result.rows[0]?.rebuild_fivetran_source_views ?? 0);
   }
 

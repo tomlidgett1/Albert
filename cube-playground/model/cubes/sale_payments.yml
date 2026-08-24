@@ -18,12 +18,10 @@ cubes:
         SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time, s.shop_id
         FROM source_lightspeed_official.ls_sales s
         WHERE NOT s.tombstone
-          AND s.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sales ORDER BY ingested_at DESC LIMIT 1)
       ),
       payments AS (
         SELECT t.* FROM source_lightspeed_official.ls_sale_payments t
         WHERE NOT t.tombstone
-          AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sale_payments ORDER BY ingested_at DESC LIMIT 1)
       )
       SELECT c.*,
              COALESCE(c.completed, p.completed) AS effective_completed,
@@ -217,7 +215,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_payment_types t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_payment_types ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key

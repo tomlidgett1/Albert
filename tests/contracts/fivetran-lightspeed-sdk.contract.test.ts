@@ -136,6 +136,22 @@ test("0171 seeds every ls_* union view and Cube reads source_lightspeed_official
       return /\bsource_lightspeed\.ls_/u.test(body) ? [file] : [];
     });
   assert.deepEqual(offenders, [], "cube models must read source_lightspeed_official.ls_*");
+  const redundantLatestPackScans = readdirSync(cubeDir)
+    .filter((file) => file.endsWith(".yml"))
+    .flatMap((file) => {
+      const body = readFileSync(`${cubeDir}/${file}`, "utf8");
+      const matches = body.match(
+        /SELECT\s+mapping_version(?:\s+AS\s+latest_pack)?\s+FROM\s+source_lightspeed_official\./giu,
+      ) ?? [];
+      return matches.map(() => file);
+    });
+  // The official layer injects one literal `fivetran-sdk` mapping version for
+  // every row, so a latest-pack subquery only adds an unnecessary scan/sort.
+  assert.deepEqual(
+    redundantLatestPackScans,
+    [],
+    "official Lightspeed cube models must not scan for a latest mapping version",
+  );
   const readers = readdirSync(cubeDir)
     .filter((file) => file.endsWith(".yml"))
     .filter((file) => /source_lightspeed_official\.ls_/u.test(readFileSync(`${cubeDir}/${file}`, "utf8")));

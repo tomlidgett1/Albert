@@ -43,7 +43,9 @@ export function GovernedResultGrid({
             ) : table.rows.map((row, rowIndex) => (
               <tr key={`${table.resultId}_${rowIndex}`}>
                 {table.columns.map((column, columnIndex) => (
-                  <td key={`${column.key}_${columnIndex}`}>{formatTraceCell(row[column.key] ?? null, column)}</td>
+                  <td key={`${column.key}_${columnIndex}`}>
+                    {formatTraceCell(row[column.key] ?? null, column, table.rowFormats?.[rowIndex])}
+                  </td>
                 ))}
               </tr>
             ))}

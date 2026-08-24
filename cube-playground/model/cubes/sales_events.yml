@@ -12,7 +12,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_sale_voids t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sale_voids ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -88,7 +87,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_sale_accounts t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sale_accounts ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: credit_accounts
@@ -163,7 +161,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_quotes t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_quotes ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -252,7 +249,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_discounts t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_discounts ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -319,7 +315,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_cc_charges t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_cc_charges ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sales
@@ -454,7 +449,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_processing_fees t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_processing_fees ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: sale_payments

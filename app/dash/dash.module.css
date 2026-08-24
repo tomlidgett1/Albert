@@ -2219,10 +2219,10 @@
 }
 
 .collapsed .sidebar {
-  /* border-box: 8 left + 36 icon column + 7 right + 1 border = 52 */
-  --sidebar-width: 52px;
-  flex-basis: 52px;
-  padding-right: 7px;
+  /* 8 left + 37 icon column; content inset is the right gutter */
+  --sidebar-width: 45px;
+  flex-basis: 45px;
+  padding-right: 0;
   overflow-x: hidden;
 }
 
@@ -2617,72 +2617,105 @@
   gap: 8px;
 }
 
-.chatRuntimeTabs {
+.chatRuntimeMenu {
   position: relative;
-  display: inline-flex;
-  height: var(--dash-control-height);
+  z-index: 8;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 20px;
-  padding: 0 0 7px;
 }
 
-.chatRuntimeTab {
+.chatRuntimeMenuTrigger {
   display: inline-flex;
-  height: 28px;
+  height: 30px;
   align-items: center;
   gap: 6px;
-  border: 0;
-  border-radius: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--dash-text-muted);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
-  font-weight: 450;
-  letter-spacing: -0.025em;
-  padding: 0;
-  transition: color 180ms ease;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  padding: 0 8px 0 10px;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
   white-space: nowrap;
 }
 
-.chatRuntimeTab:hover,
-.chatRuntimeTabActive {
+.chatRuntimeMenuTrigger:hover,
+.chatRuntimeMenuTrigger[aria-expanded="true"] {
+  border-color: var(--dash-border-soft);
+  background: var(--dash-surface-hover);
   color: var(--dash-text-heading);
 }
 
-.chatRuntimeTabActive {
-  font-weight: 620;
-}
-
-.chatRuntimeTab:focus-visible {
-  border-radius: 4px;
+.chatRuntimeMenuTrigger:focus-visible {
   outline: 2px solid var(--dash-focus);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 
-.chatRuntimeExperimental {
-  border: 1px solid var(--dash-border-soft);
-  border-radius: 999px;
-  color: var(--dash-text-subtle);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 16px;
-  padding: 0 5px;
-  text-transform: uppercase;
+.chatRuntimeMenuChevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  transition: transform 200ms ease;
 }
 
-.chatRuntimeTabIndicator {
+.chatRuntimeMenuChevronOpen {
+  transform: rotate(180deg);
+}
+
+.chatRuntimeMenuPanel {
   position: absolute;
-  bottom: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--dash-contrast);
-  pointer-events: none;
-  transition:
-    left 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  display: flex;
+  width: max-content;
+  min-width: 196px;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-quiet);
+  border-radius: 16px;
+  background: var(--dash-popup-surface);
+  box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
+  padding: 6px;
+}
+
+.chatRuntimeMenuItem {
+  display: flex;
+  width: 100%;
+  min-height: var(--dash-control-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.chatRuntimeMenuItem:hover {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.chatRuntimeMenuItem[aria-checked="true"] {
+  background: var(--dash-surface-active);
+  color: var(--dash-text-heading);
+}
+
+.chatRuntimeMenuItem:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
 }
 
 .compareShell {
@@ -2739,7 +2772,7 @@
   gap: 6px;
 }
 
-.compareTopActions button {
+.compareTopActions > button {
   min-height: 30px;
   border: 1px solid var(--dash-border-soft);
   border-radius: 8px;
@@ -2753,7 +2786,7 @@
   transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
 
-.compareTopActions button:hover {
+.compareTopActions > button:hover {
   border-color: var(--dash-border-focus);
   background: var(--dash-surface-hover);
   transform: translateY(-1px);
@@ -3180,7 +3213,7 @@
     display: none;
   }
 
-  .compareTopActions button {
+  .compareTopActions > button {
     padding: 0 8px;
   }
 
@@ -3206,12 +3239,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .compareTopActions button,
+  .compareTopActions > button,
   .compareComposer > button {
     transition: none;
   }
 
-  .compareTopActions button:hover,
+  .compareTopActions > button:hover,
   .compareComposer > button:not(:disabled):hover {
     transform: none;
   }
@@ -3321,15 +3354,10 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-
-  .chatRuntimeExperimental {
-    display: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chatRuntimeTab,
-  .chatRuntimeTabIndicator {
+  .chatRuntimeMenuChevron {
     transition: none;
   }
 
@@ -6252,6 +6280,37 @@
   white-space: pre-wrap;
 }
 
+.chatMessageUserFace > p:not([data-expanded="true"]) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.chatMessageUserMore {
+  align-self: flex-start;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+}
+
+.chatMessageUserMore:hover {
+  color: var(--dash-text-heading);
+}
+
+.chatMessageUserMore:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
 .chatMessageEditTrailing {
   display: flex;
   align-items: center;
@@ -6679,18 +6738,207 @@
   max-height: min(330px, calc(50vh - 64px));
 }
 
+.recommendedAnalysis {
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  flex-direction: column;
+  margin-top: 18px;
+}
+
+.recommendedAnalysisPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 20px;
+  background: light-dark(#ffffff, #2a2c31);
+  box-shadow:
+    light-dark(
+      0 1px 2px rgba(30, 30, 32, 0.04),
+      0 1px 2px rgba(0, 0, 0, 0.22)
+    );
+  padding: 16px 14px 12px;
+}
+
+.recommendedAnalysisHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 4px 12px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+
+.recommendedAnalysisTitle {
+  margin: 0;
+  color: var(--dash-text-heading);
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+}
+
+.recommendedAnalysisVerdict {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: 13px;
+  letter-spacing: -0.02em;
+  line-height: 1.45;
+}
+
+.recommendedAnalysisList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recommendedAnalysisRow,
+.recommendedAnalysisSkeleton {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 10px 8px;
+  text-align: left;
+}
+
+.recommendedAnalysisRow {
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.recommendedAnalysisIndex {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--dash-text-faint);
+  font-size: 11px;
+  font-weight: 520;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.recommendedAnalysisCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recommendedAnalysisCardQuestion {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dash-text-heading);
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.recommendedAnalysisCardWhy {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  letter-spacing: -0.02em;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.recommendedAnalysisChevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--dash-text-faint);
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.75;
+}
+
+.recommendedAnalysisRow:hover {
+  background: var(--dash-surface-hover);
+}
+
+.recommendedAnalysisRow:hover .recommendedAnalysisChevron {
+  color: var(--dash-text-muted);
+}
+
+.recommendedAnalysisRow:active {
+  transform: scale(0.985);
+}
+
+.recommendedAnalysisRow:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.recommendedAnalysisSkeletonBar {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--dash-surface-muted);
+}
+
+.recommendedAnalysisSkeletonBar:nth-child(2) {
+  width: 68%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recommendedAnalysisRow {
+    transition: none;
+  }
+
+  .recommendedAnalysisRow:active {
+    transform: none;
+  }
+}
+
+.chatComposerStackPrompts {
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
 .chatHeroIntro {
   position: absolute;
   left: 0;
   right: 0;
   bottom: calc(100% + 16px);
+  z-index: 7;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
 }
 
+.chatComposerStackPrompts .chatHeroIntro {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  padding-top: 12px;
+  padding-bottom: 16px;
+}
+
 .chatHeroTitle {
+  flex: 0 0 auto;
   margin: 0;
   color: var(--dash-text-heading);
   font-size: calc(28px * var(--text-scale));
@@ -6700,6 +6948,7 @@
 }
 
 .chatHeroBody {
+  flex: 0 0 auto;
   max-width: 620px;
   margin: 8px auto 0;
   color: var(--dash-text-muted);
@@ -6708,12 +6957,140 @@
   line-height: 1.45;
 }
 
+.codexPromptMenu {
+  position: relative;
+  z-index: 6;
+  width: min(100%, 420px);
+  margin: 16px auto 0;
+}
+
+.codexPromptMenuTrigger {
+  display: inline-flex;
+  width: 100%;
+  height: var(--dash-control-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 8px;
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  padding: 0 12px;
+  text-align: left;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.codexPromptMenuTrigger:hover,
+.codexPromptMenuTrigger[aria-expanded="true"] {
+  border-color: var(--dash-border-quiet);
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-heading);
+}
+
+.codexPromptMenuTrigger:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.codexPromptMenuChevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--dash-text-muted);
+  transition: transform 200ms ease;
+}
+
+.codexPromptMenuChevronOpen {
+  transform: rotate(180deg);
+}
+
+.codexPromptMenuPanel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 60;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-quiet);
+  border-radius: 16px;
+  background: var(--dash-popup-surface);
+  box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
+}
+
+.codexPromptMenuList {
+  display: flex;
+  max-height: min(320px, 45vh);
+  flex-direction: column;
+  gap: 1px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  scrollbar-color: var(--dash-border-quiet) transparent;
+  scrollbar-width: thin;
+}
+
+.codexPromptMenuItem {
+  display: block;
+  width: 100%;
+  min-height: var(--dash-control-height);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.codexPromptMenuItem:hover {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.codexPromptMenuItem:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codexPromptMenuChevron {
+    transition: none;
+  }
+
+  .codexPromptMenuChevronOpen {
+    transform: none;
+  }
+}
+
 .chatStarterPrompts {
   display: grid;
   width: min(100%, 720px);
+  min-height: 0;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   margin-top: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 2px;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--dash-border-quiet) transparent;
+  scrollbar-width: thin;
+}
+
+.chatComposerStackPrompts .chatStarterPrompts {
+  flex: 1 1 auto;
 }
 
 .chatStarterPrompt {
@@ -7056,7 +7433,7 @@
   gap: 6px;
   min-height: 0;
   border-radius: 999px;
-  padding: 4px;
+  padding: 6px;
 }
 
 .chatComposerBar.chatComposerMultiline {
@@ -7371,6 +7748,50 @@
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.voiceInputRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.voiceInputRow .dictationWave {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.voiceStatusText {
+  flex: 0 1 auto;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dash-text-muted);
+  font-size: calc(12px * var(--text-scale));
+  letter-spacing: -0.01em;
+}
+
+.voiceButtonLive {
+  animation: voiceLivePulse 2s ease-in-out infinite;
+}
+
+@keyframes voiceLivePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 28%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 6%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voiceButtonLive {
+    animation: none;
+  }
 }
 
 .dictationError {
@@ -9337,9 +9758,9 @@
   }
 
   .sidebar {
-    --sidebar-width: 52px;
-    flex-basis: 52px;
-    padding-right: 7px;
+    --sidebar-width: 45px;
+    flex-basis: 45px;
+    padding-right: 0;
     overflow-x: hidden;
   }
 

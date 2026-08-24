@@ -35,6 +35,7 @@ export {
   loadAgentConfig,
   matchAgentRequestedRules,
   matchCertifiedQueries,
+  scoreCertifiedQueries,
   renderSkillsCatalogue,
   type AlbertV3AgentConfig,
 } from "./agent-config/loader.js";

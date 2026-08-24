@@ -314,6 +314,43 @@ export function groundingEvidenceFromRows(
 }
 
 /**
+ * Numbers the owner themselves wrote — a target ("save $1k a month"), a
+ * hypothetical ("raise prices 5%"), a constraint ("under $10k a month").
+ * Restating the owner's own figure is reporting, not invention, so these
+ * values may join the grounded pool for the final answer. Digit tokens with
+ * $/%/k/m forms, "N grand", and plain number-word phrases ("five hundred",
+ * "a thousand") all count; the scaled value is returned so a question's
+ * "$1k" grounds an answer's "$1,000".
+ */
+export function ownerStatedGroundingValues(text: string): readonly number[] {
+  const values = new Set<number>();
+  numericTokenPattern.lastIndex = 0;
+  for (const raw of text.match(numericTokenPattern) ?? []) {
+    const token = parseNumericToken(raw.trim());
+    if (!token) continue;
+    values.add(token.value * token.scale);
+    if (token.scale !== 1) values.add(token.value);
+  }
+  const grandCount = new RegExp(
+    String.raw`\b(\d[\d,]*(?:\.\d+)?|a|an|(?:${numberWordAlternation})(?:[\s-]+(?:${numberWordAlternation}))?)\s*grand\b`,
+    "giu",
+  );
+  for (const grand of text.matchAll(grandCount)) {
+    const raw = grand[1]!;
+    const parsed = /^\d/u.test(raw)
+      ? Number(raw.replaceAll(",", ""))
+      : /^an?$/iu.test(raw) ? 1 : parseNumberWords(raw);
+    if (parsed !== null && Number.isFinite(parsed) && parsed > 0) values.add(parsed * 1_000);
+  }
+  numberWordPattern.lastIndex = 0;
+  for (const phrase of text.match(numberWordPattern) ?? []) {
+    const parsed = parseNumberWords(phrase);
+    if (parsed !== null && parsed !== 0) values.add(parsed);
+  }
+  return Object.freeze([...values]);
+}
+
+/**
  * Prevents model-authored figures from entering a governed narrative. Every
  * numeric token must be a faithful rendering of a governed cell, a
  * server-derived row count, or a figure the caller supplied as additional

@@ -151,7 +151,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   ) {
     throw new Error("ALBERT_PUBLIC_ORIGIN must be a clean public origin.");
   }
-  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "lightspeed-x", "fivetran-xero", "fivetran-lightspeed"].map((provider) =>
+  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "lightspeed-x", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy", "fivetran-stripe"].map((provider) =>
     new URL(`/api/oauth/${provider}/callback`, publicOrigin).toString()
   );
   const port = Number(source.PORT ?? "8080");
@@ -276,6 +276,13 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
       "MOMENCE_CLIENT_ID and MOMENCE_CLIENT_SECRET must be configured together.",
     );
   }
+  const stripeClientId = optionalSecret(source, "STRIPE_CLIENT_ID");
+  const stripeSecretKey = optionalSecret(source, "STRIPE_SECRET_KEY");
+  if (Boolean(stripeClientId) !== Boolean(stripeSecretKey)) {
+    throw new Error(
+      "STRIPE_CLIENT_ID and STRIPE_SECRET_KEY must be configured together.",
+    );
+  }
   const fivetran = loadFivetranWorkerConfig(source);
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
@@ -313,8 +320,8 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     shopifyClientId,
     shopifyClientSecret,
     shopifyRedirectUri: redirectValues[4]!,
-    stripeClientId: optionalSecret(source, "STRIPE_CLIENT_ID"),
-    stripeSecretKey: optionalSecret(source, "STRIPE_SECRET_KEY"),
+    stripeClientId,
+    stripeSecretKey,
     stripeRedirectUri: redirectValues[5]!,
     momenceClientId,
     momenceClientSecret,

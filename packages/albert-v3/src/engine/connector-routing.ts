@@ -27,6 +27,9 @@ export function normalizeV3Connector(value: string): TraceConnector | undefined 
   // Lightspeed R-Series via Fivetran lands the same ls_* contract the native
   // pack does; either connection key means the Lightspeed cubes are live.
   if (normalized === "lightspeed-r" || normalized === "fivetran-lightspeed") return "lightspeed";
+  if (normalized === "fivetran-xero") return "xero";
+  if (normalized === "fivetran-deputy") return "deputy";
+  if (normalized === "fivetran-stripe") return "stripe";
   return KNOWN_TRACE_CONNECTORS.has(normalized as TraceConnector)
     ? normalized as TraceConnector
     : undefined;
@@ -79,6 +82,9 @@ function inferredCubeConnectorHints(
   }
   if (available.has("deputy") && /\b(?:rosters?|rostered hours?|employee availability|leave requests?|leave balances?|scheduled shifts?)\b/u.test(text)) {
     found.add("deputy");
+  }
+  if (available.has("stripe") && /\b(?:stripe|payment intents?|monthly recurring revenue|\bmrr\b|stripe (?:payouts?|charges?|refunds?|invoices?|customers?|subscriptions?))\b/u.test(text)) {
+    found.add("stripe");
   }
   if (available.has("square") && /\b(?:rosters?|rostered hours?|scheduled shifts?)\b/u.test(text)) {
     found.add("square");

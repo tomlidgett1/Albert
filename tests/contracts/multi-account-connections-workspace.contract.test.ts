@@ -175,9 +175,11 @@ test("the connections catalog hides native Deputy, Xero, and Lightspeed R-Series
   assert.equal(catalogIds.includes("lightspeed"), false);
   assert.equal(catalogIds.includes("xero"), false);
   assert.equal(catalogIds.includes("deputy"), false);
+  assert.equal(catalogIds.includes("stripe"), false);
   assert.ok(catalogIds.includes("fivetran-xero"));
   assert.ok(catalogIds.includes("fivetran-lightspeed"));
   assert.ok(catalogIds.includes("fivetran-deputy"));
+  assert.ok(catalogIds.includes("fivetran-stripe"));
   assert.match(connectionsComponent, /SUPERSEDED_NATIVE_PROVIDER_IDS/u);
   assert.match(connectionsComponent, /isVisibleConnectionProvider/u);
   assert.doesNotMatch(

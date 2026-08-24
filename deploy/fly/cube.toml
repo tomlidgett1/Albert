@@ -29,6 +29,16 @@ kill_timeout = 30
   auto_start_machines = true
   min_machines_running = 1
 
+  [http_service.concurrency]
+    # Fly's implicit default (soft 20 / hard 25 connections) throttled Cube
+    # once many concurrent turns long-polled Continue-wait responses. Sized
+    # for 16 concurrent Codex turns plus dashboard refreshes; the real
+    # ceiling stays the analytics Postgres max_connections=60 (each turn's
+    # orchestrator runs a 2-slot query queue over a small pg pool).
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
   [[http_service.checks]]
     grace_period = "45s"
     interval = "15s"
@@ -41,5 +51,5 @@ kill_timeout = 30
 
 [[vm]]
   cpu_kind = "shared"
-  cpus = 1
-  memory = "1gb"
+  cpus = 2
+  memory = "2gb"

@@ -41,6 +41,12 @@ export type CodexAppServerTurnOptions = Readonly<{
   baseUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * Effort for validator-driven repair turns on the same thread. Repairs
+   * rebind citations over evidence that already exists, so a lighter effort
+   * shortens the tail without weakening the investigation itself.
+   */
+  repairEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   fastMode: boolean;
   input: string;
   baseInstructions: string;
@@ -560,6 +566,9 @@ export async function runCodexAppServerTurn(
     const deadlineAt = Date.now() + ANALYSIS_TIMEOUT_MS;
     let nextInput = options.input;
     let totalDurationMs = 0;
+    // A transient stream resume continues the investigation at full effort;
+    // only validator-driven repair turns run at the lighter repair effort.
+    let repairingCandidate = false;
     for (let repairAttempt = 0; ; repairAttempt += 1) {
       const remainingMs = deadlineAt - Date.now();
       if (remainingMs <= 0) throw new Error("The Codex analytical turn timed out.");
@@ -572,9 +581,13 @@ export async function runCodexAppServerTurn(
           approvalPolicy: "never",
           sandboxPolicy: { type: "readOnly", networkAccess: false },
           model: options.model,
-          effort: options.effort,
+          effort: repairingCandidate ? options.repairEffort ?? options.effort : options.effort,
           summary: "concise",
-          serviceTier: options.fastMode ? "fast" : null,
+          // The codex model catalog's fast tier id is "priority" ("Fast" is
+          // its display name); "fast" is not a tier id and codex silently
+          // drops it, leaving the request on the default tier. Verified by
+          // capturing the binary's /v1/responses payloads (2026-08-23).
+          serviceTier: options.fastMode ? "priority" : null,
           outputSchema: CODEX_FINAL_OUTPUT_JSON_SCHEMA,
         });
         turnId = turnIdFromResponse(started);
@@ -610,6 +623,7 @@ export async function runCodexAppServerTurn(
             durationMs: totalDurationMs || null,
           };
         }
+        repairingCandidate = true;
         nextInput = `Albert's independent evidence validator rejected the previous candidate answer.
 
 Validation feedback:
@@ -624,6 +638,7 @@ Continue working in this same thread. Reuse the governed tool results already re
         ) {
           throw error;
         }
+        repairingCandidate = false;
         nextInput = `The previous model response stream closed before the analytical turn completed.
 
 Continue working in this same thread. Preserve and reuse every governed tool result already returned, continue the existing plan from its current state, and run only materially missing checks. Do not restart the investigation or repeat an equivalent successful query. Return the complete structured answer when the evidence is sufficient.`;

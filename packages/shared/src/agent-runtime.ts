@@ -468,6 +468,18 @@ export type TraceTableColumn = Readonly<{
 }>;
 
 /**
+ * The value format of one row in a metric-per-row (pivoted) table. A pivoted
+ * column stacks different measures — currency rows above percent rows — so a
+ * single column type cannot format its cells; each row keeps the unit of the
+ * measure it was pivoted from.
+ */
+export type TraceRowFormat = Readonly<{
+  type: "number" | "currency" | "percent";
+  /** ISO-4217 code proven by query validation; omitted when the currency is unknown. */
+  currency?: string;
+}>;
+
+/**
  * An immutable, server-resolvable reference for a governed table result.
  *
  * This deliberately contains no SQL or executable browser-authored recipe.
@@ -573,6 +585,12 @@ export interface TraceTableEvent extends TraceEventBase {
   caption: string;
   columns: readonly TraceTableColumn[];
   rows: readonly Readonly<Record<string, TraceCell>>[];
+  /**
+   * Aligned with `rows`; present only when rows are measures with mixed units
+   * (a pivoted comparison). Renderers format each numeric cell by its row's
+   * format instead of the column type. A null entry keeps the column type.
+   */
+  rowFormats?: readonly (TraceRowFormat | null)[];
   resultId: string;
   provenance: TraceProvenance;
   /** Answer tables render beside prose; evidence tables remain in the query trail. */
@@ -641,12 +659,27 @@ export type PresentedTableDigest = Readonly<{
   rows: readonly (readonly (string | number | null)[])[];
 }>;
 
+/**
+ * One headline stat card shown with the answer ("Key insights"): a governed
+ * figure or two-word state, its owner-language label, and optional context.
+ * Model-authored, host-validated — every numeric token grounds against
+ * result cells before the card is emitted.
+ */
+export type AnswerKeyInsight = Readonly<{
+  value: string;
+  label: string;
+  detail?: string;
+  sentiment?: "positive" | "negative" | "neutral";
+}>;
+
 export interface TraceAnswerEvent extends TraceEventBase {
   type: "answer";
   state: AnswerState;
   text: string;
   provenance: TraceProvenance;
   followUps: readonly string[];
+  /** Headline stat cards, present only when the analysis warrants them. */
+  keyInsights?: readonly AnswerKeyInsight[];
   /** Persisted continuity state for a later anaphoric or elliptical follow-up. */
   resolvedSubject?: ResolvedConversationSubject;
   /** Results the lead explicitly selected for owner-visible tabular detail. */

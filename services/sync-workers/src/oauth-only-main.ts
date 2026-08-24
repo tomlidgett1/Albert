@@ -92,6 +92,11 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error("The OAuth-only worker is unavailable in production.");
   }
+  const stripeClientId = process.env.STRIPE_CLIENT_ID?.trim() || "";
+  const stripeSecretKey = process.env.STRIPE_SECRET_KEY?.trim() || "";
+  if (Boolean(stripeClientId) !== Boolean(stripeSecretKey)) {
+    throw new Error("STRIPE_CLIENT_ID and STRIPE_SECRET_KEY must be configured together.");
+  }
   const origin = publicOrigin();
   const tokenKeyring = loadEncodedAes256Keyring({
     currentKey: required("TOKEN_ENCRYPTION_KEY"),
@@ -129,8 +134,8 @@ export async function runOAuthOnlyWorker(): Promise<void> {
     shopifyClientId: required("SHOPIFY_CLIENT_ID"),
     shopifyClientSecret: required("SHOPIFY_CLIENT_SECRET"),
     shopifyRedirectUri: new URL("/api/oauth/shopify/callback", origin).toString(),
-    stripeClientId: required("STRIPE_CLIENT_ID"),
-    stripeSecretKey: required("STRIPE_SECRET_KEY"),
+    stripeClientId,
+    stripeSecretKey,
     stripeRedirectUri: new URL("/api/oauth/stripe/callback", origin).toString(),
     momenceClientId: required("MOMENCE_CLIENT_ID"),
     momenceClientSecret: required("MOMENCE_CLIENT_SECRET"),
@@ -144,7 +149,7 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   });
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
-    allowedRedirectUris: new Set(["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "fivetran-xero"].map((provider) =>
+    allowedRedirectUris: new Set(["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-stripe"].map((provider) =>
       new URL(`/api/oauth/${provider}/callback`, origin).toString()
     )),
     sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper), {
@@ -168,7 +173,7 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   const fivetran = fivetranApiKey && fivetranApiSecret && fivetranGroupId
     ? new FivetranWorkerHttpHandler({
         oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
-        allowedRedirectUris: new Set(["fivetran-xero", "fivetran-lightspeed", "xero", "deputy"].map((provider) =>
+        allowedRedirectUris: new Set(["fivetran-xero", "fivetran-lightspeed", "fivetran-deputy", "fivetran-stripe", "xero", "deputy", "stripe"].map((provider) =>
           new URL(`/api/oauth/${provider}/callback`, origin).toString()
         )),
         config: {

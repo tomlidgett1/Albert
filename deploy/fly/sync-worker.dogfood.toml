@@ -37,6 +37,10 @@ kill_timeout = 120
   min_machines_running = 1
   processes = ["app"]
 
+  [http_service.http_options]
+    idle_timeout = 180
+    read_timeout = 180
+
   [[http_service.checks]]
     grace_period = "45s"
     interval = "15s"

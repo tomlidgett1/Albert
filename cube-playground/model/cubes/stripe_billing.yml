@@ -1,0 +1,264 @@
+cubes:
+  - name: stripe_invoices
+    title: Invoices (Stripe)
+    public: false
+    description: >
+      One row per Stripe Invoice from Fivetran's official invoice table.
+      Paid invoices use status paid. Amounts are major currency units.
+    meta:
+      ai_context: >
+        Use for billed invoices, outstanding amount_remaining, and paid totals.
+        Subscription invoices join stripe_subscriptions. Line detail is
+        stripe_invoice_lines. Credit notes are stripe_credit_notes.
+    sql: SELECT * FROM source_stripe.st_invoice
+    joins:
+      - name: stripe_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_customers}.tenant_id AND {CUBE}.customer_id = {stripe_customers}.id"
+      - name: stripe_subscriptions
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_subscriptions}.tenant_id AND {CUBE}.subscription_id = {stripe_subscriptions}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: number, sql: "number", type: string, title: Invoice number }
+      - { name: status, sql: status, type: string, title: Invoice status }
+      - { name: billing_reason, sql: billing_reason, type: string }
+      - { name: customer_id, sql: customer_id, type: string, public: false }
+      - { name: subscription_id, sql: subscription_id, type: string, public: false }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: paid, sql: paid, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time, title: Issued at }
+      - { name: due_date, sql: due_date, type: time, title: Due }
+      - { name: period_start, sql: period_start, type: time }
+      - { name: period_end, sql: period_end, type: time }
+      - { name: status_paid_at, sql: status_paid_at, type: time, title: Paid at }
+    measures:
+      - { name: invoice_count, type: count, title: Invoices }
+      - name: paid_invoices
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'paid'" }]
+      - name: open_invoices
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'open'" }]
+      - name: invoiced_total
+        sql: "source_stripe.stripe_major_units({CUBE}.total, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Invoiced
+      - name: amount_paid
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_paid, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Invoice payments
+      - name: amount_due
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_due, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Amount due
+      - name: amount_remaining
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_remaining, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Outstanding
+        filters: [{ sql: "{CUBE}.status IN ('open', 'uncollectible')" }]
+      - name: tax_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.tax, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Invoice tax
+
+  - name: stripe_invoice_lines
+    title: Invoice lines (Stripe)
+    public: false
+    description: One row per Stripe invoice line item (Fivetran invoice_line / invoice_line_item).
+    sql: SELECT * FROM source_stripe.st_invoice_line
+    joins:
+      - name: stripe_invoices
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_invoices}.tenant_id AND {CUBE}.invoice_id = {stripe_invoices}.id"
+      - name: stripe_prices
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_prices}.tenant_id AND {CUBE}.price_id = {stripe_prices}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: invoice_id, sql: invoice_id, type: string, public: false }
+      - { name: price_id, sql: price_id, type: string, public: false }
+      - { name: subscription_id, sql: subscription_id, type: string, public: false }
+      - { name: description, sql: description, type: string }
+      - { name: type, sql: "type", type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: proration, sql: proration, type: boolean }
+    measures:
+      - { name: line_count, type: count, title: Invoice lines }
+      - name: line_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+      - name: line_quantity
+        sql: quantity
+        type: sum
+
+  - name: stripe_subscriptions
+    title: Subscriptions (Stripe)
+    public: false
+    description: >
+      Current Stripe subscriptions. Fivetran stores history in
+      subscription_history; this view keeps the active history row
+      (_fivetran_active) or the native subscription table.
+    sql: SELECT * FROM source_stripe.st_subscription
+    joins:
+      - name: stripe_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_customers}.tenant_id AND {CUBE}.customer_id = {stripe_customers}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: customer_id, sql: customer_id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: Subscription status }
+      - { name: cancel_at_period_end, sql: cancel_at_period_end, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time, title: Started at }
+      - { name: start_date, sql: start_date, type: time }
+      - { name: current_period_start, sql: current_period_start, type: time }
+      - { name: current_period_end, sql: current_period_end, type: time }
+      - { name: cancel_at, sql: cancel_at, type: time }
+      - { name: canceled_at, sql: canceled_at, type: time }
+      - { name: ended_at, sql: ended_at, type: time }
+    measures:
+      - { name: subscription_count, type: count, title: Subscriptions }
+      - name: active_subscriptions
+        type: count
+        title: Active subscriptions
+        filters: [{ sql: "{CUBE}.status IN ('active', 'trialing')" }]
+      - name: canceled_subscriptions
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'canceled'" }]
+      - name: past_due_subscriptions
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'past_due'" }]
+
+  - name: stripe_subscription_items
+    title: Subscription items (Stripe)
+    public: false
+    description: One row per Stripe subscription item (price + quantity on a subscription).
+    sql: SELECT * FROM source_stripe.st_subscription_item
+    joins:
+      - name: stripe_subscriptions
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_subscriptions}.tenant_id AND {CUBE}.subscription_id = {stripe_subscriptions}.id"
+      - name: stripe_prices
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_prices}.tenant_id AND {CUBE}.price_id = {stripe_prices}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: subscription_id, sql: subscription_id, type: string, public: false }
+      - { name: price_id, sql: price_id, type: string, public: false }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: item_count, type: count, title: Subscription items }
+      - name: item_quantity
+        sql: quantity
+        type: sum
+
+  - name: stripe_products
+    title: Products (Stripe)
+    public: false
+    description: One row per Stripe Product from Fivetran's official product table.
+    sql: SELECT * FROM source_stripe.st_product
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: name, sql: name, type: string, title: Product }
+      - { name: description, sql: description, type: string }
+      - { name: type, sql: "type", type: string }
+      - { name: active, sql: active, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: product_count, type: count, title: Products }
+      - name: active_products
+        type: count
+        filters: [{ sql: "{CUBE}.active" }]
+
+  - name: stripe_prices
+    title: Prices (Stripe)
+    public: false
+    description: One row per Stripe Price. unit_amount is the catalogue price in major units.
+    sql: SELECT * FROM source_stripe.st_price
+    joins:
+      - name: stripe_products
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_products}.tenant_id AND {CUBE}.product_id = {stripe_products}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: product_id, sql: product_id, type: string, public: false }
+      - { name: nickname, sql: nickname, type: string }
+      - { name: type, sql: "type", type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: recurring_interval, sql: recurring_interval, type: string, title: Billing interval }
+      - { name: active, sql: active, type: boolean }
+      - { name: created, sql: created, type: time }
+      - name: unit_price
+        sql: "source_stripe.stripe_major_units({CUBE}.unit_amount, {CUBE}.currency)"
+        type: number
+        format: currency
+        title: Unit price
+    measures:
+      - { name: price_count, type: count, title: Prices }
+
+  - name: stripe_credit_notes
+    title: Credit notes (Stripe)
+    public: false
+    description: One row per Stripe Credit Note against an invoice.
+    sql: SELECT * FROM source_stripe.st_credit_note
+    joins:
+      - name: stripe_invoices
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_invoices}.tenant_id AND {CUBE}.invoice_id = {stripe_invoices}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: number, sql: "number", type: string }
+      - { name: status, sql: status, type: string }
+      - { name: type, sql: "type", type: string }
+      - { name: reason, sql: reason, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: credit_note_count, type: count }
+      - name: credited_amount
+        sql: "source_stripe.stripe_major_units(COALESCE({CUBE}.total, {CUBE}.amount), {CUBE}.currency)"
+        type: sum
+        format: currency
+
+  - name: stripe_coupons
+    title: Coupons (Stripe)
+    public: false
+    description: One row per Stripe Coupon.
+    sql: SELECT * FROM source_stripe.st_coupon
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: name, sql: name, type: string, title: Coupon }
+      - { name: duration, sql: duration, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: valid, sql: valid, type: boolean }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: coupon_count, type: count }
+      - name: percent_off
+        sql: percent_off
+        type: avg

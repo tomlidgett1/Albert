@@ -1,6 +1,7 @@
 import { ulid } from "ulid";
 import { verifyInternalRequest } from "../../../packages/security/src/index.js";
 import {
+  FIVETRAN_SERVICE_IDS,
   FIVETRAN_SERVICES,
   FivetranApiError,
   FivetranClient,
@@ -13,7 +14,8 @@ import {
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 
-import type { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
+import { isStripeLiveFivetranSecret } from "../../../connectors/stripe/index.js";
+import type { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge, StripeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
 import type { FivetranDestinationStore } from "./fivetran-destinations.js";
 import { packageSdkProject } from "./fivetran-sdk-package.js";
 import type { FivetranConnectionStore } from "./fivetran-store.js";
@@ -124,7 +126,7 @@ function publicError(error: unknown) {
     ? 403
     : /not_found/.test(code)
       ? 404
-      : /invalid|mismatch|expired|incomplete/.test(code)
+      : /invalid|mismatch|expired|incomplete|live_key/.test(code)
         ? 409
         : 503;
   return errorResponse(code.replace(/[^a-z0-9_.-]/gi, "_").slice(0, 100), status, detail);
@@ -141,6 +143,8 @@ export class FivetranWorkerHttpHandler {
     destinations: FivetranDestinationStore;
     /** Present when Albert can hand a Deputy grant to Fivetran (Deputy app configured). */
     deputyCredentials?: DeputyFivetranCredentialBridge;
+    /** Present when Albert can hand a Stripe Connect grant to Fivetran. */
+    stripeCredentials?: StripeFivetranCredentialBridge;
     /** Present when Albert's Xero OAuth app is configured (Xero via the SDK connector). */
     xeroCredentials?: NativeFivetranCredentialBridge;
     /** Present when Albert's Lightspeed R-Series OAuth app is configured (Lightspeed via the SDK connector). */
@@ -294,6 +298,7 @@ export class FivetranWorkerHttpHandler {
    */
   private async startApiAuthorised(input: Record<string, unknown>, definition: FivetranServiceDefinition) {
     if (definition.service === "deputy") return this.startDeputy(input, definition);
+    if (definition.service === "stripe") return this.startStripe(input, definition);
     const sdk = this.sdkService(definition.service);
     if (sdk) return this.startSdk(input, definition, sdk);
     throw new Error("fivetran_service_unsupported");
@@ -437,8 +442,142 @@ export class FivetranWorkerHttpHandler {
       throw error;
     }
     await this.client.unpause(created.id).catch(() => undefined);
-    await this.client.enableAllSchemas(created.id).catch(() => undefined);
+    await this.enableAllSchemasWhenReady(created.id, { attempts: 3, delayMs: 1_500 });
     await this.client.sync(created.id).catch(() => undefined);
+    await this.dependencies.destinations.stamp({ destinationSchema, tenantId }).catch(() => undefined);
+    return response({ connectionId, fivetranConnectionId: created.id });
+  }
+
+  /**
+   * Stripe: Albert already holds a live Restricted key or secret key on the
+   * native grant (Connect OAuth or a bootstrapped merchant key). Native
+   * ingestion stays authorisation-only. Fivetran's native Stripe connector
+   * takes that key and lands the official ERD. Historical sync is ALL_TIME
+   * so the full schema backfills, not a truncated window.
+   */
+  private async startStripe(input: Record<string, unknown>, definition: FivetranServiceDefinition) {
+    const bridge = this.dependencies.stripeCredentials;
+    if (!bridge) {
+      throw new Error(
+        "fivetran_not_configured:Stripe via Fivetran needs a native Stripe grant "
+        + "that holds a live Restricted key or secret key.",
+      );
+    }
+    const tenantId = requiredString(input, "tenantId", 26);
+    const userId = requiredString(input, "userId", 36);
+    const nativeConnectionId = requiredString(input, "nativeConnectionId", 26);
+    const credential = await bridge.read({ tenantId, nativeConnectionId });
+    if (!isStripeLiveFivetranSecret(credential.accessToken)) {
+      throw new Error(
+        "fivetran_stripe_live_key_required:Fivetran's Stripe connector is live mode only. Connect a live Stripe account.",
+      );
+    }
+
+    const existing = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+    if (existing) {
+      await this.client.updateConfig(existing.fivetranConnectionId, {
+        access_token: credential.accessToken,
+        api_key: credential.accessToken,
+        historical_sync_time_frame: "ALL_TIME",
+        support_connected_accounts_sync: false,
+      });
+      await this.client.updateSchedule(existing.fivetranConnectionId, {
+        syncFrequencyMinutes: 1440,
+        dailySyncTimeUtc: "08:00",
+        scheduleType: "auto",
+      }).catch(() => undefined);
+      await this.enableAllSchemasWhenReady(existing.fivetranConnectionId, { attempts: 3, delayMs: 1_500 });
+      // Unpause starts one historical job. A second force-sync cancels it
+      // ("orphaned donkey") and often fails the flush.
+      await this.resumeSingleFivetranSync(existing.fivetranConnectionId);
+      await this.dependencies.store.recordSyncState({
+        tenantId,
+        connectionId: existing.connectionId,
+        syncState: existing.lastSyncState ?? "syncing",
+        authHealth: "healthy",
+        status: "connected",
+      });
+      return response({ connectionId: existing.connectionId, fivetranConnectionId: existing.fivetranConnectionId });
+    }
+
+    const connectionId = ulid();
+    const destinationSchema = fivetranConnectionSchema(definition.schemaPrefix, connectionId);
+    const unwindDestination = async (fivetranConnectionId?: string) => {
+      if (fivetranConnectionId) {
+        await this.client.deleteConnection(fivetranConnectionId).catch(() => undefined);
+      }
+      await this.dependencies.destinations.retire({ destinationSchema, tenantId }).catch(() => undefined);
+      await this.dependencies.destinations.purge({ destinationSchema, tenantId }).catch(() => undefined);
+    };
+    await this.dependencies.destinations.bind({
+      destinationSchema,
+      tenantId,
+      connectionId,
+      writerRole: this.dependencies.config.destinationRole,
+    });
+    let created;
+    try {
+      created = await this.client.createConnection({
+        service: definition.service,
+        groupId: this.dependencies.config.groupId,
+        schema: destinationSchema,
+        config: {
+          access_token: credential.accessToken,
+          api_key: credential.accessToken,
+          historical_sync_time_frame: "ALL_TIME",
+          support_connected_accounts_sync: false,
+        },
+        runSetupTests: true,
+        // Stay paused until ALLOW_ALL has selected the official ERD. Creating
+        // unpaused with isHistoricalSync started ALL_TIME on Fivetran's default
+        // table subset, then enable-all raced the first sync.
+        paused: true,
+        // Stripe uses priority-first (last 30 days, then backward). Hourly
+        // auto-schedule orphans that multi-hour ALL_TIME extract.
+        syncFrequencyMinutes: 1440,
+        dailySyncTimeUtc: "08:00",
+        scheduleType: "auto",
+      });
+    } catch (error) {
+      await unwindDestination();
+      throw error;
+    }
+    if (created.schema !== destinationSchema) {
+      await unwindDestination(created.id);
+      throw new Error("fivetran_schema_mismatch");
+    }
+    let remote = created;
+    if (remote.status.setupState !== "connected") {
+      remote = await this.client.runSetupTests(created.id).catch(() => created);
+    }
+    if (remote.status.setupState !== "connected") {
+      const detail = summarizeSetupTests(remote.setupTests) || "Fivetran could not reach Stripe with this grant.";
+      await unwindDestination(created.id);
+      throw new Error(`fivetran_setup_incomplete:${detail}`);
+    }
+    try {
+      await this.dependencies.store.createConnected({
+        tenantId,
+        connectionId,
+        authorisedBy: userId,
+        fivetranConnectionId: created.id,
+        destinationSchema,
+        service: definition.service,
+        displayName: credential.displayName ? `${credential.displayName} (Fivetran)` : definition.displayName,
+        nativeConnectionId,
+        externalAccountReference: credential.externalAccountReference,
+      });
+    } catch (error) {
+      await unwindDestination(created.id);
+      if (error instanceof Error && error.message === "fivetran_native_already_connected") {
+        const winner = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+        if (winner) return response({ connectionId: winner.connectionId, fivetranConnectionId: winner.fivetranConnectionId });
+      }
+      throw error;
+    }
+    await this.enableAllSchemasWhenReady(created.id, { attempts: 8, delayMs: 1_500 });
+    // Created paused: unpause starts ALL_TIME. Do not also force-sync.
+    await this.client.unpause(created.id).catch(() => undefined);
     await this.dependencies.destinations.stamp({ destinationSchema, tenantId }).catch(() => undefined);
     return response({ connectionId, fivetranConnectionId: created.id });
   }
@@ -580,12 +719,98 @@ export class FivetranWorkerHttpHandler {
    * source union views when the table set changed, so the Cube contract picks
    * the schema up without anyone touching SQL. Cheap when nothing changed.
    */
+  /**
+   * Fivetran's schema catalogue is often 404 until the first setup test
+   * finishes. Swallowing enable-all then meant Stripe (and Deputy) could
+   * start a historical sync with the default table set, not the full ERD.
+   * Retry until ALLOW_ALL sticks; the destination-maintenance loop is the
+   * fallback when create-time discovery is still empty.
+   */
+  /**
+   * Start exactly one Fivetran job. Unpause is enough when the connector is
+   * paused. Force-sync on an already-running historical job cancels the first
+   * extract and often fails with "Flush to pipeline queue failed".
+   */
+  private async resumeSingleFivetranSync(connectionId: string): Promise<"already_running" | "unpaused" | "synced"> {
+    const remote = await this.client.getConnection(connectionId);
+    if (remote.status.syncState === "syncing") return "already_running";
+    if (remote.paused) {
+      await this.client.unpause(connectionId);
+      // Auto schedules start a job on unpause. Manual stays scheduled until
+      // one explicit sync. Do not force-sync an auto job.
+      if (remote.scheduleType === "manual") {
+        const after = await this.client.getConnection(connectionId);
+        if (after.status.syncState === "syncing") return "unpaused";
+        await this.client.sync(connectionId);
+        return "synced";
+      }
+      return "unpaused";
+    }
+    await this.client.sync(connectionId);
+    return "synced";
+  }
+
+  private async enableAllSchemasWhenReady(
+    connectionId: string,
+    options: Readonly<{ attempts?: number; delayMs?: number }> = {},
+  ): Promise<boolean> {
+    if (!connectionId || connectionId.startsWith("pending_")) return false;
+    const attempts = options.attempts ?? 3;
+    const delayMs = options.delayMs ?? 1_500;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await this.client.enableAllSchemas(connectionId);
+        const summary = await this.client.getSchemaSummary(connectionId);
+        if (summary.loaded && summary.totalTables > 0 && summary.enabledTables >= summary.totalTables) {
+          return true;
+        }
+      } catch (error) {
+        if (attempt === attempts) {
+          console.error("Albert Fivetran enable-all schemas still not ready", {
+            connectionId,
+            message: error instanceof Error ? error.message : "unknown",
+          });
+          return false;
+        }
+      }
+      if (attempt < attempts && delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    return false;
+  }
+
   private async maintainDestination(row: Readonly<{
-    tenantId: string; connectionId: string; destinationSchema: string; service: string;
+    tenantId: string;
+    connectionId: string;
+    destinationSchema: string;
+    service: string;
+    fivetranConnectionId?: string;
   }>): Promise<void> {
     try {
-      const inventory = await this.dependencies.destinations.inventory({ destinationSchema: row.destinationSchema });
+      let inventory = await this.dependencies.destinations.inventory({ destinationSchema: row.destinationSchema });
+      // Native ERD connectors need ALLOW_ALL until tables exist in the
+      // destination. Once they have landed, skip enable-all: the call can
+      // 404/hang and would delay stamp/rebuild of a live Stripe schema.
+      if (
+        inventory.length === 0
+        && row.fivetranConnectionId
+        && (row.service === "stripe" || row.service === "deputy")
+      ) {
+        await this.enableAllSchemasWhenReady(row.fivetranConnectionId, { attempts: 1, delayMs: 0 });
+        inventory = await this.dependencies.destinations.inventory({ destinationSchema: row.destinationSchema });
+      }
       if (inventory.length === 0) return;
+      // Stamping SET NOT NULL / ADD COLUMN during a Stripe historical load
+      // races Fivetran's own schema ALTERs and fails the sync.
+      if (row.service === "stripe" && row.fivetranConnectionId) {
+        const remote = await this.client.getConnection(row.fivetranConnectionId).catch(() => null);
+        if (remote && (remote.status.syncState === "syncing" || remote.status.isHistoricalSync)) {
+          const prefix = FIVETRAN_SERVICES[row.service as FivetranService]?.schemaPrefix ?? row.service;
+          await this.dependencies.destinations.rebuildSourceViews(prefix);
+          return;
+        }
+      }
       const stamped = await this.dependencies.destinations.stamp({
         destinationSchema: row.destinationSchema, tenantId: row.tenantId,
       });
@@ -603,6 +828,24 @@ export class FivetranWorkerHttpHandler {
         message: error instanceof Error ? error.message : "unknown",
       });
     }
+  }
+
+  /**
+   * Stripe (and any other API-authorised Fivetran service) has no token-broker
+   * hook. Without this, official union views stay stubs until someone leaves
+   * the Connections tile open. Walk every live row and stamp/rebuild cheaply.
+   */
+  async maintainConnectedDestinations(signal?: AbortSignal): Promise<number> {
+    let maintained = 0;
+    for (const service of FIVETRAN_SERVICE_IDS) {
+      const rows = await this.dependencies.store.listConnectedByService({ service });
+      for (const row of rows) {
+        if (signal?.aborted) return maintained;
+        await this.maintainDestination(row);
+        maintained += 1;
+      }
+    }
+    return maintained;
   }
 
   /**
@@ -733,7 +976,7 @@ export class FivetranWorkerHttpHandler {
       throw new Error(`fivetran_setup_incomplete:${detail}`);
     }
     await this.client.unpause(remote.id);
-    await this.client.enableAllSchemas(remote.id).catch(() => undefined);
+    await this.enableAllSchemasWhenReady(remote.id, { attempts: 3, delayMs: 1_500 });
     try {
       await this.client.resync(remote.id);
     } catch {
@@ -770,7 +1013,7 @@ export class FivetranWorkerHttpHandler {
       actorUserId: requiredString(input, "userId", 36),
     });
     if (connection.status === "disconnected") throw new Error("fivetran_connection_not_found");
-    await this.client.sync(connection.fivetranConnectionId);
+    await this.resumeSingleFivetranSync(connection.fivetranConnectionId);
     await this.dependencies.store.recordSyncState({
       tenantId: connection.tenantId,
       connectionId: connection.connectionId,

@@ -14,6 +14,7 @@ export const answerArtifactMeteringSchema = z
       "claude-haiku-4-5-20251001",
       "claude-opus-5",
       "claude-sonnet-5",
+      "gemini-3.7-flash",
     ]),
     fastMode: z.boolean(),
     requests: z.number().int().nonnegative(),

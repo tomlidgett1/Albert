@@ -259,7 +259,9 @@ lines.on("line", (line) => {
     return;
   }
   if (message.id === 64 && message.result) {
-    finish("Net sales were $999.");
+    // The first candidate both embeds a code-drawn chart and states an
+    // ungrounded figure; the host must send it back for repair, never render it.
+    finish("\\u0060\\u0060\\u0060mermaid\\nxychart-beta\\n  line [100]\\n\\u0060\\u0060\\u0060\\nNet sales were $999.");
   }
 });
 `;
@@ -375,9 +377,15 @@ test("isolated Codex runtime reaches the existing Cube semantic layer and return
     assert.equal(result.durationMs, 24);
     assert.equal(authorization, token);
     assert.deepEqual(events.map((event) => event.type), [
-      "progress", "plan", "progress", "query", "table", "plan", "narrative",
-      "table", "chart", "progress", "plan", "validation", "answer",
+      "progress", "plan", "narrative", "progress", "query", "table", "plan", "narrative",
+      "table", "chart", "progress", "plan", "validation", "table", "answer",
     ]);
+    // Clean commentary now streams through the truth gate as the owner's
+    // analytical journey; leaky commentary stays suppressed below.
+    assert.equal(events[2]?.text, "I found the sales view and am checking the governed total.");
+    // Presented tables are re-emitted for the answer surface, which renders
+    // only presentation:"answer" tables beside the reply.
+    assert.equal((events.at(-2) as { presentation?: string }).presentation, "answer");
     assert.deepEqual((events[1]?.steps as Array<{ label: string; status: string }>).map((step) => step.label), [
       "Find the governed sales view",
       "Query the supported sales measure",
@@ -386,19 +394,19 @@ test("isolated Codex runtime reaches the existing Cube semantic layer and return
     assert.deepEqual((events[1]?.steps as Array<{ status: string }>).map((step) => step.status), [
       "active", "pending", "pending",
     ]);
-    assert.equal(events[6]?.text, "Net sales were $100.00.");
-    assert.equal(events.filter((event) => event.type === "narrative").length, 1);
-    assert.doesNotMatch(JSON.stringify(events), /mapping the question|checking their definitions|checking the governed total/iu);
+    assert.equal(events[7]?.text, "Net sales were $100.00.");
+    assert.equal(events.filter((event) => event.type === "narrative").length, 2);
+    assert.doesNotMatch(JSON.stringify(events), /mapping the question|checking their definitions/iu);
     assert.doesNotMatch(JSON.stringify(events), /draft total/u);
     assert.doesNotMatch(JSON.stringify(events), /structured candidate/u);
     assert.doesNotMatch(JSON.stringify(events), /\$999/u);
-    assert.equal(events[8]?.chartType, "bar");
+    assert.equal(events[9]?.chartType, "bar");
     assert.equal(
-      (events[8]?.flint as { chart_spec?: { chartType?: string } })?.chart_spec?.chartType,
+      (events[9]?.flint as { chart_spec?: { chartType?: string } })?.chart_spec?.chartType,
       "Bar Chart",
     );
-    assert.equal(events[8]?.dataRef, events[7]?.resultId);
-    assert.match(String(events[9]?.label), /repairing/u);
+    assert.equal(events[9]?.dataRef, events[8]?.resultId);
+    assert.match(String(events[10]?.label), /repairing/u);
     const planEvents = events.filter((event) => event.type === "plan");
     assert.equal(planEvents.length, 3);
     assert.deepEqual((planEvents.at(-1)?.steps as Array<{ status: string }>).map((step) => step.status), [
@@ -836,7 +844,7 @@ lines.on("line", (line) => {
     });
     assert.equal(result.queriesExecuted, 0);
     assert.equal(cubeLoads, 0);
-    assert.deepEqual(events.map((event) => event.type), ["progress", "table", "validation", "answer"]);
+    assert.deepEqual(events.map((event) => event.type), ["progress", "table", "validation", "table", "answer"]);
     assert.match(String(events.at(-1)?.text), /\$100\.00/u);
     assert.equal(events[1]?.resultId, priorResultId);
   } finally {
@@ -1173,4 +1181,180 @@ test("Codex formats governed figures for an owner instead of exposing raw Cube p
   assert.match(inferredUnits, /\$136,233\.12/u);
   assert.match(inferredUnits, /\$142\.80/u);
   assert.match(inferredUnits, /58\.61%/u);
+
+  // Ordered-list markers number the presentation, not the business: even when
+  // a currency cell happens to equal the marker, "1." must never render as
+  // "$1.00." (it did, on a goal-seek recommendations list). A dangling empty
+  // list item is a composition slip and is dropped.
+  const withMarkerCollision: CodexEvidenceResult = {
+    ...result,
+    columns: [{ key: "count", label: "Shifts", type: "currency", currency: "AUD" }],
+    rows: [{ count: 1 }],
+  };
+  const listSafe = formatCodexAnswerText(
+    "**Plan.**\n\n1. **Labour:** cut overlap.\n2. **Subscriptions:** audit.\n4.\n",
+    [withMarkerCollision],
+  );
+  assert.match(listSafe, /^1\. \*\*Labour/mu);
+  assert.doesNotMatch(listSafe, /\$1\.00\./u);
+  assert.doesNotMatch(listSafe, /^4\.\s*$/mu);
+
+  // Bare integers are counts, dates and durations, not cell pastes: "12
+  // months" must not become "$12.00 months" (and "31 July" not "$31.00 July")
+  // just because a governed cell holds that many dollars or percent.
+  const withIntegerCollision: CodexEvidenceResult = {
+    ...result,
+    columns: [
+      { key: "amt", label: "Amount", type: "currency", currency: "AUD" },
+      { key: "pct", label: "Share", type: "percent" },
+    ],
+    rows: [{ amt: 12, pct: 31 }],
+  };
+  const integerSafe = formatCodexAnswerText(
+    "Across the last 12 months, ending 31 July 2026.",
+    [withIntegerCollision],
+  );
+  assert.equal(integerSafe, "Across the last 12 months, ending 31 July 2026.");
+});
+
+test("answer provenance takes its window from this turn's evidence, not replayed prior results", async () => {
+  const { answerProvenance } = await import("../../packages/albert-codex/src/semantic-runtime.ts");
+  const base = {
+    topic: "fixture",
+    view: "sales_analytics",
+    connector: "lightspeed",
+    query: {},
+    queryYaml: "fixture",
+    columns: [{ key: "sales_analytics.gross_takings", label: "Gross takings", type: "currency" as const, currency: "AUD" }],
+    rows: [{ "sales_analytics.gross_takings": 1 }],
+    executionMs: 1,
+    rowCount: 1,
+  };
+  const provenanceFor = (label: string) => ({
+    sources: [{ connector: "lightspeed", label: "Cube · lightspeed", dataThrough: "2026-08-20" }],
+    timeRange: { label, start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+    definitions: [],
+    semanticBundleHash: "fixture",
+    identityGraph: { version: 0, hash: "fixture" },
+  });
+  const prior: CodexEvidenceResult = {
+    ...base,
+    resultId: "01J00000000000000000000301",
+    provenance: provenanceFor("2026-08-17 to 2026-08-24"),
+    priorTurnsAgo: 1,
+  };
+  const current: CodexEvidenceResult = {
+    ...base,
+    resultId: "01J00000000000000000000302",
+    provenance: provenanceFor("2026-06-15 to 2026-08-24"),
+  };
+  const provenance = answerProvenance([prior, current], "Australia/Melbourne");
+  assert.equal(provenance.timeRange.label, "2026-06-15 to 2026-08-24");
+  // With only prior evidence, its window is still better than nothing.
+  assert.equal(answerProvenance([prior], "Australia/Melbourne").timeRange.label, "2026-08-17 to 2026-08-24");
+});
+
+test("the bold lead keeps the finding but loses any literal label prefix", async () => {
+  const { formatCodexAnswerText } = await import("../../packages/albert-codex/src/semantic-runtime.ts");
+  assert.equal(
+    formatCodexAnswerText("**Bottom line: the last 10 weeks delivered strong results.**\nDetail.", []),
+    "**The last 10 weeks delivered strong results.**\nDetail.",
+  );
+  assert.equal(
+    formatCodexAnswerText("**Bottom line — takings fell.**", []),
+    "**Takings fell.**",
+  );
+  assert.equal(
+    formatCodexAnswerText("**Summary: margins held.**", []),
+    "**Margins held.**",
+  );
+  // A lead that is already just the finding is untouched.
+  assert.equal(
+    formatCodexAnswerText("**Takings fell while margins held.**", []),
+    "**Takings fell while margins held.**",
+  );
+});
+
+test("key insight cards keep grounded figures and drop invented ones", async () => {
+  const { filterCodexKeyInsights } = await import("../../packages/albert-codex/src/semantic-runtime.ts");
+  const evidence: CodexEvidenceResult = {
+    resultId: "01J00000000000000000000401",
+    topic: "Weekly sales",
+    view: "sales_analytics",
+    connector: "lightspeed",
+    query: {},
+    queryYaml: "fixture",
+    columns: [
+      { key: "sales_analytics.completed_at.week", label: "Week", type: "datetime" },
+      { key: "sales_analytics.gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+    ],
+    rows: [
+      { "sales_analytics.completed_at.week": "2026-06-22T00:00:00.000", "sales_analytics.gross_takings": 15160.36 },
+      { "sales_analytics.completed_at.week": "2026-08-03T00:00:00.000", "sales_analytics.gross_takings": 5638.3 },
+    ],
+    provenance: {
+      sources: [{ connector: "lightspeed", label: "Cube · lightspeed", dataThrough: "2026-08-20" }],
+      timeRange: { label: "2026-06-15 to 2026-08-23", start: "2026-06-15", end: "2026-08-23", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "fixture",
+      identityGraph: { version: 0, hash: "fixture" },
+    },
+    executionMs: 1,
+    rowCount: 2,
+  };
+  const filtered = filterCodexKeyInsights([
+    { value: "$15,160.36", label: "Peak week", detail: "w/c 22 June", sentiment: "positive" },
+    { value: "$5,638.30", label: "Trough week", detail: "w/c 3 August", sentiment: "negative" },
+    { value: "-62%", label: "Peak to trough", detail: "", sentiment: "negative" },
+    { value: "Trending down", label: "Direction", detail: "since late July", sentiment: "negative" },
+  ], [evidence]);
+  // The invented -62% never appeared in a cell; the number-free state card needs none.
+  assert.deepEqual(filtered.map((insight) => insight.value), ["$15,160.36", "$5,638.30", "Trending down"]);
+  assert.equal(filtered[0]?.sentiment, "positive");
+  assert.equal(filtered[2]?.detail, "since late July");
+  // Duplicates collapse; sentiment defaults to neutral.
+  const deduped = filterCodexKeyInsights([
+    { value: "$5,638.30", label: "Trough week" },
+    { value: "$5,638.30", label: "Trough week" },
+  ], [evidence]);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0]?.sentiment, "neutral");
+});
+
+test("the commentary truth gate forwards clean narration and suppresses leaks", async () => {
+  const { gatedCodexCommentary } = await import("../../packages/albert-codex/src/semantic-runtime.ts");
+  const evidence: CodexEvidenceResult = {
+    resultId: "01J00000000000000000000501",
+    topic: "Weekly sales",
+    view: "sales_analytics",
+    connector: "lightspeed",
+    query: {},
+    queryYaml: "fixture",
+    columns: [{ key: "sales_analytics.gross_takings", label: "Gross takings", type: "currency", currency: "AUD" }],
+    rows: [{ "sales_analytics.gross_takings": 15160.36 }],
+    provenance: {
+      sources: [{ connector: "lightspeed", label: "Cube · lightspeed", dataThrough: "2026-08-20" }],
+      timeRange: { label: "last 10 weeks", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+      definitions: [],
+      semanticBundleHash: "fixture",
+      identityGraph: { version: 0, hash: "fixture" },
+    },
+    executionMs: 1,
+    rowCount: 1,
+  };
+  // Plain narration with no figures flows through.
+  assert.equal(
+    gatedCodexCommentary("The late-June week looks unusually strong — checking whether refunds explain it.", [evidence]),
+    "The late-June week looks unusually strong — checking whether refunds explain it.",
+  );
+  // A figure that grounds against a retrieved cell is allowed.
+  assert.equal(
+    gatedCodexCommentary("Peak week takings reached $15,160.36 — comparing it with the rest.", [evidence]),
+    "Peak week takings reached $15,160.36 — comparing it with the rest.",
+  );
+  // An invented figure, internal mechanics, and JSON all stay suppressed.
+  assert.equal(gatedCodexCommentary("Sales were about $99,999 so far.", [evidence]), null);
+  assert.equal(gatedCodexCommentary("The draft total needs one more claim ref.", [evidence]), null);
+  assert.equal(gatedCodexCommentary('{"state":"Exploratory","answer":"nope"}', [evidence]), null);
+  assert.equal(gatedCodexCommentary("ok", [evidence]), null);
 });

@@ -1,6 +1,7 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import styles from "../dash.module.css";
 
 export type ConversationRuntimeTab = "albert" | "codex" | "compare";
@@ -15,73 +16,137 @@ export function ConversationRuntimeTabs(props: Readonly<{
   value: ConversationRuntimeTab;
   onChange: (value: ConversationRuntimeTab) => void;
 }>): React.ReactNode {
+  const reduceMotion = useReducedMotion() === true;
+  const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const buttonsRef = useRef(new Map<ConversationRuntimeTab, HTMLButtonElement>());
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef(new Map<ConversationRuntimeTab, HTMLButtonElement>());
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === props.value) ?? options[0];
 
-  useLayoutEffect(() => {
-    const update = () => {
-      const root = rootRef.current;
-      const button = buttonsRef.current.get(props.value);
-      if (!root || !button) return;
-      const rootBox = root.getBoundingClientRect();
-      const buttonBox = button.getBoundingClientRect();
-      setIndicator({ left: buttonBox.left - rootBox.left, width: buttonBox.width });
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
     };
-    update();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-    if (rootRef.current) observer?.observe(rootRef.current);
-    window.addEventListener("resize", update);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", update);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
     };
-  }, [props.value]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      itemRefs.current.get(props.value)?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, props.value]);
+
+  const moveFocus = (direction: 1 | -1) => {
+    const currentIndex = options.findIndex((option) => (
+      itemRefs.current.get(option.value) === document.activeElement
+    ));
+    const from = currentIndex >= 0 ? currentIndex : options.findIndex((option) => option.value === props.value);
+    const next = options[(from + direction + options.length) % options.length]!.value;
+    itemRefs.current.get(next)?.focus();
+  };
 
   return (
-    <div
-      ref={rootRef}
-      className={styles.chatRuntimeTabs}
-      role="tablist"
-      aria-label="Analysis runtime"
-      onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault();
-        const currentIndex = options.findIndex((option) => option.value === props.value);
-        const direction = event.key === "ArrowRight" ? 1 : -1;
-        const next = options[(currentIndex + direction + options.length) % options.length]!.value;
-        props.onChange(next);
-        window.requestAnimationFrame(() => {
-          const active = document.querySelector<HTMLButtonElement>(
-            '[role="tablist"][aria-label="Analysis runtime"] [role="tab"][aria-selected="true"]',
-          );
-          active?.focus();
-        });
-      }}
-    >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          ref={(node) => {
-            if (node) buttonsRef.current.set(option.value, node);
-            else buttonsRef.current.delete(option.value);
-          }}
-          className={`${styles.chatRuntimeTab} ${props.value === option.value ? styles.chatRuntimeTabActive : ""}`}
-          type="button"
-          role="tab"
-          aria-selected={props.value === option.value}
-          tabIndex={props.value === option.value ? 0 : -1}
-          onClick={() => props.onChange(option.value)}
+    <div className={styles.chatRuntimeMenu} ref={rootRef}>
+      <button
+        ref={triggerRef}
+        className={styles.chatRuntimeMenuTrigger}
+        type="button"
+        aria-label={`Analysis runtime: ${selected.label}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        data-testid="conversation-runtime-trigger"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selected.label}</span>
+        <svg
+          className={`${styles.chatRuntimeMenuChevron} ${open ? styles.chatRuntimeMenuChevronOpen : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          {option.label}
-          {option.value === "codex" ? <span className={styles.chatRuntimeExperimental}>Experimental</span> : null}
-        </button>
-      ))}
-      <span
-        className={styles.chatRuntimeTabIndicator}
-        aria-hidden="true"
-        style={{ left: indicator.left, width: indicator.width }}
-      />
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            id={menuId}
+            className={styles.chatRuntimeMenuPanel}
+            role="menu"
+            aria-label="Analysis runtime"
+            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.4,
+              ease: [0.04, 0.62, 0.23, 0.98],
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                moveFocus(1);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                moveFocus(-1);
+                return;
+              }
+              if (event.key === "Home") {
+                event.preventDefault();
+                itemRefs.current.get(options[0].value)?.focus();
+                return;
+              }
+              if (event.key === "End") {
+                event.preventDefault();
+                itemRefs.current.get(options[options.length - 1]!.value)?.focus();
+              }
+            }}
+          >
+            {options.map((option) => (
+              <button
+                key={option.value}
+                ref={(node) => {
+                  if (node) itemRefs.current.set(option.value, node);
+                  else itemRefs.current.delete(option.value);
+                }}
+                className={styles.chatRuntimeMenuItem}
+                type="button"
+                role="menuitemradio"
+                aria-checked={props.value === option.value}
+                onClick={() => {
+                  props.onChange(option.value);
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }}
+              >
+                <span>{option.label}</span>
+              </button>
+            ))}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

@@ -31,21 +31,11 @@ cubes:
     # log. This is the ageing anchor: Lightspeed does not link on-hand units
     # to their receipt, so "age of stock" is days since stock last came in.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_shops ORDER BY ingested_at DESC LIMIT 1
-      ),
-      iv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_items ORDER BY ingested_at DESC LIMIT 1
-      ),
-      gl AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_inventory_logs ORDER BY ingested_at DESC LIMIT 1
-      ),
-      last_in AS MATERIALIZED (
+      WITH last_in AS MATERIALIZED (
         SELECT l.tenant_id, l.item_id, l.shop_id,
                MAX(l.create_time) AS last_stock_in_at
         FROM source_lightspeed_official.ls_inventory_logs l
         WHERE NOT l.tombstone AND COALESCE(l.qoh_change, 0) > 0
-          AND l.mapping_version = (SELECT latest_pack FROM gl)
         GROUP BY 1, 2, 3
       )
       SELECT t.*,
@@ -55,12 +45,11 @@ cubes:
       FROM source_lightspeed_official.ls_item_shops t
       LEFT JOIN source_lightspeed_official.ls_items i
         ON i.tenant_id = t.tenant_id AND i.item_id = t.item_id
-        AND i.mapping_version = (SELECT latest_pack FROM iv) AND NOT i.tombstone
+        AND NOT i.tombstone
       LEFT JOIN last_in li
         ON li.tenant_id = t.tenant_id AND li.item_id = t.item_id
         AND li.shop_id = t.shop_id
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -288,12 +277,8 @@ cubes:
         Manual adjustments are automated = false. For current stock levels use
         item_shops members instead.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_inventory_logs ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_inventory_logs t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -480,12 +465,8 @@ cubes:
         "Serial numbers", "serialised stock" = this grain. A unit is sold once
         sale_line_id is set (is_sold); otherwise it is still in stock.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_serialized ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_serialized t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -590,12 +571,8 @@ cubes:
         transfer_to_id are Lightspeed location references for the source and
         destination.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_transfers ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_transfers t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: shops
@@ -725,12 +702,8 @@ cubes:
         Units and value moved between stores. A shortfall between units_sent
         and units_received flags transfer shrinkage.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_transfer_items ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_transfer_items t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: transfers
@@ -834,12 +807,8 @@ cubes:
         awaiting_contact means the stock flow finished but nobody has told the
         customer yet.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_special_orders ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_special_orders t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: customers
@@ -955,12 +924,8 @@ cubes:
         "Stocktake variance", "count discrepancies" = variance_units here
         (counted minus expected; negative = missing stock / shrinkage).
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_inventory_count_calcs ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_inventory_count_calcs t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -1037,12 +1002,8 @@ cubes:
       and when. Multiple scans of the same item roll up into
       inventory_count_calcs. Tombstoned rows are excluded at source.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_inventory_count_items ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_inventory_count_items t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -1113,12 +1074,8 @@ cubes:
         The stock corrections actually applied after a stocktake. Negative
         units_adjusted is written-off stock (shrinkage made official).
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_inventory_count_reconciles ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_inventory_count_reconciles t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items

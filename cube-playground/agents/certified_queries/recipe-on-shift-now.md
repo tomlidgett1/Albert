@@ -5,8 +5,14 @@ recipe: true
 presentation: list
 answer_hint: >
   Lead with the people whose shift timing is 'On now' (name, area, shift end); then say who is still to come today ('Upcoming') and who has finished. If nobody is 'On now', say no one is rostered on at the moment and name the next shift today. Never a chart.
+answer_template: >
+  Today's roster has **{{recipe.rows|integer}} shifts**.
 empty_answer: >
   nobody is rostered today at all, so no one is on shift right now
+follow_ups:
+  - "Who is rostered tomorrow?"
+  - "Who is on leave today?"
+  - "How many hours did staff work yesterday?"
 matches:
   - "Who's on shift right now?"
   - "Who is working right now?"

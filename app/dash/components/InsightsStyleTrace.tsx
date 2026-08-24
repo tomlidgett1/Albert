@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type {
+  AnswerKeyInsight,
   AnswerState,
   TraceChartEvent,
   TraceEvent,
@@ -122,7 +123,7 @@ type TrailModel = Readonly<{
   statusStage?: TraceProgressStage;
   /** Sticky question-contextual header theme from the analysis plan summary. */
   statusTheme?: string;
-  answer?: Readonly<{ state: AnswerState; text: string; followUps: readonly string[] }>;
+  answer?: Readonly<{ state: AnswerState; text: string; followUps: readonly string[]; keyInsights: readonly AnswerKeyInsight[] }>;
   clarification?: Readonly<{ question: string; options: readonly Readonly<{ id: string; label: string }>[] }>;
   error?: Readonly<{ message: string; recoverable: boolean }>;
   /** User or navigation stop; shown discreetly, not as a retry error. */
@@ -814,6 +815,7 @@ export function buildTrailModel(
         state: event.state,
         text: event.text,
         followUps: event.followUps,
+        keyInsights: event.keyInsights ?? [],
       };
       rememberSources(event.provenance);
       const yamlFiles = event.provenance.definitions
@@ -1749,8 +1751,8 @@ function ShimmerStatusLine({
 /**
  * Codex-style agent progress:
  * - Streaming: shimmering "Working" + live "for Xs"; current status replaces on the header line
- *   (unless the live commentary below is hosting the status shimmer, in which
- *   case the header settles to a static "Working")
+ *   (unless live commentary is on screen, in which case the header settles to
+ *   a static "Working" and the latest "Ran x queries" line carries the shimmer)
  * - Done: static "Worked" + "for Xs"
  * - Task list always collapsed by default; expand to inspect steps
  */
@@ -1764,7 +1766,7 @@ function ThinkingTrail({
   model: TrailModel;
   streaming: boolean;
   shimmer: ProgressShimmer;
-  /** False while the live commentary shows the status shimmer under its latest paragraph. */
+  /** False while live commentary is showing; the activity line hosts the shimmer. */
   headerShimmer?: boolean;
   reduceMotion?: boolean;
 }) {
@@ -1998,40 +2000,82 @@ export function summarizeActivity(steps: readonly Pick<TrailStep, "kind" | "stag
   return parts.join(" · ");
 }
 
+/**
+ * Runtime status labels are written for the trail's expanded step rows, where
+ * "Codex is composing…" reads fine; the live group line is owner-facing
+ * headline copy, so the same phrases are rewritten into plain activity.
+ */
+const LIVE_ACTIVITY_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^Albert checked the draft\b.*$/iu, "Correcting the draft"],
+  [/^(?:Codex|Albert) is composing and verifying the answer$/iu, "Writing up the answer"],
+  [/^(?:Codex|Albert) is reviewing the draft against the ask$/iu, "Checking the draft against your question"],
+  [/^(?:Codex|Albert) is tightening the answer to the ask$/iu, "Tightening the answer"],
+  [/^(?:Codex|Albert) is planning the analysis$/iu, "Planning the analysis"],
+  [/^Codex is mapping the question\b.*$/iu, "Choosing the data that answers this"],
+  [/^Codex is analysing the evidence$/iu, "Analysing the evidence"],
+];
+
+const LIVE_ACTIVITY_VERBS = /^(?:Looking|Checking|Reading|Finding|Comparing|Working|Matching|Counting|Pulling|Writing|Tightening|Correcting|Planning|Searching|Researching|Aligning|Choosing|Analysing)\b/iu;
+
+/**
+ * Live-group label: names the work in flight ("Looking up monthly sales and
+ * gross profit…", "Writing up the answer…") instead of counting it. Returns
+ * null when nothing concrete and owner-safe can be said, so the caller keeps
+ * the counted summary.
+ */
+export function liveActivityLabel(
+  steps: readonly Pick<TrailStep, "title" | "detail" | "status" | "stage" | "kind" | "governed">[],
+): string | null {
+  const running = steps.filter((step) => step.status === "running");
+  const latest = running[running.length - 1];
+  if (!latest) return null;
+  // Runtime status titles are a stable set, so they are rewritten before any
+  // softening — otherwise laymanProgressStatus can prefer a wordier detail
+  // line ("Cutting anything the question did not ask for…") over the title.
+  const rewrite = LIVE_ACTIVITY_REWRITES.find(([pattern]) => pattern.test(latest.title.trim()));
+  const purpose = (rewrite?.[1] ?? laymanProgressStatus(latest.title, latest.detail ?? ""))
+    .replace(/\.+$/u, "")
+    .trim();
+  if (!purpose || GENERIC_OWNER_THEMES.test(purpose)) return null;
+  // Internal names and member lists are audit detail, never headline copy.
+  if (TECHNICAL_COPY.test(purpose)) return null;
+  const text = (LIVE_ACTIVITY_VERBS.test(purpose)
+    ? purpose
+    : `Looking up ${purpose.charAt(0).toLowerCase()}${purpose.slice(1)}`)
+    // "Looking up Monthly sales…" reads as a title, not a sentence.
+    .replace(/^(Looking (?:up|at|through|into) )([A-Z])(?=[a-z])/u, (_match, verb: string, first: string) => `${verb}${first.toLowerCase()}`);
+  const bounded = text.length > 96 ? `${text.slice(0, 95).replace(/\s+\S*$/u, "")}` : text;
+  return `${bounded.charAt(0).toUpperCase()}${bounded.slice(1)}…`;
+}
+
 function ActivityGroup({
   steps,
-  shimmer,
-  reduceMotion,
-  tail = false,
+  live = false,
 }: {
   steps: readonly TrailStep[];
-  shimmer: ProgressShimmer;
-  reduceMotion: boolean;
   /**
-   * Only the last group hosts the status shimmer. A running group that a
-   * paragraph has already overtaken shows its label like a settled one, so
-   * there is never more than one shimmer on screen.
+   * The latest activity line keeps the live shimmer for the whole remaining
+   * turn, including quiet gaps between queries. Earlier groups stay settled.
    */
-  tail?: boolean;
+  live?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const running = steps.some((step) => step.status === "running");
-  const label = summarizeActivity(steps);
-  const showShimmer = running && tail;
+  // While work is in flight the line says what is happening; once the group
+  // settles it becomes the counted record ("Ran 3 queries · …").
+  const label = (running ? liveActivityLabel(steps) : null) ?? summarizeActivity(steps);
   return (
-    <div className={styles.activityGroup} data-running={running ? "true" : "false"}>
+    <div className={styles.activityGroup} data-running={running || live ? "true" : "false"}>
       <button
         type="button"
         className={styles.activityHeader}
         aria-expanded={open}
-        aria-label={showShimmer ? `${shimmer.line.text} ${label}` : label}
+        aria-label={label}
         onClick={() => setOpen((current) => !current)}
       >
-        {showShimmer ? (
-          <ShimmerStatusLine shimmer={shimmer} verb="Thinking" reduceMotion={reduceMotion} />
-        ) : (
-          <span className={styles.activityLabel}>{label}</span>
-        )}
+        <span className={live ? `${styles.activityLabel} ${styles.activityLabelLive}` : styles.activityLabel}>
+          {label}
+        </span>
         <span className={styles.activityChevron}><Chevron open={open} /></span>
       </button>
       <div
@@ -2091,16 +2135,14 @@ function ActivityGroup({
  * prose: they appear as a collapsible activity line under the paragraph they
  * followed, so the reader can click into what was done between findings.
  *
- * Layout: commentary → activity → commentary → activity …, with a status
- * shimmer at the bottom while the turn is still running.
+ * Layout: commentary → activity → commentary → activity …. The latest
+ * activity line keeps the live shimmer until the turn settles.
  */
 function LiveCommentary({
   model,
-  shimmer,
   reduceMotion,
 }: {
   model: TrailModel;
-  shimmer: ProgressShimmer;
   reduceMotion: boolean;
 }) {
   const stepsById = useMemo(
@@ -2111,8 +2153,7 @@ function LiveCommentary({
   if (blocks.length === 0) return null;
   const commentaryIds = blocks.filter((block) => block.kind === "commentary").map((block) => block.id);
   const latestCommentaryId = commentaryIds.at(-1);
-  const last = blocks.at(-1);
-  const tailRunning = last?.kind === "activity" && last.steps.some((step) => step.status === "running");
+  const lastActivityId = [...blocks].reverse().find((block) => block.kind === "activity")?.id;
   const itemTransition = reduceMotion ? { duration: 0 } : { duration: 0.26, ease: [0.22, 1, 0.36, 1] as const };
 
   return (
@@ -2147,18 +2188,11 @@ function LiveCommentary({
           >
             <ActivityGroup
               steps={block.steps}
-              shimmer={shimmer}
-              reduceMotion={reduceMotion}
-              tail={block.id === last?.id}
+              live={block.id === lastActivityId}
             />
           </motion.div>
         ))}
       </AnimatePresence>
-      {!tailRunning ? (
-        <div className={styles.liveCommentaryStatus} aria-hidden>
-          <ShimmerStatusLine shimmer={shimmer} verb="Thinking" reduceMotion={reduceMotion} />
-        </div>
-      ) : null}
     </motion.div>
   );
 }
@@ -2702,6 +2736,29 @@ function AnswerAuditReceipt({ reference }: { reference: TurnLineageReference }) 
   );
 }
 
+/**
+ * "Key insights" — the answer's headline stat cards. Every value was
+ * validated against governed result cells by the runtime before it reached
+ * the trace; the browser renders, never computes.
+ */
+function KeyInsightCards({ insights }: Readonly<{ insights: readonly AnswerKeyInsight[] }>) {
+  if (insights.length === 0) return null;
+  return (
+    <section className={styles.keyInsightStrip} aria-label="Key insights">
+      <p className={styles.keyInsightStripTitle}>Key insights</p>
+      <ol className={styles.keyInsightStripList} data-count={insights.length}>
+        {insights.map((insight, index) => (
+          <li className={styles.keyInsightStripItem} key={`${insight.label}:${index}`}>
+            <p className={styles.keyInsightStripLabel}>{insight.label}</p>
+            <p className={styles.keyInsightStripValue}>{insight.value}</p>
+            {insight.detail ? <p className={styles.keyInsightStripDetail}>{insight.detail}</p> : null}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 export default function InsightsStyleTrace({
   events,
   streaming = false,
@@ -2730,11 +2787,10 @@ export default function InsightsStyleTrace({
     [model.answer, model.answerTables.length],
   );
   const shimmer = useProgressShimmer(model, streaming, reduceMotion);
-  // While step summaries are on screen the status shimmer lives under the
-  // newest one; the header settles to a static "Working" so only one line moves.
-  // The initial acknowledgement is intentionally visible before the plan
-  // exists. As soon as any commentary arrives the header settles to "Working"
-  // and the live block below carries the "Thinking" shimmer.
+  // While step summaries are on screen the latest activity line ("Ran x
+  // queries") keeps the live shimmer; the header settles to a static "Working"
+  // so only one line moves. The initial acknowledgement is intentionally
+  // visible before the plan exists.
   const commentaryLive = streaming
     && (runtime === "v3" || runtime === "codex")
     && model.commentaryUpdates.length > 0;
@@ -2779,7 +2835,6 @@ export default function InsightsStyleTrace({
               <LiveCommentary
                 key="live-commentary"
                 model={model}
-                shimmer={shimmer}
                 reduceMotion={reduceMotion}
               />
             ) : null}
@@ -2838,6 +2893,7 @@ export default function InsightsStyleTrace({
               {answerStateLabels[model.answer.state]}
             </div>
           ) : null}
+          <KeyInsightCards insights={model.answer.keyInsights} />
           <AssistantMarkdown
             content={answerSections?.lead || model.answer.text}
             sources={model.sources}

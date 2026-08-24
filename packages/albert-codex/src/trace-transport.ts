@@ -34,6 +34,46 @@ function isOpenPlan(plan: PlanEventInput): boolean {
   return plan.steps.some((step) => step.status === "active" || step.status === "pending");
 }
 
+/**
+ * The durable trace contract is strictly monotonic: a plan step may never
+ * remove published evidence, regress out of a terminal status, or finish
+ * "done" with nothing behind it. The runtime is written to respect this, but
+ * one violating snapshot must degrade to a clamped update — never reject the
+ * whole turn after the analysis already succeeded.
+ */
+function clampMonotonicPlan(
+  plan: PlanEventInput,
+  previous: PlanEventInput | undefined,
+): PlanEventInput {
+  if (!previous || previous.steps.length !== plan.steps.length) return plan;
+  let activeSeen = false;
+  const steps = plan.steps.map((step, index): TracePlanStep => {
+    const before = previous.steps[index];
+    if (!before || before.id !== step.id) return step;
+    const evidenceResultIds = unique([...before.evidenceResultIds, ...step.evidenceResultIds]);
+    const terminalBefore = ["done", "blocked", "incomplete"].includes(before.status);
+    let status = terminalBefore && step.status !== before.status ? before.status : step.status;
+    let statusDetail = status === before.status ? step.statusDetail ?? before.statusDetail : step.statusDetail;
+    if (status === "done" && evidenceResultIds.length === 0) {
+      status = "incomplete";
+      statusDetail = "This check finished without a separate governed evidence result.";
+    }
+    if ((status === "blocked" || status === "incomplete") && !statusDetail?.trim()) {
+      statusDetail = "This check did not complete as a separate governed evidence step.";
+    }
+    if (status === "active") {
+      if (activeSeen) status = "pending";
+      else activeSeen = true;
+    }
+    return { ...step, status, evidenceResultIds, statusDetail };
+  });
+  return {
+    ...plan,
+    status: steps.some((step) => step.status === "blocked" || step.status === "incomplete") ? "warning" : plan.status,
+    steps,
+  };
+}
+
 function terminalPlan(
   plan: PlanEventInput,
   resultIds: readonly string[],
@@ -89,14 +129,14 @@ export function projectCodexRuntimeEvent(
     });
   }
   if (event.type === "plan") {
-    const plan = normalizePlan(event, state.resultIds);
+    const plan = clampMonotonicPlan(normalizePlan(event, state.resultIds), state.latestPlan);
     return Object.freeze({
       state: Object.freeze({ ...state, latestPlan: plan }),
       events: Object.freeze([plan]),
     });
   }
   if (event.type === "answer" && state.latestPlan && isOpenPlan(state.latestPlan)) {
-    const plan = terminalPlan(state.latestPlan, state.resultIds);
+    const plan = clampMonotonicPlan(terminalPlan(state.latestPlan, state.resultIds), state.latestPlan);
     return Object.freeze({
       state: Object.freeze({ ...state, latestPlan: plan }),
       events: Object.freeze([plan, event]),

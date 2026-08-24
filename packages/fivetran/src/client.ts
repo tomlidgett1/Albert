@@ -40,6 +40,8 @@ export type FivetranConnection = Readonly<{
   schema: string;
   groupId: string;
   paused: boolean;
+  /** Fivetran schedule. Manual does not start a job on unpause. */
+  scheduleType?: "auto" | "manual";
   status: FivetranConnectionStatus;
   setupTests: readonly FivetranSetupTest[];
   connectCardUri?: string;
@@ -119,6 +121,9 @@ function parseConnection(payload: unknown): FivetranConnection {
     schema: requiredString(data.schema, "schema"),
     groupId: requiredString(data.group_id, "group id"),
     paused: data.paused === true,
+    scheduleType: data.schedule_type === "manual" || data.schedule_type === "auto"
+      ? data.schedule_type
+      : undefined,
     status: {
       setupState,
       syncState: typeof status.sync_state === "string" ? status.sync_state : "unknown",
@@ -198,15 +203,25 @@ export class FivetranClient {
     connectCard?: Readonly<{ redirectUri: string }>;
     runSetupTests?: boolean;
     paused?: boolean;
+    /** Start a full historical sync immediately after create. */
+    isHistoricalSync?: boolean;
+    /** Minutes between scheduled syncs. Stripe historical needs 1440, not 60. */
+    syncFrequencyMinutes?: number;
+    /** "HH:00" UTC; required by Fivetran when syncFrequencyMinutes is 1440. */
+    dailySyncTimeUtc?: string;
+    scheduleType?: "auto" | "manual";
   }>): Promise<FivetranConnection> {
+    const syncFrequency = input.syncFrequencyMinutes ?? 60;
     return this.request("POST", "/v1/connections", {
       group_id: input.groupId,
       service: input.service,
       run_setup_tests: input.runSetupTests ?? false,
       paused: input.paused ?? true,
-      sync_frequency: 60,
-      schedule_type: "auto",
+      sync_frequency: syncFrequency,
+      schedule_type: input.scheduleType ?? "auto",
       destination_schema_names: "FIVETRAN_NAMING",
+      ...(syncFrequency === 1440 && input.dailySyncTimeUtc ? { daily_sync_time: input.dailySyncTimeUtc } : {}),
+      ...(input.isHistoricalSync ? { is_historical_sync: true } : {}),
       ...(input.connectCard
         ? {
           connect_card_config: {
@@ -375,9 +390,34 @@ export class FivetranClient {
     }
   }
 
+  async pause(connectionId: string): Promise<FivetranConnection> {
+    return this.request("PATCH", `/v1/connections/${encodeURIComponent(connectionId)}`, {
+      paused: true,
+    }).then(parseConnection);
+  }
+
   async unpause(connectionId: string): Promise<FivetranConnection> {
     return this.request("PATCH", `/v1/connections/${encodeURIComponent(connectionId)}`, {
       paused: false,
+    }).then(parseConnection);
+  }
+
+  /**
+   * Change schedule only. Does not pause, unpause, or start a sync.
+   * Use manual (or 1440) during a long Stripe historical so the hourly
+   * auto schedule cannot orphan the running job.
+   */
+  async updateSchedule(connectionId: string, input: Readonly<{
+    syncFrequencyMinutes: number;
+    scheduleType?: "auto" | "manual";
+    dailySyncTimeUtc?: string;
+  }>): Promise<FivetranConnection> {
+    return this.request("PATCH", `/v1/connections/${encodeURIComponent(connectionId)}`, {
+      sync_frequency: input.syncFrequencyMinutes,
+      schedule_type: input.scheduleType ?? "auto",
+      ...(input.syncFrequencyMinutes === 1440 && input.dailySyncTimeUtc
+        ? { daily_sync_time: input.dailySyncTimeUtc }
+        : {}),
     }).then(parseConnection);
   }
 

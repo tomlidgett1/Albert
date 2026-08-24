@@ -16,7 +16,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_items t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_items ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: categories
@@ -288,7 +287,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_categories t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_categories ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -347,7 +345,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_manufacturers t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_manufacturers ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -391,7 +388,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_seasons t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_seasons ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -431,7 +427,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_tags t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tags ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key
@@ -465,7 +460,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_tag_groups t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_tag_groups ORDER BY ingested_at DESC LIMIT 1)
 
     dimensions:
       - name: row_key

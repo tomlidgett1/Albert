@@ -6,6 +6,13 @@ presentation: fact
 date_parameter: sales_analytics.completed_at
 answer_hint: >
   One sentence: refund value and count for the period.
+answer_template: >
+  For {{period}}, refunds totalled **{{sales_analytics.refund_value|currency}}** across
+  **{{sales_analytics.refund_transactions|integer}}** refund transactions.
+follow_ups:
+  - "How much did we sell in the same period?"
+  - "How much GST did we collect last month?"
+  - "What share of sales have a customer attached?"
 matches:
   - "How much did we refund last month?"
   - "Refunds this year"

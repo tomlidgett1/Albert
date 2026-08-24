@@ -59,6 +59,44 @@ test("Codex native plans become stable evidence-bound task lists that tick to co
   assert.deepEqual(settled.steps[2]?.evidenceResultIds, [firstResultId, secondResultId]);
 });
 
+test("a late all-completed native snapshot never removes published evidence from a step", () => {
+  // The 2026-08-21 production failure: every result bound to step 1, then the
+  // model marks all steps completed at the end. The old reconcile donated a
+  // popped id from step 1 to step 2, shrinking step 1's published evidence and
+  // tripping the durable trace contract at the route ("removed earlier
+  // evidence"), which discarded the whole successful analysis.
+  const ids = [
+    "01J00000000000000000000201",
+    "01J00000000000000000000202",
+    "01J00000000000000000000203",
+  ];
+  let state = applyCodexNativePlan(undefined, "turn/plan/updated", nativePlan([
+    "inProgress", "pending", "pending",
+  ]));
+  assert.ok(state);
+  const published: Array<readonly (readonly string[])[]> = [state.steps.map((step) => step.evidenceResultIds)];
+  for (const resultId of ids) {
+    state = bindCodexPlanEvidence(state, resultId);
+    published.push(state.steps.map((step) => step.evidenceResultIds));
+  }
+  assert.deepEqual(state.steps[0]?.evidenceResultIds, ids);
+  const completed = applyCodexNativePlan(state, "turn/plan/updated", nativePlan([
+    "completed", "completed", "completed",
+  ]));
+  assert.ok(completed);
+  published.push(completed.steps.map((step) => step.evidenceResultIds));
+  const settled = settleCodexPlan(completed, "Qualified");
+  published.push(settled.steps.map((step) => step.evidenceResultIds));
+  // Monotonic: every published snapshot keeps every id its predecessor showed.
+  for (let index = 1; index < published.length; index += 1) {
+    published[index]!.forEach((evidence, stepIndex) => {
+      for (const resultId of published[index - 1]![stepIndex]!) {
+        assert.ok(evidence.includes(resultId), `step ${stepIndex + 1} dropped ${resultId} at snapshot ${index}`);
+      }
+    });
+  }
+});
+
 test("Codex plan parsing rejects unsafe snapshots and ignores repair-turn plan resets", () => {
   assert.equal(readCodexNativePlan("turn/plan/updated", {
     turnId: "turn_unsafe",

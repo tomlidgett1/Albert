@@ -1,0 +1,33 @@
+views:
+  - name: stripe_balance_analytics
+    title: Stripe balance analytics
+    description: >
+      Stripe Balance Transactions: gross, fee and net by type and
+      reporting_category. This is the ledger of money through the Stripe
+      account, including charges, refunds, payouts and Stripe fees.
+    meta:
+      ai_context: >
+        Use net_amount and fee_amount over created. reporting_category is the
+        finance grouping. Do not add these to charge collected_amount in one
+        query; they are a different grain.
+    cubes:
+      - join_path: stripe_balance_transactions
+        includes:
+          - tenant_id
+          - type
+          - reporting_category
+          - status
+          - currency
+          - description
+          - created
+          - available_on
+          - transaction_count
+          - gross_amount
+          - fee_amount
+          - net_amount
+      - join_path: stripe_payout_balance_links
+        prefix: true
+        includes: [link_count]
+      - join_path: stripe_payout_balance_links.stripe_payouts
+        prefix: true
+        includes: [status, arrival_date]

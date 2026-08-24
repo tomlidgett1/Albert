@@ -12,12 +12,8 @@ cubes:
         also flattened onto items (default_price / msrp); use this grain when
         the question is about other price types or comparing price types.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_prices ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_item_prices t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -77,12 +73,8 @@ cubes:
       customers can be assigned a price level. Tombstoned rows are excluded
       at source.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_price_levels ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_price_levels t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     dimensions:
       - name: row_key
@@ -130,12 +122,8 @@ cubes:
         item is the assembly; component_item_id points at the component
         product.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_components ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_item_components t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     joins:
       - name: items
@@ -189,12 +177,8 @@ cubes:
       environmental levies or assembly fees), with the calculation method and
       value. Reference list. Tombstoned rows are excluded at source.
     sql: >
-      WITH lv AS MATERIALIZED (
-        SELECT mapping_version AS latest_pack FROM source_lightspeed_official.ls_item_fees ORDER BY ingested_at DESC LIMIT 1
-      )
       SELECT t.* FROM source_lightspeed_official.ls_item_fees t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT latest_pack FROM lv)
 
     dimensions:
       - name: row_key

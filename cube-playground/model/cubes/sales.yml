@@ -22,7 +22,6 @@ cubes:
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_sales t
       WHERE NOT t.tombstone
-        AND t.mapping_version = (SELECT mapping_version FROM source_lightspeed_official.ls_sales ORDER BY ingested_at DESC LIMIT 1)
 
     joins:
       - name: customers

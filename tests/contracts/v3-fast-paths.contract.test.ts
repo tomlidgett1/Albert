@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareChartRows, resolveChartType, looksLikeTimeAxis } from "../../packages/albert-v3/src/engine/chart-layer.js";
 import { priorResultsFromTraceEvents, renderPriorResultsForPrompt, registerPriorResults, resolveTableResult } from "../../packages/albert-v3/src/engine/prior-results.js";
-import { normaliseRecipeDateRange, recipeToolInput } from "../../packages/albert-v3/src/engine/recipe-lane.js";
+import { extractRecipeDateRange, normaliseRecipeDateRange, recipeCubeQuery, recipePeriodLabel, recipeToolInput } from "../../packages/albert-v3/src/engine/recipe-lane.js";
 import { detectNativeCapability, renderNativeCapabilitiesForClassifier, resolveNativeCapability } from "../../packages/albert-v3/src/engine/native-capabilities.js";
 import { LANES, intentSchema } from "../../packages/albert-v3/src/engine/orchestrator.js";
 import { loadAgentConfig, recipesForRoute, findCertifiedQuery } from "../../packages/albert-v3/src/agent-config/loader.js";
@@ -62,6 +62,32 @@ test("chart layer: long rows pivot into wide series, sort/limit/take are determi
   assert.equal(looksLikeTimeAxis(undefined, "x.category", ["Bikes"]), false);
 });
 
+test("chart layer: cumulative transform derives running totals in date order and relabels the measure", () => {
+  const monthly = table([
+    { "p.month": "2026-03-01T00:00:00.000", "p.gp": 97762.9 },
+    { "p.month": "2026-01-01T00:00:00.000", "p.gp": 30280.46 },
+    { "p.month": "2026-02-01T00:00:00.000", "p.gp": 34706.96 },
+  ], [
+    { key: "p.month", label: "Month", type: "datetime" },
+    { key: "p.gp", label: "Gross profit", type: "currency" },
+  ]);
+  const cumulative = prepareChartRows(
+    monthly,
+    { resultId: monthly.resultId, chartType: "auto", caption: "c", xKey: "p.month", yKey: "p.gp", transform: "cumulative", sort: "y_desc" },
+    "line",
+  );
+  assert.equal(cumulative.transformed, true);
+  // Chronological order is forced even though sort=y_desc was requested.
+  assert.deepEqual(cumulative.rows.map((row) => String(row["p.month"]).slice(0, 7)), ["2026-01", "2026-02", "2026-03"]);
+  assert.deepEqual(cumulative.rows.map((row) => row["p.gp"]), [30280.46, 64987.42, 162750.32]);
+  assert.equal(cumulative.columns.find((column) => column.key === "p.gp")?.label, "Cumulative Gross profit");
+  assert.equal(cumulative.notes.some((note) => /running totals/iu.test(note)), true);
+  assert.equal(resolveChartType(
+    { resultId: monthly.resultId, chartType: "auto", caption: "c", xKey: "p.month", yKey: "p.gp", transform: "cumulative" },
+    monthly,
+  ).chartType, "line");
+});
+
 test("prior results: rebuilt from persisted trace events, rendered for the prompt, materialised on first use", async () => {
   const events = [
     { type: "query", view: "sales_analytics", queryYaml: "measures: [sales_analytics.gross_takings]" },
@@ -106,6 +132,11 @@ test("recipes: flagged certified queries convert to governed tool input with the
   const input = recipeToolInput(sales, "last week", null);
   assert.equal(input.timeDimensions?.[0]?.dateRange, "last week");
   assert.deepEqual(input.measures, ["sales_analytics.gross_takings", "sales_analytics.transactions", "sales_analytics.average_sale_value"]);
+  assert.equal(extractRecipeDateRange("Show me sales this week"), "this week");
+  assert.equal(extractRecipeDateRange("Sales on 15 August 2026"), "2026-08-15,2026-08-15");
+  assert.match(extractRecipeDateRange("How many sales last Saturday") ?? "", /^\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2}$/u);
+  assert.equal(recipePeriodLabel("in july"), "July");
+  assert.equal(recipeCubeQuery(sales, "this week", null).query.timeDimensions?.[0]?.dateRange, "this week");
   const suppliers = findCertifiedQuery("recipe-top-suppliers-by-spend", config);
   const narrowed = recipeToolInput(suppliers!, undefined, "Pon Bike");
   assert.ok(narrowed.filters?.some((f) => f.operator === "contains" && f.values?.includes("Pon Bike")));

@@ -15,6 +15,7 @@ const connectionSchema = z.object({
   connector_key: z.enum([
     "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
     "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
+    "fivetran-stripe",
   ]),
   display_name: z.string(),
   status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
@@ -53,6 +54,7 @@ const workspaceSchema = z.object({
     provider: z.enum([
       "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
       "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
+      "fivetran-stripe",
     ]),
     status: z.string(),
     discovered_account_choices: z.array(z.object({
@@ -114,6 +116,13 @@ const providerDefinitions = {
     logo: "/logos/deputy.png",
     connectDetail: "Authorise Deputy. Albert hands the grant to Fivetran and ingest starts in the background.",
   },
+  "fivetran-stripe": {
+    id: "fivetran-stripe",
+    name: "Stripe (Fivetran)",
+    description: "Full Stripe ingest through Fivetran's official schema, into a tenant-isolated native schema.",
+    logo: "/logos/stripe.svg",
+    connectDetail: "Authorise Stripe. Albert hands the grant to Fivetran and the official Stripe ERD syncs in the background.",
+  },
   square: {
     id: "square",
     name: "Square",
@@ -159,7 +168,7 @@ const providerDefinitions = {
 } as const;
 
 /** Native ingest cards superseded by Fivetran. Hidden unless a live connection remains. */
-const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set(["lightspeed", "xero", "deputy"]);
+const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set(["lightspeed", "xero", "deputy", "stripe"]);
 
 const shopifyDeletionContinuityReasons = new Set([
   "shopify_deletion_continuity_unproven",
@@ -273,6 +282,7 @@ const domainLabels: Readonly<Record<string, string>> = {
   payables: "Payables",
   receivables: "Receivables",
   workforce: "Workforce",
+  payments: "Payments",
 };
 
 const dossierLabels: Readonly<Record<string, string>> = {

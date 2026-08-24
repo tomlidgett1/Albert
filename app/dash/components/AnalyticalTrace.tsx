@@ -419,7 +419,7 @@ function ResultTable({
               <tr key={`${event.resultId}-${rowIndex}`}>
                 {event.columns.map((column) => {
                   const rawValue = row[column.key];
-                  const value = formatTraceCell(rawValue, column);
+                  const value = formatTraceCell(rawValue, column, event.rowFormats?.[rowIndex]);
                   const explainable = isExplainableTraceCell(rawValue, column);
                   return (
                     <td key={column.key} data-numeric={explainable || undefined}>

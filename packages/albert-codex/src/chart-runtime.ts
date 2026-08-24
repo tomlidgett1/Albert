@@ -203,8 +203,8 @@ export function prepareCodexChart(input: Readonly<{
     return rejected("numeric_series_dimension", "seriesKey must be a labelled dimension, not a measure.");
   }
   const caption = sanitizeTraceText(request.caption, 160);
-  if (!caption || findUngroundedNumbers(caption, source.rows).length > 0) {
-    return rejected("ungrounded_caption", "Every figure in the chart caption must come from this result; otherwise omit the figure.");
+  if (!caption) {
+    return rejected("ungrounded_caption", "Provide a short owner-facing caption naming the claim the chart supports.");
   }
 
   const sourceTimeAxis = looksLikeTimeAxis(xColumn, request.xKey, source.rows);
@@ -234,6 +234,18 @@ export function prepareCodexChart(input: Readonly<{
   }
   if (resolved === "stacked_bar" && request.purpose !== "composition") {
     return rejected("stack_requires_composition", "Stacked bars are reserved for composition or mix, not ordinary rankings.");
+  }
+  if (request.transform === "cumulative") {
+    if (seriesColumn) {
+      return rejected("cumulative_with_series", "A running total supports one measure (plus same-unit extraYKeys); drop seriesKey or chart the plain series.");
+    }
+    if (!sourceTimeAxis) {
+      return rejected("cumulative_requires_time", "A running total needs a governed time bucket on the x axis.");
+    }
+    if (resolved !== "line") {
+      resolved = "line";
+      notes.push("A running total is drawn as a line accumulated in date order.");
+    }
   }
 
   let columns: TraceTableColumn[];
@@ -363,24 +375,57 @@ export function prepareCodexChart(input: Readonly<{
       }
     }
     columns = [xColumn, yColumn, ...extraColumns];
+    if (request.transform === "cumulative") {
+      // Trusted host arithmetic over the chronologically ordered governed
+      // cells; the model never authors these totals.
+      const totals = new Map<string, number>(yKeys.map((key) => [key, 0]));
+      rows = rows.map((row) => {
+        const next: Record<string, TraceCell> = { ...row };
+        for (const key of yKeys) {
+          const value = numericValue(row[key] ?? null) ?? 0;
+          const total = Number(((totals.get(key) ?? 0) + value).toFixed(6));
+          totals.set(key, total);
+          next[key] = total;
+        }
+        return next;
+      });
+      columns = columns.map((column) => (
+        yKeys.includes(column.key) ? { ...column, label: `Cumulative ${column.label}` } : column
+      ));
+      notes.push("Values are running totals accumulated in date order from the governed cells.");
+    }
     if (yKeys.length > 1) {
-      series = yKeys.map((key) => ({ key, label: registry.get(key)?.label ?? key }));
+      series = yKeys.map((key) => ({
+        key,
+        label: columns.find((column) => column.key === key)?.label ?? registry.get(key)?.label ?? key,
+      }));
     }
   }
 
   if (!uniqueColumnKeys(columns)) {
     return rejected("duplicate_columns", "The selected chart columns are not unique.");
   }
+  // Captions are validated against the governed cells plus the host-derived
+  // chart rows, so a caption may cite a running total but never a new figure.
+  if (findUngroundedNumbers(caption, [...source.rows, ...rows]).length > 0) {
+    return rejected("ungrounded_caption", "Every figure in the chart caption must come from this result (or its host-derived chart rows); otherwise omit the figure.");
+  }
   const wireType: "bar" | "line" = resolved === "line" ? "line" : "bar";
   const stacked = resolved === "stacked_bar";
   const orientation = wireType === "bar" && !timeAxis && !stacked ? "horizontal" as const : undefined;
+  // The signature identifies the chart the owner would SEE — the plotted
+  // values, not the source resultId. Re-deriving an identical result (a second
+  // equivalent query or derived table) and charting it again is still the same
+  // chart, and shipping it twice reads as a rendering bug.
+  const plottedKeys = [chartXKey, chartYKey, ...(series?.map((item) => item.key) ?? [])];
   const signature = JSON.stringify([
-    source.resultId,
     wireType,
     stacked,
     chartXKey,
     chartYKey,
     series?.map((item) => item.key) ?? [],
+    request.transform ?? null,
+    rows.map((row) => plottedKeys.map((key) => row[key] ?? null)),
   ]);
   if (state.signatures.has(signature)) {
     return rejected("duplicate_chart", "This exact chart is already attached.");
@@ -402,7 +447,7 @@ export function prepareCodexChart(input: Readonly<{
     rows,
     timeRangeLabel: source.provenance.timeRange.label,
     timeAxis,
-    measureLabel: yColumn.label,
+    measureLabel: request.transform === "cumulative" ? `Cumulative ${yColumn.label}` : yColumn.label,
   });
   return {
     ok: true,

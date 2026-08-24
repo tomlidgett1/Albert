@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CodexFinalAnswer } from "../../packages/albert-codex/src/contracts.ts";
+import { ownerStatedGroundingValues } from "../../services/conversation/src/grounding.ts";
 import {
   buildCodexEvidenceRecoveryAnswer,
   codexClaimCandidates,
@@ -275,4 +276,112 @@ test("Codex cannot treat blank R-Series catalogue prices as exhaustive evidence"
     }],
   };
   assert.equal(codexFinalSufficiencyGap(question, priceDraft, [populatedCatalogue]), null);
+});
+
+test("Codex salvages a partially grounded answer instead of discarding everything written", () => {
+  const rankedEvidence: CodexEvidenceResult = {
+    ...evidence,
+    resultId: "01J00000000000000000000021",
+    topic: "Category ranking",
+    query: {
+      measures: ["sales_analytics.net_sales"],
+      dimensions: ["sales_analytics.category"],
+      order: { "sales_analytics.net_sales": "desc" },
+      limit: 10,
+    },
+    columns: [
+      { key: "sales_analytics.category", label: "Category", type: "string" },
+      { key: "sales_analytics.net_sales", label: "Net sales", type: "currency", currency: "AUD" },
+    ],
+    rows: [
+      { "sales_analytics.category": "Bikes", "sales_analytics.net_sales": 100 },
+      { "sales_analytics.category": "Parts", "sales_analytics.net_sales": 80 },
+    ],
+    rowCount: 2,
+  };
+  const validClaim = {
+    statement: "Bikes had the highest Net sales.",
+    assertion: "highest" as const,
+    refs: [
+      { resultId: rankedEvidence.resultId, rowIndex: 0, columnKey: "sales_analytics.net_sales" },
+      { resultId: rankedEvidence.resultId, rowIndex: 0, columnKey: "sales_analytics.category" },
+    ],
+  };
+
+  // One invented figure loses its own sentence; the proven ranking and every
+  // other grounded sentence survive, downgraded from Verified to Qualified.
+  const salvaged = validateCodexFinalAnswer({
+    state: "Verified",
+    answer: "Bikes had the highest Net sales at $100.00. Refunds were $55.00 in the same period.",
+    followUps: [],
+    presentedResultIds: [rankedEvidence.resultId],
+    claims: [validClaim],
+  }, [rankedEvidence]);
+  assert.equal(salvaged.salvaged, true);
+  assert.equal(salvaged.grounded, false);
+  assert.equal(salvaged.final.state, "Qualified");
+  assert.match(salvaged.final.answer, /Bikes had the highest Net sales at \$100\.00\./u);
+  assert.doesNotMatch(salvaged.final.answer, /55/u);
+  assert.equal(salvaged.final.claims.length, 1);
+  assert.match(salvaged.validationDetail, /removed 1 unsupported figure/u);
+
+  // An unprovable claim is dropped while proven claims keep licensing the
+  // comparative wording they support.
+  const droppedClaim = validateCodexFinalAnswer({
+    state: "Qualified",
+    answer: "Bikes had the highest Net sales at $100.00.",
+    followUps: [],
+    presentedResultIds: [rankedEvidence.resultId],
+    claims: [
+      validClaim,
+      {
+        statement: "Parts had the highest Net sales.",
+        assertion: "highest" as const,
+        refs: [{ resultId: rankedEvidence.resultId, rowIndex: 1, columnKey: "sales_analytics.net_sales" }],
+      },
+    ],
+  }, [rankedEvidence]);
+  assert.equal(droppedClaim.salvaged, true);
+  assert.equal(droppedClaim.final.state, "Qualified");
+  assert.equal(droppedClaim.final.claims.length, 1);
+  assert.match(droppedClaim.final.claims[0]?.statement ?? "", /Bikes/u);
+
+  // Nothing grounded left means nothing to salvage: fail closed as before.
+  const nothingLeft = validateCodexFinalAnswer({
+    state: "Verified",
+    answer: "Refunds were $55.00.",
+    followUps: [],
+    presentedResultIds: [rankedEvidence.resultId],
+    claims: [],
+  }, [rankedEvidence]);
+  assert.equal(nothingLeft.final.state, "Unavailable");
+  assert.equal(nothingLeft.salvaged, false);
+});
+
+// A goal question names its own yardstick ("can we save $1k a month?"). The
+// answer must be able to restate that target and compare against it — before
+// ownerStatedValues, the target was redacted as an invented figure and every
+// goal answer dodged into "the monthly target" vagueness.
+test("Codex may restate figures the owner themselves wrote in the question", () => {
+  const ownerStatedValues = ownerStatedGroundingValues("can we save 1k per month somehow?");
+  const target = draft("Net sales were $100, so the $1,000 a month target is a stretch.");
+
+  const without = validateCodexFinalAnswer(target, [evidence]);
+  assert.equal(without.final.answer.includes("$1,000"), false);
+
+  const withTarget = validateCodexFinalAnswer(target, [evidence], { ownerStatedValues });
+  assert.equal(withTarget.final.state, "Verified");
+  // The display formatter normalises the currency ("$1,000" → "$1,000.00");
+  // what matters is the target survived instead of being redacted.
+  assert.equal(withTarget.final.answer.includes("$1,000"), true);
+});
+
+test("owner-stated values parse money shorthand, percents and number words", () => {
+  assert.deepEqual([...ownerStatedGroundingValues("can we save 1k per month somehow?")].sort(), [1, 1000]);
+  assert.equal(ownerStatedGroundingValues("How could I make an extra $500 a week?").includes(500), true);
+  assert.equal(ownerStatedGroundingValues("We need to cut costs by 10%.").includes(10), true);
+  assert.equal(ownerStatedGroundingValues("keep wages under $10k a month").includes(10_000), true);
+  assert.equal(ownerStatedGroundingValues("save two grand a month").includes(2_000), true);
+  assert.deepEqual(ownerStatedGroundingValues("the grand opening"), []);
+  assert.deepEqual(ownerStatedGroundingValues("no numbers here"), []);
 });

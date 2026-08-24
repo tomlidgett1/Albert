@@ -20,6 +20,8 @@ export interface OAuthConnectorFactory {
   scopes(provider: Provider): readonly string[];
   /** Public authorize-URL client id, when the browser builds that URL itself. */
   publicClientId?(provider: Provider): string | undefined;
+  /** Optional providers (Stripe, Deputy, …) must fail closed before a session is stored. */
+  isConfigured?(provider: Provider): boolean;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -191,6 +193,9 @@ export class OAuthWorkerHttpHandler {
     const tenantId = requiredString(input, "tenantId", 26);
     const userId = requiredString(input, "userId", 36);
     const selectedProvider = provider(input);
+    if (this.dependencies.connectors.isConfigured?.(selectedProvider) === false) {
+      throw new Error(`oauth_provider_not_configured:${selectedProvider}`);
+    }
     const redirectUri = requiredString(input, "redirectUri", 1000);
     if (!this.dependencies.allowedRedirectUris.has(redirectUri)) throw new Error("oauth_redirect_not_allowed");
     const scopes = this.dependencies.connectors.scopes(selectedProvider);

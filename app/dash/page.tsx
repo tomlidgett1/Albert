@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -15,6 +15,8 @@ import {
   type AgentRunPreferences,
   type AlbertModelId,
   type ReasoningEffort,
+  type TraceAnswerEvent,
+  type TraceClarificationEvent,
   type TraceEvent,
   type TraceTableEvent,
 } from "@/packages/shared/src";
@@ -46,9 +48,11 @@ import DictationWaveform from "./components/DictationWaveform";
 import KeyInsightsPanel from "./components/KeyInsightsPanel";
 import { ModelRunControls } from "./components/ModelRunControls";
 import { ConversationRuntimeTabs, type ConversationRuntimeTab } from "./components/conversation-runtime-tabs";
+import { CollapsibleUserQuestion } from "./components/CollapsibleUserQuestion";
 import RuntimeComparisonWorkspace from "./components/runtime-comparison-workspace";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
 import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
+import SemanticMemoryWorkspace from "./components/SemanticMemoryWorkspace";
 import RawDebugger from "./components/RawDebugger";
 import {
   createRawDebugRecorder,
@@ -56,13 +60,20 @@ import {
   type RawDebugTurn,
 } from "./lib/raw-debug";
 import { useChatDictation } from "./lib/use-chat-dictation";
+import {
+  useVoiceSession,
+  type VoiceTurnObserver,
+} from "./lib/use-voice-session";
 import TenantDeletionWorkspace, {
   parseTenantDeletionReceipt,
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
+import ProactiveWorkspace from "./components/ProactiveWorkspace";
+import RecommendedAnalysis from "./components/RecommendedAnalysis";
 import MyDataWorkspace from "./components/MyDataWorkspace";
 import TestChartWorkspace from "./components/TestChartWorkspace";
+import NewTestWorkspace from "./components/NewTestWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import styles from "./dash.module.css";
@@ -100,16 +111,21 @@ type IconName =
   | "database"
   | "agents"
   | "chart"
-  | "list";
+  | "list"
+  | "radar"
+  | "voice";
 
 type ActiveItem =
   | "Chat"
+  | "Proactive"
   | "Dashboard"
   | "My Data"
   | "Test chart"
+  | "New test"
   | "Connections"
   | "Admin"
   | "BusinessContext"
+  | "SemanticMemory"
   | "Organization"
   | "Deletion";
 
@@ -120,12 +136,39 @@ const codexStarterPrompts = Object.freeze([
   "What changed most in the last 90 days, and what evidence explains it?",
   "Find one high-confidence opportunity I could test this month",
   "Challenge the assumptions I may be making about business performance",
+  "Reconcile POS cash in with Xero receipts and explain every material gap with named evidence",
+  "Prove whether margin compression is mix, discounting, cost or write-offs, not a blended average",
+  "Find SKUs that look profitable on contribution but destroy cash through inventory days",
+  "Isolate labour cost per sale-hour that is rising faster than the sales those hours produce",
+  "Identify customers who look loyal on repeat rate while cohort LTV is collapsing",
+  "Stress-test working capital if the top ten customers paid 14 days later",
+  "Separate price, volume and new-customer effects inside headline growth",
+  "Detect category or product cannibalisation hidden inside a growing total",
+  "Explain why cash moved differently from profit last quarter, with the sales or journals that caused it",
+  "Find inventory that is aged, still being reordered, and still being promoted",
+  "Rank risks by expected cash impact, not by how alarming the metric looks",
+  "Find the first assumption in my current run-rate that would break under scrutiny",
+  "Separate seasonality from a genuine structural shift in demand",
+  "Reconstruct the full economic story of the worst week and the best week",
+  "Find contradictions between Xero aged receivables and customer outstanding in sales",
+  "Detect roster hours that do not match the sales they were meant to cover",
+  "Quantify how much best-seller status is volume theatre versus economic profit",
+  "Find the weakest causal chain from staffing to conversion to collected cash",
+  "Identify the concentration risk a sceptical CFO would refuse to ignore",
+  "Show what the current numbers look like if I refuse to average away the tails",
 ]);
 
 const CODEX_MODEL_IDS = Object.freeze([
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
+] as const satisfies readonly AlbertModelId[]);
+const V3_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "grok-4.6",
+  CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies readonly AlbertModelId[]);
 const CODEX_REASONING_EFFORTS = Object.freeze([
   "low",
@@ -244,6 +287,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
           <circle cx="5" cy="18" r="1.1" fill="currentColor" stroke="none" />
         </svg>
       );
+    case "radar":
+      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.6" /><path d="M12 12l5.5-6.4" /><circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" /></svg>;
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
@@ -270,6 +315,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="m7.5 10 2.5 2-2.5 2M12.5 14h4" /></svg>;
     case "microphone":
       return <svg {...shared}><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5M9 20.5h6" /></svg>;
+    case "voice":
+      return <svg {...shared}><path d="M4 10.5v3M8 7.5v9M12 4.5v15M16 7.5v9M20 10.5v3" /></svg>;
     case "pin":
       return <svg {...shared}><path d="M12 17v5M9.5 3.5h5l1.5 6.5H18l-3.5 4v2h-5v-2L6 10h2Z" /></svg>;
     case "archive":
@@ -441,6 +488,7 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
   "fivetran-xero": "Xero (Fivetran)",
   "fivetran-lightspeed": "Lightspeed (Fivetran)",
   "fivetran-deputy": "Deputy (Fivetran)",
+  "fivetran-stripe": "Stripe (Fivetran)",
   deputy: "Deputy",
   square: "Square",
   shopify: "Shopify",
@@ -452,7 +500,7 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
 
 function isConnectableProviderId(value: string | null | undefined): value is ConnectableProviderId {
   return typeof value === "string" &&
-    ["lightspeed", "lightspeed-x", "xero", "fivetran-xero", "fivetran-lightspeed", "deputy", "fivetran-deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
+    ["lightspeed", "lightspeed-x", "xero", "fivetran-xero", "fivetran-lightspeed", "deputy", "fivetran-deputy", "fivetran-stripe", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
       .includes(value);
 }
 
@@ -506,13 +554,19 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
     case "start_failed":
       return {
         kind: "error",
-        message: `${provider} could not be started right now. Try again in a moment; if it keeps happening, the connection may not be set up for this workspace yet.`,
+        message: /stripe/i.test(provider) && /STRIPE_|oauth_provider_not_configured/u.test(detail ?? "")
+          ? "Stripe (Fivetran) needs the Stripe Connect app keys on the sync worker before Connect will open Stripe."
+          : `${provider} could not be started right now. Try again in a moment; if it keeps happening, the connection may not be set up for this workspace yet.`,
         detail,
       };
     default:
       return {
         kind: "error",
-        message: `${provider} authorization could not be completed. Try connecting again.`,
+        message: /stripe/i.test(provider) && /fivetran_stripe_live_key_required|test-mode key/u.test(detail ?? "")
+          ? "Stripe (Fivetran) needs a live Stripe account. Test-mode keys cannot land the official ERD."
+          : /stripe/i.test(provider) && /fivetran_stripe_token_missing|secret or Restricted key/u.test(detail ?? "")
+          ? "Stripe Connect did not return a key Fivetran can use. Reconnect after confirming the Connect app still issues a secret or Restricted key."
+          : `${provider} authorization could not be completed. Try connecting again.`,
         detail,
       };
   }
@@ -741,7 +795,7 @@ export default function DashPage() {
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
-  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("v3");
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("codex");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
   const [isChatResponding, setIsChatResponding] = useState(false);
@@ -755,6 +809,10 @@ export default function DashPage() {
     }
   });
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
+  const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
+  const codexPromptMenuId = useId();
+  const codexPromptMenuRef = useRef<HTMLDivElement>(null);
+  const codexPromptTriggerRef = useRef<HTMLButtonElement>(null);
   // Development inspector. Always available, including production, while the
   // product is in dogfood; it only shows what this client already received.
   const rawDebugAvailable = true;
@@ -816,6 +874,29 @@ export default function DashPage() {
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerMultiline, setComposerMultiline] = useState(false);
   const dictation = useChatDictation();
+  // Live speech mode: the realtime voice fronts the same governed codex turn
+  // the composer sends, so spoken questions land in the visible chat thread.
+  const voice = useVoiceSession({
+    runAnalysis: (question, observer) => {
+      const current = agentPreferencesRef.current;
+      void sendChatMessage(question, undefined, {
+        allowWhileResponding: true,
+        forceRuntime: "codex",
+        // A spoken wait hurts far more than a read one: voice runs the fast
+        // profile (low effort + fast mode) instead of the selector's depth,
+        // and falls back to a codex-capable model if another runtime's model
+        // is selected.
+        preferencesOverride: {
+          model: (CODEX_MODEL_IDS as readonly string[]).includes(current.model)
+            ? current.model
+            : "gpt-5.6-luna",
+          reasoningEffort: "low",
+          fastMode: true,
+        },
+        observer,
+      });
+    },
+  });
   const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
   const [mobileConnectClosing, setMobileConnectClosing] = useState(false);
   const [mobileNumber, setMobileNumber] = useState("");
@@ -855,7 +936,7 @@ export default function DashPage() {
     turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
-  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("v3");
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("codex");
   const specialistAgentIdRef = useRef<SpecialistAgentId>("general");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
@@ -915,6 +996,29 @@ export default function DashPage() {
     && !composerExpanded
     && !openingConversationId
     && !conversationSkelActive;
+  useEffect(() => {
+    if (chatComposerHero && activeChatRuntime === "codex") return;
+    setCodexPromptsOpen(false);
+  }, [activeChatRuntime, chatComposerHero]);
+  useEffect(() => {
+    if (!codexPromptsOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (codexPromptMenuRef.current?.contains(event.target as Node)) return;
+      setCodexPromptsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setCodexPromptsOpen(false);
+      codexPromptTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [codexPromptsOpen]);
   const resizeComposerTextarea = useCallback(() => {
     const textarea = chatTextareaRef.current;
     if (!textarea) return;
@@ -1008,6 +1112,28 @@ export default function DashPage() {
     () => new Set(conversationSidebarPrefs.archivedIds),
     [conversationSidebarPrefs.archivedIds],
   );
+  const [proactiveConversationIds, setProactiveConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    // Keep proactive research conversations out of sidebar history even before
+    // the Proactive tab is opened; the workspace refreshes this set afterwards.
+    let cancelled = false;
+    void fetch("/api/proactive", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setProactiveConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const pinnedConversationIds = useMemo(
     () => conversationSidebarPrefs.pinnedIds,
     [conversationSidebarPrefs.pinnedIds],
@@ -1020,12 +1146,14 @@ export default function DashPage() {
     const needle = query.trim().toLowerCase();
     return conversationSummaries.filter((conversation) => {
       if (archivedConversationIds.has(conversation.conversationId)) return false;
+      // Proactive research conversations live in the control panel, not history.
+      if (proactiveConversationIds.has(conversation.conversationId)) return false;
       if (!needle) return true;
       return conversation.title.toLowerCase().includes(needle)
         || conversation.lastMessage.toLowerCase().includes(needle)
         || conversation.status.toLowerCase().includes(needle);
     });
-  }, [archivedConversationIds, conversationSummaries, query]);
+  }, [archivedConversationIds, conversationSummaries, proactiveConversationIds, query]);
   const conversationGroups = useMemo(() => {
     const byId = new Map(
       filteredConversations.map((conversation) => [conversation.conversationId, conversation]),
@@ -1060,6 +1188,12 @@ export default function DashPage() {
     }
     return groups;
   }, [filteredConversations, pinnedConversationIdSet, pinnedConversationIds]);
+  const showRecommendedHome = chatComposerHero
+    && !isCustomerAgent
+    && conversationSummaries.some((conversation) => (
+      !archivedConversationIds.has(conversation.conversationId)
+      && !proactiveConversationIds.has(conversation.conversationId)
+    ));
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
       const match = conversationSummaries.find((item) => item.conversationId === activeConversationId);
@@ -1100,11 +1234,16 @@ export default function DashPage() {
       requestedView !== "Connections"
       && requestedView !== "MyData"
       && requestedView !== "TestChart"
+      && requestedView !== "NewTest"
+      && requestedView !== "Proactive"
       && !nextOAuthNotice
     ) return;
+    if (requestedView === "NewTest") setActiveItem("New test");
     const task = window.setTimeout(() => {
       if (requestedView === "MyData") setActiveItem("My Data");
       else if (requestedView === "TestChart") setActiveItem("Test chart");
+      else if (requestedView === "NewTest") setActiveItem("New test");
+      else if (requestedView === "Proactive") setActiveItem("Proactive");
       else if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
       setOAuthNotice(nextOAuthNotice);
     }, 0);
@@ -2176,6 +2315,12 @@ export default function DashPage() {
       conversationId?: string | null;
       priorMessageCount?: number;
       allowWhileResponding?: boolean;
+      /** Voice mode pins the governed codex pipeline regardless of the selector. */
+      forceRuntime?: "codex";
+      /** Voice mode trades analysis depth for latency with a fast profile. */
+      preferencesOverride?: AgentRunPreferences;
+      /** Voice narration listens to the turn without owning the chat UI. */
+      observer?: VoiceTurnObserver;
     }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
@@ -2228,9 +2373,11 @@ export default function DashPage() {
     let computingToken = trackedConversationId
       ? markConversationComputing(trackedConversationId)
       : null;
-    const runPreferences = agentPreferencesRef.current;
+    const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
     const runSpecialistAgentId = specialistAgentIdRef.current;
-    const runRuntime = activeChatRuntimeRef.current === "codex"
+    const runRuntime = options?.forceRuntime
+      ? options.forceRuntime
+      : activeChatRuntimeRef.current === "codex"
       ? "codex"
       : isAnthropicModel(runPreferences.model)
       ? "v3"
@@ -2321,6 +2468,8 @@ export default function DashPage() {
       specialistAgentId: runSpecialistAgentId,
     });
     const receivedEvents: TraceEvent[] = [];
+    let observerNotified = false;
+    let observerFailure: string | null = null;
     const debug = createRawDebugRecorder({
       enabled: rawDebugOnRef.current,
       id: `turn_${assistantId}`,
@@ -2602,6 +2751,7 @@ export default function DashPage() {
         receivedEvents.push(event);
         receivedEvents.sort((first, second) => first.sequence - second.sequence);
         updateAssistant({ events: [...receivedEvents] });
+        options?.observer?.onEvent(event);
       };
 
       while (true) {
@@ -2690,6 +2840,7 @@ export default function DashPage() {
         return;
       }
       const message = describeChatFailure(error, { runtime: runRuntime, phase: "start" });
+      observerFailure = message;
       const errorEvent: TraceEvent = {
         id: `trace_error_${assistantId}`,
         sequence: receivedEvents.length + 1,
@@ -2705,6 +2856,24 @@ export default function DashPage() {
           : entry
       )));
     } finally {
+      if (options?.observer && !observerNotified) {
+        observerNotified = true;
+        const answer = [...receivedEvents]
+          .reverse()
+          .find((event): event is TraceAnswerEvent => event.type === "answer");
+        const clarification = [...receivedEvents]
+          .reverse()
+          .find((event): event is TraceClarificationEvent => event.type === "clarification");
+        options.observer.onDone(
+          controller.signal.aborted
+            ? { stopped: true }
+            : clarification && (!answer || answer.state === "Clarification")
+              ? { clarification }
+              : answer
+                ? { answer }
+                : { error: observerFailure ?? "The analysis ended without an answer." },
+        );
+      }
       if (
         trackedConversationId
         && computingToken
@@ -3065,12 +3234,17 @@ export default function DashPage() {
     setEditDraft("");
   };
 
-  // New Analysis leaves specialist mode, while preserving an explicitly
-  // selected connector test runtime exactly as the existing dash did.
-  const startNewChat = () => resetChat(
-    activeChatRuntimeRef.current === "xero_mcp" ? "xero_mcp" : "v3",
-    "general",
-  );
+  // New Analysis leaves specialist mode and returns to Codex, while
+  // preserving an explicitly selected connector test runtime.
+  const startNewChat = () => {
+    if (activeChatRuntimeRef.current === "xero_mcp") {
+      resetChat("xero_mcp", "general");
+      return;
+    }
+    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    resetChat("codex", "general");
+  };
   const startCustomerChat = () => {
     resetChat("v3", "customers");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
@@ -3296,14 +3470,10 @@ export default function DashPage() {
                       }}
                     />
                   ) : (
-                    <button
-                      className={styles.chatMessageUserFace}
-                      type="button"
-                      aria-label="Edit message"
-                      onClick={() => beginEditUserMessage(message.id, message.text)}
-                    >
-                      {message.text ? <p>{message.text}</p> : null}
-                      {turnComputing ? (
+                    <CollapsibleUserQuestion
+                      text={message.text}
+                      onEdit={() => beginEditUserMessage(message.id, message.text)}
+                      orb={turnComputing ? (
                         <span className={styles.chatMessageUserOrb} aria-hidden="true">
                           <ThinkingOrb
                             className={styles.conversationItemOrb}
@@ -3316,7 +3486,7 @@ export default function DashPage() {
                           />
                         </span>
                       ) : null}
-                    </button>
+                    />
                   )}
                   {/* Identical expand method to ThinkingTrail. */}
                   <div
@@ -3349,6 +3519,7 @@ export default function DashPage() {
                             <ModelRunControls
                               value={agentPreferences}
                               onChange={setAgentPreferences}
+                              allowedModelIds={V3_MODEL_IDS}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -3534,7 +3705,7 @@ export default function DashPage() {
             <span className={styles.sidebarActionLabel}>New Analysis</span>
           </button>
           {canUseCustomerAgent ? (
-            <div className={styles.sidebarAgents} ref={agentsAreaRef}>
+            <div hidden className={styles.sidebarAgents} ref={agentsAreaRef}>
               <button
                 ref={agentsTriggerRef}
                 className={`${styles.sidebarAction} ${styles.sidebarAgentsTrigger}`}
@@ -3587,6 +3758,17 @@ export default function DashPage() {
           <button
             className={styles.sidebarAction}
             type="button"
+            aria-label="Proactive"
+            aria-current={activeItem === "Proactive" ? "page" : undefined}
+            onClick={() => setActiveItem("Proactive")}
+          >
+            <Icon name="radar" />
+            <span className={styles.sidebarActionLabel}>Proactive</span>
+          </button>
+          <button
+            hidden
+            className={styles.sidebarAction}
+            type="button"
             aria-label="Dashboard"
             aria-current={activeItem === "Dashboard" ? "page" : undefined}
             onClick={() => setActiveItem("Dashboard")}
@@ -3605,6 +3787,7 @@ export default function DashPage() {
             <span className={styles.sidebarActionLabel}>My Data</span>
           </button>
           <button
+            hidden
             className={styles.sidebarAction}
             type="button"
             aria-label="Test chart"
@@ -3613,6 +3796,16 @@ export default function DashPage() {
           >
             <Icon name="chart" />
             <span className={styles.sidebarActionLabel}>Test chart</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="New test"
+            aria-current={activeItem === "New test" ? "page" : undefined}
+            onClick={() => setActiveItem("New test")}
+          >
+            <Icon name="chat" />
+            <span className={styles.sidebarActionLabel}>New test</span>
           </button>
           <label className={`${styles.sidebarAction} ${styles.sidebarSearchAction} ${sidebarSearchOpen || query ? styles.sidebarSearchActionOpen : ""}`}>
             <Icon name="search" />
@@ -3941,6 +4134,13 @@ export default function DashPage() {
                   setAccountOpen(false);
                 }}
               ><Icon name="organization" /><span>About your business</span></button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveItem("SemanticMemory");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="settings" /><span>Albert&apos;s memory</span></button>
               {isInternalOperator ? (
                 <button
                   type="button"
@@ -4004,7 +4204,7 @@ export default function DashPage() {
         {activeItem !== "Chat" ? (
           <header className={`${styles.pageHeader} ${styles.pageHeaderSimple}`}>
             <div className={styles.pageHeaderTop}>
-              <h1 id="dash-title">{activeItem}</h1>
+              <h1 id="dash-title">{activeItem === "SemanticMemory" ? "Albert's memory" : activeItem === "BusinessContext" ? "About your business" : activeItem}</h1>
             </div>
           </header>
         ) : null}
@@ -4021,11 +4221,6 @@ export default function DashPage() {
           <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
               <div className={styles.chatTopIdentity}>
-                <ConversationRuntimeTabs
-                  value={activeChatRuntime === "codex" ? "codex" : "albert"}
-                  onChange={selectConversationRuntime}
-                />
-                <span className={styles.chatSpecialistContextDivider} aria-hidden="true" />
                 {isCustomerAgent ? (
                   <>
                     <span className={styles.chatSpecialistContext}>
@@ -4052,6 +4247,10 @@ export default function DashPage() {
                 </AnimatePresence>
               </div>
               <div className={styles.chatTopActions}>
+                <ConversationRuntimeTabs
+                  value={activeChatRuntime === "codex" ? "codex" : "albert"}
+                  onChange={selectConversationRuntime}
+                />
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatTakeawaysToggle} ${chatDetailedMode ? styles.chatTakeawaysToggleActive : ""}`}
@@ -4158,9 +4357,6 @@ export default function DashPage() {
 
             <motion.div
               className={`${styles.chatComposerStack} ${showHeroComposer ? styles.chatComposerStackHero : ""} ${chatComposerHero ? styles.chatComposerStackEmpty : ""} ${chatClarification ? styles.chatComposerStackConnected : ""}`}
-              style={{
-                overflow: "visible",
-              }}
             >
               <AnimatePresence initial={false}>
                 {chatComposerHero ? (
@@ -4179,29 +4375,64 @@ export default function DashPage() {
                       {activeChatRuntime === "xero_mcp"
                         ? "Ask Xero anything"
                         : activeChatRuntime === "codex"
-                          ? "Ask Codex about your business"
+                          ? "Ask about your business"
                         : isCustomerAgent
                           ? activeSpecialistAgent.ui.emptyStateTitle
                           : "Ask me anything"}
                     </h2>
                     {activeChatRuntime === "codex" ? (
                       <>
-                        <p className={styles.chatHeroBody}>
-                          A separate Codex harness can investigate all of Albert’s governed data. It is read-only and cannot change your source systems.
-                        </p>
-                        <div className={styles.chatStarterPrompts} aria-label="Suggested Codex investigations">
-                          {codexStarterPrompts.map((prompt) => (
-                            <button
-                              key={prompt}
-                              className={styles.chatStarterPrompt}
-                              type="button"
-                              data-codex-starter="true"
-                              onClick={() => void sendChatMessage(prompt)}
-                            >
-                              <span>{prompt}</span>
-                              <small>Codex · governed data</small>
-                            </button>
-                          ))}
+                        <div className={styles.codexPromptMenu} ref={codexPromptMenuRef}>
+                          <button
+                            ref={codexPromptTriggerRef}
+                            className={styles.codexPromptMenuTrigger}
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={codexPromptsOpen}
+                            aria-controls={codexPromptMenuId}
+                            onClick={() => setCodexPromptsOpen((current) => !current)}
+                          >
+                            <span>Suggested investigations</span>
+                            <Icon
+                              className={`${styles.codexPromptMenuChevron} ${codexPromptsOpen ? styles.codexPromptMenuChevronOpen : ""}`}
+                              name="chevronDown"
+                            />
+                          </button>
+                          <AnimatePresence>
+                            {codexPromptsOpen ? (
+                              <motion.div
+                                id={codexPromptMenuId}
+                                className={styles.codexPromptMenuPanel}
+                                role="menu"
+                                aria-label="Suggested investigations"
+                                initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+                                transition={{
+                                  duration: reduceMotion ? 0 : 0.4,
+                                  ease: [0.04, 0.62, 0.23, 0.98],
+                                }}
+                              >
+                                <div className={styles.codexPromptMenuList}>
+                                  {codexStarterPrompts.map((prompt) => (
+                                    <button
+                                      key={prompt}
+                                      className={styles.codexPromptMenuItem}
+                                      type="button"
+                                      role="menuitem"
+                                      data-codex-starter="true"
+                                      onClick={() => {
+                                        setCodexPromptsOpen(false);
+                                        void sendChatMessage(prompt);
+                                      }}
+                                    >
+                                      {prompt}
+                                    </button>
+                                  ))}
+                                </div>
+                              </motion.div>
+                            ) : null}
+                          </AnimatePresence>
                         </div>
                       </>
                     ) : isCustomerAgent ? (
@@ -4316,10 +4547,10 @@ export default function DashPage() {
               initial={false}
               animate={{
                 borderRadius: composerMultiline ? 20 : 999,
-                paddingTop: showHeroComposer ? 12 : 4,
-                paddingBottom: showHeroComposer ? 12 : 4,
-                paddingLeft: showHeroComposer ? 10 : 4,
-                paddingRight: showHeroComposer ? 10 : 4,
+                paddingTop: showHeroComposer ? 12 : 6,
+                paddingBottom: showHeroComposer ? 12 : 6,
+                paddingLeft: showHeroComposer ? 10 : 6,
+                paddingRight: showHeroComposer ? 10 : 6,
               }}
               transition={{
                 duration: reduceMotion ? 0 : 0.28,
@@ -4327,6 +4558,7 @@ export default function DashPage() {
               }}
               onSubmit={(event) => {
                 event.preventDefault();
+                if (voice.status === "connecting" || voice.status === "live") return;
                 if (dictation.status === "recording") {
                   void dictation.stopAndSend(chatDraft, setChatDraft, (text) => {
                     void sendChatMessage(text);
@@ -4346,7 +4578,24 @@ export default function DashPage() {
                 <Icon name="plus" />
               </button>
               <div className={styles.chatComposerInputRow}>
-                {dictation.status === "recording" || dictation.status === "transcribing" ? (
+                {voice.status === "connecting" || voice.status === "live" ? (
+                  <div className={styles.voiceInputRow}>
+                    <DictationWaveform
+                      volume={voice.volume}
+                      processing={voice.status === "connecting" || voice.activity === "thinking"}
+                      label={voice.status === "connecting" ? "Connecting voice" : "Voice conversation"}
+                    />
+                    <span className={styles.voiceStatusText} aria-live="polite">
+                      {voice.status === "connecting"
+                        ? "Connecting…"
+                        : voice.activity === "thinking"
+                          ? (voice.statusLine || "Working on it…")
+                          : voice.activity === "responding"
+                            ? "Speaking"
+                            : "Listening"}
+                    </span>
+                  </div>
+                ) : dictation.status === "recording" || dictation.status === "transcribing" ? (
                   <DictationWaveform
                     volume={dictation.volume}
                     processing={dictation.status === "transcribing"}
@@ -4399,7 +4648,18 @@ export default function DashPage() {
                 )}
               </div>
               <div className={styles.chatComposerTrailing}>
-                {dictation.status === "idle" && (
+                {(voice.status === "connecting" || voice.status === "live") ? (
+                  <button
+                    className={`${styles.composerIconButton} ${styles.composerIconButtonActive} ${styles.voiceButtonLive}`}
+                    type="button"
+                    aria-label="End voice conversation"
+                    title="End voice conversation"
+                    onClick={() => voice.stop()}
+                  >
+                    <Icon name="voice" />
+                  </button>
+                ) : null}
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" && (
                   activeChatRuntime === "codex" ? (
                     <ModelRunControls
                       value={agentPreferences}
@@ -4417,10 +4677,27 @@ export default function DashPage() {
                     <ModelRunControls
                       value={agentPreferences}
                       onChange={setAgentPreferences}
+                      allowedModelIds={V3_MODEL_IDS}
                     />
                   )
                 )}
-                {dictation.status === "idle" ? (
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                  <button
+                    className={styles.composerIconButton}
+                    type="button"
+                    aria-label="Talk to Albert"
+                    title="Talk to Albert"
+                    onClick={() => {
+                      if (chatMessages.length === 0) setComposerExpanded(true);
+                      if (dictation.error) dictation.clearError();
+                      voice.clearError();
+                      void voice.start();
+                    }}
+                  >
+                    <Icon name="voice" />
+                  </button>
+                ) : null}
+                {voice.status === "connecting" || voice.status === "live" ? null : dictation.status === "idle" ? (
                   <button
                     className={styles.composerIconButton}
                     type="button"
@@ -4448,7 +4725,7 @@ export default function DashPage() {
                     <Icon name="stop" />
                   </button>
                 )}
-                {dictation.status === "recording" || dictation.status === "transcribing" ? (
+                {voice.status === "connecting" || voice.status === "live" ? null : dictation.status === "recording" || dictation.status === "transcribing" ? (
                   <motion.button
                     className={styles.chatSendButton}
                     type="button"
@@ -4515,6 +4792,16 @@ export default function DashPage() {
               <p className={styles.dictationError} role="alert">
                 {dictation.error}
               </p>
+            ) : voice.error ? (
+              <p className={styles.dictationError} role="alert">
+                {voice.error}
+              </p>
+            ) : null}
+            {showRecommendedHome ? (
+              <RecommendedAnalysis
+                onAsk={(question) => void sendChatMessage(question)}
+                reduceMotion={Boolean(reduceMotion)}
+              />
             ) : null}
             </motion.div>
 
@@ -4562,6 +4849,11 @@ export default function DashPage() {
           </aside>
 
           </div>
+        ) : activeItem === "Proactive" ? (
+          <ProactiveWorkspace
+            onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}
+            onProactiveConversationIds={(ids) => setProactiveConversationIds(new Set(ids))}
+          />
         ) : activeItem === "Dashboard" ? (
           <DashboardWorkspace onOpenSource={(conversationId) => void openSavedConversation(conversationId)} />
         ) : activeItem === "My Data" ? (
@@ -4570,6 +4862,8 @@ export default function DashPage() {
           <TestChartWorkspace
             appearance={theme === "dark" || theme === "green" ? "dark" : theme === "system" ? "system" : "light"}
           />
+        ) : activeItem === "New test" ? (
+          <NewTestWorkspace />
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}
@@ -4586,6 +4880,8 @@ export default function DashPage() {
           <AdminWorkspace />
         ) : activeItem === "BusinessContext" ? (
           <BusinessContextWorkspace />
+        ) : activeItem === "SemanticMemory" ? (
+          <SemanticMemoryWorkspace />
         ) : activeItem === "Organization" ? (
           <OrganizationWorkspace
             onOrganisationChanged={() => window.location.reload()}

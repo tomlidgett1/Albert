@@ -117,6 +117,73 @@ test("Xero tenant discovery uses the access token and never logs it", async () =
   assert.deepEqual(tenants, [{ tenantId: "tenant-1", tenantName: "Demo Org" }]);
 });
 
+test("Fivetran client can pause a connection without starting a second sync", async () => {
+  const calls: Array<Readonly<{ url: string; method: string; body: unknown }>> = [];
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      calls.push({ url, method, body });
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "running_substratum",
+          service: "stripe",
+          schema: "stripe_demo",
+          group_id: "destination_group",
+          paused: true,
+          status: { setup_state: "connected", sync_state: "paused" },
+        },
+      });
+    },
+  });
+  const paused = await client.pause("running_substratum");
+  assert.equal(paused.paused, true);
+  assert.equal(calls[0]?.method, "PATCH");
+  assert.match(String(calls[0]?.url), /\/v1\/connections\/running_substratum$/u);
+  assert.deepEqual(calls[0]?.body, { paused: true });
+});
+
+test("Fivetran client can change schedule without pausing or starting a sync", async () => {
+  const calls: Array<Readonly<{ url: string; method: string; body: unknown }>> = [];
+  const client = new FivetranClient({
+    apiKey: "key",
+    apiSecret: "secret",
+    fetcher: async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      calls.push({ url, method, body });
+      return Response.json({
+        code: "Success",
+        data: {
+          id: "running_substratum",
+          service: "stripe",
+          schema: "stripe_demo",
+          group_id: "destination_group",
+          paused: false,
+          status: { setup_state: "connected", sync_state: "syncing", is_historical_sync: true },
+        },
+      });
+    },
+  });
+  const updated = await client.updateSchedule("running_substratum", {
+    syncFrequencyMinutes: 1440,
+    dailySyncTimeUtc: "08:00",
+    scheduleType: "manual",
+  });
+  assert.equal(updated.paused, false);
+  assert.equal(updated.status.syncState, "syncing");
+  assert.deepEqual(calls[0]?.body, {
+    sync_frequency: 1440,
+    schedule_type: "manual",
+    daily_sync_time: "08:00",
+  });
+});
+
 test("Fivetran client surfaces API errors without echoing credentials", async () => {
   const client = new FivetranClient({
     apiKey: "key",

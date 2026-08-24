@@ -119,18 +119,16 @@ function reconcileNativeStatuses(state: CodexVisiblePlanState): CodexVisiblePlan
 
   // A native completed state is visible as done only after a successful table
   // exists. When several checks complete in one native snapshot, distribute
-  // already-emitted results so each completed evidence task has real support.
+  // results that no step has claimed yet so each completed evidence task has
+  // real support. Never move evidence off a step that already published it:
+  // the durable trace contract forbids a plan step removing earlier evidence,
+  // so a donor-style redistribution here would poison the whole turn at the
+  // transport layer. A completed step without its own evidence simply stays
+  // open until the terminal settle marks it truthfully.
   for (let index = 0; index < steps.length - 1; index += 1) {
     const step = steps[index]!;
     if (state.nativeStatuses[index] !== "completed" || step.evidenceResultIds.length > 0) continue;
     const resultId = unassigned.shift();
-    if (resultId) step.evidenceResultIds.push(resultId);
-  }
-  for (let index = 0; index < steps.length - 1; index += 1) {
-    const step = steps[index]!;
-    if (state.nativeStatuses[index] !== "completed" || step.evidenceResultIds.length > 0) continue;
-    const donor = steps.slice(0, -1).find((candidate) => candidate.evidenceResultIds.length > 1);
-    const resultId = donor?.evidenceResultIds.pop();
     if (resultId) step.evidenceResultIds.push(resultId);
   }
 
@@ -220,12 +218,13 @@ export function settleCodexPlan(
   const steps = state.steps.map((step): TracePlanStep => {
     if (step.kind === "synthesis") {
       if (answerState !== "Unavailable" && available.length > 0) {
-        return { ...step, status: "done", evidenceResultIds: available };
+        return { ...step, status: "done", evidenceResultIds: uniqueResultIds([...step.evidenceResultIds, ...available]) };
       }
+      // Published evidence is never removed: the durable trace contract
+      // rejects any plan step that shrinks its evidence list.
       return {
         ...step,
         status: "incomplete",
-        evidenceResultIds: [],
         statusDetail: "A fully supported synthesis was not available for this turn.",
       };
     }

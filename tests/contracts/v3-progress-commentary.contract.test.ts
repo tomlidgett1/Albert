@@ -253,8 +253,11 @@ test("v3 runtime and compact UI preserve the substantial-commentary contract", (
   assert.match(deepLane, /if \(!looksLikeFinding\(body\)\) return "";/u);
 
   assert.match(trace, /aria-live="polite"/u);
-  assert.match(trace, /streaming && runtime === "v3"/u);
+  assert.match(trace, /streaming\s*&&\s*\(runtime === "v3" \|\| runtime === "codex"\)/u);
   assert.match(trace, /Routine query\/tool events never enter here/u);
+  assert.doesNotMatch(trace, /liveCommentaryStatus/u);
+  assert.match(trace, /activityLabelLive/u);
+  assert.match(styles, /\.activityLabelLive/u);
   assert.match(trace, /nextProgressShimmerDelayMs/u);
   assert.match(trace, /pickNextProgressShimmerLine/u);
   assert.match(trace, /liveProgressShimmerLine/u);

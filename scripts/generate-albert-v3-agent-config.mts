@@ -114,6 +114,7 @@ const RECIPE_PRESENTATIONS = new Set(["fact", "list", "table", "line", "bar"]);
 const RECIPE_ANSWER_FORMAT_SET: ReadonlySet<string> = new Set(RECIPE_ANSWER_FORMATS);
 const RECIPE_PLACEHOLDER = /^\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,2})\s*\|\s*([a-z]+)\s*\}\}$/u;
 const RECIPE_PLACEHOLDER_TOKEN = /\{\{[^{}]*\}\}/gu;
+const RECIPE_ROWS_MEMBER = "recipe.rows";
 const ASSISTANT_OFFER = /^(?:i can|i'll|i will|i'd|i would|happy to|want me to|would you like(?: me)? to|shall i|let me|try:)\b/iu;
 
 function selectedQueryMembers(query: unknown): ReadonlySet<string> {
@@ -139,16 +140,26 @@ function selectedQueryMembers(query: unknown): ReadonlySet<string> {
 }
 
 /** Validates the trusted deterministic-answer DSL before it reaches the bundle. */
-export function validateRecipeAnswerTemplate(raw: unknown, query: unknown, file: string): string | undefined {
+export function validateRecipeAnswerTemplate(
+  raw: unknown,
+  query: unknown,
+  file: string,
+  dateParameter?: string,
+): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string") throw new Error(`${file} answer_template must be a string.`);
   const template = raw.trim();
   if (template.length < 1 || template.length > 2_000) {
     throw new Error(`${file} answer_template must be 1-2000 characters.`);
   }
-  const tokens = [...template.matchAll(RECIPE_PLACEHOLDER_TOKEN)].map(([token]) => token);
+  const allTokens = [...template.matchAll(RECIPE_PLACEHOLDER_TOKEN)].map(([token]) => token);
+  const periodTokens = allTokens.filter((token) => /^\{\{\s*period\s*\}\}$/u.test(token));
+  const tokens = allTokens.filter((token) => !periodTokens.includes(token));
   if (tokens.length < 1 || tokens.length > 12) {
     throw new Error(`${file} answer_template must contain 1-12 member placeholders.`);
+  }
+  if (periodTokens.length > 1 || (periodTokens.length === 1 && !dateParameter)) {
+    throw new Error(`${file} {{period}} requires exactly one recipe date_parameter.`);
   }
   const withoutTokens = template.replace(RECIPE_PLACEHOLDER_TOKEN, "");
   if (withoutTokens.includes("{{") || withoutTokens.includes("}}")) {
@@ -159,6 +170,12 @@ export function validateRecipeAnswerTemplate(raw: unknown, query: unknown, file:
     const match = token.match(RECIPE_PLACEHOLDER);
     if (!match || !RECIPE_ANSWER_FORMAT_SET.has(match[2]!)) {
       throw new Error(`${file} placeholder ${token} must be {{view.member|${RECIPE_ANSWER_FORMATS.join("|")}}}.`);
+    }
+    if (match[1] === RECIPE_ROWS_MEMBER) {
+      if (match[2] !== "integer") {
+        throw new Error(`${file} placeholder ${token} must be {{recipe.rows|integer}}.`);
+      }
+      continue;
     }
     if (!selected.has(match[1]!)) {
       throw new Error(`${file} placeholder ${token} is not an exact member selected by its Cube query.`);
@@ -213,9 +230,9 @@ for (const file of markdownFiles(path.join(agentsDir, "certified_queries"))) {
       throw new Error(`${file} date_parameter must be a fully qualified member.`);
     }
     const matches = Array.isArray(frontmatter.matches)
-      ? frontmatter.matches.map((m) => String(m).trim()).filter(Boolean).slice(0, 12)
+      ? frontmatter.matches.map((m) => String(m).trim()).filter(Boolean).slice(0, 20)
       : undefined;
-    const answerTemplate = validateRecipeAnswerTemplate(frontmatter.answer_template, query, file);
+    const answerTemplate = validateRecipeAnswerTemplate(frontmatter.answer_template, query, file, dateParameter);
     const followUps = validateRecipeFollowUps(frontmatter.follow_ups, file);
     if (followUps && !answerTemplate) {
       throw new Error(`${file} follow_ups require answer_template so they stay on the deterministic path.`);

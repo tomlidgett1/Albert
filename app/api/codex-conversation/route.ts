@@ -20,6 +20,7 @@ import {
   codexRuntimeServiceUrl,
   createCodexTraceTransportState,
   detectCodexSocialMessage,
+  matchSemanticRules,
   projectCodexRuntimeEvent,
   type CodexPriorResult,
   type CodexTraceEventInput,
@@ -58,6 +59,11 @@ import {
   routeCodexMessage,
 } from "@/services/conversation/src";
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
+import {
+  loadSemanticMemory,
+  recordSemanticRuleUse,
+  saveSemanticRule,
+} from "@/services/control-plane/src/semantic-memory-repository";
 import {
   ControlPlaneError,
   consumeAlbertRateLimit,
@@ -176,8 +182,9 @@ function publicCodexFailure(error: unknown): string {
       codex_forbidden_capability: "The Codex isolation check rejected an external capability. No business data was sent.",
       codex_runtime_unavailable: "The pinned Codex runtime is unavailable on this environment.",
       codex_semantic_unavailable: "The governed semantic layer was unavailable to Codex.",
-      codex_overloaded: "The Codex experiment is at capacity. Try again shortly.",
+      codex_overloaded: "Albert is unusually busy right now. Try again in a minute.",
       codex_cancelled: "The Codex analysis was cancelled before it finished.",
+      codex_abandoned: "This analysis was superseded before it finished. Ask the question again.",
       codex_invalid_output: "Codex rejected the analytical output contract before answering.",
       codex_turn_timeout: "The Codex analysis ran out of time before finishing.",
       replayed_request: "This Codex request was already used. Ask the question again.",
@@ -459,12 +466,14 @@ export async function POST(request: Request): Promise<Response> {
   let businessContext: string | undefined;
   let sourceFindings: string | undefined;
   let priorResults: readonly CodexPriorResult[] = [];
+  let semanticMemory: CodexServiceTurn["semanticMemory"];
   try {
-    const [history, routing, context, findings, reusableResults] = await Promise.all([
+    const [history, routing, context, findings, memoryRules, reusableResults] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch(() => undefined),
       loadBusinessContext(auth.supabase).catch(() => null),
       loadSourceFindings(auth.supabase).catch(() => undefined),
+      loadSemanticMemory(auth.supabase).catch(() => [] as const),
       loadPriorTurnResults(conversationId, auth.supabase).catch((error) => {
         logger.warn("codex.prior_results_unavailable", {
           conversationId,
@@ -480,6 +489,21 @@ export async function POST(request: Request): Promise<Response> {
     businessContext = context?.rendered.slice(0, 20_000);
     sourceFindings = boundedJson(findings, 12_000);
     priorResults = boundedCodexPriorResults(reusableResults);
+    // Learned vocabulary rules whose term appears in this question travel with
+    // the turn so the runtime interprets the owner's words the taught way.
+    const matchedRules = matchSemanticRules(parsed.message, memoryRules);
+    if (matchedRules.length > 0) {
+      semanticMemory = matchedRules
+        .filter((rule) => rule.status !== "retired")
+        .map((rule) => ({
+          term: rule.term,
+          meaning: rule.meaning,
+          ...(rule.counterMeaning ? { counterMeaning: rule.counterMeaning } : {}),
+          ...(rule.binding ? { binding: rule.binding } : {}),
+          status: rule.status as "proposed" | "confirmed",
+        }));
+      void recordSemanticRuleUse(matchedRules.map((rule) => rule.ruleId), auth.supabase).catch(() => undefined);
+    }
   } catch (error) {
     await failConversationTurn({
       conversationId,
@@ -491,11 +515,15 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError("The conversation context is unavailable.", status, correlationId);
   }
 
+  // Every analytical turn carries at least the general brief so the owner's
+  // goal and the depth-matching contract reach the runtime — and with them the
+  // independent sufficiency review — instead of only the two regex-matched
+  // question shapes.
   const analysisBrief = buildSharedAnalyticalBrief({
     message: parsed.message,
     activeConnectors,
     connectorFreshness,
-    includeGeneric: parsed.comparisonMode === true,
+    includeGeneric: true,
   });
 
   const cubeBearer = signCubeJwt({
@@ -578,6 +606,7 @@ export async function POST(request: Request): Promise<Response> {
           connectorFreshness: [...connectorFreshness],
           ...(businessContext ? { businessContext } : {}),
           ...(sourceFindings ? { sourceFindings } : {}),
+          ...(semanticMemory?.length ? { semanticMemory } : {}),
           ...(analysisBrief ? { analysisBrief } : {}),
           cubeBearer,
           model: preferences.model,
@@ -589,7 +618,24 @@ export async function POST(request: Request): Promise<Response> {
         let runtimeTraceReleased = false;
         const deliverRuntimeEvent = async (event: CodexTraceEventInput) => {
           const projected = projectCodexRuntimeEvent(traceTransportState, event);
-          for (const accepted of projected.events) await emit(accepted);
+          for (const accepted of projected.events) {
+            try {
+              await emit(accepted);
+            } catch (error) {
+              // The trace contract stays authoritative, but one malformed
+              // intermediate event must not discard a whole successful
+              // analysis. Terminal answers are the only events worth failing
+              // the turn over.
+              logger.error("codex.trace_event_rejected", {
+                conversationId,
+                turnId,
+                eventType: accepted.type,
+                ...safeErrorEvidence(error),
+                ...(localErrorDetail(error) ? { detail: localErrorDetail(error) } : {}),
+              }, correlationId);
+              if (accepted.type === "answer") throw error;
+            }
+          }
           traceTransportState = projected.state;
         };
         const emitRuntimeEvent = async (event: CodexTraceEventInput) => {
@@ -654,6 +700,39 @@ export async function POST(request: Request): Promise<Response> {
           failureCode: result.answerState === "Unavailable" ? "albert_codex_unavailable" : "albert_codex_answered",
           supabase: auth.supabase,
         });
+        // Persist vocabulary the runtime captured this turn (remember_term).
+        // An explicit owner request lands confirmed; a detected correction
+        // lands proposed, pending the owner's review under Albert's memory.
+        for (const proposal of result.memoryProposals ?? []) {
+          try {
+            const stored = await saveSemanticRule({
+              kind: "term_binding",
+              term: proposal.term,
+              meaning: proposal.meaning,
+              counterMeaning: proposal.counterMeaning ?? null,
+              binding: proposal.binding ?? null,
+              status: proposal.trigger === "owner_request" ? "confirmed" : "proposed",
+              source: "albert",
+              conversationId,
+              turnId,
+            }, auth.supabase);
+            logger.info("codex.semantic_rule_saved", {
+              tenantId: tenant.tenant_id,
+              conversationId,
+              turnId,
+              ruleId: stored.ruleId,
+              status: stored.status,
+              trigger: proposal.trigger,
+            }, correlationId);
+          } catch (memoryError) {
+            logger.warn("codex.semantic_rule_save_failed", {
+              tenantId: tenant.tenant_id,
+              conversationId,
+              turnId,
+              ...safeErrorEvidence(memoryError),
+            }, correlationId);
+          }
+        }
         logger.info("codex.turn_completed", {
           tenantId: tenant.tenant_id,
           conversationId,

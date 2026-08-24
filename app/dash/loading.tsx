@@ -82,7 +82,7 @@ export default function DashLoading() {
               className={`${styles.chatComposerStack} ${styles.chatComposerStackEmpty}`}
               aria-hidden="true"
             >
-              <p className={styles.chatHeroTitle}>Ask me anything</p>
+              <p className={styles.chatHeroTitle}>Ask about your business</p>
               <div className={`${styles.chatComposer} ${styles.chatComposerBar} ${styles.routeShellComposer}`}>
                 <span className={styles.routeShellComposerPlus} />
                 <span className={styles.routeShellComposerField} />

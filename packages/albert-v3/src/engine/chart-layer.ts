@@ -60,6 +60,9 @@ export const chartInputSchema = z.object({
   limit: modelOptional(z.number().int().min(1).max(60)).describe("Keep only N points after sorting: the first N (top-N) or, with take=last, the last N (e.g. the last 7 days)."),
   take: modelOptional(z.enum(["first", "last"])).describe("Which end of the sorted points `limit` keeps. Default first."),
   orientation: modelOptional(z.enum(["vertical", "horizontal"])).describe("Bar orientation. horizontal puts the x labels (for example names) on the vertical axis; the default for ranked category bars."),
+  transform: modelOptional(z.enum(["cumulative"])).describe(
+    "cumulative = plot running totals accumulated in date order (for example cumulative gross profit across the year). Requires a time x axis; combines with extraYKeys, not seriesKey. The host derives the totals from the governed cells.",
+  ),
 }).strict();
 
 export type ChartToolInput = z.infer<typeof chartInputSchema>;
@@ -252,8 +255,11 @@ export function prepareChartRows(table: StoredTableResult, input: ChartToolInput
     transformed = true;
   }
 
-  // Ranked bars are the default for categories; time stays chronological.
-  const sortMode = input.sort ?? (timeAxis || resolved === "line" ? "x" : "y_desc");
+  // Ranked bars are the default for categories; time stays chronological. A
+  // running total is only meaningful in date order, so cumulative forces it.
+  const sortMode = input.transform === "cumulative"
+    ? "x"
+    : input.sort ?? (timeAxis || resolved === "line" ? "x" : "y_desc");
   if (sortMode === "y_desc" || sortMode === "y_asc") {
     const primary = seriesKeys[0]!;
     // With several series, rank by the total across series so a stack or a
@@ -266,6 +272,27 @@ export function prepareChartRows(table: StoredTableResult, input: ChartToolInput
     const before = rows.map((r) => String(r[input.xKey] ?? "")).join("|");
     rows.sort((a, b) => String(a[input.xKey] ?? "").localeCompare(String(b[input.xKey] ?? "")));
     if (rows.map((r) => String(r[input.xKey] ?? "")).join("|") !== before) transformed = true;
+  }
+
+  if (input.transform === "cumulative") {
+    // Host-derived running totals over the chronologically ordered governed
+    // cells; the model never authors these figures.
+    const totals = new Map<string, number>(seriesKeys.map((key) => [key, 0]));
+    rows = rows.map((row) => {
+      const next: Record<string, TraceCell> = { ...row };
+      for (const key of seriesKeys) {
+        const value = toNumber(row[key]) ?? 0;
+        const total = Number((totals.get(key)! + value).toFixed(6));
+        totals.set(key, total);
+        next[key] = total;
+      }
+      return next;
+    });
+    columns = columns.map((column) => (
+      seriesKeys.includes(column.key) ? { ...column, label: `Cumulative ${column.label}` } : column
+    ));
+    transformed = true;
+    notes.push("Values are running totals accumulated in date order from the governed cells.");
   }
 
   const limit = input.limit ?? (resolved !== "line" && !timeAxis && rows.length > BAR_AUTO_LIMIT ? BAR_AUTO_LIMIT : undefined);
@@ -293,7 +320,7 @@ export function resolveChartType(
   const timeAxis = looksLikeTimeAxis(xColumn, input.xKey, source.slice(0, 5).map((r) => r[input.xKey] ?? null));
   const distinctX = new Set(source.map((r) => String(r[input.xKey] ?? ""))).size;
   const distinctSeries = input.seriesKey ? new Set(source.map((r) => humaniseSeriesLabel(r[input.seriesKey!] ?? null))).size : 1;
-  const chronological = (input.sort ?? "x") === "x";
+  const chronological = input.transform === "cumulative" || (input.sort ?? "x") === "x";
   if (input.chartType === "auto") {
     if (timeAxis && distinctX >= 3 && chronological) {
       if (distinctSeries > LINE_MAX_SERIES) return { chartType: "stacked_bar", note: `${distinctSeries} series over time: stacked bars instead of ${distinctSeries} tangled lines.` };
@@ -334,7 +361,7 @@ export function createMakeChartTool(): Tool<V3TurnContext> {
     name: "make_chart",
     description:
       "Attach a chart to a result. Works on results from this turn AND on results retrieved in earlier turns (see the prior-results block) — re-charting, re-sorting, top-N, coarser series or flipping orientation never needs a new query. "
-      + "chartType auto follows the result's shape: a line for a time axis (≤4 series), ranked horizontal bars for categories, stacked bars for composition. Use seriesKey to split one measure by a dimension, extraYKeys for several same-unit measures, where to keep one period or category. "
+      + "chartType auto follows the result's shape: a line for a time axis (≤4 series), ranked horizontal bars for categories, stacked bars for composition. Use seriesKey to split one measure by a dimension, extraYKeys for several same-unit measures, where to keep one period or category, transform=cumulative for a running total accumulated in date order (never compute running totals yourself). "
       + "Every chart must support a specific claim in the answer; the caption names that claim. The chart is placed with the answer automatically; do not describe it as a table.",
     parameters: chartInputSchema,
     strict: true,
@@ -350,6 +377,16 @@ export function createMakeChartTool(): Tool<V3TurnContext> {
         if (!table.numericColumnKeys.includes(yk)) return { ok: false, error: `${yk} is not a numeric column.` };
       }
       if (input.seriesKey && (input.extraYKeys?.length ?? 0) > 0) return { ok: false, error: "Use either seriesKey (pivot one measure) or extraYKeys (several measures), not both." };
+      if (input.transform === "cumulative") {
+        if (input.seriesKey) return { ok: false, error: "cumulative combines with extraYKeys, not seriesKey. Drop seriesKey or chart the plain series." };
+        const sourceRows = table.allRows ?? table.rows;
+        const cumulativeTimeAxis = looksLikeTimeAxis(
+          table.columns.find((c) => c.key === input.xKey),
+          input.xKey,
+          sourceRows.slice(0, 5).map((r) => r[input.xKey] ?? null),
+        );
+        if (!cumulativeTimeAxis) return { ok: false, error: "A running total needs a time bucket on the x axis; this x column is categorical." };
+      }
       if (table.numericColumnKeys.includes(input.xKey)) return { ok: false, error: `${input.xKey} is a measure; the x axis must be a time bucket or a dimension.` };
       if (input.seriesKey && table.numericColumnKeys.includes(input.seriesKey)) return { ok: false, error: `${input.seriesKey} is a measure; seriesKey must be a dimension (use extraYKeys for several measures).` };
       const yColumn = table.columns.find((c) => c.key === input.yKey)!;
@@ -397,6 +434,7 @@ export function createMakeChartTool(): Tool<V3TurnContext> {
         const description = [
           input.where ? `filtered ${input.where.key} = ${input.where.equals}` : null,
           input.seriesKey ? `pivoted ${input.yKey} by ${input.seriesKey}` : null,
+          input.transform === "cumulative" ? "running total accumulated in date order" : null,
           input.sort && input.sort !== "x" ? `sorted ${input.sort}` : null,
           input.limit ? `${input.take === "last" ? "last" : "first"} ${input.limit}` : null,
         ].filter(Boolean).join(", ") || "chart view";

@@ -38,12 +38,13 @@ function ashburtonRoute(): V3ToolRoute {
 // The failing production message: "Try the question again" resolved into this
 // and token-matched the X-Series refunds certified query on "time" + "series".
 const ORPHAN_RETRY = "Retry the immediately preceding data request, presenting the results as a time series with dates on the x-axis.";
+const X_SERIES_REFUNDS = "Show realised X-Series refunds and average time to return by outlet this quarter.";
 
 test("certified queries are never offered for a connector the tenant has not connected", () => {
-  const unscoped = matchCertifiedQueries(ORPHAN_RETRY, config);
+  const unscoped = matchCertifiedQueries(X_SERIES_REFUNDS, config);
   assert.ok(
     unscoped.some((query) => query.name === "lightspeed-x-refunds"),
-    "fixture assumption: the unscoped matcher still surfaces the X-Series refunds query for this wording",
+    "fixture assumption: the unscoped matcher surfaces the X-Series refunds query for its own wording",
   );
   const scoped = matchCertifiedQueries(ORPHAN_RETRY, config, 3, ["deputy", "lightspeed", "xero"]);
   assert.equal(scoped.some((query) => query.name.startsWith("lightspeed-x")), false);

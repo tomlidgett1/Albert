@@ -1,4 +1,4 @@
-import type { TraceCell, TraceTableColumn } from "@/packages/shared/src";
+import type { TraceCell, TraceRowFormat, TraceTableColumn } from "@/packages/shared/src";
 
 const exactDecimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u;
 const numericColumnTypes = new Set<TraceTableColumn["type"]>(["number", "currency", "percent"]);
@@ -86,7 +86,12 @@ export function isExplainableTraceCell(value: TraceCell, column: TraceTableColum
   return numericColumnTypes.has(column.type) && traceCellNumber(value) !== null;
 }
 
-export function formatTraceCell(value: TraceCell, column: TraceTableColumn): string {
+export function formatTraceCell(value: TraceCell, column: TraceTableColumn, rowFormat?: TraceRowFormat | null): string {
+  // A pivoted table stacks measures with different units in the same column,
+  // so the row's own format outranks the column type for its numeric cells.
+  if (rowFormat && numericColumnTypes.has(column.type)) {
+    column = { ...column, type: rowFormat.type, currency: rowFormat.currency };
+  }
   if (value === null) return "—";
   if (typeof value === "string" && column.type === "date") return formatDate(value, false);
   if (typeof value === "string" && column.type === "datetime") return formatDate(value, true);
