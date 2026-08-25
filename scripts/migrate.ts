@@ -48,6 +48,10 @@ const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
     "0169_m2_deputy_source_views_over_fivetran.sql",
     "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
   ],
+  [
+    "0176_m2_deputy_leave_local_dates_and_leave_days.sql",
+    "a8ed716ea29ca8a66da77f00ca96b0770b1708b4516f6d1194cfe406369d5080",
+  ],
 ]);
 
 const FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY = Object.freeze({

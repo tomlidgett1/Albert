@@ -92,6 +92,14 @@ test("fresh analytical bootstrap supplies checksum-pinned retired Deputy compati
   };
   assert.match(analyticalMigrationBody(deputyRepoint, true), /no predecessor pack rows/u);
   assert.equal(analyticalMigrationBody(deputyRepoint, false), deputyRepoint.body);
+
+  const deputyLeaveDays = {
+    id: "0176_m2_deputy_leave_local_dates_and_leave_days.sql",
+    checksum: "a8ed716ea29ca8a66da77f00ca96b0770b1708b4516f6d1194cfe406369d5080",
+    body: "CREATE VIEW source_deputy.dp_leave_days AS SELECT * FROM source_deputy_fivetran.employee_leave;",
+  };
+  assert.match(analyticalMigrationBody(deputyLeaveDays, true), /no predecessor pack rows/u);
+  assert.equal(analyticalMigrationBody(deputyLeaveDays, false), deputyLeaveDays.body);
 });
 
 test("fresh analytical bootstrap skips the retired XER_OFFICIAL source-view bridge", () => {
