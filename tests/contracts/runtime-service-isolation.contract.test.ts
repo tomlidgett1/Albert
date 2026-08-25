@@ -173,6 +173,8 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
   assert.match(provisioner, /REVOKE \$\{identifier\(membership\.role_name\)\} FROM \$\{login\}/);
   assert.match(provisioner, /GRANT \$\{group\} TO \$\{login\}/);
   assert.match(provisioner, /Required group \$\{group\} must not inherit or hold membership in another role/);
+  assert.match(provisioner, /group === "albert_migration_owner"[\s\S]*new Set\(\["fivetran_user"\]\)/u);
+  assert.match(provisioner, /parent\.admin_option \|\| !allowedParents\.has\(parent\.role_name\)/u);
   assert.match(provisioner, /does not have exactly one non-admin group membership/);
   assert.match(provisioner, /rolcanlogin,rolinherit,rolsuper/);
   assert.match(provisioner, /membership\.admin_option/);

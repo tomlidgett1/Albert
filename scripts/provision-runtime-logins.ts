@@ -115,7 +115,13 @@ async function assertGroup(client: Client, group: string): Promise<void> {
       WHERE member.rolname=$1`,
     [group],
   );
-  if (parents.rowCount) {
+  const allowedParents = group === "albert_migration_owner"
+    ? new Set(["fivetran_user"])
+    : new Set<string>();
+  if (
+    parents.rows.some((parent) => parent.admin_option || !allowedParents.has(parent.role_name))
+    || parents.rows.length !== allowedParents.size
+  ) {
     throw new Error(`Required group ${group} must not inherit or hold membership in another role.`);
   }
 }
