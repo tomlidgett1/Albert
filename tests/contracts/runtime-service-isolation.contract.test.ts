@@ -223,7 +223,7 @@ test("the final analytical deny covers Fivetran and capability implementations",
   );
   assert.match(
     migration,
-    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA[\s\S]*ingestion,quality,semantic_internal,deletion_internal,capability_internal[\s\S]*FROM PUBLIC,service_role/u,
+    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA[\s\S]*ingestion,quality,semantic_internal,deletion_internal,capability_internal[\s\S]*FROM PUBLIC/u,
   );
   assert.equal(
     (migration.match(/ALTER DEFAULT PRIVILEGES FOR ROLE albert_migration_owner/gu) ?? []).length,

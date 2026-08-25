@@ -189,6 +189,8 @@ async function proxyRequest(
   const body = isResponsesRequest
     ? Buffer.from(JSON.stringify(withCodexProReasoningMode(JSON.parse(rawBody.toString("utf8")))), "utf8")
     : rawBody;
+  const fetchBody: Uint8Array<ArrayBuffer> = new Uint8Array(body.byteLength);
+  fetchBody.set(body);
   if (isResponsesRequest) receipt.injectedRequests += 1;
   const abort = new AbortController();
   request.once("aborted", () => abort.abort());
@@ -198,7 +200,7 @@ async function proxyRequest(
   const upstreamResponse = await fetch(targetUrl, {
     method,
     headers: requestHeaders(request, apiKey),
-    ...(body.byteLength > 0 ? { body } : {}),
+    ...(fetchBody.byteLength > 0 ? { body: fetchBody } : {}),
     redirect: "manual",
     signal: abort.signal,
   });

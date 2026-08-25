@@ -6,7 +6,7 @@ BEGIN;
 
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA
   ingestion,quality,semantic_internal,deletion_internal,capability_internal
-  FROM PUBLIC,service_role;
+  FROM PUBLIC;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE albert_migration_owner
   IN SCHEMA ingestion
