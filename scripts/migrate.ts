@@ -37,6 +37,14 @@ const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
     "1daa4ccfdf4284c2593ad00827141449c83d67337b78a3bac27782ae733208a2",
   ],
   [
+    "0136_m2_xero_pnl_lines.sql",
+    "a94a5a0ebb8059eb3512c1fb66de0b9c35479781b942ba370d3e0fbf5df081d1",
+  ],
+  [
+    "0137_m2_xero_gst_lines.sql",
+    "471381fd878e1fab499dd5a0c81d5c8f0d6c0cf7218adc9384908ba34ae0deee",
+  ],
+  [
     "0169_m2_deputy_source_views_over_fivetran.sql",
     "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
   ],
