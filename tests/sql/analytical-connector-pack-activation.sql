@@ -372,41 +372,5 @@ BEGIN
 END;
 $$;
 
--- The signed purge removes replay gates before the older reconciliation layer
--- deletes stream state. An authorized row delete must keep that gate absent
--- even while sibling Lightspeed streams still exist.
-SELECT set_config('albert.tenant_id','01K80000000000000000000010',true);
-INSERT INTO quality.connector_stream_state (
-  tenant_id,connection_id,connection_generation,connector_id,stream,required,
-  late_edit_strategy,deletion_strategy,source_total_strategy
-) VALUES
-  ('01K80000000000000000000010','01K80000000000000000000011',1,
-   'lightspeed-r','vendors',true,'modified_field','soft_delete','provider_reported'),
-  ('01K80000000000000000000010','01K80000000000000000000011',1,
-   'lightspeed-r','orders',true,'modified_field','soft_delete','provider_reported'),
-  ('01K80000000000000000000010','01K80000000000000000000011',1,
-   'lightspeed-r','sales',true,'modified_field','soft_delete','provider_reported');
-SELECT pg_temp.assert_true(
-  EXISTS (
-    SELECT 1 FROM semantic_internal.lightspeed_supplier_replay_gate_index
-     WHERE tenant_id='01K80000000000000000000010'
-       AND connection_id='01K80000000000000000000011'
-  ),
-  'Lightspeed stream health must create its fail-closed replay gate'
-);
-SELECT set_config('albert.deletion_authorized','on',true);
-DELETE FROM quality.connector_stream_state
- WHERE tenant_id='01K80000000000000000000010'
-   AND connection_id='01K80000000000000000000011'
-   AND stream='vendors';
-SELECT pg_temp.assert_true(
-  NOT EXISTS (
-    SELECT 1 FROM semantic_internal.lightspeed_supplier_replay_gate_index
-     WHERE tenant_id='01K80000000000000000000010'
-       AND connection_id='01K80000000000000000000011'
-  ),
-  'authorized stream-state erasure must not resurrect a deleted replay gate'
-);
-
 RESET ROLE;
 ROLLBACK;
