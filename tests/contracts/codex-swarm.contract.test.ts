@@ -221,7 +221,7 @@ test("Pro synthesis uses the selected Luna model at Max without putting Pro on w
   assert.equal(result.recovery, null);
   assert.equal(request?.model, "gpt-5.6-luna");
   assert.deepEqual(request?.reasoning, { effort: "max", mode: "pro" });
-  assert.equal(request?.max_output_tokens, 48_000);
+  assert.equal(request?.max_output_tokens, 24_000);
   assert.equal((request?.text as { verbosity?: string })?.verbosity, "high");
   assert.equal(Object.hasOwn(request ?? {}, "service_tier"), false);
 });
@@ -274,7 +274,7 @@ test("an incomplete Pro synthesis recovers on Luna Max without Fast before deter
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
   assert.deepEqual(requests[1]?.reasoning, { effort: "max" });
-  assert.equal(requests[0]?.max_output_tokens, 48_000);
+  assert.equal(requests[0]?.max_output_tokens, 24_000);
   assert.equal(requests[1]?.max_output_tokens, 16_000);
   assert.equal(Object.hasOwn(requests[1] ?? {}, "service_tier"), false);
 });

@@ -17,10 +17,10 @@ import type { SwarmPeriodWindow } from "./period";
 export const SWARM_SYNTHESIS_MODEL = "gpt-5.6-terra" as const;
 export const SWARM_SYNTHESIS_REASONING_EFFORT = "medium" as const;
 export const SWARM_SYNTHESIS_TIMEOUT_MS = 90_000;
-export const SWARM_PRO_SYNTHESIS_TIMEOUT_MS = 540_000;
+export const SWARM_PRO_SYNTHESIS_TIMEOUT_MS = 360_000;
 // max_output_tokens includes hidden reasoning tokens. Pro can legitimately use
 // considerably more than the visible 8k answer budget before it emits JSON.
-export const SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS = 48_000;
+export const SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS = 24_000;
 
 export const swarmSynthesisSchema = z.object({
   headline: z.string().min(8).max(160),
@@ -256,7 +256,10 @@ export async function buildSwarmSynthesis(options: Readonly<{
       apiKey: options.apiKey,
       baseURL: options.baseUrl,
       timeout: options.proMode ? SWARM_PRO_SYNTHESIS_TIMEOUT_MS : SWARM_SYNTHESIS_TIMEOUT_MS,
-      maxRetries: 1,
+      // The explicit standard Luna recovery is the one reviewed retry for a
+      // Pro synthesis. An SDK-level Pro retry could consume the route budget
+      // before that recovery starts.
+      maxRetries: options.proMode ? 0 : 1,
     });
     const payload = {
       business: options.businessName,

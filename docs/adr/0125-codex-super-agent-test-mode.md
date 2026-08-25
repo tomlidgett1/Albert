@@ -60,10 +60,12 @@ grounds the final synthesis only in recorded findings.
    can we improve profitability?” The button remains question-driven,
    so later tests can submit a different owner question through the same
    bounded mode.
-8. **Synthesis fails over without becoming shallow.** Pro receives a 48k
+8. **Synthesis fails over without becoming shallow.** Pro receives a 24k
    output allowance because Responses counts invisible reasoning tokens inside
-   `max_output_tokens`. If Pro still returns an incomplete structured answer,
-   Albert retries once on the same Luna/Max profile with Pro and Fast both off.
+   `max_output_tokens`. Its request is limited to six minutes so a difficult
+   Pro run cannot consume the entire web-route budget. If Pro still returns an
+   incomplete structured answer, Albert retries once on the same Luna/Max
+   profile with Pro and Fast both off.
    If the provider remains unavailable, the deterministic fallback preserves
    every successful finding, every key number, explicit failed obligations and
    a 30/60/90 decision cadence instead of collapsing to one generic next step.
