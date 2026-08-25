@@ -1,0 +1,39 @@
+# ADR 0127: Retire superseded architecture tests from the V3 production gate
+
+- Status: accepted
+- Date: 2026-08-25
+- Depends on: ADR 0105, ADR 0110
+
+## Context
+
+V3, Cube and the Analytics raw/source views are the production source of
+truth. Analytical migrations 0157 and 0158 removed the canonical `core`/`mart`
+layer. The isolated semantic-query promotion relay and Semantic Execution V2
+production path are also retired.
+
+The contract runner still discovered test files that imported those deleted
+services and tables. They failed before exercising current code and prevented
+the protected release gate from reporting failures in the V3 runtime that is
+actually deployed.
+
+## Decision
+
+Remove only contract files whose complete subject is a retired architecture:
+
+- canonical replay and Lightspeed canonical supplier replay;
+- canonical quarantine recovery;
+- the semantic-query promotion relay;
+- Semantic V2 persistence, production authority, waiver and snapshot receipt.
+
+Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
+security, release authority, deletion, Swarm and Codex contracts remain in the
+normal test discovery path and must be fixed when they drift.
+
+## Consequences
+
+- CI no longer treats the absence of deliberately deleted services as a
+  regression.
+- Historical migrations and ADRs remain immutable evidence; this decision
+  removes obsolete executable tests, not history.
+- Any future replacement for a retired capability needs a new V3 contract and
+  an explicit architecture decision.

@@ -8,7 +8,7 @@ import {
   splitAssistantMarkdownLead,
 } from "../../app/dash/lib/render-assistant-markdown.js";
 
-const liveRuntime = readFileSync(resolve("services/conversation/src/live.ts"), "utf8");
+const codexRuntime = readFileSync(resolve("packages/albert-codex/src/semantic-runtime.ts"), "utf8");
 const v3EngineRuntime = readFileSync(resolve("packages/albert-v3/src/engine/engine.ts"), "utf8");
 const traceStyles = readFileSync(
   resolve("app/dash/components/insights-trace.module.css"),
@@ -162,26 +162,18 @@ test("assistant report spacing wins the chat reset and follows the text scale", 
 test("the v3 contract requires clean Markdown structure without Markdown tables", () => {
   const laneRuntime = readFileSync(resolve("packages/albert-v3/src/engine/lanes.ts"), "utf8");
   assert.match(laneRuntime, /Clean Markdown prose/u);
-  assert.match(laneRuntime, /organise the detail under descriptive \\`##\\` headings/u);
-  assert.match(laneRuntime, /use bullets for distinct findings/u);
-  assert.match(laneRuntime, /numbered list for prioritised actions/u);
+  assert.match(laneRuntime, /organise the detail under short descriptive/u);
+  assert.match(laneRuntime, /put distinct findings in bullets/u);
+  assert.match(laneRuntime, /Use a numbered list, in priority order/u);
   assert.match(laneRuntime, /Never write a Markdown pipe table/u);
   assert.doesNotMatch(laneRuntime, /Prose only\. Never include/u);
   assert.match(v3EngineRuntime, /Preserve the draft's headings,/u);
   assert.doesNotMatch(v3EngineRuntime, /short prose only/u);
 });
 
-test("the runtime sanitizes prose but leaves owner-visible table selection to the analyst", () => {
-  // Each initial or repaired draft goes through the same 12k transformation
-  // boundary; the persisted narrative remains bounded at 16k.
-  assert.match(
-    liveRuntime,
-    /let answerText = sanitizeAnswerText\(\s*stripRedundantChartMarkup\(draft\.text, chartResultIds\.size > 0\),\s*12_000,\s*\)/u,
-  );
-  assert.doesNotMatch(liveRuntime, /answerText = sanitizeTraceText\(output\.text/u);
-  assert.match(liveRuntime, /markdown pipe table/u);
-  assert.doesNotMatch(liveRuntime, /answerText = ensureAnswerIncludesTable\(/u);
-  assert.match(liveRuntime, /Table selection belongs to the analyst's presentation output/u);
-  assert.match(liveRuntime, /draft\.presentation\.resultIds/u);
-  assert.match(liveRuntime, /isOwnerTrailValidation/u);
+test("the Codex runtime sanitizes prose and keeps table selection structured", () => {
+  assert.match(codexRuntime, /sanitizeAnswerText\(salvagedAnswer, 8_000\)/u);
+  assert.match(codexRuntime, /The answer embedded a markdown pipe table/u);
+  assert.match(codexRuntime, /presentedResultIds/u);
+  assert.doesNotMatch(codexRuntime, /answerText = ensureAnswerIncludesTable\(/u);
 });

@@ -32,7 +32,6 @@ const columnPresentationMigration = read("infra/migrations/control-plane/0120_m6
 const derivedTableMigration = read("infra/migrations/control-plane/0121_m6_dashboard_derived_tables.sql");
 const shared = read("packages/shared/src/agent-runtime.ts");
 const v3Tools = read("packages/albert-v3/src/engine/tools.ts");
-const v2Live = read("services/conversation/src/v2-live.ts");
 const refreshRoute = read("app/api/dashboard/refresh/route.ts");
 const refreshAdapter = read("services/dashboard/src/refresh.ts");
 const cubeConfig = read("cube-playground/cube.js");
@@ -194,15 +193,11 @@ test("derived answer tables materialize exact pivots and keep rolling date headi
   assert.equal(rolled.rows[1]?.week_1, 500);
 });
 
-test("trusted runtimes attach exact immutable replay references and empty V2 results remain visible", () => {
+test("the trusted V3 runtime attaches exact immutable replay references", () => {
   assert.match(v3Tools, /const queryEvent = await context\.emit\(\{[\s\S]*type: "query"/u);
   assert.match(v3Tools, /queryEventId: queryEvent\.id/u);
   assert.match(v3Tools, /cubeQueryDigest\(validated\.query\)/u);
   assert.match(v3Tools, /cubeSemanticVersionDigest\(validated, catalogue\)/u);
-  assert.match(v2Live, /kind: "semantic_v2"/u);
-  assert.match(v2Live, /executionId,[\s\S]*resultId: query\.queryId/u);
-  assert.match(v2Live, /query\.evidence\.publicationHash/u);
-  assert.doesNotMatch(v2Live, /if \(query\.rows\.length > 0\)/u);
 });
 
 test("Cube replay preserves rolling strings and fixed date arrays while pinning semantic definitions", () => {
@@ -416,19 +411,6 @@ test("authenticated APIs are bounded, same-origin, rate-limited and conflict-awa
   assert.match(layoutRoute, /DashboardRevisionConflict/u);
   assert.match(refreshRoute, /inBatches\(claims, 4/u);
   assert.match(migration, /date_trunc\('minute', now\(\)\)[\s\S]*% 5/u);
-});
-
-test("Semantic V2 has a signed, publication-pinned live replay path", () => {
-  const service = read("services/semantic-query/src/v2-service.ts");
-  const http = read("services/semantic-query/src/http.ts");
-  const client = read("services/conversation/src/semantic-client.ts");
-  assert.match(http, /\/v2\/dashboard\/replay/u);
-  assert.match(http, /verifyInternalRequest/u);
-  assert.match(service, /replayDashboardResult/u);
-  assert.match(service, /query_workspace_revisions_v2/u);
-  assert.match(service, /loadSemanticRegistryV2\(this\.dependencies\.controlPlanePool, input\.publicationHash\)/u);
-  assert.match(service, /sourceWatermarks: tenant\.sourceWatermarks/u);
-  assert.match(client, /signInternalRequest\(\{ method: "POST", path, body/u);
 });
 
 test("dashboard UI follows responsive, accessible and visible-only refresh contracts", () => {
