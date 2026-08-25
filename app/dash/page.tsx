@@ -1958,6 +1958,7 @@ export default function DashPage() {
             synthesis?: {
               answer?: string;
               answerState?: string;
+              source?: "model" | "model-repaired" | "fallback";
               recovery?: "standard-after-pro" | null;
               followUps?: string[];
             } | null;
@@ -1986,6 +1987,7 @@ export default function DashPage() {
           agents,
           answer: run.synthesis?.answer ?? null,
           answerState: run.synthesis?.answerState ?? null,
+          synthesisSource: run.synthesis?.source ?? null,
           synthesisRecovery: run.synthesis?.recovery ?? null,
           followUps: run.synthesis?.followUps,
           kind: run.plan?.kind,
@@ -2014,6 +2016,7 @@ export default function DashPage() {
               synthesis?: {
                 answer?: string;
                 answerState?: string;
+                source?: "model" | "model-repaired" | "fallback";
                 recovery?: "standard-after-pro" | null;
                 followUps?: string[];
               };
@@ -2029,6 +2032,7 @@ export default function DashPage() {
             agents,
             answer: synthesis.answer,
             answerState: synthesis.answerState ?? null,
+            synthesisSource: synthesis.source ?? null,
             synthesisRecovery: synthesis.recovery ?? null,
             followUps: synthesis.followUps,
             kind: run.plan?.kind,

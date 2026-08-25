@@ -336,6 +336,10 @@ export default function SwarmPanel({
                   <p className={styles.superRecovery} role="status">
                     Pro did not finish inside its limit. Luna Max completed the synthesis without Fast mode.
                   </p>
+                ) : snapshot.synthesisSource === "fallback" ? (
+                  <p className={styles.superRecovery} role="status">
+                    Pro and Luna Max recovery did not finish safely. Albert preserved the governed findings in a deterministic brief.
+                  </p>
                 ) : null}
               </section>
             ) : null}

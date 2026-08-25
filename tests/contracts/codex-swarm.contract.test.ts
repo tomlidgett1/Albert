@@ -395,6 +395,8 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(synthesisRoute, /recovery: result\.recovery/u);
   assert.match(repository, /recovery: z\.enum\(\["standard-after-pro"\]\)/u);
   assert.match(panel, /Pro did not finish inside its limit/u);
+  assert.match(panel, /Albert preserved the governed findings in a deterministic brief/u);
+  assert.match(controller, /synthesisSource: payload\.synthesis\.source \?\? null/u);
   assert.match(synthesisRoute, /failureCode: answerState === "Unavailable" \? "albert_swarm_unavailable" : "albert_swarm_answered"/u);
   assert.match(stopRoute, /assertSameOriginMutation\(request\)/u);
   assert.match(heartbeatRoute, /loadSwarmRun\(parsed\.runId\)/u);

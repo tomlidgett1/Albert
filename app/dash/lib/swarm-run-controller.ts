@@ -60,6 +60,7 @@ export type SwarmRunSnapshot = Readonly<{
   settledCount: number;
   answer: string | null;
   answerState: string | null;
+  synthesisSource: "model" | "model-repaired" | "fallback" | null;
   synthesisRecovery: "standard-after-pro" | null;
   followUps: readonly string[];
   error: string | null;
@@ -100,6 +101,7 @@ const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
   settledCount: 0,
   answer: null,
   answerState: null,
+  synthesisSource: null,
   synthesisRecovery: null,
   followUps: Object.freeze([]),
   error: null,
@@ -470,6 +472,7 @@ async function synthesise(runToken: number, runId: string): Promise<void> {
       synthesis?: {
         answer?: string;
         answerState?: string;
+        source?: "model" | "model-repaired" | "fallback";
         recovery?: "standard-after-pro" | null;
         followUps?: string[];
       };
@@ -483,6 +486,7 @@ async function synthesise(runToken: number, runId: string): Promise<void> {
       active: false,
       answer: payload.synthesis.answer,
       answerState: payload.synthesis.answerState ?? "Derived",
+      synthesisSource: payload.synthesis.source ?? null,
       synthesisRecovery: payload.synthesis.recovery ?? null,
       followUps: Object.freeze(payload.synthesis.followUps ?? []),
     });
@@ -722,6 +726,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
   agents: readonly SwarmAgentLiveState[];
   answer: string | null;
   answerState: string | null;
+  synthesisSource?: "model" | "model-repaired" | "fallback" | null;
   synthesisRecovery?: "standard-after-pro" | null;
   followUps?: readonly string[];
   kind?: SwarmRunKind;
@@ -758,6 +763,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
     agents: Object.freeze([...input.agents]),
     answer: input.answer,
     answerState: input.answerState,
+    synthesisSource: input.synthesisSource ?? null,
     synthesisRecovery: input.synthesisRecovery ?? null,
     followUps: Object.freeze([...(input.followUps ?? [])]),
     active: stillOpen && !input.answer,
