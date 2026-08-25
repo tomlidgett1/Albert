@@ -108,6 +108,11 @@ SELECT pg_temp.assert_true(
   )=0,
   'bounded reconciliation must complete without tombstones'
 );
+
+-- Runtime mutations remain function-scoped; inspect durable state as the test
+-- administrator rather than granting transform_rw direct table reads.
+RESET ROLE;
+SELECT set_config('albert.tenant_id','01H00000000000000000000M01',true);
 SELECT pg_temp.assert_true(
   (SELECT source_total=1 AND local_live_total IS NULL
           AND deletion_strategy='no_absence_deletes'
@@ -125,6 +130,8 @@ SELECT pg_temp.assert_true(
       AND stream='momence_sessions' AND NOT tombstone)=2,
   'the all-history population must deliberately differ from the bounded total'
 );
+SET LOCAL ROLE transform_rw;
+SELECT set_config('albert.tenant_id','01H00000000000000000000M01',true);
 SELECT quality.refresh_connector_quality_rollup(
   '01H00000000000000000000M01','01H00000000000000000000M08'
 );
