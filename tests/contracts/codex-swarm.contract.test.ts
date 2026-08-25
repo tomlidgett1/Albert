@@ -337,6 +337,8 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(synthesisRoute, /assertSameOriginMutation\(request\)/u);
   assert.match(synthesisRoute, /loadSwarmRun\(parsed\.runId\)/u);
   assert.match(synthesisRoute, /Specialists are still working/u);
+  assert.match(synthesisRoute, /AbortSignal\.timeout\(SYNTHESIS_ROUTE_DEADLINE_MS\)/u);
+  assert.match(synthesisRoute, /signal: synthesisSignal/u);
   assert.match(synthesisRoute, /failureCode: answerState === "Unavailable" \? "albert_swarm_unavailable" : "albert_swarm_answered"/u);
   assert.match(stopRoute, /assertSameOriginMutation\(request\)/u);
   assert.match(heartbeatRoute, /loadSwarmRun\(parsed\.runId\)/u);

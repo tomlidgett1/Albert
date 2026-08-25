@@ -67,6 +67,8 @@ grounds the final synthesis only in recorded findings.
    If the provider remains unavailable, the deterministic fallback preserves
    every successful finding, every key number, explicit failed obligations and
    a 30/60/90 decision cadence instead of collapsing to one generic next step.
+   One shared 12-minute synthesis deadline leaves the web route time to persist
+   that governed fallback before its platform ceiling.
 
 ## Consequences
 

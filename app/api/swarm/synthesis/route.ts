@@ -36,6 +36,7 @@ import {
 import { correlationIdFromHeader, createServiceLogger, safeErrorEvidence } from "@/packages/observability/src";
 
 export const maxDuration = 800;
+const SYNTHESIS_ROUTE_DEADLINE_MS = 720_000;
 
 const logger = createServiceLogger("albert-swarm-web");
 
@@ -107,6 +108,10 @@ export async function POST(request: Request): Promise<Response> {
           compareEnd: run.plan.period.compareEnd,
         }
       : null;
+    const synthesisSignal = AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(SYNTHESIS_ROUTE_DEADLINE_MS),
+    ]);
     const result = await buildSwarmSynthesis({
       question: run.question,
       periodLabel: run.plan.periodLabel,
@@ -123,7 +128,7 @@ export async function POST(request: Request): Promise<Response> {
       safetyIdentifier: createHash("sha256")
         .update(`${tenant.tenant_id}:${auth.user.id}`)
         .digest("hex"),
-      signal: request.signal,
+      signal: synthesisSignal,
     });
     const synthesis = result.synthesis;
     const answerState = governedSwarmAnswerState(findings, result.unsupportedFigures);
