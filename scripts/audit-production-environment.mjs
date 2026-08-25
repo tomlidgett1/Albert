@@ -191,10 +191,9 @@ function assertLegacyReleaseDisabled(workflow) {
 }
 
 export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY) {
-  const [releaseBody, authorityBody, semanticV2Body, dogfoodBody, dogfoodOnboardingBody, vendorBody, ciBody] = await Promise.all([
+  const [releaseBody, authorityBody, dogfoodBody, dogfoodOnboardingBody, vendorBody, ciBody] = await Promise.all([
     readFile(path.join(rootDirectory, ".github/workflows/release.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/release-authority.yml"), "utf8"),
-    readFile(path.join(rootDirectory, ".github/workflows/semantic-v2-production.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/dogfood-acceptance.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/dogfood-onboarding-journey.yml"), "utf8"),
     readFile(path.join(rootDirectory, ".github/workflows/vendor-connection-attestor.yml"), "utf8"),
@@ -202,7 +201,6 @@ export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY)
   ]);
   const release = parseWorkflowYaml(releaseBody, ".github/workflows/release.yml");
   const authority = parseWorkflowYaml(authorityBody, ".github/workflows/release-authority.yml");
-  const semanticV2 = parseWorkflowYaml(semanticV2Body, ".github/workflows/semantic-v2-production.yml");
   const dogfood = parseWorkflowYaml(dogfoodBody, ".github/workflows/dogfood-acceptance.yml");
   const dogfoodOnboarding = parseWorkflowYaml(
     dogfoodOnboardingBody,
@@ -213,9 +211,7 @@ export async function loadProductionRequirements(rootDirectory = ROOT_DIRECTORY)
   assertLegacyReleaseDisabled(release);
   const environments = Object.fromEntries(RELEASE_ENVIRONMENTS.map((entry) => {
     const workflows = entry.workflow === "authority"
-      ? entry.name === "production"
-        ? [authority, semanticV2]
-        : [authority]
+      ? [authority]
       : entry.workflow === "dogfood" ? [dogfood, dogfoodOnboarding] : [vendor];
     const derived = workflows.map((workflow) => (
       deriveEnvironmentRequirements(workflow, entry.name, entry.target)

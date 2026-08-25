@@ -183,8 +183,8 @@ async function validFixture() {
 test("production audit derives every protected workflow inventory and passes complete metadata", async () => {
   const fixture = await validFixture();
   assert.ok(fixture.requirements.environments.production.secrets.includes("SUPABASE_MANAGEMENT_TOKEN"));
-  assert.ok(fixture.requirements.environments.production.secrets.includes("ALBERT_VERCEL_READ_TOKEN"));
-  assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_VERCEL_PROJECT_ID"));
+  assert.equal(fixture.requirements.environments.production.secrets.includes("ALBERT_VERCEL_READ_TOKEN"), false);
+  assert.equal(fixture.requirements.environments.production.variables.includes("ALBERT_VERCEL_PROJECT_ID"), false);
   assert.ok(fixture.requirements.environments.production.variables.includes("ALBERT_CONTROL_PLANE_PROJECT_REF"));
   assert.ok(fixture.requirements.environments.production.variables.includes("FLY_CUBE_APP"));
   assert.ok(fixture.requirements.environments.production.variables.includes("CUBE_API_URL"));
@@ -515,7 +515,10 @@ test("production release runs only from immutable authority and keeps candidate 
   const deployStep = release.jobs["deploy-services"].steps.find(
     ({ name }) => name === "Validate trusted config and deploy only the approved digest",
   );
-  assert.match(deployStep.env.TARGET_FLOOR, /matrix\.service == 'cube' && 1/u);
+  assert.match(
+    deployStep.env.TARGET_FLOOR,
+    /matrix\.service == 'cube' \|\| matrix\.service == 'codex-runtime'/u,
+  );
   assert.match(deployStep.run, /matrix\.service \}\}" = cube[\s\S]*flyctl scale count 1/u);
   const cubeSmoke = release.jobs["activate-and-smoke"].steps.find(
     ({ name }) => name === "Prove Cube is live at the exact approved image and deployment",
