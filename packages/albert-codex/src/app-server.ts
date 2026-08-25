@@ -326,6 +326,7 @@ class CodexJsonRpcSession {
   }>>();
   private readonly toolCalls = new Map<string, Promise<Readonly<{ success: boolean; text: string }>>>();
   private readonly finalMessages = new Map<string, string[]>();
+  private notificationQueue: Promise<void> = Promise.resolve();
   private stderr = "";
   private closed = false;
   private expectedThreadId: string | undefined;
@@ -462,8 +463,16 @@ class CodexJsonRpcSession {
       return;
     }
     if (!method) return;
-    this.captureNotification(method, value.params);
-    await this.options.onNotification?.(method, value.params);
+    // readline can deliver the next JSON-RPC notification while an async
+    // handler for the previous one is still emitting UI state. Preserve the
+    // wire order for notifications without blocking independent responses or
+    // tool-call requests behind a long-running governed query.
+    const notification = this.notificationQueue.then(async () => {
+      this.captureNotification(method, value.params);
+      await this.options.onNotification?.(method, value.params);
+    });
+    this.notificationQueue = notification.catch(() => undefined);
+    await notification;
   }
 
   private captureNotification(method: string, params: unknown): void {
