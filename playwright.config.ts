@@ -19,6 +19,10 @@ const appEnvironment = {
     "browser-acceptance-diagnostic-secret-001",
   ALBERT_CODEX_RUNTIME_SIGNING_SECRET:
     "browser-acceptance-codex-runtime-secret-001",
+  ALBERT_SHOPIFYQL_SIGNING_SECRET:
+    "browser-acceptance-shopifyql-signing-secret-01",
+  ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET:
+    "browser-acceptance-shopify-admin-secret-001",
   ALBERT_USER_HASH_SECRET: "browser-acceptance-user-hash-secret-00001",
   ALBERT_PUBLIC_ORIGIN: appOrigin,
   SYNC_WORKER_INTERNAL_URL: "https://sync.browser-acceptance.invalid",
@@ -29,10 +33,15 @@ const appEnvironment = {
     "https://diagnostic.browser-acceptance.invalid",
   CODEX_RUNTIME_SERVICE_URL:
     "https://codex.browser-acceptance.invalid",
+  CUBE_API_URL: "https://cube.browser-acceptance.invalid",
+  CUBEJS_API_SECRET: "browser-acceptance-cube-secret-00000001",
   OPENAI_API_KEY: "browser-acceptance-openai-key",
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   LIGHTSPEED_CLIENT_ID: "browser-acceptance-lightspeed-client",
   XERO_CLIENT_ID: "browser-acceptance-xero-client",
+  SQUARE_CLIENT_ID: "browser-acceptance-square-client",
+  SHOPIFY_CLIENT_ID: "browser-acceptance-shopify-client",
+  SHOPIFY_CLIENT_SECRET: "browser-acceptance-shopify-secret-00001",
   DEPUTY_CLIENT_ID: "browser-acceptance-deputy-client",
   ALBERT_CONTROL_PLANE_PROJECT_REF: supabaseProjectRef,
   ALBERT_CONTROL_PLANE_REGION: "ap-southeast-2",

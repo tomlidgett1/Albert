@@ -23,6 +23,7 @@ import {
   splitSwarmWaves,
 } from "../../services/swarm/src/worker-brief.ts";
 import {
+  buildSwarmSynthesis,
   conservativeSwarmAnswerState,
   extractSwarmFigures,
   governedSwarmAnswerState,
@@ -76,11 +77,11 @@ test("dash wires a Swarm button, progress slide-out, and hidden child threads", 
   assert.match(page, /fetch\("\/api\/swarm"/u);
   assert.match(page, /const setSwarmMode = useCallback/u);
   assert.match(page, /swarmEnabledRef\.current = resolved[\s\S]{0,100}setSwarmEnabled\(resolved\)/u);
-  assert.match(panel, /Active ·/u);
+  assert.match(panel, /superAgent \? "Current pass" : "Active"/u);
   assert.match(panel, /Done ·/u);
   assert.match(panel, /InsightsStyleTrace/u);
-  assert.match(panel, /Stop swarm/u);
-  assert.match(panel, /Resize swarm panel/u);
+  assert.match(panel, /Stop \{superAgent \? "Super agent" : "swarm"\}/u);
+  assert.match(panel, /Resize \$\{superAgent \? "Super agent" : "swarm"\} panel/u);
   assert.match(page, /onWidenPastDefault=\{\(\) => setCollapsed\(true\)\}/u);
 });
 
@@ -176,6 +177,157 @@ test("synthesis stays conservative and does not invent a verified number", () =>
   assert.ok(steps.some((step) => step.id === "swarm-synthesis"));
 });
 
+test("Pro synthesis uses the selected Luna model at Max without putting Pro on workers", async () => {
+  let request: Record<string, unknown> | undefined;
+  const answer = "Sales were $12,000 in the governed window. Protect that baseline, investigate the largest controllable gap, and use the next review to decide whether to expand the intervention.";
+  const result = await buildSwarmSynthesis({
+    question: "How can we improve profitability?",
+    periodLabel: "Last 13 weeks versus prior 13 weeks",
+    businessName: "Albert Bike Store",
+    findings: [{
+      agentKey: "sales",
+      title: "Sales",
+      role: "measure",
+      answerState: "Verified",
+      headline: "Sales were $12,000",
+      keyNumbers: [{ label: "Sales", value: "$12,000" }],
+      summaryExcerpt: "Sales were $12,000 in the governed window.",
+      failed: false,
+      failureNote: null,
+    }],
+    apiKey: "sk-fixture",
+    baseUrl: "https://au.api.openai.com/v1",
+    safetyIdentifier: "fixture",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    proMode: true,
+    client: {
+      responses: {
+        create: async (body: Record<string, unknown>) => {
+          request = body;
+          return {
+            output_text: JSON.stringify({
+              headline: "Sales were $12,000",
+              answer,
+              followUps: ["Which category should I fix first?", "What is the largest cost lever?"],
+              disagreements: [],
+            }),
+          };
+        },
+      },
+    } as never,
+  });
+  assert.equal(result.source, "model");
+  assert.equal(request?.model, "gpt-5.6-luna");
+  assert.deepEqual(request?.reasoning, { effort: "max", mode: "pro" });
+  assert.equal(request?.max_output_tokens, 64_000);
+  assert.equal((request?.text as { verbosity?: string })?.verbosity, "high");
+  assert.equal(Object.hasOwn(request ?? {}, "service_tier"), false);
+});
+
+test("an incomplete Pro synthesis recovers on Luna Max without Fast before deterministic fallback", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const answer = "Sales were $12,000 in the governed window. Protect that baseline, investigate the controllable gap, and set a measured decision point before expanding the intervention.";
+  const result = await buildSwarmSynthesis({
+    question: "How can we improve profitability?",
+    periodLabel: "Last 13 weeks versus prior 13 weeks",
+    businessName: "Albert Bike Store",
+    findings: [{
+      agentKey: "sales",
+      title: "Sales",
+      role: "measure",
+      answerState: "Verified",
+      headline: "Sales were $12,000",
+      keyNumbers: [{ label: "Sales", value: "$12,000" }],
+      summaryExcerpt: "Sales were $12,000 in the governed window.",
+      failed: false,
+      failureNote: null,
+    }],
+    apiKey: "sk-fixture",
+    baseUrl: "https://au.api.openai.com/v1",
+    safetyIdentifier: "fixture",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    proMode: true,
+    client: {
+      responses: {
+        create: async (body: Record<string, unknown>) => {
+          requests.push(body);
+          if (requests.length === 1) return { status: "incomplete", output_text: "" };
+          return {
+            status: "completed",
+            output_text: JSON.stringify({
+              headline: "Recover margin before chasing volume: tighten discounts and returns, improve sales per existing labour hour, and clear aged stock for cash without treating itas",
+              answer,
+              followUps: ["Which category should I fix first?", "What is the largest cost lever?"],
+              disagreements: [],
+            }),
+          };
+        },
+      },
+    } as never,
+  });
+  assert.equal(result.source, "model-repaired");
+  assert.equal(result.synthesis.headline, "Recover margin before chasing volume");
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
+  assert.deepEqual(requests[1]?.reasoning, { effort: "max" });
+  assert.equal(requests[0]?.max_output_tokens, 64_000);
+  assert.equal(requests[1]?.max_output_tokens, 8_000);
+  assert.equal(Object.hasOwn(requests[1] ?? {}, "service_tier"), false);
+});
+
+test("the emergency synthesis fallback preserves detailed evidence and a decision cadence", async () => {
+  const result = await buildSwarmSynthesis({
+    question: "How can we improve profitability?",
+    periodLabel: "Last 13 weeks versus prior 13 weeks",
+    businessName: "Albert Bike Store",
+    findings: [{
+      agentKey: "sales",
+      title: "Sales",
+      role: "measure",
+      answerState: "Verified",
+      headline: "Discounts are the clearest leakage",
+      keyNumbers: [
+        { label: "Revenue", value: "$250,000" },
+        { label: "Discounts", value: "$10,000" },
+        { label: "Returns", value: "$4,000" },
+        { label: "Gross margin", value: "38%" },
+      ],
+      summaryExcerpt: "Discounts and returns are material, while premium bikes held margin better than accessories. Indiscriminate discounting is not supported.",
+      failed: false,
+      failureNote: null,
+    }, {
+      agentKey: "accounts",
+      title: "Accounts",
+      role: "reconcile",
+      answerState: null,
+      headline: null,
+      keyNumbers: [],
+      summaryExcerpt: "",
+      failed: true,
+      failureNote: "The P&L reconciliation did not complete.",
+    }],
+    apiKey: "sk-fixture",
+    baseUrl: "https://au.api.openai.com/v1",
+    safetyIdentifier: "fixture",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    proMode: true,
+    client: {
+      responses: {
+        create: async () => ({ status: "incomplete", output_text: "" }),
+      },
+    } as never,
+  });
+  assert.equal(result.source, "fallback");
+  assert.match(result.synthesis.answer, /Indiscriminate discounting is not supported/u);
+  assert.match(result.synthesis.answer, /Revenue: \$250,000/u);
+  assert.match(result.synthesis.answer, /The P&L reconciliation did not complete/u);
+  assert.match(result.synthesis.answer, /Next 30 days/u);
+  assert.match(result.synthesis.answer, /By 90 days/u);
+});
+
 test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(route, /assertSameOriginMutation\(request\)/u);
   assert.match(route, /consumeAlbertRateLimit\("swarm\.run"\)/u);
@@ -200,6 +352,11 @@ test("the fleet is client-orchestrated through the real Codex pipeline", () => {
   assert.match(page, /proMode: runProMode/u);
   assert.match(route, /solPlanner: z\.boolean\(\)\.optional\(\)/u);
   assert.match(route, /proMode: z\.boolean\(\)\.optional\(\)/u);
+  assert.match(route, /proMode: false/u);
+  assert.match(route, /synthesisProMode:/u);
+  assert.match(synthesisRoute, /run\.plan\.reasoningMode === "pro"/u);
+  assert.match(synthesisRoute, /proMode: true/u);
+  assert.match(synthesisRoute, /export const maxDuration = 800/u);
   assert.match(codexRoute, /\.\.\.\(solPlanner \? \{ solPlanner: true \} : \{\}\)/u);
   assert.match(codexRoute, /\.\.\.\(reasoningMode === "pro" \? \{ reasoningMode: "pro" as const \} : \{\}\)/u);
   assert.match(controller, /X-Albert-Conversation-Id/u);
@@ -523,8 +680,9 @@ test("the sales-deep test fleet stays inside sales and writes a briefing", () =>
   assert.match(agentsWorkspace, /agent\.id === "sales"/u);
   assert.match(agentsWorkspace, /onStartSalesSwarm/u);
   assert.match(page, /swarmKind: "sales-deep"/u);
-  assert.match(page, /kind: options\.swarmKind/u);
-  assert.match(route, /kind: z\.enum\(\["question", "sales-deep"\]\)/u);
+  assert.match(page, /const swarmKind = options\?\.swarmKind/u);
+  assert.match(page, /\.\.\.\(swarmKind \? \{ kind: swarmKind \} : \{\}\)/u);
+  assert.match(route, /kind: z\.enum\(\["question", "sales-deep", "super-agent"\]\)/u);
   assert.match(route, /SALES_DEEP_PREFERENCES/u);
   assert.match(synthesisRoute, /buildSalesBriefingMarkdown/u);
   assert.match(synthesisRoute, /writeSalesBriefingFile/u);

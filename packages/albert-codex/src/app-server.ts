@@ -650,8 +650,27 @@ export async function runCodexAppServerTurn(
     });
   }
   let proModeProxy: CodexProModeProxy | undefined;
+  let proReasoningSummaryQueue: Promise<void> = Promise.resolve();
   if (options.proMode && authentication.mode === "api") {
-    proModeProxy = await startCodexProModeProxy(authentication.baseUrl, authentication.apiKey);
+    proModeProxy = await startCodexProModeProxy(
+      authentication.baseUrl,
+      authentication.apiKey,
+      (event) => {
+        proReasoningSummaryQueue = proReasoningSummaryQueue.then(async () => {
+          await options.onNotification?.(
+            event.kind === "delta"
+              ? "item/reasoning/summaryTextDelta"
+              : "item/reasoning/summaryTextDone",
+            {
+              source: "responses_api",
+              itemId: event.itemId,
+              summaryIndex: event.summaryIndex,
+              ...(event.kind === "delta" ? { delta: event.text } : { text: event.text }),
+            },
+          );
+        });
+      },
+    );
   }
   const providerBaseUrl = proModeProxy?.baseUrl
     ?? (authentication.mode === "api" ? authentication.baseUrl : undefined);
@@ -725,7 +744,7 @@ export async function runCodexAppServerTurn(
           sandboxPolicy: { type: "readOnly", networkAccess: false },
           model: options.model,
           effort: repairingCandidate ? options.repairEffort ?? options.effort : options.effort,
-          summary: "concise",
+          summary: "detailed",
           // The codex model catalog's fast tier id is "priority" ("Fast" is
           // its display name); "fast" is not a tier id and codex silently
           // drops it, leaving the request on the default tier. Verified by
@@ -759,6 +778,7 @@ export async function runCodexAppServerTurn(
         if (!finalMessage) throw new Error("Codex completed without a final structured answer.");
         const validationFeedback = await options.validateFinalCandidate?.(finalMessage, repairAttempt) ?? null;
         if (!validationFeedback || deadlineAt - Date.now() < MIN_REPAIR_WINDOW_MS) {
+          await proReasoningSummaryQueue;
           const proModeVerified = proModeProxy?.receipt().verified === true;
           if (options.proMode && !proModeVerified) {
             throw new Error("Codex Pro reasoning mode was not accepted by OpenAI.");

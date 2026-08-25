@@ -16,6 +16,13 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
+export type CodexProReasoningSummaryEvent = Readonly<{
+  kind: "delta" | "done";
+  itemId: string;
+  summaryIndex: number;
+  text: string;
+}>;
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -79,12 +86,63 @@ function responseHeaders(response: Response, target: ServerResponse): void {
   }
 }
 
-async function streamResponse(response: Response, target: ServerResponse): Promise<void> {
+function reasoningSummaryEvent(value: unknown): CodexProReasoningSummaryEvent | null {
+  if (!isObject(value) || typeof value.type !== "string") return null;
+  if (
+    value.type !== "response.reasoning_summary_text.delta"
+    && value.type !== "response.reasoning_summary_text.done"
+  ) return null;
+  const text = value.type.endsWith(".delta") ? value.delta : value.text;
+  if (
+    typeof value.item_id !== "string"
+    || !Number.isInteger(value.summary_index)
+    || typeof text !== "string"
+    || !text
+  ) return null;
+  return {
+    kind: value.type.endsWith(".delta") ? "delta" : "done",
+    itemId: value.item_id,
+    summaryIndex: Number(value.summary_index),
+    text,
+  };
+}
+
+function consumeSseBlocks(
+  buffer: string,
+  onReasoningSummary?: (event: CodexProReasoningSummaryEvent) => void,
+): string {
+  const normalized = buffer.replace(/\r\n/gu, "\n");
+  const blocks = normalized.split("\n\n");
+  const remainder = blocks.pop() ?? "";
+  for (const block of blocks) {
+    const payload = block.split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const event = reasoningSummaryEvent(JSON.parse(payload));
+      if (event) onReasoningSummary?.(event);
+    } catch {
+      // Forward provider bytes unchanged. Optional summary parsing never owns
+      // the model response lifecycle.
+    }
+  }
+  return remainder;
+}
+
+async function streamResponse(
+  response: Response,
+  target: ServerResponse,
+  onReasoningSummary?: (event: CodexProReasoningSummaryEvent) => void,
+): Promise<void> {
   if (!response.body) {
     target.end();
     return;
   }
   const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = "";
   try {
     for (;;) {
       const next = await reader.read();
@@ -93,8 +151,13 @@ async function streamResponse(response: Response, target: ServerResponse): Promi
         await reader.cancel();
         return;
       }
+      sseBuffer = consumeSseBlocks(
+        `${sseBuffer}${decoder.decode(next.value, { stream: true })}`,
+        onReasoningSummary,
+      );
       if (!target.write(Buffer.from(next.value))) await once(target, "drain");
     }
+    consumeSseBlocks(`${sseBuffer}${decoder.decode()}\n\n`, onReasoningSummary);
     target.end();
   } finally {
     reader.releaseLock();
@@ -108,6 +171,7 @@ async function proxyRequest(
   capabilityPath: string,
   apiKey: string,
   receipt: { injectedRequests: number; acceptedResponses: number },
+  onReasoningSummary?: (event: CodexProReasoningSummaryEvent) => void,
 ): Promise<void> {
   const incomingUrl = new URL(request.url ?? "/", "http://127.0.0.1");
   if (!incomingUrl.pathname.startsWith(`${capabilityPath}/`)) {
@@ -142,7 +206,7 @@ async function proxyRequest(
   response.statusCode = upstreamResponse.status;
   response.statusMessage = upstreamResponse.statusText;
   responseHeaders(upstreamResponse, response);
-  await streamResponse(upstreamResponse, response);
+  await streamResponse(upstreamResponse, response, onReasoningSummary);
 }
 
 export type CodexProModeProxy = Readonly<{
@@ -166,6 +230,7 @@ export type CodexProModeProxy = Readonly<{
 export async function startCodexProModeProxy(
   upstreamBaseUrl: string,
   apiKey: string,
+  onReasoningSummary?: (event: CodexProReasoningSummaryEvent) => void,
 ): Promise<CodexProModeProxy> {
   const upstream = new URL(upstreamBaseUrl);
   if (!apiKey.trim()) throw new Error("The Codex Pro adapter requires an OpenAI API key.");
@@ -181,7 +246,15 @@ export async function startCodexProModeProxy(
   const capabilityPath = `/${randomUUID().replaceAll("-", "")}`;
   const receipt = { injectedRequests: 0, acceptedResponses: 0 };
   const server = createServer((request, response) => {
-    void proxyRequest(request, response, upstream, capabilityPath, apiKey, receipt).catch(() => {
+    void proxyRequest(
+      request,
+      response,
+      upstream,
+      capabilityPath,
+      apiKey,
+      receipt,
+      onReasoningSummary,
+    ).catch(() => {
       if (response.headersSent) {
         response.destroy();
         return;

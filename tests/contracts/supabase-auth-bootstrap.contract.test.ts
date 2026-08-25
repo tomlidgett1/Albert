@@ -80,6 +80,19 @@ test("compatibility conversion rejects unknown, changed, and count-drifted migra
     /administrator-ownership compatibility review/u,
   );
 
+  const lightspeedX = await migration(
+    "0124_m1_lightspeed_x_connector_admission.sql",
+  );
+  const lightspeedXExecutable = controlPlaneMigrationBody(lightspeedX);
+  assert.match(
+    lightspeedXExecutable,
+    /SELECT extensions\.albert_install_lightspeed_x_vendor_attestor_provider\(\)/u,
+  );
+  assert.doesNotMatch(
+    lightspeedXExecutable,
+    /ALTER TABLE control_plane\.live_vendor_attestation_(?:challenges|results)/u,
+  );
+
   const streamExpectations = await migration(
     "0091_m3_spec_driven_stream_expectations.sql",
   );

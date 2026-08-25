@@ -109,6 +109,66 @@ test("the Pro receipt does not verify a provider-rejected Responses request", as
   }
 });
 
+test("the Pro adapter forwards documented reasoning-summary deltas without exposing reasoning text", async () => {
+  const events: unknown[] = [];
+  const upstream = createServer((_request, response) => {
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/event-stream");
+    response.write(`data: ${JSON.stringify({
+      type: "response.reasoning_summary_text.delta",
+      item_id: "rs_fixture",
+      summary_index: 0,
+      delta: "I’ll compare the strongest explanations. ",
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      type: "response.reasoning_text.delta",
+      item_id: "rs_fixture",
+      content_index: 0,
+      delta: "private reasoning must not be surfaced",
+    })}\n\n`);
+    response.end(`data: ${JSON.stringify({
+      type: "response.reasoning_summary_text.done",
+      item_id: "rs_fixture",
+      summary_index: 0,
+      text: "I’ll compare the strongest explanations.",
+    })}\n\n`);
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  assert.ok(address && typeof address !== "string");
+  const proxy = await startCodexProModeProxy(
+    `http://127.0.0.1:${address.port}/v1`,
+    "sk-fixture",
+    (event) => events.push(event),
+  );
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.6-luna", stream: true, input: "fixture" }),
+    });
+    assert.match(await response.text(), /private reasoning must not be surfaced/u);
+    assert.deepEqual(events, [
+      {
+        kind: "delta",
+        itemId: "rs_fixture",
+        summaryIndex: 0,
+        text: "I’ll compare the strongest explanations. ",
+      },
+      {
+        kind: "done",
+        itemId: "rs_fixture",
+        summaryIndex: 0,
+        text: "I’ll compare the strongest explanations.",
+      },
+    ]);
+  } finally {
+    await proxy.close();
+    await new Promise<void>((resolveClose) => upstream.close(() => resolveClose()));
+  }
+});
+
 test("Pro mode is API-authenticated and wired only into the Codex request path", async () => {
   const proxyArguments = codexAppServerArguments({
     mode: "api",

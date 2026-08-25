@@ -73,7 +73,8 @@ function AgentRow({
   agent: SwarmAgentLiveState;
   onOpen: () => void;
 }>): React.ReactNode {
-  const live = isActive(agent.phase);
+  const live = agent.phase === "starting" || agent.phase === "researching" || agent.phase === "recording";
+  const queued = agent.phase === "pending";
   const reduceMotion = Boolean(useReducedMotion());
   return (
     <button className={styles.row} type="button" onClick={onOpen}>
@@ -88,7 +89,7 @@ function AgentRow({
         </span>
       ) : (
         <span
-          className={`${styles.dot} ${agent.phase === "failed" ? styles.dotFailed : styles.dotDone}`}
+          className={`${styles.dot} ${queued ? styles.dotQueued : agent.phase === "failed" ? styles.dotFailed : styles.dotDone}`}
           aria-hidden="true"
         />
       )}
@@ -193,9 +194,16 @@ export default function SwarmPanel({
   };
 
   const inspect = snapshot.agents.find((agent) => agent.key === inspectKey) ?? null;
-  const active = snapshot.agents.filter((agent) => isActive(agent.phase));
+  const superAgent = snapshot.kind === "super-agent";
+  const active = snapshot.agents.filter((agent) => superAgent
+    ? agent.phase === "starting" || agent.phase === "researching" || agent.phase === "recording"
+    : isActive(agent.phase));
+  const queued = snapshot.agents.filter((agent) => agent.phase === "pending");
   const done = snapshot.agents.filter((agent) => !isActive(agent.phase));
   const finishedCount = done.length;
+  const progress = snapshot.durationMs
+    ? Math.min(1, Math.max(0, snapshot.elapsedMs / snapshot.durationMs))
+    : 0;
   const inspectConversationId = inspect?.conversationId ?? null;
   const inspectEvents = traceLoad?.conversationId === inspectConversationId ? traceLoad.events : [];
   const inspectState = !inspectConversationId
@@ -253,7 +261,7 @@ export default function SwarmPanel({
         className={styles.resizeHandle}
         role="slider"
         aria-orientation="vertical"
-        aria-label="Resize swarm panel"
+        aria-label={`Resize ${superAgent ? "Super agent" : "swarm"} panel`}
         aria-controls="analysis-takeaways"
         aria-valuemin={SWARM_PANEL_MIN_WIDTH}
         aria-valuemax={SWARM_PANEL_MAX_WIDTH}
@@ -276,11 +284,11 @@ export default function SwarmPanel({
             <BackIcon />
           </button>
         ) : null}
-        <h2>{inspect ? inspect.title : "Swarm"}</h2>
+        <h2>{inspect ? inspect.title : superAgent ? "Super agent" : "Swarm"}</h2>
         {!inspect && snapshot.agents.length > 0 ? (
-          <span className={styles.count}>{finishedCount} of {snapshot.agents.length} done</span>
+          <span className={styles.count}>{finishedCount} of {snapshot.agents.length} {superAgent ? "passes" : "done"}</span>
         ) : null}
-        <button className={styles.close} type="button" aria-label="Close swarm" onClick={onClose}>
+        <button className={styles.close} type="button" aria-label={`Close ${superAgent ? "Super agent" : "swarm"}`} onClick={onClose}>
           <CloseIcon />
         </button>
       </header>
@@ -304,15 +312,37 @@ export default function SwarmPanel({
       ) : (
         <>
           <div className={styles.body}>
+            {superAgent ? (
+              <section className={styles.superProgress} aria-label="Super agent progress">
+                <div className={styles.superProgressHeader}>
+                  <strong>45-minute deep-work budget</strong>
+                  <span>{Math.floor(snapshot.elapsedMs / 60_000)}m / 45m</span>
+                </div>
+                <div
+                  className={styles.superProgressTrack}
+                  role="progressbar"
+                  aria-label="Super agent elapsed-time budget"
+                  aria-valuemin={0}
+                  aria-valuemax={45}
+                  aria-valuenow={Math.floor(snapshot.elapsedMs / 60_000)}
+                >
+                  <span style={{ width: `${progress * 100}%` }} />
+                </div>
+                <p className={styles.superCheckpoint} aria-live="polite" data-testid="super-agent-checkpoint">
+                  {snapshot.checkpointText ?? "Starting pass 1. The first scheduled checkpoint arrives after two minutes."}
+                </p>
+                <p className={styles.superDisclosure}>Sol planner → Luna · Max evidence passes → Luna · Max · Pro synthesis · standard speed · updates every 2 minutes</p>
+              </section>
+            ) : null}
             <section>
-              <h3 className={styles.sectionTitle}>Active · {active.length}</h3>
+              <h3 className={styles.sectionTitle}>{superAgent ? "Current pass" : "Active"} · {active.length}</h3>
               {active.length === 0 ? (
                 <p className={styles.empty}>
                   {snapshot.synthesising
                     ? "Combining the findings…"
                     : snapshot.answer
-                      ? "All specialists have finished."
-                      : "No specialists running."}
+                      ? (superAgent ? "All passes have finished." : "All specialists have finished.")
+                      : (superAgent ? "Preparing the next pass…" : "No specialists running.")}
                 </p>
               ) : (
                 <div className={styles.list}>
@@ -326,10 +356,28 @@ export default function SwarmPanel({
                 </div>
               )}
             </section>
+            {superAgent ? (
+              <section>
+                <h3 className={styles.sectionTitle}>Up next · {queued.length}</h3>
+                {queued.length === 0 ? (
+                  <p className={styles.empty}>No passes are waiting.</p>
+                ) : (
+                  <div className={styles.list}>
+                    {queued.map((agent) => (
+                      <AgentRow
+                        key={agent.key}
+                        agent={agent}
+                        onOpen={() => setInspectKey(agent.key)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
             <section>
               <h3 className={styles.sectionTitle}>Done · {done.length}</h3>
               {done.length === 0 ? (
-                <p className={styles.empty}>Finished specialists will land here.</p>
+                <p className={styles.empty}>{superAgent ? "Completed passes will land here." : "Finished specialists will land here."}</p>
               ) : (
                 <div className={styles.list}>
                   {done.map((agent) => (
@@ -346,7 +394,7 @@ export default function SwarmPanel({
           {snapshot.active ? (
             <div className={styles.footer}>
               <button className={styles.stop} type="button" onClick={() => stopSwarmFleet()}>
-                Stop swarm
+                Stop {superAgent ? "Super agent" : "swarm"}
               </button>
             </div>
           ) : null}

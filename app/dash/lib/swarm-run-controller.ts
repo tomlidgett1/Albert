@@ -24,6 +24,8 @@ export type SwarmAgentPhase =
   | "failed"
   | "stopped";
 
+export type SwarmRunKind = "question" | "sales-deep" | "super-agent";
+
 export type SwarmAgentLiveState = Readonly<{
   key: string;
   title: string;
@@ -45,6 +47,13 @@ export type SwarmRunSnapshot = Readonly<{
   parentTurnId: string | null;
   question: string | null;
   periodLabel: string | null;
+  kind: SwarmRunKind;
+  startedAtMs: number | null;
+  durationMs: number | null;
+  elapsedMs: number;
+  checkpointIntervalMs: number | null;
+  checkpointCount: number;
+  checkpointText: string | null;
   active: boolean;
   synthesising: boolean;
   agents: readonly SwarmAgentLiveState[];
@@ -77,6 +86,13 @@ const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
   parentTurnId: null,
   question: null,
   periodLabel: null,
+  kind: "question",
+  startedAtMs: null,
+  durationMs: null,
+  elapsedMs: 0,
+  checkpointIntervalMs: null,
+  checkpointCount: 0,
+  checkpointText: null,
   active: false,
   synthesising: false,
   agents: Object.freeze([]),
@@ -93,6 +109,9 @@ let agentOrder: string[] = [];
 let fleetActive = false;
 let currentRunToken = 0;
 let heartbeatTimer: number | undefined;
+let checkpointTimer: number | undefined;
+let deadlineTimer: number | undefined;
+let superAgentDeadlineReached = false;
 const listeners = new Set<() => void>();
 const abortByAgent = new Map<string, AbortController>();
 const waveFindings = new Map<string, SwarmWaveFinding>();
@@ -128,6 +147,58 @@ function setAgent(
   if (!current) return;
   agentStates.set(key, Object.freeze({ ...current, ...patch }));
   publish({}, settledDelta);
+}
+
+function totalQueriesSeen(): number {
+  return [...agentStates.values()].reduce((total, agent) => total + agent.queriesSeen, 0);
+}
+
+function clearFleetTimers(): void {
+  if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
+  if (checkpointTimer !== undefined) window.clearInterval(checkpointTimer);
+  if (deadlineTimer !== undefined) window.clearTimeout(deadlineTimer);
+  heartbeatTimer = undefined;
+  checkpointTimer = undefined;
+  deadlineTimer = undefined;
+}
+
+export function formatSuperAgentCheckpoint(input: Readonly<{
+  elapsedMs: number;
+  completedPasses: number;
+  totalPasses: number;
+  queriesSeen: number;
+  activePass?: string | null;
+}>): string {
+  const elapsedMinutes = Math.max(0, Math.floor(input.elapsedMs / 60_000));
+  const pass = input.activePass?.trim()
+    ? ` Current: ${input.activePass.trim()}.`
+    : " Preparing the final synthesis.";
+  return `${elapsedMinutes}m elapsed · ${input.completedPasses} of ${input.totalPasses} passes complete · ${input.queriesSeen} governed ${input.queriesSeen === 1 ? "query" : "queries"}.${pass}`;
+}
+
+function publishSuperAgentCheckpoint(runToken: number): void {
+  if (runToken !== currentRunToken || snapshot.kind !== "super-agent" || !snapshot.startedAtMs) return;
+  const elapsedMs = Math.min(
+    snapshot.durationMs ?? Number.MAX_SAFE_INTEGER,
+    Date.now() - snapshot.startedAtMs,
+  );
+  const completedPasses = [...agentStates.values()].filter((agent) => (
+    agent.phase === "done" || agent.phase === "failed" || agent.phase === "stopped"
+  )).length;
+  const activePass = [...agentStates.values()].find((agent) => (
+    agent.phase === "starting" || agent.phase === "researching" || agent.phase === "recording"
+  ));
+  publish({
+    elapsedMs,
+    checkpointCount: snapshot.checkpointCount + 1,
+    checkpointText: formatSuperAgentCheckpoint({
+      elapsedMs,
+      completedPasses,
+      totalPasses: agentStates.size,
+      queriesSeen: totalQueriesSeen(),
+      activePass: activePass?.title,
+    }),
+  });
 }
 
 type RecordedFinding = Readonly<{
@@ -331,7 +402,25 @@ async function runAgent(
     }, 1);
   } catch (error) {
     if (controller.signal.aborted || runToken !== currentRunToken) {
-      setAgent(agent.key, { phase: "stopped", statusLine: "Stopped" }, 1);
+      if (runToken === currentRunToken && superAgentDeadlineReached) {
+        const failureNote = "The 45-minute Super agent budget ended during this pass.";
+        await recordAgent({
+          action: "failed",
+          runId,
+          agentKey: agent.key,
+          failureNote,
+        }).catch(() => undefined);
+        waveFindings.set(agent.key, {
+          title: agent.title,
+          headline: null,
+          answerState: null,
+          keyNumbers: [],
+          failed: true,
+        });
+        setAgent(agent.key, { phase: "failed", statusLine: "45-minute budget reached", error: failureNote }, 1);
+      } else {
+        setAgent(agent.key, { phase: "stopped", statusLine: "Stopped" }, 1);
+      }
       return;
     }
     const message = error instanceof Error ? error.message.slice(0, 280) : "The analysis failed.";
@@ -415,6 +504,47 @@ function startHeartbeat(runId: string, runToken: number): void {
   }, 90_000);
 }
 
+function startSuperAgentTimers(input: Readonly<{
+  runToken: number;
+  durationMs: number;
+  checkpointIntervalMs: number;
+}>): void {
+  checkpointTimer = window.setInterval(() => {
+    publishSuperAgentCheckpoint(input.runToken);
+  }, input.checkpointIntervalMs);
+  deadlineTimer = window.setTimeout(() => {
+    if (input.runToken !== currentRunToken) return;
+    superAgentDeadlineReached = true;
+    publishSuperAgentCheckpoint(input.runToken);
+    abortByAgent.forEach((controller) => controller.abort("super-agent-deadline"));
+  }, input.durationMs);
+}
+
+async function recordUnfinishedSuperAgentPasses(runId: string): Promise<void> {
+  for (const agent of agentStates.values()) {
+    if (agent.phase !== "pending") continue;
+    const failureNote = "This pass did not start before the 45-minute Super agent budget ended.";
+    await recordAgent({
+      action: "failed",
+      runId,
+      agentKey: agent.key,
+      failureNote,
+    }).catch(() => undefined);
+    waveFindings.set(agent.key, {
+      title: agent.title,
+      headline: null,
+      answerState: null,
+      keyNumbers: [],
+      failed: true,
+    });
+    setAgent(agent.key, {
+      phase: "failed",
+      statusLine: "Not started before the 45-minute limit",
+      error: failureNote,
+    }, 1);
+  }
+}
+
 async function runWave(
   runToken: number,
   runId: string,
@@ -427,7 +557,7 @@ async function runWave(
   const worker = async () => {
     for (;;) {
       const agent = queue.shift();
-      if (!agent || runToken !== currentRunToken) break;
+      if (!agent || runToken !== currentRunToken || superAgentDeadlineReached) break;
       await runAgent(runToken, runId, agent, preferences);
     }
   };
@@ -435,6 +565,25 @@ async function runWave(
     { length: Math.max(1, Math.min(concurrency, agents.length)) },
     () => worker(),
   ));
+}
+
+async function runSuperAgentPasses(
+  runToken: number,
+  runId: string,
+  agents: readonly SwarmFleetAgent[],
+  preferences: SwarmFleetPreferences,
+): Promise<void> {
+  for (const agent of agents) {
+    if (runToken !== currentRunToken || superAgentDeadlineReached) return;
+    const priorFindings = [...waveFindings.values()];
+    const briefed = priorFindings.length > 0
+      ? {
+          ...agent,
+          prompt: appendSwarmBrief(agent.prompt, buildSwarmWaveBrief(priorFindings)),
+        }
+      : agent;
+    await runAgent(runToken, runId, briefed, preferences);
+  }
 }
 
 export function startSwarmFleet(input: Readonly<{
@@ -446,6 +595,9 @@ export function startSwarmFleet(input: Readonly<{
   agents: readonly SwarmFleetAgent[];
   preferences: SwarmFleetPreferences;
   concurrency: number;
+  kind?: SwarmRunKind;
+  durationMs?: number;
+  checkpointIntervalMs?: number;
 }>): void {
   currentRunToken += 1;
   const runToken = currentRunToken;
@@ -454,6 +606,8 @@ export function startSwarmFleet(input: Readonly<{
   waveFindings.clear();
   abortByAgent.forEach((controller) => controller.abort());
   abortByAgent.clear();
+  clearFleetTimers();
+  superAgentDeadlineReached = false;
   const { firstWave, secondWave } = splitSwarmWaves(input.agents);
   const secondWaveKeys = new Set(secondWave.map((agent) => agent.key));
   for (const agent of input.agents) {
@@ -464,7 +618,9 @@ export function startSwarmFleet(input: Readonly<{
       tagline: agent.tagline,
       role: agent.role,
       phase: "pending" as const,
-      statusLine: secondWaveKeys.has(agent.key) ? "Waiting on the first wave" : "Queued",
+      statusLine: input.kind === "super-agent"
+        ? "Waiting for the previous pass"
+        : secondWaveKeys.has(agent.key) ? "Waiting on the first wave" : "Queued",
       queriesSeen: 0,
       headline: null,
       answerState: null,
@@ -474,6 +630,7 @@ export function startSwarmFleet(input: Readonly<{
     }));
   }
   fleetActive = true;
+  const startedAtMs = Date.now();
   snapshot = Object.freeze({
     ...EMPTY_SNAPSHOT,
     runId: input.runId,
@@ -481,29 +638,46 @@ export function startSwarmFleet(input: Readonly<{
     parentTurnId: input.parentTurnId,
     question: input.question,
     periodLabel: input.periodLabel,
+    kind: input.kind ?? "question",
+    startedAtMs,
+    durationMs: input.durationMs ?? null,
+    checkpointIntervalMs: input.checkpointIntervalMs ?? null,
     active: true,
   });
   publish();
   startHeartbeat(input.runId, runToken);
+  if (input.kind === "super-agent" && input.durationMs && input.checkpointIntervalMs) {
+    startSuperAgentTimers({
+      runToken,
+      durationMs: input.durationMs,
+      checkpointIntervalMs: input.checkpointIntervalMs,
+    });
+  }
   void (async () => {
-    await runWave(runToken, input.runId, firstWave, input.preferences, input.concurrency);
-    if (runToken !== currentRunToken) return;
-    if (secondWave.length > 0) {
-      const brief = buildSwarmWaveBrief(firstWave
-        .map((agent) => waveFindings.get(agent.key))
-        .filter((finding): finding is SwarmWaveFinding => Boolean(finding)));
-      const briefed = secondWave.map((agent) => ({
-        ...agent,
-        prompt: appendSwarmBrief(agent.prompt, brief),
-      }));
-      await runWave(runToken, input.runId, briefed, input.preferences, input.concurrency);
+    if (input.kind === "super-agent") {
+      await runSuperAgentPasses(runToken, input.runId, input.agents, input.preferences);
       if (runToken !== currentRunToken) return;
+    } else {
+      await runWave(runToken, input.runId, firstWave, input.preferences, input.concurrency);
+      if (runToken !== currentRunToken) return;
+      if (secondWave.length > 0) {
+        const brief = buildSwarmWaveBrief(firstWave
+          .map((agent) => waveFindings.get(agent.key))
+          .filter((finding): finding is SwarmWaveFinding => Boolean(finding)));
+        const briefed = secondWave.map((agent) => ({
+          ...agent,
+          prompt: appendSwarmBrief(agent.prompt, brief),
+        }));
+        await runWave(runToken, input.runId, briefed, input.preferences, input.concurrency);
+        if (runToken !== currentRunToken) return;
+      }
+    }
+    if (input.kind === "super-agent" && superAgentDeadlineReached) {
+      await recordUnfinishedSuperAgentPasses(input.runId);
     }
     fleetActive = false;
-    if (heartbeatTimer !== undefined) {
-      window.clearInterval(heartbeatTimer);
-      heartbeatTimer = undefined;
-    }
+    if (input.kind === "super-agent") publishSuperAgentCheckpoint(runToken);
+    clearFleetTimers();
     await synthesise(runToken, input.runId);
   })();
 }
@@ -514,10 +688,8 @@ export function stopSwarmFleet(): void {
   abortByAgent.forEach((controller) => controller.abort());
   abortByAgent.clear();
   fleetActive = false;
-  if (heartbeatTimer !== undefined) {
-    window.clearInterval(heartbeatTimer);
-    heartbeatTimer = undefined;
-  }
+  superAgentDeadlineReached = false;
+  clearFleetTimers();
   for (const key of agentOrder) {
     const current = agentStates.get(key);
     if (!current || current.phase === "done" || current.phase === "failed") continue;
@@ -547,6 +719,10 @@ export function hydrateSwarmFromRun(input: Readonly<{
   answer: string | null;
   answerState: string | null;
   followUps?: readonly string[];
+  kind?: SwarmRunKind;
+  startedAt?: string;
+  durationMs?: number;
+  checkpointIntervalMs?: number;
 }>): void {
   agentStates = new Map();
   agentOrder = input.agents.map((agent) => agent.key);
@@ -559,6 +735,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
     || agent.phase === "researching"
     || agent.phase === "recording"
   ));
+  const startedAtMs = input.startedAt ? new Date(input.startedAt).valueOf() : null;
   snapshot = Object.freeze({
     ...EMPTY_SNAPSHOT,
     runId: input.runId,
@@ -566,6 +743,13 @@ export function hydrateSwarmFromRun(input: Readonly<{
     parentTurnId: input.parentTurnId,
     question: input.question,
     periodLabel: input.periodLabel,
+    kind: input.kind ?? "question",
+    startedAtMs: startedAtMs !== null && Number.isFinite(startedAtMs) ? startedAtMs : null,
+    durationMs: input.durationMs ?? null,
+    elapsedMs: startedAtMs !== null && Number.isFinite(startedAtMs)
+      ? Math.max(0, Math.min(input.durationMs ?? Number.MAX_SAFE_INTEGER, Date.now() - startedAtMs))
+      : 0,
+    checkpointIntervalMs: input.checkpointIntervalMs ?? null,
     agents: Object.freeze([...input.agents]),
     answer: input.answer,
     answerState: input.answerState,

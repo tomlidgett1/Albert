@@ -53,6 +53,11 @@ const AUTHORIZATION_CONNECTOR_BRIDGE = Object.freeze({
   checksum: "570efd8ac294890cb9808d1ab5b70164e412aeb4bae5ea54c30c3e554d8462ba",
 });
 
+const LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE = Object.freeze({
+  id: "0124_m1_lightspeed_x_connector_admission.sql",
+  checksum: "729fcb66c7bbbe66a3ee7b2744eea6fefbbe1e3f8ea9158aa31d036e65efa76b",
+});
+
 const PROTECTED_DOGFOOD_ACL_COMPATIBILITY = Object.freeze({
   id: "0091_m3_spec_driven_stream_expectations.sql",
   checksum: "e5fb7f265ccebc5764b804fb8cb75a34dbc988b7c0397730bdb97786c027e692",
@@ -107,6 +112,25 @@ export function controlPlaneMigrationBody(
         `${migration.id} changed after its administrator-ownership compatibility review.`,
       );
     return "SELECT extensions.albert_install_authorization_connector_providers();";
+  }
+  if (migration.id === LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE.id) {
+    if (migration.checksum !== LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE.checksum)
+      throw new Error(
+        `${migration.id} changed after its administrator-ownership compatibility review.`,
+      );
+    const challenges = replaceAndCount(
+      migration.body,
+      /ALTER TABLE control_plane\.live_vendor_attestation_challenges[\s\S]*?\n\s*\);/u,
+      "SELECT extensions.albert_install_lightspeed_x_vendor_attestor_provider();",
+    );
+    const results = replaceAndCount(
+      challenges.value,
+      /ALTER TABLE control_plane\.live_vendor_attestation_results[\s\S]*?\n\s*\);/u,
+      "-- Administrator bridge widened live_vendor_attestation_results;",
+    );
+    assertCount(migration.id, "administrator-owned challenge provider check", challenges.count, 1);
+    assertCount(migration.id, "administrator-owned result provider check", results.count, 1);
+    return results.value;
   }
   if (migration.id === PROTECTED_DOGFOOD_ACL_COMPATIBILITY.id) {
     if (migration.checksum !== PROTECTED_DOGFOOD_ACL_COMPATIBILITY.checksum)

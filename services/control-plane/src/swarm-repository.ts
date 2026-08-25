@@ -43,7 +43,7 @@ export const swarmAgentSchema = z.object({
 
 export const swarmStoredSynthesisSchema = z.object({
   headline: z.string().min(1).max(160),
-  answer: z.string().min(1).max(4_000),
+  answer: z.string().min(1).max(8_000),
   answerState: z.enum(["Derived", "Exploratory", "No data", "Unavailable"]),
   followUps: z.array(z.string().max(180)).max(4),
   disagreements: z.array(z.string().max(200)).max(4).catch([]),
@@ -68,7 +68,9 @@ export const swarmPlanDocumentSchema = z.object({
   fastMode: z.boolean().optional(),
   solPlanner: z.boolean().optional(),
   reasoningMode: z.enum(["standard", "pro"]).optional(),
-  kind: z.enum(["question", "sales-deep"]).optional(),
+  kind: z.enum(["question", "sales-deep", "super-agent"]).optional(),
+  durationMs: z.number().int().min(60_000).max(45 * 60_000).optional(),
+  checkpointIntervalMs: z.number().int().min(30_000).max(10 * 60_000).optional(),
 }).passthrough();
 
 export const swarmRunSchema = z.object({
@@ -164,7 +166,9 @@ export async function beginSwarmRun(input: Readonly<{
     fastMode?: boolean;
     solPlanner?: boolean;
     reasoningMode?: "standard" | "pro";
-    kind?: "question" | "sales-deep";
+    kind?: "question" | "sales-deep" | "super-agent";
+    durationMs?: number;
+    checkpointIntervalMs?: number;
   }>;
   agents: readonly Readonly<{
     key: string;

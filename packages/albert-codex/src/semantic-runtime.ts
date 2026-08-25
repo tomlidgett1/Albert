@@ -351,6 +351,8 @@ export function codexQueryBudgetForTurn(
   const id = turn.analysisBrief?.id;
   const hard = id === "testable_opportunity_v2"
     ? 16
+    : id === "profitability_review_v1"
+      ? 16
     : id === "target_goal_v1"
       ? 14
       : id === "decision_model_v1"
@@ -439,6 +441,7 @@ function renderTrustedInstructions(
   timezone: string,
   currency: string,
   preferredQueries: readonly CertifiedQuery[] = [],
+  hasSolChecklist = false,
 ): Readonly<{ base: string; developer: string }> {
   const preferredBlock = renderPreferredCertifiedQueries(preferredQueries);
   return {
@@ -497,7 +500,9 @@ Security and truth contract:
 - make_chart is the only way a chart reaches the owner. Never draw a chart inside the answer text: no mermaid, xychart, ASCII art or code-fenced diagrams — the product does not render them and they appear as broken code.
 - Never write a markdown pipe table inside the answer text. Tables reach the owner only through presentedResultIds — query results and albert.derive_result results render as rich tables beside the answer. If the exact rows you want to show do not yet exist as one result, build them with albert.derive_result and present that result; keep only the headline figures in prose.
 - Every topic and caption is owner-visible. Write a short business description ("Monthly cash in and cash out"), never a view name, member id or internal identifier.
-- For multi-step questions, create a plan with the built-in plan tool before the first semantic query and update that same plan as work progresses. Keep it to two through six short evidence checks and keep plan text free of figures, dates, names, IDs, or result values. Simple one-query lookups do not need a plan.
+${hasSolChecklist
+  ? "- Sol has already supplied a bounded checklist. Do not recreate or expand the plan before evidence. Validate the first relevant view or preferred query and start the first governed query immediately; update the built-in plan only after evidence changes the checklist."
+  : "- For multi-step questions, create a plan with the built-in plan tool before the first semantic query and update that same plan as work progresses. Keep it to two through six short evidence checks and keep plan text free of figures, dates, names, IDs, or result values. Simple one-query lookups do not need a plan."}
 - A single evidence plan step may hold at most three governed results. When Albert reports that the active step is saturated, mark it done and advance the next pending evidence step before querying again; do not keep attaching optional surfaces to the same step.
 - Format the final answer for an owner scanning on a phone. For multi-part analysis, start with a short bold bottom line, then use concise Markdown headings and bullets. Keep paragraphs short. Never emit raw database precision: currencies use thousands separators and two decimals, percentages at most two decimals, whole counts no decimals, and other quantities at most two decimals.
 - Your final response must satisfy the supplied JSON schema. It must not be wrapped in a Markdown code fence.
@@ -510,7 +515,7 @@ Tenant defaults: timezone ${timezone}; currency ${currency}. Current date in the
 
 Governed semantic view index (navigation only; call get_view_schema before querying):
 ${index || "No governed views are currently available."}`,
-    developer: `Operate as a sharp, candid analyst, not a report generator. Investigate first, then compose: if a preferred certified query below answers the ask, run that Cube JSON (period adjusted) and compose immediately. Otherwise load the named view from the index, or search the catalogue only when the index does not name a usable view. Run the fewest queries that answer the question, derive the comparisons that matter, and only then decide the storyline. Judge the draft as a busy owner would. Did it tell me something I did not already know, and can I act on it? Prefer direct evidence, derived comparisons, and limitations disclosed once.
+    developer: `Operate as a sharp, candid analyst, not a report generator. ${hasSolChecklist ? "A Sol checklist already exists: do not repeat planning or broad catalogue discovery; start with the first relevant preferred query or named view." : ""} Investigate first, then compose: if a preferred certified query below answers the ask, run that Cube JSON (period adjusted) and compose immediately. Otherwise load the named view from the index, or search the catalogue only when the index does not name a usable view. Run the fewest queries that answer the question, derive the comparisons that matter, and only then decide the storyline. Judge the draft as a busy owner would. Did it tell me something I did not already know, and can I act on it? Prefer direct evidence, derived comparisons, and limitations disclosed once.
 ${preferredBlock ? `\nPreferred certified starting queries (trusted Cube JSON; ignore a hint that does not answer the question):\n${preferredBlock}\n` : ""}
 Albert's governed semantic rules:
 ${alwaysRules.slice(0, 24_000)}`,
@@ -2526,7 +2531,7 @@ export function gatedCodexCommentary(
   return formatCodexAnswerText(cleaned, evidence);
 }
 
-const REASONING_SUMMARY_INTERNAL_SMELL = /(?:https?:\/\/|www\.|[{}`]|\b(?:chain[- ]of[- ]thought|raw reasoning|system message|developer message|sql|cube|columnkey|rowindex|resultid|result id|credential|password|secret|token|draft|json|schema|tool|validat\w*|payload|prompt|instruction|repair|structured)\b)/iu;
+const REASONING_SUMMARY_INTERNAL_SMELL = /(?:https?:\/\/|www\.|[{}`]|\b(?:chain[- ]of[- ]thought|raw reasoning|raw precision|system message|developer message|sql|cube|semantic query|columnkey|rowindex|resultid|result id|credential|password|secret|token|draft|json|schema|tool|validat\w*|payload|prompt|instruction|repair|structured|commentary|app-server|preflight|summary index|rerun limit|report update)\b)/iu;
 
 /**
  * Reasoning summaries are provider-authored public summaries, never raw model
@@ -3106,7 +3111,10 @@ export async function runCodexSemanticTurn(
       turn,
       authentication: options.authentication,
       fastMode: turn.fastMode,
-      proMode: turn.reasoningMode === "pro",
+      // Sol is a bounded decomposition preflight. Pro belongs to the selected
+      // Luna explorer; applying it to both stages burns the worker deadline
+      // before governed evidence starts.
+      proMode: false,
       timeoutMs: Math.min(CODEX_SOL_PLANNER_TIMEOUT_MS, remainingMs),
       signal: options.signal,
     });
@@ -3154,6 +3162,7 @@ export async function runCodexSemanticTurn(
     config.timezone,
     config.currency,
     preferredCodexCertifiedQueries(turn, config, 2),
+    solPlannerSteps.length > 0,
   );
   const evidence: CodexEvidenceResult[] = [...priorEvidence];
   const priorEvidenceById = new Map(priorEvidence.map((result) => [result.resultId, result]));
@@ -3762,6 +3771,9 @@ export async function runCodexSemanticTurn(
         ...(queriesExecuted >= queryBudget.soft ? {
           budgetAdvisory: `You have run ${queriesExecuted} of at most ${queryBudget.hard} governed queries (${queryBudget.hard - queriesExecuted} remain). Finish the current evidence obligation, then compose. Do not open another optional surface; derive any remaining arithmetic from existing cells.`,
         } : {}),
+        ...(plannerDeadlineAt && plannerDeadlineAt - Date.now() < 240_000 ? {
+          timeAdvisory: "Fewer than four minutes remain in this turn. Do not open another evidence surface. Derive only essential arithmetic from existing cells, then compose the complete grounded answer now.",
+        } : {}),
         hostGeneratedClaims: codexClaimCandidates(evidence.slice(-12), 24)
           .filter((candidate) => candidate.refs.some((ref) => ref.resultId === resultId))
           .slice(0, 12),
@@ -4092,6 +4104,7 @@ export async function runCodexSemanticTurn(
       if (
         method === "item/reasoning/summaryTextDelta"
         && isObject(params)
+        && (turn.reasoningMode !== "pro" || params.source === "responses_api")
         && typeof params.itemId === "string"
         && Number.isInteger(params.summaryIndex)
         && typeof params.delta === "string"
@@ -4104,8 +4117,24 @@ export async function runCodexSemanticTurn(
         await emitReasoningSummary(false);
       }
       if (
+        method === "item/reasoning/summaryTextDone"
+        && isObject(params)
+        && (turn.reasoningMode !== "pro" || params.source === "responses_api")
+        && typeof params.itemId === "string"
+        && Number.isInteger(params.summaryIndex)
+        && typeof params.text === "string"
+      ) {
+        updateReasoningSummaryPart(
+          `${params.itemId}:${params.summaryIndex}`,
+          params.text,
+          false,
+        );
+        await emitReasoningSummary(true);
+      }
+      if (
         method === "item/completed"
         && isObject(params)
+        && turn.reasoningMode !== "pro"
         && isObject(params.item)
         && params.item.type === "reasoning"
         && typeof params.item.id === "string"
@@ -4114,9 +4143,12 @@ export async function runCodexSemanticTurn(
         const reasoningItem = params.item;
         const summaries = reasoningItem.summary as unknown[];
         summaries.slice(0, 8).forEach((summary, index) => {
-          if (typeof summary === "string") {
-            updateReasoningSummaryPart(`${reasoningItem.id}:${index}`, summary, false);
-          }
+          const text = typeof summary === "string"
+            ? summary
+            : isObject(summary) && typeof summary.text === "string"
+              ? summary.text
+              : null;
+          if (text) updateReasoningSummaryPart(`${reasoningItem.id}:${index}`, text, false);
         });
         await emitReasoningSummary(true);
       }

@@ -32,13 +32,86 @@ const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
     "0131_m5_retire_capability_tombstones_after_activation.sql",
     "cf6a66b997095df92a0975fe94726106f269b84a733b2182ebe9e5cc33740fb7",
   ],
+  [
+    "0169_m2_deputy_source_views_over_fivetran.sql",
+    "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
+  ],
 ]);
+
+const FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY = Object.freeze({
+  id: "0134_m2_deputy_source_views.sql",
+  checksum: "3c4b2ae020296affad452c187c3d9a4f3cee7802b3c6f3310a8f43488f073ae5",
+});
+
+const FRESH_DEPUTY_RAW_STUBS = `
+CREATE SCHEMA IF NOT EXISTS "DEPUTYNEW";
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employee (
+  "Id" text, "FirstName" text, "LastName" text, "DisplayName" text,
+  "Position" text, "Active" boolean, "Paused" boolean, "StartDate" text,
+  "TerminationDate" text, "Company" text, "Role" text, "Created" text,
+  "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employeerole (
+  "Id" text, "Role" text, "Ranking" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_operationalunit (
+  "Id" text, "OperationalUnitName" text, "Company" text, "CompanyName" text,
+  "Active" boolean, "AddressObject__City" text, "AddressObject__State" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_company (
+  "Id" text, "CompanyName" text, "TradingName" text, "Active" boolean,
+  "IsWorkplace" boolean, "IsPayrollEntity" boolean
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_timesheet (
+  "Id" text, "Employee" text, "_DPMetaData__EmployeeInfo__DisplayName" text,
+  "Date" text, "StartTimeLocalized" text, "EndTimeLocalized" text,
+  "TotalTime" text, "Cost__v_double" double precision, "Cost" text,
+  "OnCost__v_double" double precision, "OnCost" text, "TimeApproved" boolean,
+  "PayRuleApproved" boolean, "IsInProgress" boolean, "IsLeave" boolean,
+  "LeaveId" text, "LeaveRule" text, "OperationalUnit" text,
+  "_DPMetaData__OperationalUnitInfo__OperationalUnitName" text,
+  "_DPMetaData__OperationalUnitInfo__CompanyName" text, "Roster" text,
+  "EmployeeComment" text, "Created" text, "Modified" text, "Discarded" boolean
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_roster (
+  "Id" text, "Employee" text, "_DPMetaData__EmployeeInfo__DisplayName" text,
+  "Date" text, "StartTimeLocalized" text, "EndTimeLocalized" text,
+  "TotalTime" text, "Cost__v_double" double precision, "Cost" text,
+  "Published" boolean, "Open" boolean, "MatchedByTimesheet" text,
+  "OperationalUnit" text,
+  "_DPMetaData__OperationalUnitInfo__OperationalUnitName" text,
+  "_DPMetaData__OperationalUnitInfo__CompanyName" text, "Comment" text,
+  "ConfirmStatus" text, "Created" text, "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_leave (
+  "Id" text, "Employee" text, "EmployeeName" text, "Company" text,
+  "DateStart" text, "DateEnd" text, "Days__v_double" double precision,
+  "Days" text, "TotalHours__v_double" double precision, "TotalHours" text,
+  "Status" integer, "LeaveRule" text, "Comment" text,
+  "ApprovalComment" text, "Created" text, "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_leaverules (
+  "Id" text, "Name" text, "PaidLeave" boolean, "Visible" boolean,
+  "Description" text
+);
+`;
 
 export function analyticalMigrationBody(
   migration: Readonly<{ id: string; checksum: string; body: string }>,
   bootstrap: boolean,
 ): string {
   const reviewedChecksum = FRESH_ANALYTICAL_DATA_MIGRATIONS.get(migration.id);
+  if (
+    bootstrap
+    && migration.id === FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Deputy compatibility review.`,
+      );
+    }
+    return `${FRESH_DEPUTY_RAW_STUBS}\n${migration.body}`;
+  }
   if (!bootstrap || !reviewedChecksum) return migration.body;
   if (migration.checksum !== reviewedChecksum)
     throw new Error(

@@ -35,7 +35,7 @@ import {
 } from "@/services/control-plane/src/request-security";
 import { correlationIdFromHeader, createServiceLogger, safeErrorEvidence } from "@/packages/observability/src";
 
-export const maxDuration = 120;
+export const maxDuration = 800;
 
 const logger = createServiceLogger("albert-swarm-web");
 
@@ -113,6 +113,11 @@ export async function POST(request: Request): Promise<Response> {
       period,
       businessName: tenant.tenant_name ?? "the business",
       findings,
+      ...(run.plan.reasoningMode === "pro" ? {
+        model: run.model,
+        reasoningEffort: run.reasoningEffort,
+        proMode: true,
+      } : {}),
       apiKey,
       baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
       safetyIdentifier: createHash("sha256")

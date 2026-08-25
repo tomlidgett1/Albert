@@ -71,3 +71,24 @@ test("a fresh analytical bootstrap skips only the reviewed predecessor-pack data
     capabilityCleanup.body,
   );
 });
+
+test("fresh analytical bootstrap supplies checksum-pinned retired Deputy compatibility", () => {
+  const deputyViews = {
+    id: "0134_m2_deputy_source_views.sql",
+    checksum: "3c4b2ae020296affad452c187c3d9a4f3cee7802b3c6f3310a8f43488f073ae5",
+    body: "CREATE VIEW source_deputy.dp_employees AS SELECT * FROM \"DEPUTYNEW\".deputy_employee;",
+  };
+  const executable = analyticalMigrationBody(deputyViews, true);
+  assert.match(executable, /CREATE SCHEMA IF NOT EXISTS "DEPUTYNEW"/u);
+  assert.match(executable, /deputy_employee/u);
+  assert.match(executable, /CREATE VIEW source_deputy\.dp_employees/u);
+  assert.equal(analyticalMigrationBody(deputyViews, false), deputyViews.body);
+
+  const deputyRepoint = {
+    id: "0169_m2_deputy_source_views_over_fivetran.sql",
+    checksum: "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
+    body: "SELECT ingestion.rebuild_fivetran_source_views('deputy');",
+  };
+  assert.match(analyticalMigrationBody(deputyRepoint, true), /no predecessor pack rows/u);
+  assert.equal(analyticalMigrationBody(deputyRepoint, false), deputyRepoint.body);
+});

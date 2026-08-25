@@ -23,6 +23,10 @@ test("reasoning-summary gate keeps public approach prose and rejects internal or
     gatedCodexReasoningSummary("Revenue appears to be 123 before I query the data.", []),
     null,
   );
+  assert.equal(
+    gatedCodexReasoningSummary("I will rerun the semantic query and report an update in commentary.", []),
+    null,
+  );
 });
 
 test("Detailed trail keeps only the latest reasoning-summary snapshot", () => {
@@ -67,8 +71,11 @@ test("Codex opts into summaries but never forwards raw reasoning deltas", async 
     read("app/dash/page.tsx"),
     read("app/dash/dash.module.css"),
   ]);
-  assert.match(appServer, /summary: "concise"/u);
+  assert.match(appServer, /summary: "detailed"/u);
   assert.match(runtime, /item\/reasoning\/summaryTextDelta/u);
+  assert.match(runtime, /item\/reasoning\/summaryTextDone/u);
+  assert.match(runtime, /params\.source === "responses_api"/u);
+  assert.match(runtime, /typeof summary\.text === "string"/u);
   assert.match(runtime, /purpose: "reasoning_summary"/u);
   assert.doesNotMatch(runtime, /item\/reasoning\/textDelta/u);
   assert.match(shared, /"acknowledgement" \| "reasoning_summary"/u);

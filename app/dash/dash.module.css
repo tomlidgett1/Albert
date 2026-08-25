@@ -7869,7 +7869,8 @@
   color: var(--dash-text-heading);
 }
 
-.swarmToggle {
+.swarmToggle,
+.superAgentToggle {
   display: inline-flex;
   height: 28px;
   align-items: center;
@@ -7886,17 +7887,20 @@
   letter-spacing: -0.02em;
 }
 
-.swarmToggleLabel {
+.swarmToggleLabel,
+.superAgentToggleLabel {
   display: inline;
 }
 
-.chatComposerBar .swarmToggle {
+.chatComposerBar .swarmToggle,
+.chatComposerBar .superAgentToggle {
   width: auto;
   min-width: 0;
   flex: 0 0 auto;
 }
 
-.swarmToggle svg {
+.swarmToggle svg,
+.superAgentToggle svg {
   width: 13px;
   height: 13px;
 }
@@ -7908,14 +7912,16 @@
 }
 
 @container composer (max-width: 640px) {
-  .chatComposerBar .swarmToggle {
+  .chatComposerBar .swarmToggle,
+  .chatComposerBar .superAgentToggle {
     width: 28px;
     justify-content: center;
     gap: 0;
     padding: 0;
   }
 
-  .swarmToggleLabel {
+  .swarmToggleLabel,
+  .superAgentToggleLabel {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -7954,7 +7960,8 @@
   }
 }
 
-.swarmToggle:hover {
+.swarmToggle:hover,
+.superAgentToggle:hover {
   background: var(--dash-surface-hover);
   color: var(--dash-text-heading);
 }
@@ -7962,6 +7969,12 @@
 .swarmToggleActive {
   background: var(--dash-surface-active);
   color: var(--dash-text-heading);
+}
+
+.superAgentToggleActive {
+  background: color-mix(in srgb, var(--dash-text-heading), transparent 88%);
+  color: var(--dash-text-heading);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dash-text-heading), transparent 86%);
 }
 
 .composerIconButton svg {

@@ -426,6 +426,32 @@ test("Swarm selection atomically routes an immediate Pro and Sol send", async ({
   expect(capture.codexConversationPayloads).toHaveLength(0);
 });
 
+test("Super agent atomically sends the profitability test with its fixed deep profile", async ({ page }) => {
+  const capture = await openDashboard(page);
+  const prompt = "How can we improve profitability?";
+  await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
+  await page.evaluate(() => {
+    const superAgent = document.querySelector<HTMLButtonElement>('button[aria-label="Super agent"]');
+    const send = document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
+    if (!superAgent || !send) throw new Error("Super agent test controls were unavailable.");
+    superAgent.click();
+    send.click();
+  });
+
+  await expect.poll(() => capture.swarmPayloads.length).toBe(1);
+  expect(capture.swarmPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+    solPlanner: true,
+    proMode: true,
+    kind: "super-agent",
+  });
+  expect(capture.codexConversationPayloads).toHaveLength(0);
+  await expect(page.getByRole("complementary", { name: "Super agent" })).toBeVisible();
+  await expect(page.getByText("45-minute deep-work budget", { exact: true })).toBeVisible();
+  await expect(page.getByText("updates every 2 minutes", { exact: false })).toBeVisible();
+});
+
 test("Codex model controls allow a reviewed OpenAI model change", async ({ page }) => {
   const capture = await openDashboard(page);
   const settings = page.getByTestId("model-run-controls-trigger");

@@ -12,12 +12,14 @@ const services = Object.freeze({
     runtime: "codex-runtime",
     command: "services/codex-runtime.js",
     port: 8792,
+    memory: "4gb",
     exposure: "signed-public",
     source: "services/codex-runtime/src/http.ts",
   }),
   "cube.toml": Object.freeze({
     runtime: "cube",
     port: 4000,
+    memory: "2gb",
     exposure: "signed-public",
     source: "cube-playground/cube.js",
     customImage: true,
@@ -28,6 +30,7 @@ const services = Object.freeze({
     runtime: "deletion-worker",
     command: "services/deletion-worker.js",
     port: 8083,
+    memory: "512mb",
     exposure: "private",
     source: "services/deletion-worker/src/main.ts",
   }),
@@ -35,6 +38,7 @@ const services = Object.freeze({
     runtime: "operator-diagnostic",
     command: "services/operator-diagnostic.js",
     port: 8790,
+    memory: "512mb",
     exposure: "signed-public",
     source: "services/operator-diagnostic/src/node-server.ts",
   }),
@@ -42,6 +46,7 @@ const services = Object.freeze({
     runtime: "sync-worker",
     command: "services/sync-worker.js",
     port: 8080,
+    memory: "1gb",
     exposure: "signed-public",
     source: "services/sync-workers/src/main.ts",
   }),
@@ -49,6 +54,7 @@ const services = Object.freeze({
     runtime: "webhook-gateway",
     command: "services/webhook-gateway.js",
     port: 8081,
+    memory: "512mb",
     exposure: "vendor-public",
     source: "services/webhook-gateway/src/main.ts",
   }),
@@ -228,8 +234,8 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.match(
     body,
-    /^\s*memory\s*=\s*"(?:512mb|1gb)"$/mu,
-    `${file} must declare bounded memory.`,
+    new RegExp(`^\\s*memory\\s*=\\s*"${escapeRegularExpression(expected.memory)}"$`, "mu"),
+    `${file} must declare its reviewed bounded memory.`,
   );
   assert.match(
     body,

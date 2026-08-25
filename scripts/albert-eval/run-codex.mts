@@ -42,6 +42,10 @@ import {
 } from "../../packages/albert-codex/src/index.js";
 import type { CodexServiceTurn } from "../../packages/albert-codex/src/contracts.js";
 import { buildSharedAnalyticalBrief } from "../../services/conversation/src/analytical-brief.js";
+import {
+  prepareSuperAgentPasses,
+  superAgentPlan,
+} from "../../services/swarm/src/super-agent.js";
 import { CODEX_300_QUESTIONS } from "./questions-codex-300.js";
 import { CODEX_QUESTIONS } from "./questions-codex-bikeshop.js";
 import type { EvalQuestion } from "./questions.js";
@@ -69,6 +73,8 @@ type Args = {
   run: string;
   ids?: Set<string>;
   question?: string;
+  superAgentQuestion?: string;
+  startSuperPass?: number;
   concurrency: number;
   timeoutMs: number;
   limit?: number;
@@ -81,6 +87,8 @@ type Args = {
   authMode: "api" | "chatgpt";
   transport: "service" | "in-process";
   workerStaggerMs: number;
+  solPlanner: boolean;
+  proMode: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -97,6 +105,8 @@ function parseArgs(argv: string[]): Args {
     authMode: "api",
     transport: "service",
     workerStaggerMs: 0,
+    solPlanner: false,
+    proMode: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -104,6 +114,8 @@ function parseArgs(argv: string[]): Args {
     if (a === "--run") args.run = next();
     else if (a === "--ids") args.ids = new Set(next().split(",").map((s) => s.trim()).filter(Boolean));
     else if (a === "--question") args.question = next();
+    else if (a === "--super-agent-question") args.superAgentQuestion = next();
+    else if (a === "--start-super-pass") args.startSuperPass = Number(next());
     else if (a === "--concurrency") args.concurrency = Number(next());
     else if (a === "--timeout-ms") args.timeoutMs = Number(next());
     else if (a === "--limit") args.limit = Number(next());
@@ -116,6 +128,8 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--auth") args.authMode = next() as Args["authMode"];
     else if (a === "--transport") args.transport = next() as Args["transport"];
     else if (a === "--worker-stagger-ms") args.workerStaggerMs = Number(next());
+    else if (a === "--sol-planner") args.solPlanner = true;
+    else if (a === "--pro") args.proMode = true;
   }
   if (args.corpus !== "codex56" && args.corpus !== "subscription300") {
     throw new Error("--corpus must be codex56 or subscription300");
@@ -128,6 +142,21 @@ function parseArgs(argv: string[]): Args {
   }
   if (!Number.isFinite(args.workerStaggerMs) || args.workerStaggerMs < 0 || args.workerStaggerMs > 30_000) {
     throw new Error("--worker-stagger-ms must be between 0 and 30000");
+  }
+  if (args.question && args.superAgentQuestion) {
+    throw new Error("--question and --super-agent-question are mutually exclusive");
+  }
+  if (args.superAgentQuestion) args.solPlanner = true;
+  if (args.proMode && args.authMode !== "api") {
+    throw new Error("--pro requires --auth api");
+  }
+  if (args.startSuperPass !== undefined && (
+    !Number.isInteger(args.startSuperPass)
+    || args.startSuperPass < 1
+    || args.startSuperPass > 5
+    || !args.superAgentQuestion
+  )) {
+    throw new Error("--start-super-pass requires --super-agent-question and a pass from 1 to 5");
   }
   if (args.corpus === "subscription300" && (
     args.authMode !== "chatgpt"
@@ -247,7 +276,9 @@ const dir = runDir(args.run);
 const eventsDir = path.join(dir, "events");
 mkdirSync(eventsDir, { recursive: true });
 const resultsFile = path.join(dir, "results.jsonl");
-const priorRunRecords = args.resume ? readJsonl<EvalTurnRecord>(resultsFile) : [];
+const priorRunRecords = args.resume || args.startSuperPass !== undefined
+  ? readJsonl<EvalTurnRecord>(resultsFile)
+  : [];
 const existingRecords = new Map<string, EvalTurnRecord>();
 // Resume retries failed/aborted turns. Only a completed record can satisfy a
 // corpus id or provide trusted context to the rest of its thread.
@@ -262,7 +293,27 @@ engineVersion = `codex-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${pro
 const corpus: readonly EvalQuestion[] = args.corpus === "subscription300"
   ? CODEX_300_QUESTIONS
   : CODEX_QUESTIONS;
-let selected: EvalQuestion[] = args.question
+const allSuperAgentQuestions: EvalQuestion[] | null = args.superAgentQuestion
+  ? prepareSuperAgentPasses(
+      superAgentPlan({ timezone: "Australia/Melbourne" }),
+      args.superAgentQuestion,
+    ).map((pass, index) => ({
+      id: `SUPER-${String(index + 1).padStart(2, "0")}`,
+      tier: "xhard" as const,
+      scope: "multi" as const,
+      surface: "cross" as const,
+      pattern: index === 0 ? "cold" as const : "followup" as const,
+      question: pass.prompt,
+      thread: "SUPER-AGENT",
+      turn: index + 1,
+      expect: pass.tagline,
+      format: "any" as const,
+    }))
+  : null;
+const superAgentQuestions = allSuperAgentQuestions?.filter((question) => (
+  (question.turn ?? 1) >= (args.startSuperPass ?? 1)
+)) ?? null;
+let selected: EvalQuestion[] = superAgentQuestions ?? (args.question
   ? [{
     id: "ADHOC",
     tier: "easy",
@@ -271,7 +322,7 @@ let selected: EvalQuestion[] = args.question
     pattern: "cold",
     question: args.question,
   }]
-  : corpus.filter((question) => !args.ids || args.ids.has(question.id));
+  : corpus.filter((question) => !args.ids || args.ids.has(question.id)));
 if (args.ids) {
   const selectedThreads = new Set(selected.flatMap((question) => question.thread ? [question.thread] : []));
   selected = corpus.filter((question) => (
@@ -299,7 +350,7 @@ units.sort((left, right) => (right.turns.length - left.turns.length) || left.key
 const selectedUnits = args.limit ? units.slice(0, args.limit) : units;
 selected = selectedUnits.flatMap((unit) => unit.turns);
 const runnableCount = selected.filter((question) => !existing.has(question.id)).length;
-console.log(`[codex-eval] run=${args.run} corpus=${args.corpus} engine=${engineVersion} model=${args.model} effort=${args.effort} fast=${args.fastMode} auth=${args.authMode} transport=${args.transport} service=${args.serviceUrl} turns=${runnableCount}/${selected.length} units=${selectedUnits.length} concurrency=${args.concurrency}`);
+console.log(`[codex-eval] run=${args.run} corpus=${args.corpus} engine=${engineVersion} model=${args.model} effort=${args.effort} fast=${args.fastMode} solPlanner=${args.solPlanner} pro=${args.proMode} auth=${args.authMode} transport=${args.transport} service=${args.serviceUrl} turns=${runnableCount}/${selected.length} units=${selectedUnits.length} concurrency=${args.concurrency}`);
 
 type Lease = { conversationId: string; turnId: string };
 
@@ -310,6 +361,8 @@ async function mintLease(question: EvalQuestion, existingConversationId?: string
     model: args.model,
     reasoningEffort: args.effort,
     fastMode: args.fastMode,
+    solPlanner: args.solPlanner,
+    reasoningMode: args.proMode ? "pro" : "standard",
     kind: "codex_eval",
   };
   const begun = await db(
@@ -425,6 +478,8 @@ async function runTurnOnce(
       model: args.model,
       effort: args.effort,
       fastMode: args.fastMode,
+      ...(args.solPlanner ? { solPlanner: true } : {}),
+      ...(args.proMode ? { reasoningMode: "pro" as const } : {}),
     };
     let transport = createCodexTraceTransportState();
     const receiveEvent = async (raw: Parameters<typeof projectCodexRuntimeEvent>[1]) => {
@@ -491,7 +546,18 @@ async function runTurnOnce(
       }
     };
     const result = args.transport === "service"
-      ? await client!.runTurn(turn, receiveEvent, controller.signal)
+      ? await client!.runTurn(
+          turn,
+          receiveEvent,
+          controller.signal,
+          async (event) => {
+            appendJsonl(eventsFile, {
+              atMs: Date.now() - t0,
+              type: "query_audit",
+              event,
+            });
+          },
+        )
       : await runCodexSemanticTurn({
           turn,
           cubeApiUrl: env.CUBE_API_URL!,
@@ -521,8 +587,12 @@ const TRANSIENT = /overloaded|429|rate limit|usage limit|fetch failed|ECONNREFUS
 let done = 0;
 const queue = [...selectedUnits];
 async function runUnit(unit: Unit): Promise<void> {
-  const prior: EvalTurnRecord[] = [];
-  let conversationId: string | undefined;
+  const prior: EvalTurnRecord[] = args.startSuperPass !== undefined
+    ? priorRunRecords
+      .filter((record) => record.thread === "SUPER-AGENT" && (record.turn ?? 0) < args.startSuperPass!)
+      .sort((left, right) => (left.turn ?? 0) - (right.turn ?? 0))
+    : [];
+  let conversationId: string | undefined = prior.at(-1)?.conversationId;
   for (const question of unit.turns) {
     const previous = existingRecords.get(question.id);
     if (previous) {

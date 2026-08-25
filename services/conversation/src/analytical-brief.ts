@@ -16,6 +16,7 @@ const DECISION_MODEL = /\b(?:can\s+(?:i|we|the\s+business)\s+(?:afford|support|s
 const TARGET_AMOUNT = /(?:\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?\b|\b\d[\d,]*(?:\.\d+)?\s*(?:k|m|grand|dollars?|bucks?|percent|per\s?cent)\b|\d(?:\.\d+)?\s*%|\b(?:a|one)\s+(?:thousand|grand)\b|\b(?:five|ten)\s+hundred\b)/iu;
 const TARGET_GOAL_VERB = /\b(?:save|savings?|cut(?:ting)?|trim|reduce|reduc(?:e|ing|tion)|shave|free\s+up|find|unlock|claw\s+back|recover|make|earn|add|extra|additional|increase|grow|boost|lift|bring\s+in|generate|get\s+(?:it|that|[a-z\s]{0,24})\s*(?:under|below|down\s+to)|keep\s+[a-z\s]{0,24}\s*(?:under|below)|under|below|target(?:ing)?)\b/iu;
 const FRAMEWORK_QUESTION = /\b(?:how\s+(?:should|do|would)\s+(?:i|we)\s+(?:best\s+)?(?:think\s+about|approach|price|structure|evaluate|reason\s+about)|what(?:'s|\s+is)\s+a\s+(?:sensible|good|healthy)\s+(?:way|target|benchmark)|what\s+(?:kpis?|metrics)\s+should|frameworks?\s+appl)/iu;
+const PROFITABILITY_REVIEW = /\b(?:how\s+(?:can|could|should)\s+(?:i|we).*(?:improve|increase|grow|lift).*(?:profit|profitability)|profitability\s+(?:review|drivers?|improvement)|what.*(?:driv|improv).*(?:profit|profitability))\b/iu;
 
 function connectorFamily(value: string): "lightspeed" | "deputy" | string {
   const normalized = value.toLowerCase().replaceAll("_", "-");
@@ -45,7 +46,9 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
     && TARGET_AMOUNT.test(input.message) && TARGET_GOAL_VERB.test(input.message);
   const decisionModel = !employeePerformance && !testableOpportunity && !targetGoal && DECISION_MODEL.test(input.message);
   const frameworkQuestion = !employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && FRAMEWORK_QUESTION.test(input.message);
-  if (!employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion && !input.includeGeneric) return undefined;
+  const profitabilityReview = !employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion
+    && PROFITABILITY_REVIEW.test(input.message);
+  if (!employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion && !profitabilityReview && !input.includeGeneric) return undefined;
   const active = new Set((input.activeConnectors ?? []).map(connectorFamily));
   const hasDeputy = active.has("deputy");
   const latestByConnector = new Map<string, string>();
@@ -142,6 +145,33 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
     ]),
     requiredViews: Object.freeze([]),
     requiredCalculations: Object.freeze([]),
+    commonPeriodEnd: null,
+  } satisfies Omit<AnalyticalBrief, "digest">) : profitabilityReview ? Object.freeze({
+    id: "profitability_review_v1",
+    version: 1,
+    ownerGoal: "Explain whole-business profitability movement, rank the largest controllable levers, and size actions without double counting overlapping evidence.",
+    answerMustCover: Object.freeze([
+      "When the owner did not name a period, use the latest complete calendar month versus the prior complete month for accounting, sales and labour performance, state that assumption in the opening, and label any trailing-period inventory or structural context separately.",
+      "Establish accounting profit, gross profit and operating-expense movement over one explicit current and comparable period.",
+      "Bridge the accounting result to operational transaction volume, basket, margin, discounts, refunds and product/category mix without claiming the lenses reconcile unless proven.",
+      "Test labour, workshop, inventory and cash only where they could materially change the ranked recommendation.",
+      "Rank three to five named controllable levers with governed figures, distinguish profit from cash release and one-offs from recurring impact, and avoid adding overlapping opportunity amounts.",
+      "End with a concrete 30/60/90-day plan and one short limitations section.",
+    ]),
+    requiredViews: Object.freeze([
+      ...(active.has("xero") ? [
+        Object.freeze({ view: "xero_profit_and_loss_analytics", reason: "whole-business accounting profit bridge" }),
+        Object.freeze({ view: "xero_profit_and_loss_account_analytics", reason: "named operating-cost movements" }),
+      ] : []),
+      ...(active.has("lightspeed") ? [
+        Object.freeze({ view: "sales_analytics", reason: "operational volume, basket, margin and leakage" }),
+        Object.freeze({ view: "product_sales_analytics", reason: "category and product gross-profit concentration" }),
+      ] : []),
+      ...(active.has("deputy") ? [
+        Object.freeze({ view: "workforce_analytics", reason: "labour capacity and cost context" }),
+      ] : []),
+    ]),
+    requiredCalculations: Object.freeze(["profit_bridge", "ranked_opportunity_sizes"]),
     commonPeriodEnd: null,
   } satisfies Omit<AnalyticalBrief, "digest">) : Object.freeze({
     id: "general_analysis_v1",

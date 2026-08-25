@@ -27,6 +27,12 @@ import {
   SALES_DEEP_PREFERENCES,
 } from "@/services/swarm/src/sales-deep";
 import {
+  SUPER_AGENT_KIND,
+  SUPER_AGENT_PREFERENCES,
+  SUPER_AGENT_PRO_MODE,
+  SUPER_AGENT_SOL_PLANNER,
+} from "@/services/swarm/src/super-agent";
+import {
   getPublicSpecialistAgentDefinition,
   normalizeSpecialistAgentId,
   parseSpecialistAgentId,
@@ -881,6 +887,7 @@ export default function DashPage() {
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
   const [reasoningPanelOpen, setReasoningPanelOpen] = useState(false);
   const [swarmEnabled, setSwarmEnabled] = useState(false);
+  const [superAgentEnabled, setSuperAgentEnabled] = useState(false);
   const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
   const [swarmPanelWidth, setSwarmPanelWidth] = useState(SWARM_PANEL_DEFAULT_WIDTH);
   const [swarmPanelResizing, setSwarmPanelResizing] = useState(false);
@@ -888,6 +895,7 @@ export default function DashPage() {
     () => new Set(),
   );
   const swarmEnabledRef = useRef(false);
+  const superAgentEnabledRef = useRef(false);
   const setSwarmMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === "function" ? next(swarmEnabledRef.current) : next;
     // Send routing reads the ref synchronously. Updating both here prevents a
@@ -895,6 +903,11 @@ export default function DashPage() {
     // while still posting an ordinary /api/codex-conversation turn.
     swarmEnabledRef.current = resolved;
     setSwarmEnabled(resolved);
+  }, []);
+  const setSuperAgentMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(superAgentEnabledRef.current) : next;
+    superAgentEnabledRef.current = resolved;
+    setSuperAgentEnabled(resolved);
   }, []);
   const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
@@ -1935,7 +1948,13 @@ export default function DashPage() {
             parentTurnId: string;
             question: string;
             status: string;
-            plan?: { periodLabel?: string };
+            startedAt?: string;
+            plan?: {
+              periodLabel?: string;
+              kind?: "question" | "sales-deep" | "super-agent";
+              durationMs?: number;
+              checkpointIntervalMs?: number;
+            };
             synthesis?: {
               answer?: string;
               answerState?: string;
@@ -1967,6 +1986,10 @@ export default function DashPage() {
           answer: run.synthesis?.answer ?? null,
           answerState: run.synthesis?.answerState ?? null,
           followUps: run.synthesis?.followUps,
+          kind: run.plan?.kind,
+          startedAt: run.startedAt,
+          durationMs: run.plan?.durationMs,
+          checkpointIntervalMs: run.plan?.checkpointIntervalMs,
         });
         if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
           setSwarmPanelOpen(true);
@@ -2000,6 +2023,10 @@ export default function DashPage() {
             answer: synthesis.answer,
             answerState: synthesis.answerState ?? null,
             followUps: synthesis.followUps,
+            kind: run.plan?.kind,
+            startedAt: run.startedAt,
+            durationMs: run.plan?.durationMs,
+            checkpointIntervalMs: run.plan?.checkpointIntervalMs,
           });
         }).catch(() => undefined);
       })
@@ -2575,7 +2602,7 @@ export default function DashPage() {
       preferencesOverride?: AgentRunPreferences;
       /** Voice narration listens to the turn without owning the chat UI. */
       observer?: VoiceTurnObserver;
-      swarmKind?: "sales-deep";
+      swarmKind?: "sales-deep" | "super-agent";
     }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
@@ -2638,7 +2665,7 @@ export default function DashPage() {
       : null;
     const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
     const runSpecialistAgentId = specialistAgentIdRef.current;
-    const runRuntime = swarmEnabledRef.current
+    const runRuntime = swarmEnabledRef.current || superAgentEnabledRef.current
       ? "codex"
       : options?.forceRuntime
       ? options.forceRuntime
@@ -2801,12 +2828,15 @@ export default function DashPage() {
 
     let swarmFleetStarted = false;
     try {
-      if (swarmEnabledRef.current) {
+      if (swarmEnabledRef.current || superAgentEnabledRef.current) {
+        const swarmKind = options?.swarmKind
+          ?? (superAgentEnabledRef.current ? SUPER_AGENT_KIND : undefined);
         debug.request("/api/swarm", {
           message: text,
           preferences: runPreferences,
           solPlanner: runSolPlanner,
           proMode: runProMode,
+          ...(swarmKind ? { kind: swarmKind } : {}),
         });
         const response = await fetch("/api/swarm", {
           method: "POST",
@@ -2818,7 +2848,7 @@ export default function DashPage() {
             proMode: runProMode,
             ...(requestConversationId ? { conversationId: requestConversationId } : {}),
             ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
-            ...(options?.swarmKind ? { kind: options.swarmKind } : {}),
+            ...(swarmKind ? { kind: swarmKind } : {}),
           }),
           signal: controller.signal,
         });
@@ -2850,6 +2880,9 @@ export default function DashPage() {
             proMode: boolean;
           };
           concurrency?: number;
+          kind?: "question" | "sales-deep" | "super-agent";
+          durationMs?: number;
+          checkpointIntervalMs?: number;
         };
         if (
           !responseConversationId || !ulidPattern.test(responseConversationId)
@@ -2922,6 +2955,9 @@ export default function DashPage() {
             proMode: runProMode,
           },
           concurrency: payload.concurrency ?? 3,
+          kind: payload.kind,
+          durationMs: payload.durationMs,
+          checkpointIntervalMs: payload.checkpointIntervalMs,
         });
         swarmFleetStarted = true;
         setSwarmPanelOpen(true);
@@ -3764,7 +3800,10 @@ export default function DashPage() {
     setTakeawaysOpen(false);
     setReasoningPanelOpen(false);
     setSwarmPanelOpen(false);
-    if (runtime !== "codex") setSwarmMode(false);
+    if (runtime !== "codex") {
+      setSwarmMode(false);
+      setSuperAgentMode(false);
+    }
     setChatClarification(null);
     setClarifyDraft("");
     setEditingMessageId(null);
@@ -3814,6 +3853,7 @@ export default function DashPage() {
     agentPreferencesRef.current = SALES_DEEP_PREFERENCES;
     resetChat("codex", "general");
     setSwarmMode(true);
+    setSuperAgentMode(false);
     void sendChatMessage(SALES_DEEP_OWNER_QUESTION, undefined, {
       conversationId: null,
       priorMessageCount: 0,
@@ -4897,9 +4937,11 @@ export default function DashPage() {
                   <button
                     className={`${styles.chatTakeawaysToggle} ${swarmPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
-                    aria-label="Swarm progress"
+                    aria-label={swarmSnapshot.kind === "super-agent" ? "Super agent progress" : "Swarm progress"}
                     aria-pressed={swarmPanelOpen}
-                    title={swarmPanelOpen ? "Hide swarm" : "Show swarm"}
+                    title={swarmPanelOpen
+                      ? `Hide ${swarmSnapshot.kind === "super-agent" ? "Super agent" : "swarm"}`
+                      : `Show ${swarmSnapshot.kind === "super-agent" ? "Super agent" : "swarm"}`}
                     onClick={() => {
                       setSwarmPanelOpen((open) => {
                         if (!open) {
@@ -4910,7 +4952,7 @@ export default function DashPage() {
                       });
                     }}
                   >
-                    <Icon name="agents" />
+                    <Icon name={swarmSnapshot.kind === "super-agent" ? "sparkles" : "agents"} />
                   </button>
                 ) : null}
                 {!takeawaysOpen && !reasoningPanelOpen && !swarmPanelOpen ? (
@@ -5247,7 +5289,9 @@ export default function DashPage() {
                   <textarea
                     ref={chatTextareaRef}
                     aria-label={
-                      swarmEnabled
+                      superAgentEnabled
+                        ? "Ask a question for the 45-minute Super agent"
+                        : swarmEnabled
                         ? "Ask a harder question for Swarm"
                         : activeChatRuntime === "xero_mcp"
                         ? "Ask Xero anything"
@@ -5258,7 +5302,11 @@ export default function DashPage() {
                           : "Ask me anything"
                     }
                     placeholder={
-                      swarmEnabled
+                      superAgentEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask another deep follow-up. Super agent will loop through the evidence…"
+                          : "Ask a big question. Super agent will investigate for up to 45 minutes…"
+                      : swarmEnabled
                         ? chatMessages.length > 0
                           ? "Ask a harder follow-up. Swarm will split the work…"
                           : "Ask a bigger question. Swarm will split the work across specialists…"
@@ -5311,6 +5359,45 @@ export default function DashPage() {
                 ) : null}
                 {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
                   <button
+                    className={`${styles.superAgentToggle} ${superAgentEnabled ? styles.superAgentToggleActive : ""}`}
+                    type="button"
+                    aria-pressed={superAgentEnabled}
+                    aria-label="Super agent"
+                    title="Run the next question through five sequential deep passes for up to 45 minutes"
+                    onClick={() => {
+                      if (activeChatRuntime !== "codex") {
+                        startCodexChat();
+                        setSwarmMode(false);
+                        setAgentPreferences(SUPER_AGENT_PREFERENCES);
+                        agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
+                        setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
+                        codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
+                        setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
+                        codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
+                        setSuperAgentMode(true);
+                        return;
+                      }
+                      setSuperAgentMode((current) => {
+                        const next = !current;
+                        if (next) {
+                          setSwarmMode(false);
+                          setAgentPreferences(SUPER_AGENT_PREFERENCES);
+                          agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
+                          setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
+                          codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
+                          setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
+                          codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    <Icon name="sparkles" />
+                    <span className={styles.superAgentToggleLabel}>Super agent</span>
+                  </button>
+                ) : null}
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                  <button
                     className={`${styles.swarmToggle} ${swarmEnabled ? styles.swarmToggleActive : ""}`}
                     type="button"
                     aria-pressed={swarmEnabled}
@@ -5319,10 +5406,15 @@ export default function DashPage() {
                     onClick={() => {
                       if (activeChatRuntime !== "codex") {
                         startCodexChat();
+                        setSuperAgentMode(false);
                         setSwarmMode(true);
                         return;
                       }
-                      setSwarmMode((current) => !current);
+                      setSwarmMode((current) => {
+                        const next = !current;
+                        if (next) setSuperAgentMode(false);
+                        return next;
+                      });
                     }}
                   >
                     <Icon name="agents" />
@@ -5496,7 +5588,9 @@ export default function DashPage() {
           <aside
             id="analysis-takeaways"
             className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""}`}
-            aria-label={swarmPanelOpen ? "Swarm" : reasoningPanelOpen ? "Reasoning" : "Key insights"}
+            aria-label={swarmPanelOpen
+              ? (swarmSnapshot.kind === "super-agent" ? "Super agent" : "Swarm")
+              : reasoningPanelOpen ? "Reasoning" : "Key insights"}
             aria-hidden={!sidePanelOpen}
             inert={!sidePanelOpen || undefined}
           >

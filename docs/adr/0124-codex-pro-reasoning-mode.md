@@ -50,8 +50,15 @@ Pro mode is unavailable for local ChatGPT-subscription authentication because
 OpenAI documents it as a Responses API request feature; those runs fail with a
 specific public error rather than silently running standard mode.
 
-The setting applies to both the optional Sol planning preflight and the
-owner-selected Codex investigation when both switches are enabled.
+For an ordinary Codex turn, the setting applies to the owner-selected model
+request. The optional Sol planning preflight remains standard Max so a bounded
+decomposition cannot consume the Pro latency budget before evidence starts.
+
+For Swarm and Super agent, tool-using Luna Max workers also remain standard.
+The one evidence-only parent synthesis uses the selected Luna model, Max effort
+and Pro mode. This matches Pro's single-final-answer shape, keeps every worker
+inside the interactive route deadline, and concentrates the additional model
+work where it improves the owner-facing answer.
 
 ## Consequences
 

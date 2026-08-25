@@ -55,6 +55,17 @@ import {
   prepareSalesDeepAgents,
   salesDeepPlan,
 } from "@/services/swarm/src/sales-deep";
+import {
+  SUPER_AGENT_CHECKPOINT_INTERVAL_MS,
+  SUPER_AGENT_CONCURRENCY,
+  SUPER_AGENT_DURATION_MS,
+  SUPER_AGENT_KIND,
+  SUPER_AGENT_PREFERENCES,
+  SUPER_AGENT_PRO_MODE,
+  SUPER_AGENT_SOL_PLANNER,
+  prepareSuperAgentPasses,
+  superAgentPlan,
+} from "@/services/swarm/src/super-agent";
 import { swarmPlanSteps } from "@/services/swarm/src/parent-events";
 
 const logger = createServiceLogger("albert-swarm-web");
@@ -66,7 +77,7 @@ const bodySchema = z.object({
   preferences: z.unknown().optional(),
   solPlanner: z.boolean().optional(),
   proMode: z.boolean().optional(),
-  kind: z.enum(["question", "sales-deep"]).optional(),
+  kind: z.enum(["question", "sales-deep", "super-agent"]).optional(),
 }).strict();
 
 function jsonError(message: string, status: number, correlationId: string): Response {
@@ -115,11 +126,18 @@ export async function POST(request: Request): Promise<Response> {
 
     const parsed = bodySchema.parse(await readBoundedJsonBody(request));
     const salesDeep = parsed.kind === SALES_DEEP_KIND;
+    const superAgent = parsed.kind === SUPER_AGENT_KIND;
     const preferences = salesDeep
       ? SALES_DEEP_PREFERENCES
+      : superAgent
+        ? SUPER_AGENT_PREFERENCES
       : normalizeAgentPreferences(parsed.preferences);
-    const solPlanner = !salesDeep && parsed.solPlanner === true;
-    const reasoningMode = !salesDeep && parsed.proMode === true ? "pro" as const : "standard" as const;
+    const solPlanner = superAgent
+      ? SUPER_AGENT_SOL_PLANNER
+      : !salesDeep && parsed.solPlanner === true;
+    const reasoningMode = superAgent || (!salesDeep && parsed.proMode === true)
+      ? "pro" as const
+      : "standard" as const;
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
 
@@ -139,6 +157,13 @@ export async function POST(request: Request): Promise<Response> {
           periodSource: "fallback" as const,
           issue: null,
         }
+      : superAgent
+        ? {
+            plan: superAgentPlan({ timezone: tenant.timezone }),
+            source: "fallback" as const,
+            periodSource: "fallback" as const,
+            issue: null,
+          }
       : await allocateSwarmPlan({
           question: parsed.message,
           connectors,
@@ -162,6 +187,8 @@ export async function POST(request: Request): Promise<Response> {
     }, correlationId);
     const agents = salesDeep
       ? prepareSalesDeepAgents(plan, parsed.message)
+      : superAgent
+        ? prepareSuperAgentPasses(plan, parsed.message)
       : prepareSwarmAgents(plan, parsed.message);
 
     turnId = ulid();
@@ -178,6 +205,7 @@ export async function POST(request: Request): Promise<Response> {
       codexProtocolVersion: ALBERT_CODEX_PROTOCOL_VERSION,
       analysisTimeoutMs: ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
       swarm: true,
+      ...(superAgent ? { superAgent: true, superAgentDurationMs: SUPER_AGENT_DURATION_MS } : {}),
     } as const;
 
     begun = await beginConversationTurn({
@@ -209,6 +237,11 @@ export async function POST(request: Request): Promise<Response> {
         solPlanner,
         reasoningMode,
         ...(salesDeep ? { kind: SALES_DEEP_KIND } : {}),
+        ...(superAgent ? {
+          kind: SUPER_AGENT_KIND,
+          durationMs: SUPER_AGENT_DURATION_MS,
+          checkpointIntervalMs: SUPER_AGENT_CHECKPOINT_INTERVAL_MS,
+        } : {}),
       },
       agents: agents.map((agent) => ({
         key: agent.key,
@@ -234,6 +267,8 @@ export async function POST(request: Request): Promise<Response> {
         purpose: "acknowledgement",
         text: salesDeep
           ? `I'll run a deep sales swarm across ${agents.length} specialists. This can take a while. I'll write what they find into a sales briefing you can ask about.`
+          : superAgent
+            ? `I'll run this as a Super agent investigation: ${agents.length} ordered deep passes, one at a time, with a 45-minute hard budget and a public progress checkpoint every two minutes.`
           : `I'll split this across ${agents.length} specialists, then combine what they find.`,
       },
     }).catch(() => undefined);
@@ -286,9 +321,18 @@ export async function POST(request: Request): Promise<Response> {
         reasoningEffort: preferences.reasoningEffort,
         fastMode: preferences.fastMode,
         solPlanner,
-        proMode: reasoningMode === "pro",
+        // Pro is deliberately reserved for the one evidence-only parent
+        // synthesis. Tool-using workers stay standard so they can finish
+        // governed evidence inside the interactive route window.
+        proMode: false,
       },
-      concurrency: SWARM_CLIENT_CONCURRENCY,
+      synthesisProMode: superAgent ? SUPER_AGENT_PRO_MODE : reasoningMode === "pro",
+      concurrency: superAgent ? SUPER_AGENT_CONCURRENCY : SWARM_CLIENT_CONCURRENCY,
+      kind: superAgent ? SUPER_AGENT_KIND : salesDeep ? SALES_DEEP_KIND : "question",
+      ...(superAgent ? {
+        durationMs: SUPER_AGENT_DURATION_MS,
+        checkpointIntervalMs: SUPER_AGENT_CHECKPOINT_INTERVAL_MS,
+      } : {}),
       conversationId,
       turnId,
     }, {

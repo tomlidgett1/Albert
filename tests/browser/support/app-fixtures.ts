@@ -1262,6 +1262,7 @@ export async function installAppApiRoutes(
     const preferences = requestPayload.preferences && typeof requestPayload.preferences === "object"
       ? requestPayload.preferences as Record<string, unknown>
       : {};
+    const superAgent = requestPayload.kind === "super-agent";
     await route.fulfill({
       status: 200,
       headers: {
@@ -1270,16 +1271,25 @@ export async function installAppApiRoutes(
         "X-Albert-Turn-Id": "01J00000000000000000000062",
       },
       json: {
-        run: { runId: "01J00000000000000000000063", plan: { periodLabel: "As asked" } },
+        run: {
+          runId: "01J00000000000000000000063",
+          plan: { periodLabel: "As asked" },
+        },
         agents: [],
         preferences: {
           model: typeof preferences.model === "string" ? preferences.model : "gpt-5.6-luna",
           reasoningEffort: typeof preferences.reasoningEffort === "string" ? preferences.reasoningEffort : "max",
           fastMode: preferences.fastMode === true,
           solPlanner: requestPayload.solPlanner === true,
-          proMode: requestPayload.proMode === true,
+          proMode: false,
         },
-        concurrency: 3,
+        synthesisProMode: requestPayload.proMode === true,
+        concurrency: superAgent ? 1 : 3,
+        kind: superAgent ? "super-agent" : "question",
+        ...(superAgent ? {
+          durationMs: 45 * 60_000,
+          checkpointIntervalMs: 2 * 60_000,
+        } : {}),
       },
     });
   });
