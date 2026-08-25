@@ -314,6 +314,7 @@ export async function assertPinnedCodexVersion(
 class CodexJsonRpcSession {
   private nextRequestId = 1;
   private readonly pending = new Map<number, Readonly<{
+    method: string;
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
     timeout: ReturnType<typeof setTimeout>;
@@ -379,7 +380,7 @@ class CodexJsonRpcSession {
         this.pending.delete(id);
         rejectRequest(new Error(`Codex app-server ${method} timed out.`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolveRequest, reject: rejectRequest, timeout });
+      this.pending.set(id, { method, resolve: resolveRequest, reject: rejectRequest, timeout });
     });
     this.write({ method, id, params });
     return response;
@@ -458,6 +459,16 @@ class CodexJsonRpcSession {
       if (isObject(value.error)) {
         pending.reject(new Error(asString(value.error.message) ?? "Codex app-server rejected the request."));
       } else {
+        // A model may issue its first tool call immediately after replying to
+        // turn/start. Bind the new turn synchronously while processing that
+        // response; waiting for the caller's promise continuation leaves a
+        // one-line race where the valid call is compared with the prior turn.
+        if (pending.method === "turn/start") {
+          const nextTurnId = isObject(value.result) && isObject(value.result.turn)
+            ? asString(value.result.turn.id)
+            : undefined;
+          if (nextTurnId) this.expectedTurnId = nextTurnId;
+        }
         pending.resolve(value.result);
       }
       return;
