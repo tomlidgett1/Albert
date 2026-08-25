@@ -107,7 +107,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_id',$1,true)",[TENANT_B]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a caller-selected tenant GUC must never authorize an exact runtime login",
@@ -120,27 +120,15 @@ async function main():Promise<void>{
     await transaction(transform,"transform_rw",async()=>{
       await transform.query("select set_config('albert.tenant_id',$1,true)",[TENANT_B]);
       await transform.query("select set_config('albert.tenant_capability',$1,true)",[transformToken]);
-      const result=await transform.query<{tenant_id:string}>("select core.current_tenant_id() as tenant_id");
+      const result=await transform.query<{tenant_id:string}>("select ingestion.current_tenant_id() as tenant_id");
       assert.equal(result.rows[0]?.tenant_id,TENANT_A);
-      // Exercise the exact production LOGIN, signed tenant capability, RLS,
-      // canonical ULID CHECK, and currency CHECK together. Function ACL
-      // hardening must not make transform_rw unable to perform its declared
-      // canonical writes.
-      await transform.query(
-        `insert into core.legal_entity(
-           tenant_id,id,name,base_currency,active,sync_run_id
-         ) values($1,$2,$3,$4,true,$5)
-         on conflict(tenant_id,id) do nothing`,
-        [
-          TENANT_A,"01H00000000000000000000931","Capability boundary entity",
-          "AUD","01H00000000000000000000932",
-        ],
+      // V3 retired the canonical core tables. Exercise the exact production
+      // LOGIN, signed tenant capability, source-table ACL and RLS together on
+      // the current typed staging surface instead.
+      const visible=await transform.query<{count:string}>(
+        "select count(*)::text as count from source_xero.xero_currencies",
       );
-      const inserted=await transform.query<{count:string}>(
-        "select count(*)::text as count from core.legal_entity where tenant_id=$1 and id=$2",
-        [TENANT_A,"01H00000000000000000000931"],
-      );
-      assert.equal(Number(inserted.rows[0]?.count),1);
+      assert.equal(Number(visible.rows[0]?.count),0);
     });
 
     await admin.query("begin");
@@ -196,7 +184,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[wrongAudience]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "an ingest token must not cross into transform",
@@ -207,7 +195,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[JSON.stringify(tampered)]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a tenant claim mutation must invalidate the signature",
@@ -270,7 +258,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[prePurgeTransformToken]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a capability issued before purge must not authorize post-purge data recreation",
