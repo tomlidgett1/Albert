@@ -93,6 +93,17 @@ test("compatibility conversion rejects unknown, changed, and count-drifted migra
     /ALTER TABLE control_plane\.live_vendor_attestation_(?:challenges|results)/u,
   );
 
+  const shopifyContinuity = await migration(
+    "0135_m2_shopify_deletion_continuity_block.sql",
+  );
+  const shopifyContinuityExecutable = controlPlaneMigrationBody(shopifyContinuity);
+  assert.match(shopifyContinuityExecutable, /TO albert_control_migration_owner;/u);
+  assert.doesNotMatch(shopifyContinuityExecutable, /TO albert_migration_owner;/u);
+  assert.throws(
+    () => controlPlaneMigrationBody({ ...shopifyContinuity, checksum: "c".repeat(64) }),
+    /control-plane owner compatibility review/u,
+  );
+
   const streamExpectations = await migration(
     "0091_m3_spec_driven_stream_expectations.sql",
   );

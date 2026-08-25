@@ -58,6 +58,11 @@ const LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE = Object.freeze({
   checksum: "729fcb66c7bbbe66a3ee7b2744eea6fefbbe1e3f8ea9158aa31d036e65efa76b",
 });
 
+const SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY = Object.freeze({
+  id: "0135_m2_shopify_deletion_continuity_block.sql",
+  checksum: "a553066abf7756abb73ae5b29e7826bc736886039f07ef7645bb6c5a2f506445",
+});
+
 const PROTECTED_DOGFOOD_ACL_COMPATIBILITY = Object.freeze({
   id: "0091_m3_spec_driven_stream_expectations.sql",
   checksum: "e5fb7f265ccebc5764b804fb8cb75a34dbc988b7c0397730bdb97786c027e692",
@@ -131,6 +136,19 @@ export function controlPlaneMigrationBody(
     assertCount(migration.id, "administrator-owned challenge provider check", challenges.count, 1);
     assertCount(migration.id, "administrator-owned result provider check", results.count, 1);
     return results.value;
+  }
+  if (migration.id === SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY.id) {
+    if (migration.checksum !== SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY.checksum)
+      throw new Error(
+        `${migration.id} changed after its control-plane owner compatibility review.`,
+      );
+    const owner = replaceAndCount(
+      migration.body,
+      /TO albert_migration_owner;/u,
+      "TO albert_control_migration_owner;",
+    );
+    assertCount(migration.id, "wrong-cell migration-owner grant", owner.count, 1);
+    return owner.value;
   }
   if (migration.id === PROTECTED_DOGFOOD_ACL_COMPATIBILITY.id) {
     if (migration.checksum !== PROTECTED_DOGFOOD_ACL_COMPATIBILITY.checksum)

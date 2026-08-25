@@ -120,3 +120,20 @@ test("fresh analytical bootstrap skips the retired XER_OFFICIAL source-view brid
     );
   }
 });
+
+test("fresh analytical bootstrap creates the current Xero official schema before repointing", () => {
+  const repoint = {
+    id: "0164_m2_xero_official_views_over_connector_staging.sql",
+    checksum: "78f2c44ba04b366160e87e6b311ccfc6fba8f75e47ae213779bd323c6970f85b",
+    body: "CREATE VIEW source_xero_official.xo_accounts AS SELECT * FROM source_xero.xero_accounts;",
+  };
+  assert.match(
+    analyticalMigrationBody(repoint, true),
+    /^CREATE SCHEMA IF NOT EXISTS source_xero_official;/u,
+  );
+  assert.equal(analyticalMigrationBody(repoint, false), repoint.body);
+  assert.throws(
+    () => analyticalMigrationBody({ ...repoint, checksum: "f".repeat(64) }, true),
+    /fresh-bootstrap Xero schema compatibility review/u,
+  );
+});

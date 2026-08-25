@@ -55,6 +55,11 @@ const FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY = Object.freeze({
   checksum: "3c4b2ae020296affad452c187c3d9a4f3cee7802b3c6f3310a8f43488f073ae5",
 });
 
+const FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY = Object.freeze({
+  id: "0164_m2_xero_official_views_over_connector_staging.sql",
+  checksum: "78f2c44ba04b366160e87e6b311ccfc6fba8f75e47ae213779bd323c6970f85b",
+});
+
 const FRESH_DEPUTY_RAW_STUBS = `
 CREATE SCHEMA IF NOT EXISTS "DEPUTYNEW";
 CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employee (
@@ -123,6 +128,17 @@ export function analyticalMigrationBody(
       );
     }
     return `${FRESH_DEPUTY_RAW_STUBS}\n${migration.body}`;
+  }
+  if (
+    bootstrap
+    && migration.id === FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Xero schema compatibility review.`,
+      );
+    }
+    return `CREATE SCHEMA IF NOT EXISTS source_xero_official;\n${migration.body}`;
   }
   if (!bootstrap || !reviewedChecksum) return migration.body;
   if (migration.checksum !== reviewedChecksum)
