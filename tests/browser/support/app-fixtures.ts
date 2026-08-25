@@ -15,7 +15,7 @@ export const fixtureWorkspace = Object.freeze({
   }),
   providers: Object.freeze([
     Object.freeze({
-      id: "lightspeed",
+      id: "fivetran-lightspeed",
       name: "Lightspeed",
       description: "Sales, inventory, customers, and store activity.",
       logo: "/logos/lightspeed.png",

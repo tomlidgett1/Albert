@@ -50,6 +50,7 @@ jobs:
           path: .playwright
           if-no-files-found: ignore
           retention-days: 14
+          include-hidden-files: true
 
   analytical-database:
     runs-on: ubuntu-latest

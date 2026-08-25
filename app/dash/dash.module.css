@@ -187,10 +187,10 @@
   --dash-text-strong: #2c3526;
   --dash-text-heading: #243024;
   --dash-text-body: #3a4334;
-  --dash-text-muted: #6f7a64;
-  --dash-text-soft: #6f7a64;
-  --dash-text-subtle: #6f7a64;
-  --dash-text-faint: #6f7a64;
+  --dash-text-muted: #59634e;
+  --dash-text-soft: #59634e;
+  --dash-text-subtle: #59634e;
+  --dash-text-faint: #59634e;
   --dash-border: #c9d4b4;
   --dash-border-soft: #d5dec4;
   --dash-border-input: #c3ceb0;
@@ -225,7 +225,7 @@
   --dash-popup-reply: #e6edd8;
   --dash-popup-reply-text: #2c3526;
   --dash-popup-text: #243024;
-  --dash-popup-muted: #6f7a64;
+  --dash-popup-muted: #59634e;
   --dash-popup-border: rgba(70, 78, 52, 0.14);
   --dash-albert-icon: #6a8c4a;
   --dash-albert-hover: #5a7a3d;

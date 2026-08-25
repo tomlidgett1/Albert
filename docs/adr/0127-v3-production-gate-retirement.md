@@ -47,6 +47,9 @@ Remove only contract files whose complete subject is a retired architecture:
 - the progressive canonical-transform dependency SQL harness. Its complete
   subject is the retired transform worker and `canonical_transform_jobs` path;
   current raw landing, sync lifecycle and V3 source-readiness gates remain.
+- browser journeys whose complete subject is the retired Semantic V2 Admin
+  authoring workspace or isolated Anthropic "New Method" runtime. Current V3
+  administration, Codex model controls and browser accessibility remain gated.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the
