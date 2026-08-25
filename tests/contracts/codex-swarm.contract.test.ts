@@ -220,7 +220,7 @@ test("Pro synthesis uses the selected Luna model at Max without putting Pro on w
   assert.equal(result.source, "model");
   assert.equal(request?.model, "gpt-5.6-luna");
   assert.deepEqual(request?.reasoning, { effort: "max", mode: "pro" });
-  assert.equal(request?.max_output_tokens, 64_000);
+  assert.equal(request?.max_output_tokens, 48_000);
   assert.equal((request?.text as { verbosity?: string })?.verbosity, "high");
   assert.equal(Object.hasOwn(request ?? {}, "service_tier"), false);
 });
@@ -272,8 +272,57 @@ test("an incomplete Pro synthesis recovers on Luna Max without Fast before deter
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
   assert.deepEqual(requests[1]?.reasoning, { effort: "max" });
-  assert.equal(requests[0]?.max_output_tokens, 64_000);
+  assert.equal(requests[0]?.max_output_tokens, 48_000);
   assert.equal(requests[1]?.max_output_tokens, 8_000);
+  assert.equal(Object.hasOwn(requests[1] ?? {}, "service_tier"), false);
+});
+
+test("a Pro provider timeout reaches the standard Luna Max recovery", async () => {
+  const requests: Record<string, unknown>[] = [];
+  const result = await buildSwarmSynthesis({
+    question: "How can we improve profitability?",
+    periodLabel: "Latest complete month versus prior complete month",
+    businessName: "Albert Bike Store",
+    findings: [{
+      agentKey: "accounts",
+      title: "Accounts",
+      role: "measure",
+      answerState: "Verified",
+      headline: "Gross profit was $95,000",
+      keyNumbers: [{ label: "Gross profit", value: "$95,000" }],
+      summaryExcerpt: "Gross profit was $95,000 in the governed period.",
+      failed: false,
+      failureNote: null,
+    }],
+    apiKey: "sk-fixture",
+    baseUrl: "https://au.api.openai.com/v1",
+    safetyIdentifier: "fixture",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    proMode: true,
+    client: {
+      responses: {
+        create: async (body: Record<string, unknown>) => {
+          requests.push(body);
+          if (requests.length === 1) throw new Error("Request timed out.");
+          return {
+            status: "completed",
+            output_text: JSON.stringify({
+              headline: "Protect the $95,000 gross-profit baseline",
+              answer: "Gross profit was $95,000 in the governed period. Protect that baseline, assign an owner to the material controllable levers, and retain only actions that improve the governed result without breaching the agreed guardrail.",
+              followUps: ["Which cost lever should I test first?", "Which sales lever is most controllable?"],
+              disagreements: [],
+            }),
+          };
+        },
+      },
+    } as never,
+  });
+  assert.equal(result.source, "model-repaired");
+  assert.equal(result.failure, null);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
+  assert.deepEqual(requests[1]?.reasoning, { effort: "max" });
   assert.equal(Object.hasOwn(requests[1] ?? {}, "service_tier"), false);
 });
 

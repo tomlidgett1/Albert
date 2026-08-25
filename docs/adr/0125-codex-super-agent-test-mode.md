@@ -60,7 +60,7 @@ grounds the final synthesis only in recorded findings.
    can we improve profitability?” The button remains question-driven,
    so later tests can submit a different owner question through the same
    bounded mode.
-8. **Synthesis fails over without becoming shallow.** Pro receives a 64k
+8. **Synthesis fails over without becoming shallow.** Pro receives a 48k
    output allowance because Responses counts invisible reasoning tokens inside
    `max_output_tokens`. If Pro still returns an incomplete structured answer,
    Albert retries once on the same Luna/Max profile with Pro and Fast both off.

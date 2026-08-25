@@ -17,10 +17,10 @@ import type { SwarmPeriodWindow } from "./period";
 export const SWARM_SYNTHESIS_MODEL = "gpt-5.6-terra" as const;
 export const SWARM_SYNTHESIS_REASONING_EFFORT = "medium" as const;
 export const SWARM_SYNTHESIS_TIMEOUT_MS = 90_000;
-export const SWARM_PRO_SYNTHESIS_TIMEOUT_MS = 600_000;
+export const SWARM_PRO_SYNTHESIS_TIMEOUT_MS = 540_000;
 // max_output_tokens includes hidden reasoning tokens. Pro can legitimately use
 // considerably more than the visible 8k answer budget before it emits JSON.
-export const SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS = 64_000;
+export const SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS = 48_000;
 
 export const swarmSynthesisSchema = z.object({
   headline: z.string().min(8).max(160),
@@ -323,17 +323,32 @@ export async function buildSwarmSynthesis(options: Readonly<{
         : null;
     };
 
-    const first = await attempt();
+    let firstFailure: string | null = null;
+    const first = await attempt().catch((error: unknown) => {
+      firstFailure = error instanceof Error
+        ? error.message.replace(/\s+/gu, " ").slice(0, 120)
+        : "provider request failed";
+      return null;
+    });
     // A Pro response can exhaust its reasoning allowance before emitting the
     // structured answer. Recover once on the same selected Luna/Max profile,
     // without Pro and without Fast, before considering the deterministic
     // emergency fallback.
+    let recoveryFailure: string | null = null;
     const recovered = first ? null : await attempt(
       "The prior attempt did not produce a complete structured answer. Write the complete owner brief now and satisfy the schema exactly.",
       "standard",
-    ).catch(() => null);
+    ).catch((error: unknown) => {
+      recoveryFailure = error instanceof Error
+        ? error.message.replace(/\s+/gu, " ").slice(0, 120)
+        : "provider recovery failed";
+      return null;
+    });
     if (!first && !recovered) {
-      return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: "invalid-structured-output" };
+      const failure = firstFailure || recoveryFailure
+        ? `synthesis-recovery-failed:${[firstFailure, recoveryFailure].filter(Boolean).join("; ").slice(0, 150)}`
+        : "invalid-structured-output";
+      return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure };
     }
     let synthesis = first ?? recovered!;
     let source: SwarmSynthesisResult["source"] = first ? "model" : "model-repaired";
