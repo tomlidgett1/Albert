@@ -216,3 +216,17 @@ test("the final control-plane deny covers current and future private functions",
   );
   assert.match(migration, /NOTIFY pgrst, 'reload schema'/u);
 });
+
+test("the final analytical deny covers Fivetran and capability implementations", async () => {
+  const migration = await source(
+    "infra/migrations/analytical/0179_m0_final_private_function_default_deny.sql",
+  );
+  assert.match(
+    migration,
+    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA[\s\S]*ingestion,quality,semantic_internal,deletion_internal,capability_internal[\s\S]*FROM PUBLIC,service_role/u,
+  );
+  assert.equal(
+    (migration.match(/ALTER DEFAULT PRIVILEGES FOR ROLE albert_migration_owner/gu) ?? []).length,
+    5,
+  );
+});
