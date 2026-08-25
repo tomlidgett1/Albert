@@ -250,15 +250,6 @@ jobs:
           -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-capability-runtime.sql
         env:
           PGPASSWORD: ci-control-diagnostic-password-000001
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-seed.sql
-      - run: >-
-          psql -h 127.0.0.1 -p 54322 -U albert_semantic_control_runtime
-          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay.sql
-        env:
-          PGPASSWORD: ci-control-semantic-password-00000001
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-verify.sql
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-release-qualification.sql
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-review-batch.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-rls.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-runtime-isolation.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-connection-mutation-boundary.sql

@@ -38,6 +38,8 @@ Remove only contract files whose complete subject is a retired architecture:
   quality runner; current ingestion and connector-quality contracts remain.
 - the canonical pipeline-snapshot attestation harness whose snapshot function
   was explicitly dropped by analytical migration 0157.
+- control-plane Semantic V2 review/qualification and semantic-query promotion
+  relay SQL, whose services and customer path are retired.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the
