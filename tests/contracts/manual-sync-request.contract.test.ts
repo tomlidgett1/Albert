@@ -157,5 +157,10 @@ test("the sync route enforces same-origin, role, rate limit and bounded body bef
     assert.ok(guardAt > -1 && guardAt < rpcAt, `${guard} must run before the RPC`);
   }
   // Tenant scope comes from the session inside the definer, never the body.
-  assert.doesNotMatch(route, /tenantId|tenant_id/u);
+  const requestContract = route.slice(
+    route.indexOf("const requestSchema"),
+    route.indexOf("const DECLINE_COPY"),
+  );
+  assert.doesNotMatch(requestContract, /tenantId|tenant_id/u);
+  assert.match(route, /tenantId: tenant\.tenant_id/u);
 });

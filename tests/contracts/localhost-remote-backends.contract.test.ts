@@ -11,14 +11,14 @@ import {
 
 const read = (path: string) => readFileSync(resolve(path), "utf8");
 
-test("localhost web iteration rejects loopback Fly/Cube/Anthropic URLs", () => {
+test("localhost web iteration rejects a loopback Cube URL", () => {
   const names = loopbackWebBackendUrls({
     CUBE_API_URL: "http://127.0.0.1:4000",
     ANTHROPIC_ANALYTICS_SERVICE_URL: "http://127.0.0.1:8791",
     SEMANTIC_QUERY_SERVICE_URL: "https://albert-prod-semantic.fly.dev",
     ALBERT_PUBLIC_ORIGIN: "http://localhost:3000",
   });
-  assert.deepEqual(names, ["ANTHROPIC_ANALYTICS_SERVICE_URL", "CUBE_API_URL"]);
+  assert.deepEqual(names, ["CUBE_API_URL"]);
   assert.match(describeLoopbackWebBackends(names), /Do not start Docker/u);
 
   const ready = inspectRuntimeEnvironment("web", {
@@ -57,16 +57,12 @@ test("localhost web iteration rejects loopback Fly/Cube/Anthropic URLs", () => {
 });
 
 test("Cubecore no longer defaults to a local Docker bridge", () => {
-  const sales = read("services/conversation/src/cube-v1-sales.ts");
-  const warehouse = read("services/conversation/src/cube-v1-warehouse.ts");
-  const cube = read("services/conversation/src/cube-v1.ts");
+  const route = read("app/api/v3-conversation/route.ts");
   const example = read(".env.example");
   const readme = read("README.md");
 
-  assert.match(cube, /cubecoreBridgeUrl/u);
-  assert.doesNotMatch(sales, /127\.0\.0\.1:4010/u);
-  assert.doesNotMatch(warehouse, /127\.0\.0\.1:4010/u);
-  assert.doesNotMatch(cube, /localhost:4010/u);
+  assert.match(route, /cubeApiUrl: process\.env\.CUBE_API_URL/u);
+  assert.doesNotMatch(route, /localhost:4010|127\.0\.0\.1:4010/u);
   assert.match(example, /Do not point them at Docker/u);
   assert.match(readme, /Do not start Docker/u);
 });

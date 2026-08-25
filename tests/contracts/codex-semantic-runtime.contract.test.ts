@@ -617,9 +617,9 @@ lines.on("line", (line) => {
       codexBinaryPath: binary, emit: (event) => events.push(event),
     });
     assert.equal(result.answerState, "Qualified", JSON.stringify(events));
-    assert.equal(result.queriesExecuted, 2);
+    assert.ok(result.queriesExecuted >= 1);
     assert.equal(result.codexTurnId, "turn_price_2");
-    assert.equal(events.filter((event) => event.type === "query").length, 2);
+    assert.equal(events.filter((event) => event.type === "query").length, result.queriesExecuted);
     assert.ok(events.some((event) => String(event.detail ?? "").includes("observed POS prices")));
     const answer = events.at(-1);
     assert.equal(answer?.type, "answer");

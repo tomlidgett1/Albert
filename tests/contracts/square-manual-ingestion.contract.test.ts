@@ -167,5 +167,5 @@ test("the workspace exposes Square as connected but inert until the manual actio
     component,
     /requestManualSync\(\s*connection\.connectionId,\s*true,\s*provider\.id/u,
   );
-  assert.match(component, /Connected\. No data has been imported yet\./u);
+  assert.match(component, /Not imported yet/u);
 });

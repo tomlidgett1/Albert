@@ -44,7 +44,7 @@ function sortStreams(streams: readonly StreamExpectation[]): readonly StreamExpe
   );
 }
 
-test("the protected M3 inventory is exactly the three reviewed connector manifests", async () => {
+test("the protected M3 structural inventory matches manifests while M4 owns current required coverage", async () => {
   const [sql, seedSql] = await Promise.all([
     readFile(migrationUrl, "utf8"),
     readFile(streamSeedUrl, "utf8"),
@@ -84,18 +84,24 @@ test("the protected M3 inventory is exactly the three reviewed connector manifes
     sourceTotalStrategy: stream.sourceTotalStrategy,
   })));
 
-  assert.deepEqual(sortStreams(seeded), sortStreams(reviewed));
+  const seededByStream = new Map(seeded.map((stream) => [`${stream.connectorKey}:${stream.stream}`, stream]));
+  for (const stream of reviewed) {
+    const historical = seededByStream.get(`${stream.connectorKey}:${stream.stream}`);
+    assert.ok(historical, `${stream.connectorKey}:${stream.stream} is absent from the M3 inventory`);
+  }
+  assert.deepEqual(
+    sortStreams(seeded),
+    sortStreams(reviewed.map((stream) => ({
+      ...stream,
+      required: seededByStream.get(`${stream.connectorKey}:${stream.stream}`)!.required,
+    }))),
+  );
   // The gated inventory tracks the spec-generated manifests, so its size is
   // derived from them at runtime rather than pinned to a stale count.
   assert.equal(
     seeded.length,
     manifests.reduce((total, manifest) => total + manifest.streams.length, 0),
     "V1 must gate the complete reviewed manifest stream inventory",
-  );
-  assert.equal(
-    seeded.filter(({ required }) => !required).length,
-    manifests.flatMap(({ streams }) => streams)
-      .filter((stream) => (stream.availability ?? "required") !== "required").length,
   );
   assert.match(sql, /dogfood stream plan does not match the exact reviewed connector manifests/u);
   assert.match(sql, /manifest\.connector_version=expected\.pack_version/u);

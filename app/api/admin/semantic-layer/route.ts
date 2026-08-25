@@ -32,6 +32,11 @@ import squareEfficiencyCubes from "@/cube-playground/model/cubes/square_efficien
 import squareFinanceCubes from "@/cube-playground/model/cubes/square_finance.yml?raw";
 import squareOperationsCubes from "@/cube-playground/model/cubes/square_operations.yml?raw";
 import squareSourceExplorerCubes from "@/cube-playground/model/cubes/square_source_explorer.yml?raw";
+import stripeBillingCubes from "@/cube-playground/model/cubes/stripe_billing.yml?raw";
+import stripeCustomersCubes from "@/cube-playground/model/cubes/stripe_customers.yml?raw";
+import stripePaymentsCubes from "@/cube-playground/model/cubes/stripe_payments.yml?raw";
+import stripePayoutsCubes from "@/cube-playground/model/cubes/stripe_payouts.yml?raw";
+import stripeSourceExplorerCubes from "@/cube-playground/model/cubes/stripe_source_explorer.yml?raw";
 import staffCubes from "@/cube-playground/model/cubes/staff.yml?raw";
 import workshopCubes from "@/cube-playground/model/cubes/workshop.yml?raw";
 import xeroAccountingCubes from "@/cube-playground/model/cubes/xero_accounting.yml?raw";
@@ -74,6 +79,18 @@ import squareSalesViews from "@/cube-playground/model/views/square_sales_analyti
 import squareSettlementsViews from "@/cube-playground/model/views/square_settlements_analytics.yml?raw";
 import squareSourceExplorerViews from "@/cube-playground/model/views/square_source_explorer.yml?raw";
 import squareWorkforceViews from "@/cube-playground/model/views/square_workforce_analytics.yml?raw";
+import stripeBalanceViews from "@/cube-playground/model/views/stripe_balance_analytics.yml?raw";
+import stripeBillingViews from "@/cube-playground/model/views/stripe_billing_analytics.yml?raw";
+import stripeCatalogueViews from "@/cube-playground/model/views/stripe_catalogue_analytics.yml?raw";
+import stripeCheckoutViews from "@/cube-playground/model/views/stripe_checkout_analytics.yml?raw";
+import stripeConnectViews from "@/cube-playground/model/views/stripe_connect_analytics.yml?raw";
+import stripeCustomerViews from "@/cube-playground/model/views/stripe_customer_analytics.yml?raw";
+import stripeDisputesViews from "@/cube-playground/model/views/stripe_disputes_analytics.yml?raw";
+import stripePaymentsViews from "@/cube-playground/model/views/stripe_payments_analytics.yml?raw";
+import stripePayoutsViews from "@/cube-playground/model/views/stripe_payouts_analytics.yml?raw";
+import stripeRefundsViews from "@/cube-playground/model/views/stripe_refunds_analytics.yml?raw";
+import stripeSourceExplorerViews from "@/cube-playground/model/views/stripe_source_explorer.yml?raw";
+import stripeSubscriptionsViews from "@/cube-playground/model/views/stripe_subscriptions_analytics.yml?raw";
 import staffViews from "@/cube-playground/model/views/staff_analytics.yml?raw";
 import workforceViews from "@/cube-playground/model/views/workforce_analytics.yml?raw";
 import workshopViews from "@/cube-playground/model/views/workshop_analytics.yml?raw";
@@ -91,6 +108,7 @@ type AppId =
   | "xero"
   | "shopify"
   | "square"
+  | "stripe"
   | "momence";
 
 type ModelSource = Readonly<{
@@ -135,6 +153,11 @@ const MODEL_SOURCES = Object.freeze([
   { kind: "cube", path: "cube-playground/model/cubes/square_finance.yml", raw: squareFinanceCubes },
   { kind: "cube", path: "cube-playground/model/cubes/square_operations.yml", raw: squareOperationsCubes },
   { kind: "cube", path: "cube-playground/model/cubes/square_source_explorer.yml", raw: squareSourceExplorerCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/stripe_billing.yml", raw: stripeBillingCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/stripe_customers.yml", raw: stripeCustomersCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/stripe_payments.yml", raw: stripePaymentsCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/stripe_payouts.yml", raw: stripePayoutsCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/stripe_source_explorer.yml", raw: stripeSourceExplorerCubes },
   { kind: "cube", path: "cube-playground/model/cubes/staff.yml", raw: staffCubes },
   { kind: "cube", path: "cube-playground/model/cubes/workshop.yml", raw: workshopCubes },
   { kind: "cube", path: "cube-playground/model/cubes/xero_accounting.yml", raw: xeroAccountingCubes },
@@ -176,6 +199,18 @@ const MODEL_SOURCES = Object.freeze([
   { kind: "view", path: "cube-playground/model/views/square_settlements_analytics.yml", raw: squareSettlementsViews },
   { kind: "view", path: "cube-playground/model/views/square_source_explorer.yml", raw: squareSourceExplorerViews },
   { kind: "view", path: "cube-playground/model/views/square_workforce_analytics.yml", raw: squareWorkforceViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_balance_analytics.yml", raw: stripeBalanceViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_billing_analytics.yml", raw: stripeBillingViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_catalogue_analytics.yml", raw: stripeCatalogueViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_checkout_analytics.yml", raw: stripeCheckoutViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_connect_analytics.yml", raw: stripeConnectViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_customer_analytics.yml", raw: stripeCustomerViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_disputes_analytics.yml", raw: stripeDisputesViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_payments_analytics.yml", raw: stripePaymentsViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_payouts_analytics.yml", raw: stripePayoutsViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_refunds_analytics.yml", raw: stripeRefundsViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_source_explorer.yml", raw: stripeSourceExplorerViews },
+  { kind: "view", path: "cube-playground/model/views/stripe_subscriptions_analytics.yml", raw: stripeSubscriptionsViews },
   { kind: "view", path: "cube-playground/model/views/staff_analytics.yml", raw: staffViews },
   { kind: "view", path: "cube-playground/model/views/workforce_analytics.yml", raw: workforceViews },
   { kind: "view", path: "cube-playground/model/views/workshop_analytics.yml", raw: workshopViews },
@@ -193,6 +228,7 @@ const APP_DEFINITIONS = Object.freeze([
   { id: "xero", label: "Xero", description: "Accounting, business reference data and Australian payroll." },
   { id: "shopify", label: "Shopify", description: "Commerce, catalogue, fulfilment, returns, customers and privacy-bounded source fields." },
   { id: "square", label: "Square", description: "Commerce, payments, settlements, inventory, workforce, loyalty and gift cards." },
+  { id: "stripe", label: "Stripe", description: "Payments, billing, subscriptions, payouts, disputes and checkout activity." },
   { id: "momence", label: "Momence", description: "Studio members, schedules, attendance, memberships, payments and source exploration." },
 ] satisfies readonly Readonly<{ id: AppId; label: string; description: string }>[]);
 
@@ -206,6 +242,7 @@ const CONNECTOR_TO_APP: Readonly<Record<string, AppId>> = Object.freeze({
   xero: "xero",
   shopify: "shopify",
   square: "square",
+  stripe: "stripe",
   momence: "momence",
 });
 
@@ -238,6 +275,7 @@ function appForFile(sourceFile: string): AppId {
   if (file.startsWith("xero_")) return "xero";
   if (file.startsWith("shopify_")) return "shopify";
   if (file.startsWith("square_")) return "square";
+  if (file.startsWith("stripe_")) return "stripe";
   if (file.startsWith("momence_")) return "momence";
   return "lightspeed-r";
 }

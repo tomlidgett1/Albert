@@ -187,7 +187,11 @@ test("every cookie-authenticated JSON mutation route uses the bounded reader", (
   const mutationRoutes = [
     "app/api/admin/pipeline/[tenantId]/sample/route.ts",
     "app/api/connections/review/route.ts",
-    "app/api/conversation/route.ts",
+    "app/api/v3-conversation/route.ts",
+    "app/api/codex-conversation/route.ts",
+    "app/api/swarm/route.ts",
+    "app/api/swarm/agent/route.ts",
+    "app/api/swarm/synthesis/route.ts",
     "app/api/oauth/disconnect/route.ts",
     "app/api/oauth/select/route.ts",
     "app/api/organisations/members/route.ts",

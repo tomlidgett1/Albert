@@ -83,7 +83,7 @@ test("Momence UI exposes Start ingestion first and Sync only after activation", 
 
   assert.match(component, /initialStart && providerId !== "shopify"[\s\S]{0,120}"\/api\/connections\/start-ingestion"/u);
   assert.match(component, /manualIngestionStartRequired[\s\S]{0,480}"Start ingestion"/u);
-  assert.match(component, /Connected\. No data has been imported yet\./u);
+  assert.match(component, /Not imported yet/u);
   assert.match(component, /manualIngestionStartRequired[\s\S]{0,700}"Sync now"/u);
   assert.match(
     callback,

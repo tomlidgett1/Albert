@@ -120,6 +120,14 @@ test("the migration history contains no unreviewed literal-only lifecycle vocabu
     "control-plane/0045_m2_progressive_dependency_barriers.sql",
     "control-plane/0053_m8_user_bound_tenant_deletion_receipts.sql",
     "control-plane/0067_m7_independent_live_vendor_attestation.sql",
+    "control-plane/0145_m1_fivetran_xero_connections.sql",
+    "control-plane/0153_m8_business_context.sql",
+    "control-plane/0154_m6_fivetran_my_data_browser.sql",
+    "control-plane/0158_m6_proactive_control_panel.sql",
+    "control-plane/0158_m6_proactive_control_panel.sql",
+    "control-plane/0161_m8_semantic_memory.sql",
+    "control-plane/0168_m8_codex_swarm.sql",
+    "control-plane/0168_m8_codex_swarm.sql",
     "analytical/0081_m2_reconciliation_and_connector_stream_health.sql",
   ]);
 });

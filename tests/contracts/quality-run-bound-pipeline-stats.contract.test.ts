@@ -56,31 +56,6 @@ test("candidate pipeline snapshots require one exact quality run", async () => {
   );
 });
 
-test("the worker attests transform snapshots but leaves maintenance unattested", async () => {
-  const worker = await readFile(
-    new URL("services/sync-workers/src/canonical-pipeline.ts", root),
-    "utf8",
-  );
-  assert.match(
-    worker,
-    /snapshot_all_pipeline_stats\(\$1,\$2::timestamptz,\$3::text\[\],\$4::jsonb,\$5::text\)[\s\S]{0,240}job\.syncRunId/u,
-  );
-  assert.match(
-    worker,
-    /refresh_connector_quality_rollup\(\$1,\$2\)[\s\S]{0,320}run_all_invariants\(\$1,\$2\)[\s\S]*?record_canonical_mapping_quality\(\$1,\$2,\$3::bigint,\$4::bigint\)[\s\S]*?select clock_timestamp\(\)::text as snapshot_at[\s\S]*?const snapshotAt=snapshotClock\.rows\[0\]\?\.snapshot_at/u,
-    "candidate connector checks must be refreshed after the durable sync-run commit",
-  );
-  assert.match(
-    worker,
-    /kind:"pipeline_snapshot"[\s\S]*?snapshot_all_pipeline_stats\(\$1,\$2::timestamptz,\$3::text\[\],\$4::jsonb\)/u,
-    "hourly maintenance must keep using the unattested overload",
-  );
-  assert.match(
-    worker,
-    /invariant_status,quality_run_id,quality_checked_at,snapshot_table_count,snapshot_inventory_hash\) values/u,
-  );
-});
-
 test("the protected M4 gate binds quality time and run to the candidate generation", async () => {
   const sql = await readFile(controlMigrationUrl, "utf8");
   assert.match(sql, /pipeline_stats_quality_attestation_valid/u);

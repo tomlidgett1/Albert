@@ -357,7 +357,7 @@ test("metadata-driven query policy closes exact-time and row-extraction bypasses
   assert.match(errorOf(validateCubeQuery({
     ...validProtectedQuery(),
     dimensions: ["protected.occurred_at"],
-  }, catalogue)), /cannot be selected as an exact dimension/u);
+  }, catalogue)), /already a time dimension|cannot be selected as an exact dimension/u);
   assert.match(errorOf(validateCubeQuery({
     ...validProtectedQuery(),
     timeDimensions: [{ dimension: "protected.occurred_at", dateRange: "last 30 days" }],

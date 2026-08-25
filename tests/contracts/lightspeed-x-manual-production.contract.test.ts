@@ -141,7 +141,7 @@ test("Lightspeed X is visibly connected but inert until Start ingestion", async 
     component,
     /requestManualSync\(\s*connection\.connectionId,\s*true,\s*provider\.id/u,
   );
-  assert.match(component, /Connected\. No data has been imported yet\./u);
+  assert.match(component, /Not imported yet/u);
   assert.match(
     dashPage,
     /connected_without_sync[\s\S]{0,220}Data will not be ingested until you choose Start ingestion\./u,

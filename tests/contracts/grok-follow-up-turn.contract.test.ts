@@ -148,7 +148,6 @@ test("a runtime lock is not swallowed as a generic start 503", async () => {
 test("Grok follow-ups stay on Albert v3 and replace the previous turn", () => {
   const dash = read("app/dash/page.tsx");
   const v3 = read("app/api/v3-conversation/route.ts");
-  const v1 = read("app/api/conversation/route.ts");
   const history = read("infra/migrations/control-plane/0137_m8_conversation_followup_runtime.sql");
   const schema = read("services/control-plane/src/web-repository.ts");
 
@@ -157,7 +156,6 @@ test("Grok follow-ups stay on Albert v3 and replace the previous turn", () => {
   assert.match(dash, /replaceTurnId/u);
   assert.match(v3, /replaceTurnId/u);
   assert.match(v3, /beginConversationTurn/u);
-  assert.match(v1, /replaceTurnId/u);
   assert.match(history, /'runtime', turn\.runtime_profile->'runtime'/u);
   assert.match(history, /'analyticalRuntime', turn\.runtime_profile->'analyticalRuntime'/u);
   assert.match(history, /OR turn\.status = 'failed'/u);

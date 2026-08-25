@@ -56,11 +56,8 @@ test("Shopify is admitted atomically through every durable analytical runtime bo
   assert.doesNotMatch(migration, /DISABLE ROW LEVEL SECURITY/u);
 });
 
-test("the admitted pack, typed staging, and production canonical mapper share one 16-stream identity", async () => {
-  const [stagingMigration, transformMain] = await Promise.all([
-    source("infra/migrations/analytical/0138_m2_shopify_full_staging.sql"),
-    source("services/transform-worker/src/main.ts"),
-  ]);
+test("the admitted pack and typed staging share one 16-stream identity", async () => {
+  const stagingMigration = await source("infra/migrations/analytical/0138_m2_shopify_full_staging.sql");
   const manifestStreams = shopifyManifest.streams.map(({ id }) => id).sort();
   const typedStreams = Object.keys(SHOPIFY_STREAM_FIELDS).sort();
   const stagedStreams = [...stagingMigration.matchAll(
@@ -72,6 +69,4 @@ test("the admitted pack, typed staging, and production canonical mapper share on
   assert.equal(manifestStreams.length, 16);
   assert.deepEqual(typedStreams, manifestStreams);
   assert.deepEqual(stagedStreams, manifestStreams);
-  assert.match(transformMain, /import \{ mapShopifyCanonical \} from "\.\.\/\.\.\/\.\.\/connectors\/shopify\/canonical\.js"/u);
-  assert.match(transformMain, /"shopify": mapShopifyCanonical/u);
 });

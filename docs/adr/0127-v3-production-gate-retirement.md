@@ -25,6 +25,12 @@ Remove only contract files whose complete subject is a retired architecture:
 - the semantic-query promotion relay;
 - Semantic V2 persistence, production authority, waiver and snapshot receipt.
 - the pre-V3 Agents SDK factory and `createLiveAlbertAgent` helper contracts.
+- the removed Admin architecture-map/plan-preview and retired transform or
+  semantic-query runtime readiness checks.
+- pre-V3 canonical connector mappers and the removed V1 large-result
+  summarizer contract.
+- Semantic-query V1 quality and canonical snapshot worker assertions; current
+  manifest, ingestion and analytical SQL gates remain.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the

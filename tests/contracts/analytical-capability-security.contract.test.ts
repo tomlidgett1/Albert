@@ -34,12 +34,10 @@ test("capability key input is canonical, dual-cell by default, and rotation is e
 });
 
 test("runtime tenant scope is signed, audience-bound, exact-login, and deletion tokens are one-use",async()=>{
-  const [control,analytical,ingest,transform,semanticMetadata]=await Promise.all([
+  const [control,analytical,ingest]=await Promise.all([
     readFile(new URL("../../infra/migrations/control-plane/0038_m0_m8_signed_analytical_capabilities.sql",import.meta.url),"utf8"),
     readFile(new URL("../../infra/migrations/analytical/0083_m0_m8_signed_tenant_capability_enforcement.sql",import.meta.url),"utf8"),
     readFile(new URL("../../services/sync-workers/src/analytical-store.ts",import.meta.url),"utf8"),
-    readFile(new URL("../../services/sync-workers/src/canonical-pipeline.ts",import.meta.url),"utf8"),
-    readFile(new URL("../../services/semantic-query/src/postgres-adapters.ts",import.meta.url),"utf8"),
   ]);
   assert.match(control,/extensions\.hmac\(convert_to\(payload::text,'utf8'\),key_row\.secret,'sha256'\)/);
   assert.match(control,/session_user::name IS DISTINCT FROM p_login/);
@@ -72,8 +70,6 @@ test("runtime tenant scope is signed, audience-bound, exact-login, and deletion 
   );
   const analyticalDeletionFence=/pg_advisory_xact_lock_shared\(hashtextextended\('deletion:'\|\|\$1,0\)\)/;
   assert.match(ingest,analyticalDeletionFence);
-  assert.match(transform,analyticalDeletionFence);
-  assert.match(semanticMetadata,analyticalDeletionFence);
 });
 
 test("release installs security state after migration and before any service deployment",async()=>{
@@ -81,9 +77,8 @@ test("release installs security state after migration and before any service dep
   const bootstrap=release.indexOf("\n  schema:");
   const migrate=release.indexOf("Apply immutable migrations with deployer identities");
   const provision=release.indexOf("\n  runtime-security:");
-  const registry=release.indexOf("\n  publish-registry:");
   const deploy=release.indexOf("\n  deploy-services:");
-  assert.ok(bootstrap>-1&&migrate>bootstrap&&provision>migrate&&registry>provision&&deploy>registry);
+  assert.ok(bootstrap>-1&&migrate>bootstrap&&provision>migrate&&deploy>provision);
   assert.match(release,/provision:runtime-logins[\s\S]*provision:analytical-capability-key[\s\S]*provision:webhook-attestation-key/);
   assert.match(release,/ANALYTICAL_CAPABILITY_SECRET_BASE64: \$\{\{ secrets\.ANALYTICAL_CAPABILITY_SECRET_BASE64 \}\}/);
   assert.doesNotMatch(release,/--target=(?:control-plane|analytical)[\s\S]*provision:analytical-capability-key/);
@@ -92,8 +87,6 @@ test("release installs security state after migration and before any service dep
 test("every analytical runtime fails readiness closed without the shared keyring",async()=>{
   const sources=await Promise.all([
     readFile(new URL("../../services/sync-workers/src/main.ts",import.meta.url),"utf8"),
-    readFile(new URL("../../services/transform-worker/src/main.ts",import.meta.url),"utf8"),
-    readFile(new URL("../../services/semantic-query/src/composition.ts",import.meta.url),"utf8"),
     readFile(new URL("../../services/deletion-worker/src/store.ts",import.meta.url),"utf8"),
     readFile(new URL("../../services/operator-diagnostic/src/database.ts",import.meta.url),"utf8"),
   ]);

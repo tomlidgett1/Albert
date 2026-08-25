@@ -234,11 +234,10 @@ test("complete per-order child collections are the only child-removal evidence",
   assert.equal(replay.records[0]?.normalized?.fields.collectionScanId, partialState.collectionScanId);
 });
 
-test("runtime and migrations fence child replacement, canonical retirement, purge, and continuity", async () => {
+test("runtime and migrations fence child replacement, purge, and continuity", async () => {
   const root = new URL("../../", import.meta.url);
-  const [landing,canonical,migration,controlMigration,commerceCube,referenceCube,worker,route,workspace,readme] = await Promise.all([
+  const [landing,migration,controlMigration,commerceCube,referenceCube,worker,route,workspace,readme] = await Promise.all([
     readFile(new URL("services/sync-workers/src/analytical-store.ts",root),"utf8"),
-    readFile(new URL("services/sync-workers/src/canonical-pipeline.ts",root),"utf8"),
     readFile(new URL("infra/migrations/analytical/0155_m3_shopify_authoritative_order_line_replacement.sql",root),"utf8"),
     readFile(new URL("infra/migrations/control-plane/0135_m2_shopify_deletion_continuity_block.sql",root),"utf8"),
     readFile(new URL("cube-playground/model/cubes/shopify_commerce.yml",root),"utf8"),
@@ -259,9 +258,6 @@ test("runtime and migrations fence child replacement, canonical retirement, purg
   assert.match(landing, /line\.collection_scan_id is distinct from current_collection\.collection_scan_id/u);
   assert.match(landing, /line\.source_updated_at<=current_collection\.retired_at/u);
   assert.match(landing, /update ingestion\.source_records[\s\S]*normalized_payload=jsonb_set/u);
-  assert.match(canonical, /set order_status='cancelled',voided=true/u);
-  assert.match(canonical, /set status='voided'/u);
-  assert.match(canonical, /set voided=true,sync_run_id/u);
   assert.equal((commerceCube.match(/COALESCE\(t\.collection_complete, false\) = false/gu) ?? []).length, 5);
 
   const privateCubeSql = `${commerceCube}\n${referenceCube}`;
