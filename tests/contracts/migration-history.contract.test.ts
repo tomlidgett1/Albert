@@ -92,3 +92,17 @@ test("fresh analytical bootstrap supplies checksum-pinned retired Deputy compati
   assert.match(analyticalMigrationBody(deputyRepoint, true), /no predecessor pack rows/u);
   assert.equal(analyticalMigrationBody(deputyRepoint, false), deputyRepoint.body);
 });
+
+test("fresh analytical bootstrap skips the retired XER_OFFICIAL source-view bridge", () => {
+  const xeroViews = {
+    id: "0135_m2_xero_official_source_views.sql",
+    checksum: "1daa4ccfdf4284c2593ad00827141449c83d67337b78a3bac27782ae733208a2",
+    body: "CREATE VIEW source_xero_official.xo_accounts AS SELECT * FROM \"XER_OFFICIAL\".accounting_accounts;",
+  };
+  assert.match(analyticalMigrationBody(xeroViews, true), /no predecessor pack rows/u);
+  assert.equal(analyticalMigrationBody(xeroViews, false), xeroViews.body);
+  assert.throws(
+    () => analyticalMigrationBody({ ...xeroViews, checksum: "f".repeat(64) }, true),
+    /changed after its fresh-bootstrap data-migration review/u,
+  );
+});

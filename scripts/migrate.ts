@@ -33,6 +33,10 @@ const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
     "cf6a66b997095df92a0975fe94726106f269b84a733b2182ebe9e5cc33740fb7",
   ],
   [
+    "0135_m2_xero_official_source_views.sql",
+    "1daa4ccfdf4284c2593ad00827141449c83d67337b78a3bac27782ae733208a2",
+  ],
+  [
     "0169_m2_deputy_source_views_over_fivetran.sql",
     "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
   ],
