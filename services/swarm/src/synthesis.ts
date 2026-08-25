@@ -288,7 +288,9 @@ export async function buildSwarmSynthesis(options: Readonly<{
       const response = await client.responses.create({
         model: options.model ?? SWARM_SYNTHESIS_MODEL,
         store: false,
-        max_output_tokens: mode === "pro" ? SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS : 8_000,
+        max_output_tokens: mode === "pro"
+          ? SWARM_PRO_SYNTHESIS_MAX_OUTPUT_TOKENS
+          : options.proMode ? 16_000 : 8_000,
         reasoning: {
           effort: options.reasoningEffort ?? SWARM_SYNTHESIS_REASONING_EFFORT,
           ...(mode === "pro" ? { mode: "pro" as const } : {}),

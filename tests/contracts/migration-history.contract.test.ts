@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -136,4 +137,12 @@ test("fresh analytical bootstrap creates the current Xero official schema before
     () => analyticalMigrationBody({ ...repoint, checksum: "f".repeat(64) }, true),
     /fresh-bootstrap Xero schema compatibility review/u,
   );
+});
+
+test("fresh analytical bootstrap installs a credential-free Fivetran owner bridge", async () => {
+  const runner = await readFile(new URL("../../scripts/migrate.ts", import.meta.url), "utf8");
+  assert.match(runner, /ensureFreshAnalyticalFivetranOwner/u);
+  assert.match(runner, /CREATE ROLE fivetran_user[\s\S]*NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION/u);
+  assert.match(runner, /GRANT fivetran_user TO albert_migration_owner/u);
+  assert.match(runner, /target\.stream !== "analytical"/u);
 });

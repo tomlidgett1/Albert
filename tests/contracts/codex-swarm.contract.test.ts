@@ -273,7 +273,7 @@ test("an incomplete Pro synthesis recovers on Luna Max without Fast before deter
   assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
   assert.deepEqual(requests[1]?.reasoning, { effort: "max" });
   assert.equal(requests[0]?.max_output_tokens, 48_000);
-  assert.equal(requests[1]?.max_output_tokens, 8_000);
+  assert.equal(requests[1]?.max_output_tokens, 16_000);
   assert.equal(Object.hasOwn(requests[1] ?? {}, "service_tier"), false);
 });
 

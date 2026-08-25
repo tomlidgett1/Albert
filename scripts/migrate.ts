@@ -390,6 +390,33 @@ async function ensureBootstrapMigrationRoleActivation(
   }
 }
 
+async function ensureFreshAnalyticalFivetranOwner(
+  client: Client,
+  target: Target,
+  requested: boolean,
+): Promise<void> {
+  if (!requested || target.stream !== "analytical") return;
+  // Historical migration 0168 transfers Fivetran-owned destination tables
+  // through this membership. Existing production databases already have the
+  // externally provisioned LOGIN role; a fresh, credential-free bootstrap
+  // needs only its least-privilege NOLOGIN identity so the immutable migration
+  // history can compile. Platform provisioning may later add LOGIN/password.
+  await client.query(`
+    DO $bootstrap$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'fivetran_user'
+      ) THEN
+        CREATE ROLE fivetran_user
+          NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      END IF;
+    END
+    $bootstrap$;
+    ALTER ROLE fivetran_user NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+    GRANT fivetran_user TO albert_migration_owner;
+  `);
+}
+
 async function applyTarget(
   target: Target,
   environment: NodeJS.ProcessEnv,
@@ -429,6 +456,7 @@ async function applyTarget(
     }
     await applyBootstrap(client, target, bootstrap);
     await ensureBootstrapMigrationRoleActivation(client, target, bootstrap);
+    await ensureFreshAnalyticalFivetranOwner(client, target, bootstrap);
     if (bootstrap && target.stream === "control-plane") {
       // Fresh databases apply the same immutable administrator stream used by
       // upgrades of existing databases. This happens before migration 0035,
