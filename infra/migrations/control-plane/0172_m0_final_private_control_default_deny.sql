@@ -19,7 +19,7 @@ BEGIN
        AND procedure.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
   LOOP
     EXECUTE format(
-      'REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,authenticated,service_role',
+      'REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,service_role',
       routine
     );
   END LOOP;

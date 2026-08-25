@@ -210,8 +210,9 @@ test("the final control-plane deny covers current and future private functions",
   assert.doesNotMatch(migration, /REVOKE USAGE ON SCHEMA control_plane FROM [^;]*authenticated/u);
   assert.match(
     migration,
-    /procedure\.proowner = \(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname = current_user\)[\s\S]*REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,authenticated,service_role/u,
+    /procedure\.proowner = \(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname = current_user\)[\s\S]*REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,service_role/u,
   );
+  assert.doesNotMatch(migration, /REVOKE EXECUTE[^;']*authenticated/u);
   assert.match(
     migration,
     /ALTER DEFAULT PRIVILEGES FOR ROLE albert_control_migration_owner[\s\S]*REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/u,
