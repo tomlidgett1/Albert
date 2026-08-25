@@ -12,11 +12,14 @@ END;
 $$;
 
 SET LOCAL ROLE albert_migration_owner;
+-- Exercise the generic activation protocol on Deputy. Xero now has a real
+-- sequence-2 candidate (pack 2.0.0), so a synthetic Xero 1.1.0 candidate would
+-- collide with production release authority instead of testing activation.
 INSERT INTO semantic_internal.connector_pack_release (
   connector_id,pack_version,release_sequence,predecessor_version,state,
   registered_by_migration
 ) VALUES (
-  'xero','1.1.0',2,'1.0.0','candidate','9999_test_pack.sql'
+  'deputy','1.1.0',2,'1.0.0','candidate','9999_test_pack.sql'
 );
 
 RESET ROLE;
@@ -27,14 +30,14 @@ INSERT INTO semantic_internal.tenant_capability (
   tenant_id,capability,source_key,connection_id,connector_id,available,
   support,reason_code,coverage,pack_version,source_watermark
 ) VALUES
-  ('01K80000000000000000000000','finance.journals','xero:fixture:canonical:journals',
-   '01K80000000000000000000001','xero',true,'full','canonical_stream_observed',
+  ('01K80000000000000000000000','finance.journals','deputy:fixture:canonical:journals',
+   '01K80000000000000000000001','deputy',true,'full','canonical_stream_observed',
    '{"stream":"journals"}'::jsonb,'1.0.0','2026-08-03T00:00:00Z'),
-  ('01K80000000000000000000000','finance.invoices','xero:fixture:canonical:invoices',
-   '01K80000000000000000000001','xero',true,'full','canonical_stream_observed',
+  ('01K80000000000000000000000','finance.invoices','deputy:fixture:canonical:invoices',
+   '01K80000000000000000000001','deputy',true,'full','canonical_stream_observed',
    '{"stream":"invoices"}'::jsonb,'1.0.0','2026-08-03T00:00:00Z'),
-  ('01K80000000000000000000000','finance.journals','xero:fixture:canonical:journals',
-   '01K80000000000000000000001','xero',true,'full','canonical_stream_observed',
+  ('01K80000000000000000000000','finance.journals','deputy:fixture:canonical:journals',
+   '01K80000000000000000000001','deputy',true,'full','canonical_stream_observed',
    '{"stream":"journals"}'::jsonb,'1.1.0','2026-08-04T00:00:00Z')
 ON CONFLICT (tenant_id,capability,source_key) DO UPDATE SET
   available=excluded.available,support=excluded.support,
@@ -50,12 +53,12 @@ INSERT INTO semantic_internal.tenant_capability (
   support,reason_code,coverage,pack_version,source_watermark
 ) VALUES
   ('01K80000000000000000000000','finance.bank_transactions',
-   'xero:retired:canonical:bank_transactions','01K80000000000000000000002',
-   'xero',true,'full','canonical_stream_observed','{"stream":"bank_transactions"}'::jsonb,
+   'deputy:retired:canonical:bank_transactions','01K80000000000000000000002',
+   'deputy',true,'full','canonical_stream_observed','{"stream":"bank_transactions"}'::jsonb,
    '1.0.0','2026-08-03T00:00:00Z'),
   ('01K80000000000000000000000','finance.payments',
-   'xero:retired:canonical:payments','01K80000000000000000000002',
-   'xero',true,'full','canonical_stream_observed','{"stream":"payments"}'::jsonb,
+   'deputy:retired:canonical:payments','01K80000000000000000000002',
+   'deputy',true,'full','canonical_stream_observed','{"stream":"payments"}'::jsonb,
    '1.0.0','2026-08-03T00:00:00Z');
 
 INSERT INTO semantic_internal.source_field_allowlist (
@@ -63,12 +66,12 @@ INSERT INTO semantic_internal.source_field_allowlist (
   field_type,disposition,pii_class,authority_concept,documented_definition,
   pack_version,active
 ) VALUES
-  ('01K80000000000000000000000','01K80000000000000000000001','xero',
-   'source_xero','journals','source_type','text','governed_source_extension',
-   'none','statutory_finance','Xero journal source type.','1.0.0',true),
-  ('01K80000000000000000000000','01K80000000000000000000001','xero',
-   'source_xero','journals','source_type','text','governed_source_extension',
-   'none','statutory_finance','Xero journal source type.','1.1.0',true)
+  ('01K80000000000000000000000','01K80000000000000000000001','deputy',
+   'source_deputy','journals','source_type','text','governed_source_extension',
+   'none','statutory_finance','Deputy journal source type.','1.0.0',true),
+  ('01K80000000000000000000000','01K80000000000000000000001','deputy',
+   'source_deputy','journals','source_type','text','governed_source_extension',
+   'none','statutory_finance','Deputy journal source type.','1.1.0',true)
 ON CONFLICT (tenant_id,connection_id,source_table,source_field) DO UPDATE SET
   connector_id=excluded.connector_id,active=excluded.active;
 
@@ -98,13 +101,13 @@ UPDATE semantic_internal.connector_pack_source_field_snapshot
        deactivation_reason='pack_reclassified_or_removed'
  WHERE tenant_id='01K80000000000000000000000'
    AND connection_id='01K80000000000000000000001'
-   AND connector_id='xero' AND pack_version='1.1.0';
+   AND connector_id='deputy' AND pack_version='1.1.0';
 SELECT pg_temp.assert_true(
   (SELECT active=false
      FROM semantic_internal.connector_pack_source_field_snapshot
     WHERE tenant_id='01K80000000000000000000000'
       AND connection_id='01K80000000000000000000001'
-      AND connector_id='xero' AND pack_version='1.1.0'),
+      AND connector_id='deputy' AND pack_version='1.1.0'),
   'candidate deactivation must target the shadow snapshot'
 );
 
@@ -115,7 +118,7 @@ SELECT pg_temp.assert_true(
      FROM semantic_internal.connector_pack_evidence_index
     WHERE tenant_id='01K80000000000000000000000'
       AND connection_id='01K80000000000000000000001'
-      AND connector_id='xero' AND pack_version='1.1.0'
+      AND connector_id='deputy' AND pack_version='1.1.0'
       AND evidence_kind='source_field'),
   'candidate deactivation must update its shadow evidence index'
 );
@@ -127,7 +130,7 @@ UPDATE semantic_internal.connector_pack_source_field_snapshot
    SET active=true,deactivated_at=NULL,deactivation_reason=NULL
  WHERE tenant_id='01K80000000000000000000000'
    AND connection_id='01K80000000000000000000001'
-   AND connector_id='xero' AND pack_version='1.1.0';
+   AND connector_id='deputy' AND pack_version='1.1.0';
 
 RESET ROLE;
 SET LOCAL ROLE semantic_ro;
@@ -150,13 +153,13 @@ RESET ROLE;
 SET LOCAL ROLE albert_migration_owner;
 SELECT pg_temp.assert_true(
   NOT coalesce((semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'ready')::boolean,false),
   'activation must fail while predecessor capability keys are absent'
 );
 SELECT pg_temp.assert_true(
   (semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'missingPredecessorCapabilityRows')::bigint=3,
   'preflight must identify missing rows across active and disconnected connections'
 );
@@ -168,8 +171,8 @@ INSERT INTO semantic_internal.tenant_capability (
   tenant_id,capability,source_key,connection_id,connector_id,available,
   support,reason_code,coverage,pack_version,source_watermark
 ) VALUES (
-  '01K80000000000000000000000','finance.invoices','xero:fixture:canonical:invoices',
-  '01K80000000000000000000001','xero',true,'full','canonical_stream_observed',
+  '01K80000000000000000000000','finance.invoices','deputy:fixture:canonical:invoices',
+  '01K80000000000000000000001','deputy',true,'full','canonical_stream_observed',
   '{"stream":"invoices"}'::jsonb,'1.1.0','2026-08-04T00:00:00Z'
 );
 
@@ -177,24 +180,24 @@ RESET ROLE;
 SET LOCAL ROLE albert_migration_owner;
 SELECT pg_temp.assert_true(
   NOT coalesce((semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'ready')::boolean,false),
   'a disconnected predecessor must remain fail-closed without a retirement audit'
 );
 SELECT pg_temp.assert_true(
   (semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'missingPredecessorCapabilityRows')::bigint=2,
   'only the disconnected connection should remain incomplete'
 );
 SELECT semantic_internal.retire_connector_pack_connection(
-  '01K80000000000000000000000','01K80000000000000000000002','xero',
+  '01K80000000000000000000000','01K80000000000000000000002','deputy',
   '1.1.0','1.0.0','disconnected','01K80000000000000000000009',
   repeat('a',64)
 );
 SELECT pg_temp.assert_true(
   coalesce((semantic_internal.retire_connector_pack_connection(
-    '01K80000000000000000000000','01K80000000000000000000002','xero',
+    '01K80000000000000000000000','01K80000000000000000000002','deputy',
     '1.1.0','1.0.0','disconnected','01K80000000000000000000009',
     repeat('a',64)
   )->>'idempotentReplay')::boolean,false),
@@ -204,7 +207,7 @@ DO $$
 BEGIN
   BEGIN
     PERFORM semantic_internal.retire_connector_pack_connection(
-      '01K80000000000000000000000','01K80000000000000000000002','xero',
+      '01K80000000000000000000000','01K80000000000000000000002','deputy',
       '1.1.0','1.0.0','disconnected','01K80000000000000000000009',
       repeat('b',64)
     );
@@ -216,14 +219,14 @@ END;
 $$;
 SELECT pg_temp.assert_true(
   coalesce((semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'ready')::boolean,false)
   AND (semantic_internal.connector_pack_activation_status(
-    'xero','1.1.0','1.0.0'
+    'deputy','1.1.0','1.0.0'
   )->>'auditedRetiredConnections')::bigint=1,
   'an exact migration-owner retirement audit should unblock only that connection'
 );
-SELECT semantic_internal.activate_connector_pack('xero','1.1.0','1.0.0');
+SELECT semantic_internal.activate_connector_pack('deputy','1.1.0','1.0.0');
 
 RESET ROLE;
 SET LOCAL ROLE semantic_ro;
@@ -251,31 +254,31 @@ BEGIN
       tenant_id,capability,source_key,connection_id,connector_id,available,
       support,reason_code,coverage,pack_version,source_watermark
     ) VALUES (
-      '01K80000000000000000000000','finance.payments','xero:stale:canonical:payments',
-      '01K80000000000000000000001','xero',true,'full',
+      '01K80000000000000000000000','finance.payments','deputy:stale:canonical:payments',
+      '01K80000000000000000000001','deputy',true,'full',
       'canonical_stream_observed','{"stream":"payments"}'::jsonb,'1.0.0',now()
     );
     RAISE EXCEPTION 'retired capability evidence unexpectedly accepted an insert';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN
-    IF SQLERRM NOT LIKE 'connector_pack_retired:xero:1.0.0%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE 'connector_pack_retired:deputy:1.0.0%' THEN RAISE; END IF;
   END;
   BEGIN
     UPDATE semantic_internal.tenant_capability
        SET evaluated_at=now()
      WHERE tenant_id='01K80000000000000000000000'
-       AND connector_id='xero' AND pack_version='1.0.0';
+       AND connector_id='deputy' AND pack_version='1.0.0';
     RAISE EXCEPTION 'retired capability evidence unexpectedly remained writable';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN
-    IF SQLERRM NOT LIKE 'connector_pack_retired:xero:1.0.0%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE 'connector_pack_retired:deputy:1.0.0%' THEN RAISE; END IF;
   END;
   BEGIN
     UPDATE semantic_internal.source_field_allowlist
        SET active=false
      WHERE tenant_id='01K80000000000000000000000'
-       AND connector_id='xero' AND pack_version='1.0.0';
+       AND connector_id='deputy' AND pack_version='1.0.0';
     RAISE EXCEPTION 'retired source-field evidence unexpectedly remained writable';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN
-    IF SQLERRM NOT LIKE 'connector_pack_retired:xero:1.0.0%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE 'connector_pack_retired:deputy:1.0.0%' THEN RAISE; END IF;
   END;
 END;
 $$;
@@ -287,8 +290,8 @@ INSERT INTO semantic_internal.tenant_capability (
   tenant_id,capability,source_key,connection_id,connector_id,available,
   support,reason_code,coverage,pack_version,source_watermark
 ) VALUES (
-  '01K80000000000000000000000','finance.payments','xero:retired:canonical:payments',
-  '01K80000000000000000000002','xero',true,'full','canonical_stream_observed',
+  '01K80000000000000000000000','finance.payments','deputy:retired:canonical:payments',
+  '01K80000000000000000000002','deputy',true,'full','canonical_stream_observed',
   '{"stream":"payments"}'::jsonb,'1.1.0',now()
 ) ON CONFLICT (tenant_id,capability,source_key) DO UPDATE SET
   available=excluded.available,support=excluded.support,
@@ -299,9 +302,9 @@ INSERT INTO semantic_internal.source_field_allowlist (
   field_type,disposition,pii_class,authority_concept,documented_definition,
   pack_version,active
 ) VALUES (
-  '01K80000000000000000000000','01K80000000000000000000002','xero',
-  'source_xero','payments','source_type','text','governed_source_extension',
-  'none','statutory_finance','Xero payment source type.','1.1.0',true
+  '01K80000000000000000000000','01K80000000000000000000002','deputy',
+  'source_deputy','payments','source_type','text','governed_source_extension',
+  'none','statutory_finance','Deputy payment source type.','1.1.0',true
 ) ON CONFLICT (tenant_id,connection_id,source_table,source_field) DO UPDATE SET
   connector_id=excluded.connector_id,active=excluded.active;
 
@@ -310,7 +313,7 @@ SET LOCAL ROLE albert_migration_owner;
 SELECT pg_temp.assert_true(
   (SELECT count(*)=1
      FROM semantic_internal.connector_pack_activation_event
-    WHERE connector_id='xero' AND release_sequence=2
+    WHERE connector_id='deputy' AND release_sequence=2
       AND previous_pack_version='1.0.0'
       AND activated_pack_version='1.1.0'
       AND activation_evidence->'ready'='true'::jsonb
