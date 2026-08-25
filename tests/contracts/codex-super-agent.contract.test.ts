@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { formatSuperAgentCheckpoint } from "../../app/dash/lib/swarm-run-controller.ts";
+import { codexAnalyticalBriefSchema } from "../../packages/albert-codex/src/contracts.ts";
 import {
   SUPER_AGENT_CHECKPOINT_INTERVAL_MS,
   SUPER_AGENT_CONCURRENCY,
@@ -93,7 +94,8 @@ test("open profitability questions receive an explicit evidence brief", () => {
     "workforce_analytics",
   ]);
   assert.match(brief?.ownerGoal ?? "", /without double counting/iu);
-  assert.match(brief?.answerMustCover.join(" ") ?? "", /latest complete calendar month versus the prior complete month/iu);
+  assert.match(brief?.answerMustCover.join(" ") ?? "", /latest complete month versus the prior complete month/iu);
+  assert.equal(codexAnalyticalBriefSchema.safeParse(brief).success, true);
 });
 
 test("the API, controller, and UI preserve the explicit mode and progress contract", () => {

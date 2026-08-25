@@ -151,7 +151,7 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
     version: 1,
     ownerGoal: "Explain whole-business profitability movement, rank the largest controllable levers, and size actions without double counting overlapping evidence.",
     answerMustCover: Object.freeze([
-      "When the owner did not name a period, use the latest complete calendar month versus the prior complete month for accounting, sales and labour performance, state that assumption in the opening, and label any trailing-period inventory or structural context separately.",
+      "When no period is named, use the latest complete month versus the prior complete month for accounting, sales and labour; state that assumption first and label trailing inventory context separately.",
       "Establish accounting profit, gross profit and operating-expense movement over one explicit current and comparable period.",
       "Bridge the accounting result to operational transaction volume, basket, margin, discounts, refunds and product/category mix without claiming the lenses reconcile unless proven.",
       "Test labour, workshop, inventory and cash only where they could materially change the ranked recommendation.",
