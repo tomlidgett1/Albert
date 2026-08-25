@@ -208,7 +208,7 @@ test("the final control-plane deny covers current and future private functions",
   );
   assert.match(
     migration,
-    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA control_plane[\s\S]*FROM PUBLIC,anon,authenticated,service_role/u,
+    /procedure\.proowner = \(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname = current_user\)[\s\S]*REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,authenticated,service_role/u,
   );
   assert.match(
     migration,
