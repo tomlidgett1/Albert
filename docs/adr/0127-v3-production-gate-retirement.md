@@ -31,6 +31,9 @@ Remove only contract files whose complete subject is a retired architecture:
   summarizer contract.
 - Semantic-query V1 quality and canonical snapshot worker assertions; current
   manifest, ingestion and analytical SQL gates remain.
+- post-migration SQL harnesses whose only target was a removed `core` or
+  canonical table. Current source-staging RLS, deletion capability, quality,
+  reconciliation and connector-activation SQL remains in CI.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the
