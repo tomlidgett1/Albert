@@ -223,6 +223,8 @@ SELECT pg_temp.assert_true(
   )=0,
   'note-discovered payments must complete without absence tombstones'
 );
+RESET ROLE;
+SELECT set_config('albert.tenant_id','01H00000000000000000000M01',true);
 SELECT pg_temp.assert_true(
   (SELECT source_total=1 AND local_live_total IS NULL
      FROM quality.connector_stream_state
