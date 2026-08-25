@@ -156,6 +156,7 @@ export type AppApiCapture = {
   bootstrapPayloads: unknown[];
   conversationPayloads: unknown[];
   codexConversationPayloads: unknown[];
+  swarmPayloads: unknown[];
   runtimeRequestStartedAt: { v3: number[]; codex: number[] };
   anthropicConversationPayloads: unknown[];
   oauthSelectionPayloads: unknown[];
@@ -813,6 +814,7 @@ export async function installAppApiRoutes(
     bootstrapPayloads: [],
     conversationPayloads: [],
     codexConversationPayloads: [],
+    swarmPayloads: [],
     runtimeRequestStartedAt: { v3: [], codex: [] },
     anthropicConversationPayloads: [],
     oauthSelectionPayloads: [],
@@ -1250,6 +1252,50 @@ export async function installAppApiRoutes(
     }).catch(() => undefined);
   });
 
+  await page.route(/\/api\/swarm(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fulfill({ json: { run: null } });
+      return;
+    }
+    const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
+    capture.swarmPayloads.push(requestPayload);
+    const preferences = requestPayload.preferences && typeof requestPayload.preferences === "object"
+      ? requestPayload.preferences as Record<string, unknown>
+      : {};
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Albert-Conversation-Id": "01J00000000000000000000061",
+        "X-Albert-Turn-Id": "01J00000000000000000000062",
+      },
+      json: {
+        run: { runId: "01J00000000000000000000063", plan: { periodLabel: "As asked" } },
+        agents: [],
+        preferences: {
+          model: typeof preferences.model === "string" ? preferences.model : "gpt-5.6-luna",
+          reasoningEffort: typeof preferences.reasoningEffort === "string" ? preferences.reasoningEffort : "max",
+          fastMode: preferences.fastMode === true,
+          solPlanner: requestPayload.solPlanner === true,
+          proMode: requestPayload.proMode === true,
+        },
+        concurrency: 3,
+      },
+    });
+  });
+
+  await page.route(/\/api\/swarm\/synthesis$/u, async (route) => {
+    await route.fulfill({
+      json: {
+        synthesis: {
+          answer: "The fixture swarm completed without launching worker fixtures.",
+          answerState: "Unavailable",
+          followUps: [],
+        },
+      },
+    });
+  });
+
   await page.route(/\/api\/codex-conversation$/u, async (route) => {
     const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
     capture.codexConversationPayloads.push(requestPayload);
@@ -1310,8 +1356,17 @@ export async function installAppApiRoutes(
         text: "Bikes led category net sales at $84,240.00.",
       },
       {
-        id: "trace_fixture_codex_plan_complete",
+        id: "trace_fixture_codex_reasoning_summary",
         sequence: 12,
+        type: "narrative",
+        status: "complete",
+        purpose: "reasoning_summary",
+        occurredAt: "2026-08-03T00:43:00.640Z",
+        text: "I compared category performance, checked the strongest alternative explanations, and verified the leading result against the governed evidence.",
+      },
+      {
+        id: "trace_fixture_codex_plan_complete",
+        sequence: 13,
         type: "plan",
         status: "complete",
         occurredAt: "2026-08-03T00:43:00.680Z",
@@ -1321,7 +1376,7 @@ export async function installAppApiRoutes(
           { id: "codex_plan_step_3", label: "Validate and present the answer", status: "done", kind: "synthesis", evidenceResultIds: [FIXTURE_RESULT_ID] },
         ],
       },
-      ...fixtureEvents.slice(8).map((event) => ({ ...event, sequence: event.sequence + 4 })),
+      ...fixtureEvents.slice(8).map((event) => ({ ...event, sequence: event.sequence + 5 })),
     ];
     const localConversationEvent = (id: string, text: string) => ({
       id,

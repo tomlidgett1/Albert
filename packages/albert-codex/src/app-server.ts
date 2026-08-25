@@ -36,6 +36,8 @@ export type CodexAppServerTurnResult = Readonly<{
   turnId: string;
   finalMessage: string;
   durationMs: number | null;
+  /** True only after OpenAI accepted a Responses request carrying `reasoning.mode: "pro"`. */
+  proModeVerified: boolean;
 }>;
 
 /**
@@ -757,11 +759,16 @@ export async function runCodexAppServerTurn(
         if (!finalMessage) throw new Error("Codex completed without a final structured answer.");
         const validationFeedback = await options.validateFinalCandidate?.(finalMessage, repairAttempt) ?? null;
         if (!validationFeedback || deadlineAt - Date.now() < MIN_REPAIR_WINDOW_MS) {
+          const proModeVerified = proModeProxy?.receipt().verified === true;
+          if (options.proMode && !proModeVerified) {
+            throw new Error("Codex Pro reasoning mode was not accepted by OpenAI.");
+          }
           return {
             threadId,
             turnId,
             finalMessage,
             durationMs: totalDurationMs || null,
+            proModeVerified,
           };
         }
         repairingCandidate = true;

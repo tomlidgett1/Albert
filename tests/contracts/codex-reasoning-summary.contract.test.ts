@@ -59,11 +59,13 @@ test("Detailed trail keeps only the latest reasoning-summary snapshot", () => {
 });
 
 test("Codex opts into summaries but never forwards raw reasoning deltas", async () => {
-  const [appServer, runtime, shared, trace] = await Promise.all([
+  const [appServer, runtime, shared, trace, page, dashStyles] = await Promise.all([
     read("packages/albert-codex/src/app-server.ts"),
     read("packages/albert-codex/src/semantic-runtime.ts"),
     read("packages/shared/src/agent-runtime.ts"),
     read("app/dash/components/InsightsStyleTrace.tsx"),
+    read("app/dash/page.tsx"),
+    read("app/dash/dash.module.css"),
   ]);
   assert.match(appServer, /summary: "concise"/u);
   assert.match(runtime, /item\/reasoning\/summaryTextDelta/u);
@@ -82,4 +84,11 @@ test("Codex opts into summaries but never forwards raw reasoning deltas", async 
   const detailedTrail = trace.slice(trace.indexOf("function DetailedTrail"));
   assert.doesNotMatch(compactTrail, /reasoningSummary/u);
   assert.match(detailedTrail, /reasoningSummary/u);
+  assert.match(page, />Reasoning</u);
+  assert.match(page, /setReasoningPanelOpen/u);
+  assert.match(page, /latestReasoningSummary\(message\.events \?\? \[\]\)/u);
+  assert.match(page, /aria-live=\{turn\.streaming \? "polite" : undefined\}/u);
+  assert.match(page, /Private chain-of-thought stays hidden/u);
+  assert.match(dashStyles, /\.reasoningPanelBody/u);
+  assert.match(dashStyles, /\.reasoningPanelStatusDotLive/u);
 });

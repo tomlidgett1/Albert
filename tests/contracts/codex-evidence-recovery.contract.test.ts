@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runCodexSemanticTurn } from "../../packages/albert-codex/src/semantic-runtime.ts";
+import {
+  codexHarnessFailureRecoverable,
+  runCodexSemanticTurn,
+} from "../../packages/albert-codex/src/semantic-runtime.ts";
 import { signCubeJwt } from "../../packages/albert-v3/src/cube/jwt.ts";
 
 const failingAfterEvidenceSource = `#!/usr/bin/env node
@@ -74,9 +77,27 @@ lines.on("line", (line) => {
       }
     });
   }
-  if (message.id === 61 && message.result) setImmediate(() => process.exit(12));
+  if (message.id === 61 && message.result) setImmediate(() => {
+    process.stderr.write("Cube bearer unavailable after evidence.\\n");
+    process.exit(12);
+  });
 });
 `;
+
+test("late availability failures recover only after evidence and never bypass Pro verification", () => {
+  assert.equal(
+    codexHarnessFailureRecoverable(new Error("Cube bearer unavailable after evidence."), undefined, 3),
+    true,
+  );
+  assert.equal(
+    codexHarnessFailureRecoverable(new Error("Cube bearer unavailable before evidence."), undefined, 0),
+    false,
+  );
+  assert.equal(
+    codexHarnessFailureRecoverable(new Error("Pro reasoning mode was not accepted by OpenAI."), undefined, 3),
+    false,
+  );
+});
 
 test("a late Codex process failure cannot discard successful governed evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "albert-codex-evidence-recovery-"));

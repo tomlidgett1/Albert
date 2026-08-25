@@ -285,6 +285,7 @@ test("Codex app-server is pinned, environmentless, and handles one namespaced ho
     assert.equal(calls, 1);
     assert.equal(result.threadId, "thr_fixture");
     assert.equal(result.durationMs, 7);
+    assert.equal(result.proModeVerified, false);
     assert.match(result.finalMessage, /protocol test/u);
     await assert.rejects(() => runCodexAppServerTurn({
       authentication: {

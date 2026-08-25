@@ -339,6 +339,93 @@ test("Codex is the default harness and Albert remains available", async ({ page 
   );
 });
 
+test("Codex reasoning summaries stream in an accessible slide-out", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  const capture = await openDashboard(page);
+
+  const prompt = "Which categories performed best last month?";
+  await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
+
+  const reasoningToggle = page.getByRole("button", { name: "Show reasoning" });
+  await expect(reasoningToggle).toBeVisible();
+  await reasoningToggle.click();
+  await expect(page.getByRole("button", { name: "Hide reasoning" })).toHaveAttribute("aria-pressed", "true");
+
+  const drawer = page.locator('aside[aria-label="Reasoning"]');
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("heading", { name: "Reasoning", level: 2 })).toBeVisible();
+  await expect(drawer.getByText("OpenAI’s live reasoning summary.", { exact: false })).toBeVisible();
+  await expect(drawer.getByText("Private chain-of-thought stays hidden.", { exact: false })).toBeVisible();
+  await expect(drawer.getByText(
+    "I compared category performance, checked the strongest alternative explanations, and verified the leading result against the governed evidence.",
+    { exact: true },
+  )).toBeVisible();
+
+  const layout = await drawer.evaluate((element) => ({
+    innerWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    drawerWidth: element.getBoundingClientRect().width,
+    runningAnimations: element
+      .getAnimations({ subtree: true })
+      .filter((animation) => animation.playState === "running").length,
+  }));
+  expect(layout.drawerWidth).toBeLessThanOrEqual(layout.innerWidth);
+  expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
+  expect(layout.runningAnimations).toBe(0);
+  const scan = await new AxeBuilder({ page })
+    .include('aside[aria-label="Reasoning"]')
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(
+    scan.violations,
+    `Codex reasoning compact dark:\n${scan.violations.map((violation) => `${violation.id}: ${violation.help}`).join("\n")}`,
+  ).toEqual([]);
+
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  const lightScan = await new AxeBuilder({ page })
+    .include('aside[aria-label="Reasoning"]')
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(
+    lightScan.violations,
+    `Codex reasoning compact light:\n${lightScan.violations.map((violation) => `${violation.id}: ${violation.help}`).join("\n")}`,
+  ).toEqual([]);
+});
+
+test("Swarm selection atomically routes an immediate Pro and Sol send", async ({ page }) => {
+  const capture = await openDashboard(page);
+  const settings = page.getByTestId("model-run-controls-trigger");
+  await settings.click();
+  const proReasoning = page.getByRole("switch", { name: "Pro reasoning" });
+  await proReasoning.click();
+  await expect(proReasoning).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+
+  const prompt = "We need to pay out 1500AUD per month to owners. What can we do to make this in extra GP per month.";
+  await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
+  await page.evaluate(() => {
+    const swarm = document.querySelector<HTMLButtonElement>('button[aria-label="Swarm"]');
+    const send = document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
+    if (!swarm || !send) throw new Error("Swarm test controls were unavailable.");
+    // Deliberately submit in the same browser task. React effects cannot run
+    // between these clicks, which is the production race this test guards.
+    swarm.click();
+    send.click();
+  });
+
+  await expect.poll(() => capture.swarmPayloads.length).toBe(1);
+  expect(capture.swarmPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: true },
+    solPlanner: true,
+    proMode: true,
+  });
+  expect(capture.codexConversationPayloads).toHaveLength(0);
+});
+
 test("Codex model controls allow a reviewed OpenAI model change", async ({ page }) => {
   const capture = await openDashboard(page);
   const settings = page.getByTestId("model-run-controls-trigger");

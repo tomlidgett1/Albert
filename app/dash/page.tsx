@@ -93,6 +93,7 @@ import AgentsWorkspace from "./components/AgentsWorkspace";
 import QueryLogsWorkspace from "./components/QueryLogsWorkspace";
 import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
+import { latestReasoningSummary } from "./lib/reasoning-summary";
 import styles from "./dash.module.css";
 import traceStyles from "./components/insights-trace.module.css";
 
@@ -878,6 +879,7 @@ export default function DashPage() {
     }
   });
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
+  const [reasoningPanelOpen, setReasoningPanelOpen] = useState(false);
   const [swarmEnabled, setSwarmEnabled] = useState(false);
   const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
   const [swarmPanelWidth, setSwarmPanelWidth] = useState(SWARM_PANEL_DEFAULT_WIDTH);
@@ -886,6 +888,14 @@ export default function DashPage() {
     () => new Set(),
   );
   const swarmEnabledRef = useRef(false);
+  const setSwarmMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(swarmEnabledRef.current) : next;
+    // Send routing reads the ref synchronously. Updating both here prevents a
+    // click-and-send in the same event loop from rendering Swarm as selected
+    // while still posting an ordinary /api/codex-conversation turn.
+    swarmEnabledRef.current = resolved;
+    setSwarmEnabled(resolved);
+  }, []);
   const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
   const codexPromptMenuId = useId();
@@ -1041,9 +1051,6 @@ export default function DashPage() {
     activeChatRuntimeRef.current = activeChatRuntime;
   }, [activeChatRuntime]);
   useEffect(() => {
-    swarmEnabledRef.current = swarmEnabled;
-  }, [swarmEnabled]);
-  useEffect(() => {
     specialistAgentIdRef.current = specialistAgentId;
   }, [specialistAgentId]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
@@ -1073,7 +1080,21 @@ export default function DashPage() {
   const keyInsights = deriveKeyInsights(keyInsightTurns);
   const keyInsightsStreaming = keyInsightTurns.some((turn) => turn.streaming);
   const keyInsightActivity = latestInsightActivity(keyInsightTurns);
-  const sidePanelOpen = takeawaysOpen || swarmPanelOpen;
+  const reasoningTurns = chatMessages.flatMap((message, index) => {
+    if (message.role !== "assistant" || message.runtime !== "codex") return [];
+    const summary = latestReasoningSummary(message.events ?? []);
+    const question = [...chatMessages.slice(0, index)]
+      .reverse()
+      .find((candidate) => candidate.role === "user")?.text.trim() ?? "";
+    if (!summary && !message.isStreaming) return [];
+    return [{
+      id: message.id,
+      question,
+      summary,
+      streaming: Boolean(message.isStreaming),
+    }];
+  });
+  const sidePanelOpen = takeawaysOpen || reasoningPanelOpen || swarmPanelOpen;
   const chatBusy = isChatResponding
     || (
       swarmSnapshot.active
@@ -1950,6 +1971,7 @@ export default function DashPage() {
         if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
           setSwarmPanelOpen(true);
           setTakeawaysOpen(false);
+          setReasoningPanelOpen(false);
         }
         const settled = run.agents.every((agent) => (
           agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
@@ -2035,6 +2057,7 @@ export default function DashPage() {
       if (swarmRunSnapshot().parentConversationId === conversationId) {
         setSwarmPanelOpen(true);
         setTakeawaysOpen(false);
+        setReasoningPanelOpen(false);
       } else {
         hydrateSwarmConversation(conversationId);
       }
@@ -2903,6 +2926,7 @@ export default function DashPage() {
         swarmFleetStarted = true;
         setSwarmPanelOpen(true);
         setTakeawaysOpen(false);
+        setReasoningPanelOpen(false);
         return;
       }
       const requestBody = {
@@ -3550,6 +3574,7 @@ export default function DashPage() {
       conversationCacheRef.current.delete(conversationId);
     }
     setTakeawaysOpen(false);
+    setReasoningPanelOpen(false);
 
     void sendChatMessage(pending.text, undefined, {
       conversationId: conversationId ?? null,
@@ -3737,8 +3762,9 @@ export default function DashPage() {
     setIsChatResponding(false);
     setComposerExpanded(false);
     setTakeawaysOpen(false);
+    setReasoningPanelOpen(false);
     setSwarmPanelOpen(false);
-    if (runtime !== "codex") setSwarmEnabled(false);
+    if (runtime !== "codex") setSwarmMode(false);
     setChatClarification(null);
     setClarifyDraft("");
     setEditingMessageId(null);
@@ -3787,8 +3813,7 @@ export default function DashPage() {
     setAgentPreferences(SALES_DEEP_PREFERENCES);
     agentPreferencesRef.current = SALES_DEEP_PREFERENCES;
     resetChat("codex", "general");
-    swarmEnabledRef.current = true;
-    setSwarmEnabled(true);
+    setSwarmMode(true);
     void sendChatMessage(SALES_DEEP_OWNER_QUESTION, undefined, {
       conversationId: null,
       priorMessageCount: 0,
@@ -4834,6 +4859,28 @@ export default function DashPage() {
                     <Icon name="list" />
                   </button>
                 ) : null}
+                {activeChatRuntime === "codex" && chatMessages.length > 0 ? (
+                  <button
+                    className={`${styles.chatTakeawaysToggle} ${styles.chatReasoningToggle} ${reasoningPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
+                    type="button"
+                    aria-label={reasoningPanelOpen ? "Hide reasoning" : "Show reasoning"}
+                    aria-pressed={reasoningPanelOpen}
+                    aria-controls="analysis-takeaways"
+                    title={reasoningPanelOpen ? "Hide reasoning" : "Show OpenAI reasoning summary"}
+                    onClick={() => {
+                      setReasoningPanelOpen((open) => {
+                        if (!open) {
+                          setTakeawaysOpen(false);
+                          setSwarmPanelOpen(false);
+                        }
+                        return !open;
+                      });
+                    }}
+                  >
+                    <Icon name="sparkles" />
+                    <span>Reasoning</span>
+                  </button>
+                ) : null}
                 {rawDebugAvailable ? (
                   <button
                     className={`${styles.chatTakeawaysToggle} ${rawDebugOpen ? styles.chatTakeawaysToggleActive : ""}`}
@@ -4855,7 +4902,10 @@ export default function DashPage() {
                     title={swarmPanelOpen ? "Hide swarm" : "Show swarm"}
                     onClick={() => {
                       setSwarmPanelOpen((open) => {
-                        if (!open) setTakeawaysOpen(false);
+                        if (!open) {
+                          setTakeawaysOpen(false);
+                          setReasoningPanelOpen(false);
+                        }
                         return !open;
                       });
                     }}
@@ -4863,7 +4913,7 @@ export default function DashPage() {
                     <Icon name="agents" />
                   </button>
                 ) : null}
-                {!takeawaysOpen && !swarmPanelOpen ? (
+                {!takeawaysOpen && !reasoningPanelOpen && !swarmPanelOpen ? (
                   <button
                     className={styles.chatTakeawaysToggle}
                     type="button"
@@ -4872,6 +4922,7 @@ export default function DashPage() {
                     aria-controls="analysis-takeaways"
                     onClick={() => {
                       setSwarmPanelOpen(false);
+                      setReasoningPanelOpen(false);
                       setTakeawaysOpen(true);
                     }}
                   >
@@ -5268,10 +5319,10 @@ export default function DashPage() {
                     onClick={() => {
                       if (activeChatRuntime !== "codex") {
                         startCodexChat();
-                        setSwarmEnabled(true);
+                        setSwarmMode(true);
                         return;
                       }
-                      setSwarmEnabled((current) => !current);
+                      setSwarmMode((current) => !current);
                     }}
                   >
                     <Icon name="agents" />
@@ -5445,7 +5496,7 @@ export default function DashPage() {
           <aside
             id="analysis-takeaways"
             className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""}`}
-            aria-label={swarmPanelOpen ? "Swarm" : "Key insights"}
+            aria-label={swarmPanelOpen ? "Swarm" : reasoningPanelOpen ? "Reasoning" : "Key insights"}
             aria-hidden={!sidePanelOpen}
             inert={!sidePanelOpen || undefined}
           >
@@ -5457,6 +5508,56 @@ export default function DashPage() {
                 onResizeActiveChange={setSwarmPanelResizing}
                 onWidenPastDefault={() => setCollapsed(true)}
               />
+            ) : reasoningPanelOpen ? (
+              <div className={styles.takeawaysPanelInner}>
+                <div className={styles.takeawaysHeader}>
+                  <h2>Reasoning</h2>
+                  <button
+                    className={styles.takeawaysClose}
+                    type="button"
+                    aria-label="Collapse reasoning"
+                    onClick={() => setReasoningPanelOpen(false)}
+                  >
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className={`${styles.takeawaysBody} ${styles.reasoningPanelBody}`}>
+                  <div className={styles.reasoningPanelIntro}>
+                    <span
+                      className={`${styles.reasoningPanelStatusDot} ${reasoningTurns.some((turn) => turn.streaming) ? styles.reasoningPanelStatusDotLive : ""}`}
+                      aria-hidden="true"
+                    />
+                    <p>
+                      OpenAI’s live reasoning summary. Private chain-of-thought stays hidden.
+                    </p>
+                  </div>
+                  {reasoningTurns.length > 0 ? (
+                    <div className={styles.reasoningTurnList}>
+                      {reasoningTurns.map((turn, index) => (
+                        <article className={styles.reasoningTurn} key={turn.id}>
+                          <div className={styles.reasoningTurnHeader}>
+                            <span>{turn.streaming ? "Live" : `Turn ${index + 1}`}</span>
+                            {turn.streaming ? <span className={styles.reasoningStreamingLabel}>Streaming</span> : null}
+                          </div>
+                          {turn.question ? <h3>{turn.question}</h3> : null}
+                          {turn.summary ? (
+                            <p aria-live={turn.streaming ? "polite" : undefined}>{turn.summary}</p>
+                          ) : (
+                            <p className={styles.reasoningWaiting} role="status">
+                              Waiting for OpenAI’s first reasoning summary…
+                            </p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.takeawaysEmptyState}>
+                      <strong>No reasoning summary yet</strong>
+                      <p>Send a Codex question and its reasoning summary will stream here as OpenAI provides it.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className={styles.takeawaysPanelInner}>
                 <div className={styles.takeawaysHeader}>

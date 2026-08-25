@@ -66,6 +66,43 @@ test("the loopback adapter injects Pro into the exact outgoing Responses request
       reasoning: { effort: "max", mode: "pro" },
       input: "fixture",
     });
+    assert.deepEqual(proxy.receipt(), {
+      injectedRequests: 1,
+      acceptedResponses: 1,
+      verified: true,
+    });
+  } finally {
+    await proxy.close();
+    await new Promise<void>((resolveClose) => upstream.close(() => resolveClose()));
+  }
+});
+
+test("the Pro receipt does not verify a provider-rejected Responses request", async () => {
+  const upstream = createServer((_request, response) => {
+    response.statusCode = 400;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ error: { message: "rejected fixture" } }));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  assert.ok(address && typeof address !== "string");
+  const proxy = await startCodexProModeProxy(
+    `http://127.0.0.1:${address.port}/v1`,
+    "sk-fixture",
+  );
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.6-luna", input: "fixture" }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(proxy.receipt(), {
+      injectedRequests: 1,
+      acceptedResponses: 0,
+      verified: false,
+    });
   } finally {
     await proxy.close();
     await new Promise<void>((resolveClose) => upstream.close(() => resolveClose()));
@@ -113,6 +150,8 @@ test("Pro mode is API-authenticated and wired only into the Codex request path",
   assert.match(dash, /proMode: runProMode/u);
   assert.match(route, /reasoningMode/u);
   assert.match(runtime, /proMode: turn\.reasoningMode === "pro"/u);
+  assert.match(runtime, /name: "OpenAI Pro reasoning mode"/u);
   assert.match(planner, /proMode: options\.proMode/u);
   assert.match(appServer, /startCodexProModeProxy/u);
+  assert.match(appServer, /proModeProxy\?\.receipt\(\)\.verified/u);
 });

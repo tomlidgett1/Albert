@@ -84,6 +84,9 @@ function publicFailure(error: unknown): Readonly<{ code: string; message: string
   if (/Pro reasoning mode requires API authentication/iu.test(message)) {
     return { code: "codex_pro_unavailable", message: "Codex Pro reasoning is unavailable for this runtime authentication mode." };
   }
+  if (/Pro reasoning mode was not accepted by OpenAI/iu.test(message)) {
+    return { code: "codex_pro_unavailable", message: "OpenAI did not accept Codex Pro reasoning for this request." };
+  }
   if (/version|pinned Codex runtime|unavailable|ENOENT/iu.test(message)) {
     return { code: "codex_runtime_unavailable", message: "The pinned Codex runtime is unavailable." };
   }
@@ -116,7 +119,7 @@ function diagnosticFailureCode(error: unknown): string {
   if (/thread\/start|turn\/start|rejected the request/iu.test(message)) return "protocol_request_rejected";
   if (/app-server exited/iu.test(message)) return "app_server_exited";
   if (/timed out/iu.test(message)) return "turn_timeout";
-  if (/Pro reasoning mode requires API authentication/iu.test(message)) return "pro_mode_unavailable";
+  if (/Pro reasoning mode (?:requires API authentication|was not accepted by OpenAI)/iu.test(message)) return "pro_mode_unavailable";
   if (/Cube|semantic|catalogue/iu.test(message)) return "semantic_unavailable";
   if (/401|API key|authentication|model/iu.test(message)) return "model_request_rejected";
   return "unknown";

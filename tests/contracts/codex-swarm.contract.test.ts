@@ -74,6 +74,8 @@ test("dash wires a Swarm button, progress slide-out, and hidden child threads", 
   assert.match(page, /stopSwarmFleet\(\)/u);
   assert.match(page, /swarmConversationIds\.has\(conversation\.conversationId\)/u);
   assert.match(page, /fetch\("\/api\/swarm"/u);
+  assert.match(page, /const setSwarmMode = useCallback/u);
+  assert.match(page, /swarmEnabledRef\.current = resolved[\s\S]{0,100}setSwarmEnabled\(resolved\)/u);
   assert.match(panel, /Active ·/u);
   assert.match(panel, /Done ·/u);
   assert.match(panel, /InsightsStyleTrace/u);

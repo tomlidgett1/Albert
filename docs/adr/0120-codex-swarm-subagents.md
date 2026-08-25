@@ -140,3 +140,21 @@ Swarm now also carries the selected Sol-planner and Pro-mode switches into
 every worker and records them in the parent run plan. The run-settings label,
 parent runtime profile, and child execution therefore describe the same
 configuration. Sales-deep keeps its reviewed fixed profile.
+
+## Update — 2026-08-25: atomic activation and late-evidence recovery
+
+Production diagnosis of the owner-payout gross-profit question found two
+independent failure modes. First, the Swarm control updated visible React state
+while send routing read a ref synchronized later by an effect. A click and send
+inside one browser task could therefore show Swarm as selected but post an
+ordinary `/api/codex-conversation` request. Swarm mode now updates routing and
+visible state atomically before the send handler can run. Browser acceptance
+submits in that exact same-task order and requires `/api/swarm`, Pro, and Sol.
+
+Second, a long Pro turn retrieved three non-empty governed results before its
+isolated app-server process ended. A later availability error mentioning Cube,
+a bearer, provider authentication, or transport could veto the existing
+evidence-recovery path and discard those valid rows. Once a turn has successful
+current-turn evidence, availability failures now publish only a revalidated
+Qualified recovery over those immutable result cells. Isolation, tenant-scope,
+explicit cancellation, and unverified Pro-mode failures remain fail-closed.

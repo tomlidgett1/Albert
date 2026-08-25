@@ -107,6 +107,7 @@ async function proxyRequest(
   upstreamOrigin: URL,
   capabilityPath: string,
   apiKey: string,
+  receipt: { injectedRequests: number; acceptedResponses: number },
 ): Promise<void> {
   const incomingUrl = new URL(request.url ?? "/", "http://127.0.0.1");
   if (!incomingUrl.pathname.startsWith(`${capabilityPath}/`)) {
@@ -124,6 +125,7 @@ async function proxyRequest(
   const body = isResponsesRequest
     ? Buffer.from(JSON.stringify(withCodexProReasoningMode(JSON.parse(rawBody.toString("utf8")))), "utf8")
     : rawBody;
+  if (isResponsesRequest) receipt.injectedRequests += 1;
   const abort = new AbortController();
   request.once("aborted", () => abort.abort());
   response.once("close", () => {
@@ -136,6 +138,7 @@ async function proxyRequest(
     redirect: "manual",
     signal: abort.signal,
   });
+  if (isResponsesRequest && upstreamResponse.ok) receipt.acceptedResponses += 1;
   response.statusCode = upstreamResponse.status;
   response.statusMessage = upstreamResponse.statusText;
   responseHeaders(upstreamResponse, response);
@@ -145,6 +148,12 @@ async function proxyRequest(
 export type CodexProModeProxy = Readonly<{
   /** Loopback base URL retaining the upstream base path (normally `/v1`). */
   baseUrl: string;
+  /** Provider acceptance receipt containing no request, response, or credential data. */
+  receipt: () => Readonly<{
+    injectedRequests: number;
+    acceptedResponses: number;
+    verified: boolean;
+  }>;
   close: () => Promise<void>;
 }>;
 
@@ -170,8 +179,9 @@ export async function startCodexProModeProxy(
     throw new Error("The Codex Pro upstream must use HTTPS outside loopback tests.");
   }
   const capabilityPath = `/${randomUUID().replaceAll("-", "")}`;
+  const receipt = { injectedRequests: 0, acceptedResponses: 0 };
   const server = createServer((request, response) => {
-    void proxyRequest(request, response, upstream, capabilityPath, apiKey).catch(() => {
+    void proxyRequest(request, response, upstream, capabilityPath, apiKey, receipt).catch(() => {
       if (response.headersSent) {
         response.destroy();
         return;
@@ -197,6 +207,11 @@ export async function startCodexProModeProxy(
   const basePath = upstream.pathname.replace(/\/+$/u, "");
   return Object.freeze({
     baseUrl: `http://127.0.0.1:${address.port}${capabilityPath}${basePath}`,
+    receipt: () => Object.freeze({
+      injectedRequests: receipt.injectedRequests,
+      acceptedResponses: receipt.acceptedResponses,
+      verified: receipt.injectedRequests > 0 && receipt.acceptedResponses > 0,
+    }),
     close: async () => {
       server.closeIdleConnections();
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));

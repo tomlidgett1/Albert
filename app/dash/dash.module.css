@@ -3411,6 +3411,24 @@
   height: 18px;
 }
 
+.chatReasoningToggle {
+  display: inline-flex;
+  width: auto;
+  min-width: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: calc(11px * var(--text-scale));
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.chatReasoningToggle svg {
+  width: 15px;
+  height: 15px;
+}
+
 .chatShellTakeawaysOpen .chatWorkspace {
   padding-right: 12px;
 }
@@ -3427,7 +3445,7 @@
 
 .takeawaysPanel {
   position: relative;
-  z-index: 4;
+  z-index: 9;
   display: flex;
   width: var(--takeaways-panel-width);
   height: 100%;
@@ -3536,6 +3554,107 @@
   overflow-y: auto;
   padding: 14px 16px 24px;
   scrollbar-width: thin;
+}
+
+.reasoningPanelBody {
+  gap: 16px;
+}
+
+.reasoningPanelIntro {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  border-bottom: 1px solid var(--dash-border-soft);
+  padding: 2px 0 14px;
+}
+
+.reasoningPanelIntro p {
+  margin: 0;
+  color: var(--dash-text-soft);
+  font-size: calc(11px * var(--text-scale));
+  letter-spacing: -0.012em;
+  line-height: 1.45;
+}
+
+.reasoningPanelStatusDot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--dash-text-faint);
+}
+
+.reasoningPanelStatusDotLive {
+  background: var(--dash-success-text);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--dash-success-text), transparent 84%);
+  animation: reasoningStatusPulse 1.6s ease-in-out infinite;
+}
+
+.reasoningTurnList {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.reasoningTurn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reasoningTurn + .reasoningTurn {
+  border-top: 1px solid var(--dash-border-soft);
+  padding-top: 18px;
+}
+
+.reasoningTurnHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dash-text-faint);
+  font-size: calc(10px * var(--text-scale));
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.reasoningStreamingLabel {
+  color: var(--dash-success-text);
+}
+
+.reasoningTurn h3 {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--dash-text-heading);
+  font-size: calc(12px * var(--text-scale));
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.reasoningTurn > p {
+  margin: 0;
+  color: var(--dash-text-body);
+  font-size: calc(13px * var(--text-scale));
+  letter-spacing: -0.018em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.reasoningTurn > .reasoningWaiting {
+  color: var(--dash-text-muted);
+  font-size: calc(12px * var(--text-scale));
+}
+
+@keyframes reasoningStatusPulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .takeawaysEmptyState {
@@ -3700,6 +3819,10 @@
 
   .takeawaysPanelInner {
     transform: none;
+  }
+
+  .reasoningPanelStatusDotLive {
+    animation: none;
   }
 
 }
@@ -10028,6 +10151,15 @@
   .takeawaysPanelInner {
     width: var(--takeaways-panel-width);
     min-width: var(--takeaways-panel-width);
+  }
+
+  .chatReasoningToggle span {
+    display: none;
+  }
+
+  .chatReasoningToggle {
+    width: 30px;
+    padding: 0;
   }
 
   .chatShell {

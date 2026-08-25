@@ -36,6 +36,12 @@ continues independently. The feature bypasses deterministic recipe shortcuts
 so an enabled question still reaches the selected model after the preflight;
 social and trusted conversational fast paths remain unchanged.
 
+The planner's capability guard allows app-server's ordinary `userMessage`
+input lifecycle item as well as reasoning, plan and answer lifecycle items.
+That item is the owner's already-supplied input echo, not a tool invocation.
+External MCP, command execution and every other unapproved item type remain
+fail-closed.
+
 ## Consequences
 
 - Difficult Codex questions get a stronger decomposition without changing the

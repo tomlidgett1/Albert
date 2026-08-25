@@ -2263,14 +2263,27 @@ export function buildCodexEvidenceRecoveryAnswer(input: Readonly<{
   return attempts.find((attempt) => attempt.final.state !== "Unavailable") ?? null;
 }
 
-function recoverableHarnessFailure(error: unknown, signal: AbortSignal | undefined): boolean {
+export function codexHarnessFailureRecoverable(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  successfulEvidenceCount = 0,
+): boolean {
   if (signal?.aborted) return false;
   const message = error instanceof Error
     ? error.message
     : typeof error === "string"
       ? error
       : "";
-  return !/(?:forbidden|external (?:instruction|workspace|MCP)|tenant|scope|bearer|unauthori[sz]ed|authentication|API key|Cube|semantic layer)/iu.test(message);
+  // Never turn an isolation, tenant-scope, or unverified Pro execution into a
+  // publishable answer. These are trust-boundary failures, not availability.
+  if (/(?:forbidden|external (?:instruction|workspace|MCP)|tenant|scope|Pro reasoning mode)/iu.test(message)) {
+    return false;
+  }
+  // Once governed rows have been returned, a later provider, bearer, Cube, or
+  // app-server transport failure must not erase them. Recovery revalidates only
+  // those successful result cells and explicitly excludes unfinished work.
+  if (successfulEvidenceCount > 0) return true;
+  return !/(?:bearer|unauthori[sz]ed|authentication|API key|Cube|semantic layer)/iu.test(message);
 }
 
 function normalizeTypedClaimFromCandidates(
@@ -3112,7 +3125,7 @@ export async function runCodexSemanticTurn(
         status: "warning",
         stage: "planning",
         label: "The selected Codex model is planning the analysis",
-        detail: "The Sol preflight was unavailable, so the selected model is continuing independently",
+        detail: "Sol could not produce a valid checklist, so the selected model is continuing independently",
       });
     }
   }
@@ -4211,9 +4224,24 @@ export async function runCodexSemanticTurn(
   };
   try {
     appServerResult = await appServerRun;
+    if (turn.reasoningMode === "pro") {
+      if (!appServerResult.proModeVerified) {
+        throw new Error("Codex Pro reasoning mode was not accepted by OpenAI.");
+      }
+      await options.emit({
+        type: "validation",
+        status: "complete",
+        name: "OpenAI Pro reasoning mode",
+        outcome: "passed",
+        detail: "OpenAI accepted the selected model request with Pro mode; reasoning effort remained independently configured.",
+      });
+    }
     await emitReasoningSummary(true);
   } catch (error) {
-    const recovered = recoverableHarnessFailure(error, options.signal)
+    const successfulEvidenceCount = evidence.filter((result) => (
+      result.priorTurnsAgo === undefined && result.rowCount > 0
+    )).length;
+    const recovered = codexHarnessFailureRecoverable(error, options.signal, successfulEvidenceCount)
       ? attemptEvidenceRecovery()
       : null;
     if (recovered) return await publishEvidenceRecovery(recovered);

@@ -90,7 +90,7 @@ function renderPlannerInput(turn: CodexServiceTurn): string {
   });
 }
 
-function assertNoForbiddenPlannerCapability(method: string, params: unknown): void {
+export function assertNoForbiddenPlannerCapability(method: string, params: unknown): void {
   if (method.startsWith("mcpServer/")) {
     throw new Error("The Sol planner attempted to start an external MCP capability.");
   }
@@ -98,7 +98,9 @@ function assertNoForbiddenPlannerCapability(method: string, params: unknown): vo
     return;
   }
   const type = typeof params.item.type === "string" ? params.item.type : "unknown";
-  if (!new Set(["agentMessage", "reasoning", "plan", "contextCompaction", "sleep", "error"]).has(type)) {
+  // app-server reports the owner's supplied input as a userMessage lifecycle
+  // item before reasoning starts. It is an input echo, not a tool capability.
+  if (!new Set(["userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "sleep", "error"]).has(type)) {
     throw new Error(`The Sol planner attempted a forbidden ${type} capability.`);
   }
 }

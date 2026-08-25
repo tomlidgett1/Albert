@@ -8,6 +8,7 @@ import {
 import {
   CODEX_SOL_PLANNER_EFFORT,
   CODEX_SOL_PLANNER_MODEL,
+  assertNoForbiddenPlannerCapability,
   sanitizeCodexSolPlannerOutput,
 } from "../../packages/albert-codex/src/sol-planner.ts";
 
@@ -37,6 +38,18 @@ test("Sol planner output is bounded, deduplicated, and rejects unsafe labels", (
     sanitizeCodexSolPlannerOutput({ steps: [{ label: "Only one check" }] }),
     null,
   );
+});
+
+test("Sol planner accepts the app-server input echo but still rejects tool capabilities", () => {
+  assert.doesNotThrow(() => assertNoForbiddenPlannerCapability("item/started", {
+    item: { type: "userMessage" },
+  }));
+  assert.doesNotThrow(() => assertNoForbiddenPlannerCapability("item/completed", {
+    item: { type: "userMessage" },
+  }));
+  assert.throws(() => assertNoForbiddenPlannerCapability("item/started", {
+    item: { type: "commandExecution" },
+  }), /forbidden commandExecution capability/u);
 });
 
 test("Codex exposes the Sol planner only on the main Codex path", async () => {

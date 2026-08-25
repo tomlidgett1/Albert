@@ -40,6 +40,12 @@ URL, so production continues to use the approved AU endpoint.
 
 The adapter binds to `127.0.0.1`, accepts bounded request bodies, never logs
 headers, bodies or credentials, and is closed with the app-server session.
+It maintains a content-free receipt counting injected Responses requests and
+successful upstream acceptances. A Pro turn cannot complete unless at least
+one request carrying `reasoning.mode: "pro"` receives a successful provider
+response. The successful main turn emits a durable `OpenAI Pro reasoning mode`
+validation event so the trace distinguishes provider acceptance from the
+requested runtime profile.
 Pro mode is unavailable for local ChatGPT-subscription authentication because
 OpenAI documents it as a Responses API request feature; those runs fail with a
 specific public error rather than silently running standard mode.
@@ -51,6 +57,8 @@ owner-selected Codex investigation when both switches are enabled.
 
 - Albert sends the exact documented GPT-5.6 Pro parameter without inventing a
   `gpt-5.6-pro` model id or overloading reasoning effort.
+- A persisted passed validation confirms that OpenAI accepted Pro mode; a UI
+  toggle or requested runtime profile alone is not treated as proof.
 - Pro can be combined independently with Luna, Terra or Sol, any supported
   effort, and the existing Fast processing selection.
 - Enabled turns may be materially slower and use more billed output/reasoning
