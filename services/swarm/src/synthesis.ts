@@ -34,6 +34,7 @@ export type SwarmSynthesis = z.infer<typeof swarmSynthesisSchema>;
 export type SwarmSynthesisResult = Readonly<{
   synthesis: SwarmSynthesis;
   source: "model" | "model-repaired" | "fallback";
+  recovery: "standard-after-pro" | null;
   /** Figures in the final answer that no finding contains, after repair. */
   unsupportedFigures: readonly string[];
   failure: string | null;
@@ -248,7 +249,7 @@ export async function buildSwarmSynthesis(options: Readonly<{
     findings: options.findings,
   });
   if (options.findings.filter((finding) => finding.headline && !finding.failed).length === 0) {
-    return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: "no-completed-findings" };
+    return { synthesis: fallback, source: "fallback", recovery: null, unsupportedFigures: [], failure: "no-completed-findings" };
   }
   try {
     const client = options.client ?? new OpenAI({
@@ -350,10 +351,13 @@ export async function buildSwarmSynthesis(options: Readonly<{
       const failure = firstFailure || recoveryFailure
         ? `synthesis-recovery-failed:${[firstFailure, recoveryFailure].filter(Boolean).join("; ").slice(0, 150)}`
         : "invalid-structured-output";
-      return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure };
+      return { synthesis: fallback, source: "fallback", recovery: null, unsupportedFigures: [], failure };
     }
     let synthesis = first ?? recovered!;
     let source: SwarmSynthesisResult["source"] = first ? "model" : "model-repaired";
+    let recovery: SwarmSynthesisResult["recovery"] = !first && options.proMode
+      ? "standard-after-pro"
+      : null;
     const synthesisMode: "standard" | "pro" = first && options.proMode ? "pro" : "standard";
     let unsupported = unsupportedSwarmFigures({
       headline: synthesis.headline,
@@ -374,13 +378,14 @@ export async function buildSwarmSynthesis(options: Readonly<{
         if (repairedUnsupported.length < unsupported.length) {
           synthesis = repaired;
           source = "model-repaired";
+          if (options.proMode) recovery = "standard-after-pro";
           unsupported = repairedUnsupported;
         }
       }
     }
-    return { synthesis, source, unsupportedFigures: unsupported, failure: null };
+    return { synthesis, source, recovery, unsupportedFigures: unsupported, failure: null };
   } catch (error) {
     const detail = error instanceof Error ? error.message.replace(/\s+/gu, " ").slice(0, 160) : "unknown";
-    return { synthesis: fallback, source: "fallback", unsupportedFigures: [], failure: `synthesis-error:${detail}` };
+    return { synthesis: fallback, source: "fallback", recovery: null, unsupportedFigures: [], failure: `synthesis-error:${detail}` };
   }
 }

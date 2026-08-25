@@ -141,6 +141,7 @@ export async function POST(request: Request): Promise<Response> {
         followUps: synthesis.followUps,
         disagreements: synthesis.disagreements,
         source: result.source,
+        recovery: result.recovery,
         unsupportedFigures: [...result.unsupportedFigures],
       },
     });
@@ -219,6 +220,7 @@ export async function POST(request: Request): Promise<Response> {
       answerState,
       completedAgents: completed.length,
       source: result.source,
+      recovery: result.recovery,
       unsupportedFigureCount: result.unsupportedFigures.length,
       failure: result.failure,
     }, correlationId);
@@ -230,6 +232,8 @@ export async function POST(request: Request): Promise<Response> {
         answerState,
         followUps: synthesis.followUps,
         disagreements: synthesis.disagreements,
+        source: result.source,
+        recovery: result.recovery,
       },
       conversationId: run.parentConversationId,
       turnId: run.parentTurnId,

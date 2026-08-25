@@ -332,6 +332,11 @@ export default function SwarmPanel({
                   {snapshot.checkpointText ?? "Starting pass 1. The first scheduled checkpoint arrives after two minutes."}
                 </p>
                 <p className={styles.superDisclosure}>Sol planner → Luna · Max evidence passes → Luna · Max · Pro synthesis · standard speed · updates every 2 minutes</p>
+                {snapshot.synthesisRecovery === "standard-after-pro" ? (
+                  <p className={styles.superRecovery} role="status">
+                    Pro did not finish inside its limit. Luna Max completed the synthesis without Fast mode.
+                  </p>
+                ) : null}
               </section>
             ) : null}
             <section>

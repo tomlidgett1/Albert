@@ -1958,6 +1958,7 @@ export default function DashPage() {
             synthesis?: {
               answer?: string;
               answerState?: string;
+              recovery?: "standard-after-pro" | null;
               followUps?: string[];
             } | null;
             agents?: readonly {
@@ -1985,6 +1986,7 @@ export default function DashPage() {
           agents,
           answer: run.synthesis?.answer ?? null,
           answerState: run.synthesis?.answerState ?? null,
+          synthesisRecovery: run.synthesis?.recovery ?? null,
           followUps: run.synthesis?.followUps,
           kind: run.plan?.kind,
           startedAt: run.startedAt,
@@ -2009,7 +2011,12 @@ export default function DashPage() {
         }).then((response) => (response.ok ? response.json() : null)).then((result: unknown) => {
           const synthesis = result && typeof result === "object"
             ? (result as {
-              synthesis?: { answer?: string; answerState?: string; followUps?: string[] };
+              synthesis?: {
+                answer?: string;
+                answerState?: string;
+                recovery?: "standard-after-pro" | null;
+                followUps?: string[];
+              };
             }).synthesis
             : null;
           if (!synthesis?.answer) return;
@@ -2022,6 +2029,7 @@ export default function DashPage() {
             agents,
             answer: synthesis.answer,
             answerState: synthesis.answerState ?? null,
+            synthesisRecovery: synthesis.recovery ?? null,
             followUps: synthesis.followUps,
             kind: run.plan?.kind,
             startedAt: run.startedAt,

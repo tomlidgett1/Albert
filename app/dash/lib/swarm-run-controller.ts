@@ -60,6 +60,7 @@ export type SwarmRunSnapshot = Readonly<{
   settledCount: number;
   answer: string | null;
   answerState: string | null;
+  synthesisRecovery: "standard-after-pro" | null;
   followUps: readonly string[];
   error: string | null;
 }>;
@@ -99,6 +100,7 @@ const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
   settledCount: 0,
   answer: null,
   answerState: null,
+  synthesisRecovery: null,
   followUps: Object.freeze([]),
   error: null,
 });
@@ -468,6 +470,7 @@ async function synthesise(runToken: number, runId: string): Promise<void> {
       synthesis?: {
         answer?: string;
         answerState?: string;
+        recovery?: "standard-after-pro" | null;
         followUps?: string[];
       };
     } | null;
@@ -480,6 +483,7 @@ async function synthesise(runToken: number, runId: string): Promise<void> {
       active: false,
       answer: payload.synthesis.answer,
       answerState: payload.synthesis.answerState ?? "Derived",
+      synthesisRecovery: payload.synthesis.recovery ?? null,
       followUps: Object.freeze(payload.synthesis.followUps ?? []),
     });
   } catch (error) {
@@ -718,6 +722,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
   agents: readonly SwarmAgentLiveState[];
   answer: string | null;
   answerState: string | null;
+  synthesisRecovery?: "standard-after-pro" | null;
   followUps?: readonly string[];
   kind?: SwarmRunKind;
   startedAt?: string;
@@ -753,6 +758,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
     agents: Object.freeze([...input.agents]),
     answer: input.answer,
     answerState: input.answerState,
+    synthesisRecovery: input.synthesisRecovery ?? null,
     followUps: Object.freeze([...(input.followUps ?? [])]),
     active: stillOpen && !input.answer,
   });

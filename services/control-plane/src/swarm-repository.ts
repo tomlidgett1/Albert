@@ -48,6 +48,7 @@ export const swarmStoredSynthesisSchema = z.object({
   followUps: z.array(z.string().max(180)).max(4),
   disagreements: z.array(z.string().max(200)).max(4).catch([]),
   source: z.enum(["model", "model-repaired", "fallback"]).optional(),
+  recovery: z.enum(["standard-after-pro"]).nullable().optional(),
   unsupportedFigures: z.array(z.string().max(80)).max(8).optional(),
 }).strict();
 

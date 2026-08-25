@@ -218,6 +218,7 @@ test("Pro synthesis uses the selected Luna model at Max without putting Pro on w
     } as never,
   });
   assert.equal(result.source, "model");
+  assert.equal(result.recovery, null);
   assert.equal(request?.model, "gpt-5.6-luna");
   assert.deepEqual(request?.reasoning, { effort: "max", mode: "pro" });
   assert.equal(request?.max_output_tokens, 48_000);
@@ -268,6 +269,7 @@ test("an incomplete Pro synthesis recovers on Luna Max without Fast before deter
     } as never,
   });
   assert.equal(result.source, "model-repaired");
+  assert.equal(result.recovery, "standard-after-pro");
   assert.equal(result.synthesis.headline, "Recover margin before chasing volume");
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
@@ -319,6 +321,7 @@ test("a Pro provider timeout reaches the standard Luna Max recovery", async () =
     } as never,
   });
   assert.equal(result.source, "model-repaired");
+  assert.equal(result.recovery, "standard-after-pro");
   assert.equal(result.failure, null);
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0]?.reasoning, { effort: "max", mode: "pro" });
@@ -370,6 +373,7 @@ test("the emergency synthesis fallback preserves detailed evidence and a decisio
     } as never,
   });
   assert.equal(result.source, "fallback");
+  assert.equal(result.recovery, null);
   assert.match(result.synthesis.answer, /Indiscriminate discounting is not supported/u);
   assert.match(result.synthesis.answer, /Revenue: \$250,000/u);
   assert.match(result.synthesis.answer, /The P&L reconciliation did not complete/u);
@@ -388,6 +392,9 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(synthesisRoute, /Specialists are still working/u);
   assert.match(synthesisRoute, /AbortSignal\.timeout\(SYNTHESIS_ROUTE_DEADLINE_MS\)/u);
   assert.match(synthesisRoute, /signal: synthesisSignal/u);
+  assert.match(synthesisRoute, /recovery: result\.recovery/u);
+  assert.match(repository, /recovery: z\.enum\(\["standard-after-pro"\]\)/u);
+  assert.match(panel, /Pro did not finish inside its limit/u);
   assert.match(synthesisRoute, /failureCode: answerState === "Unavailable" \? "albert_swarm_unavailable" : "albert_swarm_answered"/u);
   assert.match(stopRoute, /assertSameOriginMutation\(request\)/u);
   assert.match(heartbeatRoute, /loadSwarmRun\(parsed\.runId\)/u);
