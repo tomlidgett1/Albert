@@ -201,3 +201,18 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
     "transform_rw",
   ].sort());
 });
+
+test("the final control-plane deny covers current and future private functions", async () => {
+  const migration = await source(
+    "infra/migrations/control-plane/0172_m0_final_private_control_default_deny.sql",
+  );
+  assert.match(
+    migration,
+    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA control_plane[\s\S]*FROM PUBLIC,anon,authenticated,service_role/u,
+  );
+  assert.match(
+    migration,
+    /ALTER DEFAULT PRIVILEGES FOR ROLE albert_control_migration_owner[\s\S]*REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/u,
+  );
+  assert.match(migration, /NOTIFY pgrst, 'reload schema'/u);
+});
