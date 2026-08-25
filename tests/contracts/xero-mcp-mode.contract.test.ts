@@ -12,15 +12,17 @@ import {
 test("dash exposes a XERO MCP mode that talks to the official Xero MCP route", async () => {
   const page = await readFile(new URL("../../app/dash/page.tsx", import.meta.url), "utf8");
   const route = await readFile(new URL("../../app/api/xero-mcp-conversation/route.ts", import.meta.url), "utf8");
+  const v3Route = await readFile(new URL("../../app/api/v3-conversation/route.ts", import.meta.url), "utf8");
   const session = await readFile(new URL("../../packages/xero-mcp/src/session.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../../services/sync-workers/src/main.ts", import.meta.url), "utf8");
 
   assert.doesNotMatch(page, /Live test: ask the official Xero MCP/u);
-  assert.match(page, /resetChat\("xero_mcp"\)/);
+  assert.match(page, /resetChat\("xero_mcp", "general"\)/);
   assert.match(page, /\/api\/xero-mcp-conversation/);
   assert.match(page, /Ask Xero anything/);
   assert.match(route, /runXeroMcpTurn/);
   assert.match(route, /X-Albert-Runtime/);
+  assert.match(v3Route, /xeroMcpServiceUrl\(\)/u);
   assert.match(session, /@xeroapi\/xero-mcp-server@0\.0\.17/);
   assert.match(session, /XERO_CLIENT_BEARER_TOKEN/);
   assert.match(worker, /\/v1\/xero-mcp\//);
@@ -99,7 +101,7 @@ test("Xero MCP service URL resolves the same way on localhost and Vercel", async
   }
 });
 
-test("v3 routes P&L to governed CubeCore while retaining unqualified native Xero reports", async () => {
+test("v3 routes P&L figures to Cube while retaining the native Xero statement tool", async () => {
   const tools = await readFile(new URL("../../packages/albert-v3/src/engine/tools.ts", import.meta.url), "utf8");
   const lanes = await readFile(new URL("../../packages/albert-v3/src/engine/lanes.ts", import.meta.url), "utf8");
   const route = await readFile(new URL("../../app/api/v3-conversation/route.ts", import.meta.url), "utf8");
@@ -115,8 +117,8 @@ test("v3 routes P&L to governed CubeCore while retaining unqualified native Xero
     assert.match(tools, new RegExp(`mcpTool: "${mcp}"`), mcp);
     assert.match(lanes, new RegExp(tool!), `${tool} in lane guidance`);
   }
-  assert.doesNotMatch(tools, /name: "xero_profit_and_loss"/u);
-  assert.doesNotMatch(tools, /mcpTool: "list-profit-and-loss"/u);
+  assert.match(tools, /name: "xero_profit_and_loss"/u);
+  assert.match(tools, /mcpTool: "list-profit-and-loss"/u);
   assert.match(lanes, /xero_profit_and_loss_analytics/u);
   assert.match(lanes, /never call xero_profit_and_loss/u);
   // The web route resolves the service URL through the shared resolver so

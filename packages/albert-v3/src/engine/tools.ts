@@ -2799,28 +2799,28 @@ export function createV3Tools(
   if (options.lane === "statement") {
     return Object.freeze([...xeroLiveReportTools]);
   }
-  // Remaining live Xero reports are offered on every answer route. The
+  // Remaining live Xero reports are offered on Xero-routed answers. The
   // governed xero_profit_and_loss_* Cube views stay the authority for P&L
   // FIGURES (ADR 0099); the live P&L tool exists so "show me the P&L"
   // presents Xero's full statement, every line. Each native tool refuses
   // at call time when the turn context has no xero-mcp client, so exposure is
   // harmless. Xero itself renders these reports — the model never rebuilds
   // them from Cube views.
-  if (purpose === "answer" && route.cube) selected.push(...xeroLiveReportTools);
+  if (
+    purpose === "answer"
+    && route.cube
+    && route.preferredCubeConnectors.includes("xero")
+  ) selected.push(...xeroLiveReportTools);
   if (route.shopifyQL || route.shopifyAdmin) selected.push(listShopifyAdminStores);
   if (route.shopifyAdmin) {
     selected.push(searchShopifyAdminCatalogue, runShopifyAdminQuery);
   }
   if (route.shopifyQL) selected.push(searchShopifyQLCatalogue, runShopifyQLQuery);
   if (route.cube) {
-    selected.push(
-      searchSemanticCatalogueTool,
-      getViewSchema,
-      runCubeQuery,
-      comparePeriods,
-      topNBreakdown,
-      exploreEntities,
-    );
+    selected.push(searchSemanticCatalogueTool, getViewSchema, runCubeQuery);
+    if (options.lane !== "quick") {
+      selected.push(comparePeriods, topNBreakdown, exploreEntities);
+    }
   }
   if ((route.cube || route.shopifyQL || route.shopifyAdmin) && options.chartable !== false) {
     selected.push(makeChart);
@@ -2835,6 +2835,11 @@ export function createV3Tools(
     selected.push(updatePlan);
   }
   if (purpose === "answer") selected.push(recordSourceFindingTool);
-  if (purpose === "answer") selected.push(loadSkill, createPresentResultTool(), createComposeTableTool(), createAggregateResultTool());
+  if (purpose === "answer") {
+    if (options.lane !== "quick") {
+      selected.push(loadSkill, createComposeTableTool(), createAggregateResultTool());
+    }
+    selected.push(createPresentResultTool());
+  }
   return Object.freeze(selected);
 }

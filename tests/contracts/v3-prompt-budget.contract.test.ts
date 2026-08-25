@@ -31,6 +31,10 @@ import {
 
 const encoding = getEncoding("o200k_base");
 const config = loadAgentConfig();
+// The V3 answer host now carries governed source authority, reasoning-safe
+// progress tools and current connector disclosure. Keep a strict 24k base
+// ceiling while the smaller intent/planner/support roles remain below 15k.
+const ANSWER_LANE_BASE_TOKEN_LIMIT = 24_000;
 
 const catalogue: CubeCatalogue = Object.freeze({
   fetchedAt: "2026-08-13T00:00:00.000Z",
@@ -73,6 +77,7 @@ function route(
         ? (planes.cube ? ["shopify", "square"] : ["shopify"])
         : [],
     ),
+    unavailableRequestedConnectors: Object.freeze([]),
     mode,
     reasons: Object.freeze(["prompt budget fixture"]),
   });
@@ -218,7 +223,7 @@ test("the production compact index stays in the 3k-5k token envelope", () => {
   assert.ok(Buffer.byteLength(index, "utf8") <= 22_000, "compact index exceeds byte backstop");
 });
 
-test("every single-family production base request stays below 15k tokens", async () => {
+test("every single-family production answer request stays below 24k tokens", async () => {
   const profiles = [
     await captureStructuredLane({
       lane: "quick",
@@ -243,7 +248,7 @@ test("every single-family production base request stays below 15k tokens", async
   ];
   for (const agent of profiles) {
     const tokens = promptTokenCount(agent);
-    assert.ok(tokens <= 15_000, `${agent.name} base payload is ${tokens} tokens`);
+    assert.ok(tokens <= ANSWER_LANE_BASE_TOKEN_LIMIT, `${agent.name} base payload is ${tokens} tokens`);
   }
 });
 
@@ -341,7 +346,7 @@ test("deep planning, Cube branches and synthesis each stay below 15k", async () 
   }
 });
 
-test("Grok investigation and its evidence-only composer stay below 15k independently", async () => {
+test("Grok investigation and its evidence-only composer stay within the answer budget independently", async () => {
   const captured: CapturedAgent[] = [];
   const turnContext = context(route({ cube: true, shopifyQL: false, shopifyAdmin: false }));
   let seededEvidence = false;
@@ -383,7 +388,7 @@ test("Grok investigation and its evidence-only composer stay below 15k independe
   }));
   assert.equal(captured.length, 2);
   for (const agent of captured) {
-    assert.ok(promptTokenCount(agent) <= 15_000, `${agent.name} exceeds the base budget`);
+    assert.ok(promptTokenCount(agent) <= ANSWER_LANE_BASE_TOKEN_LIMIT, `${agent.name} exceeds the base budget`);
   }
   const composer = captured.find(({ name }) => name.includes("answer composer"));
   assert.ok(composer && typeof composer.instructions === "string");
@@ -396,7 +401,8 @@ test("mixed connector exposure remains bounded and never restores the full catal
     toolRoute: route({ cube: true, shopifyQL: true, shopifyAdmin: true }),
     question: "Compare Square sales with Shopify conversion and inspect product publication status.",
   });
-  assert.ok(promptTokenCount(agent) <= 15_000, "explicit three-plane union exceeds base budget");
+  const tokens = promptTokenCount(agent);
+  assert.ok(tokens <= ANSWER_LANE_BASE_TOKEN_LIMIT, `explicit three-plane union is ${tokens} tokens`);
   const instructions = instructionText(agent);
   assert.doesNotMatch(instructions, /## View:|### Measures|### Dimensions/u);
   assert.doesNotMatch(instructions, /get_semantic_catalogue/u);

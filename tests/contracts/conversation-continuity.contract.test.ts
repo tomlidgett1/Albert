@@ -120,5 +120,11 @@ test("model context accepts a JSON-null answer text without failing the follow-u
   } as unknown as ConversationSupabase;
 
   const messages = await loadConversationModelContext("conversation_test", supabase);
-  assert.deepEqual(messages, [{ role: "user", text: "Show sales" }]);
+  assert.deepEqual(messages, [
+    { role: "user", text: "Show sales" },
+    {
+      role: "assistant",
+      text: "(No answer was produced for this message: the attempt was interrupted before it finished. There are no figures, tables or charts from it to refine; treat any follow-up as a fresh request built on the message above.)",
+    },
+  ]);
 });

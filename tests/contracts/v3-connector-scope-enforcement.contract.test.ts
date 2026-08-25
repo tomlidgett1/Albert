@@ -73,7 +73,7 @@ test("query, schema and entity tools refuse views outside the tenant's connector
   assert.deepEqual(viewsOutsideRoute(context, ["not_a_view"]), []);
 
   const tools = read("packages/albert-v3/src/engine/tools.ts");
-  assert.match(tools, /const outside = viewsOutsideRoute\(context, memberViews\(input\)\);\s*if \(outside\.length > 0\) return outOfScopeError/u);
+  assert.match(tools, /const outside = viewsOutsideRoute\(context, memberViews\(input\)\);\s*if \(outside\.length > 0\) \{\s*const response = outOfScopeError\(context, outside\);\s*return rejectAttempt\("cube_view_outside_route"/u);
   assert.match(tools, /const outside = viewsOutsideRoute\(context, input\.viewNames\);\s*if \(outside\.length > 0\) return outOfScopeError/u);
   assert.match(tools, /input\.searchIn, \.\.\.\(input\.sizeBy \? \[input\.sizeBy\] : \[\]\)/u);
 });

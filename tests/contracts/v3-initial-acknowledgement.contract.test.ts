@@ -17,7 +17,7 @@ function read(path: string): string {
 test("the initial acknowledgement is rendered from a bounded non-quantitative plan", () => {
   assert.equal(
     renderInitialAcknowledgement({ action: "compare", focus: "sales performance across the requested periods" }),
-    "I’ll line up sales performance across the requested periods and pinpoint the material differences.",
+    "I’ll line up sales performance across the requested periods side by side.",
   );
   assert.equal(
     renderInitialAcknowledgement({ action: "investigate", focus: "the main drivers of weaker gross margin" }),
@@ -56,7 +56,7 @@ test("the acknowledgement call pins Luna high on OpenAI Fast with structured out
     } as never,
   });
 
-  assert.equal(result?.text, "I’ll line up sales performance across the requested periods and pinpoint the material differences.");
+  assert.equal(result?.text, "I’ll line up sales performance across the requested periods side by side.");
   assert.equal(result?.actualServiceTier, "priority");
   assert.deepEqual(result?.usage, { inputTokens: 42, outputTokens: 18, totalTokens: 60 });
   assert.equal(calls.length, 1);

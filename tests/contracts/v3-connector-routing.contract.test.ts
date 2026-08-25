@@ -73,15 +73,9 @@ test("ordinary governed analytics takes the Cube route with deterministic connec
     "search_semantic_catalogue",
     "get_view_schema",
     "run_cube_query",
-    "compare_periods",
-    "top_n_breakdown",
-    "explore_entities",
     "make_chart",
     "record_source_finding",
-    "load_skill",
     "present_result",
-    "compose_table",
-    "aggregate_result",
   ]);
 });
 
@@ -91,7 +85,7 @@ test("high-confidence accounting and roster domains route deterministically with
   assert.equal(accounting.cube, true);
 
   const workforce = route("Compare rostered hours with leave requests");
-  assert.deepEqual(workforce.preferredCubeConnectors, ["deputy"]);
+  assert.deepEqual(workforce.preferredCubeConnectors, ["deputy", "square"]);
   assert.equal(workforce.cube, true);
 
   const ambiguousTax = route("How much GST did we collect on sales?");
@@ -120,10 +114,7 @@ test("Shopify-native reporting exposes ShopifyQL without unrelated Cube tools", 
     "run_shopifyql_query",
     "make_chart",
     "record_source_finding",
-    "load_skill",
     "present_result",
-    "compose_table",
-    "aggregate_result",
   ]);
 });
 
@@ -140,10 +131,7 @@ test("Shopify long-tail object metadata exposes the Admin read plane only", () =
     "run_shopify_admin_query",
     "make_chart",
     "record_source_finding",
-    "load_skill",
     "present_result",
-    "compose_table",
-    "aggregate_result",
   ]);
 });
 

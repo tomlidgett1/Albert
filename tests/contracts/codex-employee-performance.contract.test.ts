@@ -84,11 +84,14 @@ const workforce = result({
   ],
 });
 
-const draft = (answer: string): CodexFinalAnswer => ({
+const draft = (
+  answer: string,
+  presentedResultIds: readonly string[] = [sales.resultId],
+): CodexFinalAnswer => ({
   state: "Qualified",
   answer,
   followUps: [],
-  presentedResultIds: [],
+  presentedResultIds: [...presentedResultIds],
   claims: [],
 });
 
@@ -200,7 +203,10 @@ test("trusted employee productivity aligns exact unique labels and calculates go
   assert.equal(
     codexFinalSufficiencyGap(
       "Which employee performed best?",
-      draft("Leigh led total contribution and remained strongest on takings per worked hour; exact-name alignment is a limitation."),
+      draft(
+        "Leigh led total contribution and remained strongest on takings per worked hour; exact-name alignment is a limitation.",
+        [derived.resultId],
+      ),
       [sales, workforce, derived],
       { analysisBrief: brief },
     ),
