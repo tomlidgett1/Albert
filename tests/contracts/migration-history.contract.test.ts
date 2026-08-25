@@ -146,3 +146,27 @@ test("fresh analytical bootstrap installs a credential-free Fivetran owner bridg
   assert.match(runner, /GRANT fivetran_user TO albert_migration_owner/u);
   assert.match(runner, /target\.stream !== "analytical"/u);
 });
+
+test("fresh analytical bootstrap installs Fivetran functions without an unbound Xero repoint", () => {
+  const body = [
+    "CREATE FUNCTION ingestion.rebuild_fivetran_source_views(text) RETURNS integer;",
+    "SELECT ingestion.rebuild_fivetran_source_views('xero');",
+    "RAISE EXCEPTION 'no active Fivetran Xero schema';",
+    "DROP VIEW source_xero_official.xo_accounts;",
+  ].join("\n");
+  const migration = {
+    id: "0168_m2_xero_official_views_over_fivetran.sql",
+    checksum: "1ae4cb35ebab373890b688fbbd95543ae5dbf71cc012661fc93e92c60c083155",
+    body,
+  };
+  const executable = analyticalMigrationBody(migration, true);
+  assert.match(executable, /CREATE FUNCTION ingestion\.rebuild_fivetran_source_views/u);
+  assert.match(executable, /SELECT ingestion\.rebuild_fivetran_source_views\('xero'\);$/u);
+  assert.doesNotMatch(executable, /no active Fivetran Xero schema/u);
+  assert.doesNotMatch(executable, /DROP VIEW source_xero_official/u);
+  assert.equal(analyticalMigrationBody(migration, false), body);
+  assert.throws(
+    () => analyticalMigrationBody({ ...migration, checksum: "f".repeat(64) }, true),
+    /fresh-bootstrap Fivetran repoint review/u,
+  );
+});

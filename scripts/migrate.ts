@@ -60,6 +60,12 @@ const FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY = Object.freeze({
   checksum: "78f2c44ba04b366160e87e6b311ccfc6fba8f75e47ae213779bd323c6970f85b",
 });
 
+const FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY = Object.freeze({
+  id: "0168_m2_xero_official_views_over_fivetran.sql",
+  checksum: "1ae4cb35ebab373890b688fbbd95543ae5dbf71cc012661fc93e92c60c083155",
+  repointMarker: "SELECT ingestion.rebuild_fivetran_source_views('xero');",
+});
+
 const FRESH_DEPUTY_RAW_STUBS = `
 CREATE SCHEMA IF NOT EXISTS "DEPUTYNEW";
 CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employee (
@@ -139,6 +145,25 @@ export function analyticalMigrationBody(
       );
     }
     return `CREATE SCHEMA IF NOT EXISTS source_xero_official;\n${migration.body}`;
+  }
+  if (
+    bootstrap
+    && migration.id === FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Fivetran repoint review.`,
+      );
+    }
+    const marker = FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.repointMarker;
+    const cutoff = migration.body.indexOf(marker);
+    if (cutoff < 1 || migration.body.indexOf(marker, cutoff + marker.length) !== -1) {
+      throw new Error(`${migration.id} changed its reviewed Fivetran repoint boundary.`);
+    }
+    // Install the current binding, stamping and rebuild functions, but retain
+    // 0164's typed source_xero-backed official views until a real destination
+    // is bound. Production upgrades still execute the full immutable body.
+    return `${migration.body.slice(0, cutoff)}${marker}`;
   }
   if (!bootstrap || !reviewedChecksum) return migration.body;
   if (migration.checksum !== reviewedChecksum)
