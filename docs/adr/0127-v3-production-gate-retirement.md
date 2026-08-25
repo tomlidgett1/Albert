@@ -44,6 +44,9 @@ Remove only contract files whose complete subject is a retired architecture:
   connector-quality gates remain in CI.
 - control-plane Semantic V2 review/qualification and semantic-query promotion
   relay SQL, whose services and customer path are retired.
+- the progressive canonical-transform dependency SQL harness. Its complete
+  subject is the retired transform worker and `canonical_transform_jobs` path;
+  current raw landing, sync lifecycle and V3 source-readiness gates remain.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the
