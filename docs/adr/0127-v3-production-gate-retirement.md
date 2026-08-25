@@ -36,6 +36,8 @@ Remove only contract files whose complete subject is a retired architecture:
   reconciliation and connector-activation SQL remains in CI.
 - the V1 `quality.run_all_invariants` SQL harness removed with the canonical
   quality runner; current ingestion and connector-quality contracts remain.
+- the canonical pipeline-snapshot attestation harness whose snapshot function
+  was explicitly dropped by analytical migration 0157.
 
 Do not blanket-exclude failing tests. V3 routing, Cube, connector ingestion,
 security, release authority, deletion, Swarm and Codex contracts remain in the

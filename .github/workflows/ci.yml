@@ -107,7 +107,6 @@ jobs:
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-momence-reconciliation-policy.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-durable-reconciliation-findings.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-lookup-backed-statuses.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-run-bound-pipeline-stats.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-connector-pack-activation.sql
 
   control-plane-database:
