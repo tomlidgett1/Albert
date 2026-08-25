@@ -206,6 +206,8 @@ test("the final control-plane deny covers current and future private functions",
   const migration = await source(
     "infra/migrations/control-plane/0172_m0_final_private_control_default_deny.sql",
   );
+  assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/u);
+  assert.doesNotMatch(migration, /REVOKE USAGE ON SCHEMA control_plane FROM [^;]*authenticated/u);
   assert.match(
     migration,
     /procedure\.proowner = \(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname = current_user\)[\s\S]*REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,authenticated,service_role/u,

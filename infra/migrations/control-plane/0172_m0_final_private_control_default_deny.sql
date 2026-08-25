@@ -4,7 +4,7 @@
 
 BEGIN;
 
-REVOKE USAGE ON SCHEMA control_plane FROM PUBLIC,anon,authenticated,service_role;
+REVOKE USAGE ON SCHEMA control_plane FROM service_role;
 
 DO $deny$
 DECLARE
