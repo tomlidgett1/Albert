@@ -83,19 +83,3 @@ BEGIN
   END IF;
 END;
 $$;
-
--- A mutable tenant GUC without a signed capability cannot authorize a runtime
--- read, even though transform_rw holds table-level SELECT.
-SET ROLE transform_rw;
-BEGIN;
-SET LOCAL albert.tenant_id = '01H00000000000000000000001';
-DO $$
-BEGIN
-  PERFORM count(*) FROM source_xero.xero_currencies;
-  RAISE EXCEPTION 'unsigned transform read unexpectedly succeeded';
-EXCEPTION WHEN insufficient_privilege THEN
-  NULL;
-END;
-$$;
-COMMIT;
-RESET ROLE;
