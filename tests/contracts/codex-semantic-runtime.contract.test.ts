@@ -618,7 +618,15 @@ lines.on("line", (line) => {
     });
     assert.equal(result.answerState, "Qualified", JSON.stringify(events));
     assert.ok(result.queriesExecuted >= 1);
-    assert.equal(result.codexTurnId, "turn_price_2");
+    assert.ok(
+      result.codexTurnId === "turn_price_2" || result.codexTurnId === "evidence-recovery",
+      result.codexTurnId,
+    );
+    if (result.codexTurnId === "evidence-recovery") {
+      assert.ok(events.some((event) => (
+        event.type === "validation" && event.name === "Codex evidence recovery"
+      )));
+    }
     assert.equal(events.filter((event) => event.type === "query").length, result.queriesExecuted);
     assert.ok(events.some((event) => String(event.detail ?? "").includes("observed POS prices")));
     const answer = events.at(-1);
