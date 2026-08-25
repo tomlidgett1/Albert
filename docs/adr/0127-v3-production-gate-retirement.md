@@ -38,6 +38,10 @@ Remove only contract files whose complete subject is a retired architecture:
   quality runner; current ingestion and connector-quality contracts remain.
 - the canonical pipeline-snapshot attestation harness whose snapshot function
   was explicitly dropped by analytical migration 0157.
+- the durable canonical reconciliation-finding harness and its historical
+  migration contract, whose materialiser reads the `mart` schema removed by
+  analytical migration 0158. Current source reconciliation lifecycle and
+  connector-quality gates remain in CI.
 - control-plane Semantic V2 review/qualification and semantic-query promotion
   relay SQL, whose services and customer path are retired.
 
