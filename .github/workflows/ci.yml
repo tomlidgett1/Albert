@@ -277,6 +277,17 @@ jobs:
           -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
         env:
           PGPASSWORD: ci-control-sync-password-00000000001
+      - name: Record protected dogfood transform-worker deployment observation
+        run: >-
+          psql -h 127.0.0.1 -p 54322 -U albert_transform_control_runtime -d postgres
+          -v ON_ERROR_STOP=1
+          -v dogfood_login=albert_transform_control_runtime
+          -v dogfood_group=albert_transform_control
+          -v dogfood_worker_id=ci-dogfood-transform
+          -v dogfood_service=transform-worker
+          -f tests/sql/control-plane-protected-dogfood-worker-barrier.sql
+        env:
+          PGPASSWORD: ci-control-transform-password-0000001
       - name: Record protected dogfood deletion-worker deployment observation
         run: >-
           psql -h 127.0.0.1 -p 54322 -U albert_deletion_control_runtime -d postgres
