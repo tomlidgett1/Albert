@@ -37,6 +37,16 @@ run as stranded.
    defect survived for months because the only failure signal was swallowed;
    a renewal that fails while a turn streams is now visible in web logs.
 
+## Update — 2026-08-26: the 0084 body was also broken
+
+An impersonated functional test on production (renew as the owner over a
+temporarily revived turn, rolled back) failed with 42703:
+`conversation_turns.updated_at` does not exist. 0084's body — copied into
+0174's wrapper — always referenced a column the table never had, so even a
+reachable renewal would have raised on first call. Migration 0176 rewrites
+both bodies to touch only `lease_expires_at`. The same test now returns a
+lease exactly `p_lease_seconds` ahead of `clock_timestamp()`.
+
 ## Consequences
 
 - Long analytical turns — swarm children at max effort, Pro reasoning runs —
