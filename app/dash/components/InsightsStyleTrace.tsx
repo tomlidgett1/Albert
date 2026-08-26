@@ -1793,7 +1793,13 @@ function ThinkingTrail({
 
   if (!hasTrail) return null;
 
-  const startedAt = model.startedAtMs ?? (streaming ? mountedAt : null);
+  // The clock starts ticking at mount, before any server event exists. When
+  // the first event lands its occurredAt is "now", so re-anchoring on it
+  // would collapse a visible "Planning 4s" back to 0s — the origin may only
+  // ever move backwards (a rehydrated older turn), never forwards.
+  const startedAt = model.startedAtMs != null
+    ? Math.min(model.startedAtMs, mountedAt)
+    : (streaming ? mountedAt : null);
   const elapsedMs = streaming && startedAt != null
     ? Math.max(0, now - startedAt)
     : model.stats.durationMs;
@@ -2883,6 +2889,17 @@ export default function InsightsStyleTrace({
           animateIn={animateAnswerReveal}
           reduceMotion={reduceMotion}
         />
+      ) : null}
+      {swarmLoading ? (
+        <AnimatePresence initial={false}>
+          {commentaryLive ? (
+            <LiveCommentary
+              key="swarm-live-commentary"
+              model={model}
+              reduceMotion={reduceMotion}
+            />
+          ) : null}
+        </AnimatePresence>
       ) : null}
 
       {!detailedMode ? (

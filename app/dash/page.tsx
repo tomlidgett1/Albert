@@ -453,19 +453,44 @@ function swarmAgentPhase(status: string): SwarmAgentLiveState["phase"] {
   return "pending";
 }
 
+type PersistedSwarmAgent = Readonly<{
+  agentKey: string;
+  title: string;
+  tagline: string;
+  role: string;
+  status: string;
+  headline: string | null;
+  answerState: string | null;
+  conversationId: string | null;
+  turnId: string | null;
+  failureNote: string | null;
+}>;
+
+type PersistedSwarmRun = Readonly<{
+  runId: string;
+  parentConversationId: string;
+  parentTurnId: string;
+  question: string;
+  status: string;
+  startedAt?: string;
+  plan?: {
+    periodLabel?: string;
+    kind?: "question" | "sales-deep" | "super-agent";
+    durationMs?: number;
+    checkpointIntervalMs?: number;
+  };
+  synthesis?: {
+    answer?: string;
+    answerState?: string;
+    source?: "model" | "model-repaired" | "fallback";
+    recovery?: "standard-after-pro" | null;
+    followUps?: string[];
+  } | null;
+  agents?: readonly PersistedSwarmAgent[];
+}>;
+
 function swarmAgentsFromPersisted(
-  agents: readonly Readonly<{
-    agentKey: string;
-    title: string;
-    tagline: string;
-    role: string;
-    status: string;
-    headline: string | null;
-    answerState: string | null;
-    conversationId: string | null;
-    turnId: string | null;
-    failureNote: string | null;
-  }>[],
+  agents: readonly PersistedSwarmAgent[],
 ): SwarmAgentLiveState[] {
   return agents.map((agent) => ({
     key: agent.agentKey,
@@ -910,6 +935,11 @@ export default function DashPage() {
     setSuperAgentEnabled(resolved);
   }, []);
   const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
+  // First-seen timestamps for the synthesized swarm trace events, per run.
+  const swarmEventTimesRef = useRef<{ runId: string | null; times: Map<string, string> }>({
+    runId: null,
+    times: new Map(),
+  });
   const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
   const codexPromptMenuId = useId();
   const codexPromptMenuRef = useRef<HTMLDivElement>(null);
@@ -1095,15 +1125,33 @@ export default function DashPage() {
   const keyInsightActivity = latestInsightActivity(keyInsightTurns);
   const reasoningTurns = chatMessages.flatMap((message, index) => {
     if (message.role !== "assistant" || message.runtime !== "codex") return [];
-    const summary = latestReasoningSummary(message.events ?? []);
     const question = [...chatMessages.slice(0, index)]
       .reverse()
       .find((candidate) => candidate.role === "user")?.text.trim() ?? "";
+    // A swarm parent turn runs no model of its own — its reasoning lives on
+    // the child conversations, so the panel shows one entry per specialist.
+    if (
+      swarmSnapshot.parentTurnId
+      && message.turnId === swarmSnapshot.parentTurnId
+      && swarmSnapshot.agents.length > 0
+    ) {
+      return swarmSnapshot.agents
+        .filter((agent) => agent.phase !== "pending")
+        .map((agent) => ({
+          id: `${message.id}_${agent.key}`,
+          question: agent.tagline ? `${agent.title} — ${agent.tagline}` : agent.title,
+          summary: agent.reasoningSummary ?? null,
+          streaming: agent.phase === "starting"
+            || agent.phase === "researching"
+            || agent.phase === "recording",
+        }));
+    }
+    const summary = latestReasoningSummary(message.events ?? []);
     if (!summary && !message.isStreaming) return [];
     return [{
-      id: message.id,
+      id: String(message.id),
       question,
-      summary,
+      summary: summary as string | null,
       streaming: Boolean(message.isStreaming),
     }];
   });
@@ -1937,112 +1985,110 @@ export default function DashPage() {
   };
 
   const hydrateSwarmConversation = useCallback((conversationId: string) => {
-    void fetch(`/api/swarm?conversationId=${encodeURIComponent(conversationId)}`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload: unknown) => {
-        if (!payload || typeof payload !== "object") return;
-        const run = (payload as {
-          run?: {
-            runId: string;
-            parentConversationId: string;
-            parentTurnId: string;
-            question: string;
-            status: string;
-            startedAt?: string;
-            plan?: {
-              periodLabel?: string;
-              kind?: "question" | "sales-deep" | "super-agent";
-              durationMs?: number;
-              checkpointIntervalMs?: number;
-            };
+    void (async () => {
+      const response = await fetch(
+        `/api/swarm?conversationId=${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" },
+      ).catch(() => null);
+      if (!response?.ok) return;
+      const payload = await response.json().catch(() => null) as
+        | { run?: PersistedSwarmRun }
+        | null;
+      let run = payload?.run;
+      if (!run || run.parentConversationId !== conversationId || !run.agents) return;
+
+      // A run still marked open with no fleet in this browser was stranded by
+      // a disconnect (or is live on another device). Reconciliation is
+      // lease-gated server-side, so asking is safe either way: a stranded run
+      // settles with its completed findings intact, a live one is untouched.
+      const liveHere = swarmRunSnapshot().active && swarmRunSnapshot().runId === run.runId;
+      if (!liveHere && (run.status === "running" || run.status === "synthesising")) {
+        const reconciled = await fetch("/api/swarm/reconcile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId: run.runId }),
+        }).then((result) => (result.ok ? result.json() : null)).catch(() => null) as
+          | { run?: PersistedSwarmRun }
+          | null;
+        if (reconciled?.run?.runId === run.runId && reconciled.run.agents) {
+          run = reconciled.run;
+        }
+      }
+      if (!run.agents) return;
+
+      const agents = swarmAgentsFromPersisted(run.agents);
+      hydrateSwarmFromRun({
+        runId: run.runId,
+        parentConversationId: run.parentConversationId,
+        parentTurnId: run.parentTurnId,
+        question: run.question,
+        periodLabel: run.plan?.periodLabel ?? "As asked",
+        agents,
+        answer: run.synthesis?.answer ?? null,
+        answerState: run.synthesis?.answerState ?? null,
+        synthesisSource: run.synthesis?.source ?? null,
+        synthesisRecovery: run.synthesis?.recovery ?? null,
+        followUps: run.synthesis?.followUps,
+        kind: run.plan?.kind,
+        startedAt: run.startedAt,
+        durationMs: run.plan?.durationMs,
+        checkpointIntervalMs: run.plan?.checkpointIntervalMs,
+      });
+      if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
+        setSwarmPanelOpen(true);
+        setTakeawaysOpen(false);
+        setReasoningPanelOpen(false);
+      }
+      const settled = run.agents.every((agent) => (
+        agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
+      ));
+      const anyCompleted = run.agents.some((agent) => agent.status === "completed");
+      if (
+        !settled
+        || !anyCompleted
+        || run.synthesis
+        || run.status === "stopped"
+        || run.status === "abandoned"
+      ) {
+        return;
+      }
+      const finalRun = run;
+      await fetch("/api/swarm/synthesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: finalRun.runId }),
+      }).then((result) => (result.ok ? result.json() : null)).then((result: unknown) => {
+        const synthesis = result && typeof result === "object"
+          ? (result as {
             synthesis?: {
               answer?: string;
               answerState?: string;
               source?: "model" | "model-repaired" | "fallback";
               recovery?: "standard-after-pro" | null;
               followUps?: string[];
-            } | null;
-            agents?: readonly {
-              agentKey: string;
-              title: string;
-              tagline: string;
-              role: string;
-              status: string;
-              headline: string | null;
-              answerState: string | null;
-              conversationId: string | null;
-              turnId: string | null;
-              failureNote: string | null;
-            }[];
-          };
-        }).run;
-        if (!run || run.parentConversationId !== conversationId || !run.agents) return;
-        const agents = swarmAgentsFromPersisted(run.agents);
+            };
+          }).synthesis
+          : null;
+        if (!synthesis?.answer) return;
         hydrateSwarmFromRun({
-          runId: run.runId,
-          parentConversationId: run.parentConversationId,
-          parentTurnId: run.parentTurnId,
-          question: run.question,
-          periodLabel: run.plan?.periodLabel ?? "As asked",
+          runId: finalRun.runId,
+          parentConversationId: finalRun.parentConversationId,
+          parentTurnId: finalRun.parentTurnId,
+          question: finalRun.question,
+          periodLabel: finalRun.plan?.periodLabel ?? "As asked",
           agents,
-          answer: run.synthesis?.answer ?? null,
-          answerState: run.synthesis?.answerState ?? null,
-          synthesisSource: run.synthesis?.source ?? null,
-          synthesisRecovery: run.synthesis?.recovery ?? null,
-          followUps: run.synthesis?.followUps,
-          kind: run.plan?.kind,
-          startedAt: run.startedAt,
-          durationMs: run.plan?.durationMs,
-          checkpointIntervalMs: run.plan?.checkpointIntervalMs,
+          answer: synthesis.answer,
+          answerState: synthesis.answerState ?? null,
+          synthesisSource: synthesis.source ?? null,
+          synthesisRecovery: synthesis.recovery ?? null,
+          followUps: synthesis.followUps,
+          kind: finalRun.plan?.kind,
+          startedAt: finalRun.startedAt,
+          durationMs: finalRun.plan?.durationMs,
+          checkpointIntervalMs: finalRun.plan?.checkpointIntervalMs,
         });
-        if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
-          setSwarmPanelOpen(true);
-          setTakeawaysOpen(false);
-          setReasoningPanelOpen(false);
-        }
-        const settled = run.agents.every((agent) => (
-          agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
-        ));
-        if (!settled || run.synthesis || run.status === "stopped" || run.status === "abandoned") {
-          return;
-        }
-        void fetch("/api/swarm/synthesis", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runId: run.runId }),
-        }).then((response) => (response.ok ? response.json() : null)).then((result: unknown) => {
-          const synthesis = result && typeof result === "object"
-            ? (result as {
-              synthesis?: {
-                answer?: string;
-                answerState?: string;
-                source?: "model" | "model-repaired" | "fallback";
-                recovery?: "standard-after-pro" | null;
-                followUps?: string[];
-              };
-            }).synthesis
-            : null;
-          if (!synthesis?.answer) return;
-          hydrateSwarmFromRun({
-            runId: run.runId,
-            parentConversationId: run.parentConversationId,
-            parentTurnId: run.parentTurnId,
-            question: run.question,
-            periodLabel: run.plan?.periodLabel ?? "As asked",
-            agents,
-            answer: synthesis.answer,
-            answerState: synthesis.answerState ?? null,
-            synthesisSource: synthesis.source ?? null,
-            synthesisRecovery: synthesis.recovery ?? null,
-            followUps: synthesis.followUps,
-            kind: run.plan?.kind,
-            startedAt: run.startedAt,
-            durationMs: run.plan?.durationMs,
-            checkpointIntervalMs: run.plan?.checkpointIntervalMs,
-          });
-        }).catch(() => undefined);
-      })
-      .catch(() => undefined);
+      }).catch(() => undefined);
+    })();
   }, []);
 
   const openSavedConversation = async (conversationId: string) => {
@@ -3373,11 +3419,27 @@ export default function DashPage() {
     const live = liveTurnsRef.current.get(cacheKey);
     if (!cache && !live) return;
 
+    // Synthesized events are rebuilt on every fleet publish, so each id keeps
+    // the timestamp from when it first appeared — a moving occurredAt would
+    // reset the trail's elapsed clock and reorder animations.
+    const stampCache = swarmEventTimesRef.current;
+    if (stampCache.runId !== snap.runId) {
+      stampCache.runId = snap.runId;
+      stampCache.times.clear();
+    }
+    const stamp = (id: string): string => {
+      const cached = stampCache.times.get(id);
+      if (cached) return cached;
+      const fresh = new Date().toISOString();
+      stampCache.times.set(id, fresh);
+      return fresh;
+    };
+
     const planEvent: TraceEvent = {
       id: `swarm_plan_${snap.runId}`,
       sequence: 2,
       type: "plan",
-      occurredAt: new Date().toISOString(),
+      occurredAt: stamp(`swarm_plan_${snap.runId}`),
       steps: swarmPlanSteps({
         agents: snap.agents.map((agent) => ({
           key: agent.key,
@@ -3393,12 +3455,89 @@ export default function DashPage() {
       sequence: 1,
       type: "narrative",
       purpose: "acknowledgement",
-      occurredAt: new Date().toISOString(),
+      occurredAt: stamp(`swarm_ack_${snap.runId}`),
       text: snap.periodLabel && snap.periodLabel !== "As asked"
         ? `I'll split this across ${snap.agents.length} specialists for ${snap.periodLabel}.`
         : `I'll split this across ${snap.agents.length} specialists, then combine what they find.`,
     };
     const events: TraceEvent[] = [ackEvent, planEvent];
+
+    // Mirror fleet milestones into the parent thread as live commentary, so
+    // the main conversation shows what the specialists are doing without
+    // opening the slide-out. Ids are stable, so settled milestones keep their
+    // place and only the fleet-status line rewrites in place.
+    let sequence = 3;
+    if (!snap.answer && !snap.error) {
+      for (const agent of snap.agents) {
+        if (agent.phase === "pending") continue;
+        const startId = `swarm_live_${snap.runId}_${agent.key}_start`;
+        events.push({
+          id: startId,
+          sequence: sequence += 1,
+          type: "narrative",
+          occurredAt: stamp(startId),
+          text: agent.tagline
+            ? `${agent.title} is investigating: ${agent.tagline}`
+            : `${agent.title} is investigating.`,
+        });
+        if (agent.phase === "done") {
+          const doneId = `swarm_live_${snap.runId}_${agent.key}_done`;
+          events.push({
+            id: doneId,
+            sequence: sequence += 1,
+            type: "narrative",
+            occurredAt: stamp(doneId),
+            text: agent.headline
+              ? `${agent.title} reported: ${agent.headline}`
+              : `${agent.title} has finished.`,
+          });
+        } else if (agent.phase === "failed") {
+          const failId = `swarm_live_${snap.runId}_${agent.key}_failed`;
+          events.push({
+            id: failId,
+            sequence: sequence += 1,
+            type: "narrative",
+            occurredAt: stamp(failId),
+            text: `${agent.title} couldn't finish${agent.error ? ` — ${agent.error}` : "."}`,
+          });
+        }
+      }
+      const working = [...snap.agents]
+        .filter((agent) => (
+          agent.phase === "starting" || agent.phase === "researching" || agent.phase === "recording"
+        ))
+        .sort((a, b) => b.queriesSeen - a.queriesSeen)[0];
+      if (snap.synthesising) {
+        const synthId = `swarm_live_${snap.runId}_synthesising`;
+        events.push({
+          id: synthId,
+          sequence: sequence += 1,
+          type: "narrative",
+          occurredAt: stamp(synthId),
+          text: "All specialists have reported. Combining their findings into one answer…",
+        });
+      } else if (working) {
+        const totalQueries = snap.agents.reduce((total, agent) => total + agent.queriesSeen, 0);
+        events.push({
+          id: `swarm_live_${snap.runId}_now`,
+          sequence: sequence += 1,
+          type: "narrative",
+          occurredAt: new Date().toISOString(),
+          text: totalQueries > 0
+            ? `${working.title}: ${working.statusLine} · ${totalQueries} governed ${totalQueries === 1 ? "query" : "queries"} so far`
+            : `${working.title}: ${working.statusLine}`,
+        });
+      }
+      if (snap.kind === "super-agent" && snap.checkpointText) {
+        events.push({
+          id: `swarm_live_${snap.runId}_checkpoint`,
+          sequence: sequence += 1,
+          type: "narrative",
+          occurredAt: new Date().toISOString(),
+          text: snap.checkpointText,
+        });
+      }
+    }
     if (snap.answer) {
       const answerState: AnswerState = (
         snap.answerState === "Verified"
@@ -3411,10 +3550,10 @@ export default function DashPage() {
       ) ? snap.answerState : "Derived";
       events.push({
         id: `swarm_answer_${snap.runId}`,
-        sequence: 3,
+        sequence: sequence += 1,
         type: "answer",
         status: answerState === "Unavailable" ? "warning" : "complete",
-        occurredAt: new Date().toISOString(),
+        occurredAt: stamp(`swarm_answer_${snap.runId}`),
         state: answerState,
         text: snap.answer,
         provenance: swarmEmptyProvenance("Australia/Melbourne"),
@@ -3425,10 +3564,10 @@ export default function DashPage() {
     } else if (snap.error) {
       events.push({
         id: `swarm_error_${snap.runId}`,
-        sequence: 3,
+        sequence: sequence += 1,
         type: "error",
         status: "error",
-        occurredAt: new Date().toISOString(),
+        occurredAt: stamp(`swarm_error_${snap.runId}`),
         message: snap.error,
         recoverable: true,
       });

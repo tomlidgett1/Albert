@@ -1,14 +1,21 @@
 /**
  * Synthesise the parent Swarm answer (ADR 0120).
  *
- * POST { runId }. Reads only persisted findings. Appends the answer to the
- * parent turn and releases the parent lease.
+ * POST { runId }. Reads only persisted findings — and re-reads each child's
+ * own persisted answer by its stored conversation/turn ids, so a finding
+ * whose browser relay never landed is recovered rather than lost. Appends
+ * the answer to the parent turn and completes it from the stored synthesis.
  */
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { buildSwarmSynthesis, governedSwarmAnswerState } from "@/services/swarm/src/synthesis";
 import { swarmParentAnswerEvent, swarmPlanSteps } from "@/services/swarm/src/parent-events";
+import {
+  swarmChildAnswerFromHistory,
+  type SwarmChildAnswer,
+} from "@/services/swarm/src/child-answers";
+import { distillProactiveAnswer } from "@/services/proactive/src/distill";
 import { writeSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
 import {
   SALES_DEEP_BRIEFING_PATH,
@@ -16,9 +23,13 @@ import {
   buildSalesBriefingMarkdown,
 } from "@/services/swarm/src/sales-deep";
 import {
+  completeSwarmParentTurn,
   loadSwarmRun,
+  recordSwarmAgentCompleted,
   recordSwarmSynthesis,
   saveSwarmBriefing,
+  swarmAnswerStateSchema,
+  type SwarmRun,
 } from "@/services/control-plane/src/swarm-repository";
 import {
   ControlPlaneError,
@@ -28,6 +39,7 @@ import {
 import {
   appendConversationEvent,
   failConversationTurn,
+  type ConversationSupabase,
 } from "@/services/conversation/src/artifact-store";
 import {
   assertSameOriginMutation,
@@ -51,6 +63,65 @@ function jsonError(message: string, status: number, correlationId: string): Resp
   });
 }
 
+async function loadChildAnswer(
+  supabase: ConversationSupabase,
+  conversationId: string,
+  turnId: string,
+): Promise<SwarmChildAnswer | null> {
+  const { data, error } = await supabase.rpc("albert_conversation_history", {
+    p_conversation_id: conversationId,
+    p_after_sequence: 0,
+  });
+  if (error) return null;
+  return swarmChildAnswerFromHistory(Array.isArray(data) ? data[0] ?? null : data, turnId);
+}
+
+/**
+ * Re-read every child's persisted answer. The browser-relayed copy in
+ * swarm_agents can be missing (the record POST failed, or the run was
+ * reconciled after a disconnect) even though the child turn finished and
+ * persisted its answer — those agents are recovered to completed here.
+ * Returns the refreshed run plus each recovered/pulled answer by agent key.
+ */
+async function recoverChildAnswers(
+  run: SwarmRun,
+  supabase: ConversationSupabase,
+  correlationId: string,
+): Promise<Readonly<{ run: SwarmRun; answers: ReadonlyMap<string, SwarmChildAnswer> }>> {
+  const answers = new Map<string, SwarmChildAnswer>();
+  let recovered = false;
+  for (const agent of run.agents) {
+    if (!agent.conversationId || !agent.turnId) continue;
+    if (agent.status === "stopped") continue;
+    const answer = await loadChildAnswer(supabase, agent.conversationId, agent.turnId);
+    if (!answer) continue;
+    answers.set(agent.agentKey, answer);
+    if (agent.status === "completed") continue;
+    const distilled = distillProactiveAnswer(answer.text);
+    const parsedState = swarmAnswerStateSchema.safeParse(answer.answerState);
+    await recordSwarmAgentCompleted({
+      runId: run.runId,
+      agentKey: agent.agentKey,
+      answerState: parsedState.success ? parsedState.data : "Exploratory",
+      headline: distilled.headline,
+      summary: answer.text.slice(0, 8_000),
+      keyNumbers: distilled.keyNumbers,
+      questions: answer.followUps.map((question) => question.slice(0, 200)),
+    }).then(() => {
+      recovered = true;
+      logger.info("swarm.agent_recovered", {
+        runId: run.runId,
+        agentKey: agent.agentKey,
+        priorStatus: agent.status,
+      }, correlationId);
+    }).catch(() => undefined);
+  }
+  return {
+    run: recovered ? await loadSwarmRun(run.runId) : run,
+    answers,
+  };
+}
+
 export async function POST(request: Request): Promise<Response> {
   const correlationId = correlationIdFromHeader(request.headers.get("x-request-id"));
   try {
@@ -62,14 +133,18 @@ export async function POST(request: Request): Promise<Response> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
 
-    const run = await loadSwarmRun(parsed.runId);
-    if (run.synthesis) {
+    const loaded = await loadSwarmRun(parsed.runId);
+    if (loaded.synthesis) {
       return Response.json({
-        synthesis: run.synthesis,
-        conversationId: run.parentConversationId,
-        turnId: run.parentTurnId,
+        synthesis: loaded.synthesis,
+        conversationId: loaded.parentConversationId,
+        turnId: loaded.parentTurnId,
       }, { headers: { "Cache-Control": "no-store", "x-request-id": correlationId } });
     }
+
+    const recovery = await recoverChildAnswers(loaded, auth.supabase, correlationId);
+    const run = recovery.run;
+    const childAnswers = recovery.answers;
 
     const stillOpen = run.agents.some((agent) => (
       agent.status === "pending" || agent.status === "running"
@@ -89,6 +164,7 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError("No specialist finished, so there is nothing to combine.", 409, correlationId);
     }
 
+    // Prefer the child's own persisted answer over the browser-relayed copy.
     const findings = run.agents.map((agent) => ({
       agentKey: agent.agentKey,
       title: agent.title,
@@ -96,7 +172,9 @@ export async function POST(request: Request): Promise<Response> {
       answerState: agent.answerState,
       headline: agent.headline,
       keyNumbers: agent.keyNumbers,
-      summaryExcerpt: agent.summary ?? "",
+      summaryExcerpt: childAnswers.get(agent.agentKey)?.text.slice(0, 8_000)
+        ?? agent.summary
+        ?? "",
       failed: agent.status === "failed" || agent.status === "stopped",
       failureNote: agent.failureNote,
     }));
@@ -180,12 +258,27 @@ export async function POST(request: Request): Promise<Response> {
         period: period ? { label: run.plan.periodLabel, start: period.start, end: period.end } : null,
       }),
     }).catch(() => undefined);
-    await failConversationTurn({
-      conversationId: run.parentConversationId,
-      turnId: run.parentTurnId,
-      failureCode: answerState === "Unavailable" ? "albert_swarm_unavailable" : "albert_swarm_answered",
-      supabase: auth.supabase,
-    }).catch(() => undefined);
+    if (answerState === "Unavailable") {
+      await failConversationTurn({
+        conversationId: run.parentConversationId,
+        turnId: run.parentTurnId,
+        failureCode: "albert_swarm_unavailable",
+        supabase: auth.supabase,
+      }).catch(() => undefined);
+    } else {
+      // A synthesised swarm turn is a success: complete it from the persisted
+      // synthesis. If this environment has not applied migration 0175 yet,
+      // fall back to the legacy failure-code release so the parent lease is
+      // never left held.
+      await completeSwarmParentTurn(run.runId).catch(async () => {
+        await failConversationTurn({
+          conversationId: run.parentConversationId,
+          turnId: run.parentTurnId,
+          failureCode: "albert_swarm_answered",
+          supabase: auth.supabase,
+        }).catch(() => undefined);
+      });
+    }
 
     let briefingMarkdown: string | null = null;
     if (run.plan.kind === SALES_DEEP_KIND) {

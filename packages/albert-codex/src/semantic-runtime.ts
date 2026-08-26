@@ -3233,7 +3233,10 @@ export async function runCodexSemanticTurn(
   const reasoningSummaryState = {
     parts: new Map<string, string>(),
     emitted: 0,
-    maxUpdates: 12,
+    // A long Pro turn runs for many minutes; 12 updates rendered it near-static
+    // in the Reasoning panel. 48 with the 400ms/80-char throttle below keeps
+    // the panel visibly live without flooding the persisted trace.
+    maxUpdates: 48,
     lastEmitted: "",
     lastEmittedAt: 0,
   };
@@ -4078,7 +4081,7 @@ export async function runCodexSemanticTurn(
       !force
       && reasoningSummaryState.lastEmittedAt > 0
       && now - reasoningSummaryState.lastEmittedAt < 400
-      && safe.length - reasoningSummaryState.lastEmitted.length < 160
+      && safe.length - reasoningSummaryState.lastEmitted.length < 80
     ) return;
     reasoningSummaryState.emitted += 1;
     reasoningSummaryState.lastEmitted = safe;

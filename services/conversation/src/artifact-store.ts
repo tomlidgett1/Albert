@@ -9,6 +9,7 @@ import type {
   TraceEvent,
 } from "../../../packages/shared/src/index.js";
 import { ControlPlaneError, requireUser } from "../../control-plane/src/web-repository.js";
+import { createServiceLogger } from "../../../packages/observability/src/index.js";
 import {
   priorResultsFromTraceEvents,
   type PriorTurnResult,
@@ -246,6 +247,8 @@ export async function beginConversationTurn(input: Readonly<{
   });
 }
 
+const leaseLogger = createServiceLogger("albert-conversation");
+
 /**
  * Extends a running turn's durable lease. The reaper exists to recover turns
  * whose runner died; a runner that is still streaming says so here, so an
@@ -260,7 +263,16 @@ export async function renewConversationTurnLease(input: Readonly<{
     p_turn_id: input.turnId,
     p_lease_seconds: input.leaseSeconds ?? 360,
   });
-  if (error) return false;
+  if (error) {
+    // A failing renewal is how a live long turn dies at the 6-minute mark
+    // (production ran for months with every renewal 404ing silently before
+    // migration 0174), so the failure itself must be loud.
+    leaseLogger.warn("conversation.turn_lease_renewal_failed", {
+      turnId: input.turnId,
+      error: error.message?.slice(0, 300) ?? "unknown",
+    });
+    return false;
+  }
   return singleton(data) !== null && singleton(data) !== undefined;
 }
 

@@ -39,6 +39,8 @@ export type SwarmAgentLiveState = Readonly<{
   conversationId: string | null;
   turnId: string | null;
   error: string | null;
+  /** Latest provider reasoning summary streamed by this child turn. */
+  reasoningSummary?: string | null;
 }>;
 
 export type SwarmRunSnapshot = Readonly<{
@@ -212,33 +214,48 @@ type RecordedFinding = Readonly<{
 }>;
 
 async function recordAgent(body: Record<string, unknown>): Promise<RecordedFinding | null> {
-  const response = await fetch("/api/swarm/agent", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(payload?.error || `Recording failed (${response.status}).`);
+  // Transient failures retry: losing a lifecycle record strands the run row.
+  for (let attempt = 1; ; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch("/api/swarm/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (attempt >= 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+      continue;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt >= 3) {
+        throw new Error(payload?.error || `Recording failed (${response.status}).`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+      continue;
+    }
+    const payload = await response.json().catch(() => null) as {
+      agent?: { headline?: unknown; answerState?: unknown; keyNumbers?: unknown };
+    } | null;
+    const agent = payload?.agent;
+    if (!agent) return null;
+    return {
+      headline: typeof agent.headline === "string" ? agent.headline : null,
+      answerState: typeof agent.answerState === "string" ? agent.answerState : null,
+      keyNumbers: Array.isArray(agent.keyNumbers)
+        ? agent.keyNumbers
+          .filter((item): item is { label: string; value: string } => (
+            typeof item === "object" && item !== null
+            && typeof (item as { label?: unknown }).label === "string"
+            && typeof (item as { value?: unknown }).value === "string"
+          ))
+          .slice(0, 6)
+        : [],
+    };
   }
-  const payload = await response.json().catch(() => null) as {
-    agent?: { headline?: unknown; answerState?: unknown; keyNumbers?: unknown };
-  } | null;
-  const agent = payload?.agent;
-  if (!agent) return null;
-  return {
-    headline: typeof agent.headline === "string" ? agent.headline : null,
-    answerState: typeof agent.answerState === "string" ? agent.answerState : null,
-    keyNumbers: Array.isArray(agent.keyNumbers)
-      ? agent.keyNumbers
-        .filter((item): item is { label: string; value: string } => (
-          typeof item === "object" && item !== null
-          && typeof (item as { label?: unknown }).label === "string"
-          && typeof (item as { value?: unknown }).value === "string"
-        ))
-        .slice(0, 6)
-      : [],
-  };
 }
 
 type ParsedSseBlock = Readonly<{ event: string; data: string }>;
@@ -350,6 +367,10 @@ async function runAgent(
         }
         if (event.type === "progress" && typeof event.label === "string") {
           setAgent(agent.key, { statusLine: event.label.slice(0, 160) });
+        } else if (event.type === "narrative" && typeof event.text === "string" && event.purpose === "reasoning_summary") {
+          // Feed the Reasoning panel: each child streams provider reasoning
+          // summaries on its own conversation, invisible to the parent trace.
+          setAgent(agent.key, { reasoningSummary: event.text.slice(0, 2_000) });
         } else if (event.type === "narrative" && typeof event.text === "string" && event.purpose !== "acknowledgement") {
           setAgent(agent.key, { statusLine: event.text.slice(0, 160) });
         } else if (event.type === "query") {
@@ -379,14 +400,22 @@ async function runAgent(
       throw new Error(streamError || "The analysis ended before an answer arrived.");
     }
     setAgent(agent.key, { phase: "recording", statusLine: "Recording the finding…" });
-    const recorded = await recordAgent({
-      action: "completed",
-      runId,
-      agentKey: agent.key,
-      answerState: outcome.answerState,
-      answer: outcome.answer.slice(0, 8_000),
-      followUps: outcome.followUps.map((question) => question.slice(0, 200)),
-    });
+    // A failed record must not overwrite a successful analysis: the child
+    // turn has already persisted this answer on its own conversation, and
+    // synthesis re-reads it server-side by the stored turn id.
+    let recorded: RecordedFinding | null = null;
+    try {
+      recorded = await recordAgent({
+        action: "completed",
+        runId,
+        agentKey: agent.key,
+        answerState: outcome.answerState,
+        answer: outcome.answer.slice(0, 8_000),
+        followUps: outcome.followUps.map((question) => question.slice(0, 200)),
+      });
+    } catch {
+      recorded = null;
+    }
     const headline = recorded?.headline
       ?? outcome.answer.split("\n").find((line) => line.trim())?.replace(/^#+\s*/u, "").slice(0, 200)
       ?? null;
@@ -685,8 +714,19 @@ export function startSwarmFleet(input: Readonly<{
     }
     fleetActive = false;
     if (input.kind === "super-agent") publishSuperAgentCheckpoint(runToken);
-    clearFleetTimers();
+    // The heartbeat keeps renewing the parent turn lease until synthesis has
+    // finished: a Pro synthesis can outlive the 360-second lease, and an
+    // expired lease mid-synthesis reads as a stranded run to reconciliation.
+    if (checkpointTimer !== undefined) {
+      window.clearInterval(checkpointTimer);
+      checkpointTimer = undefined;
+    }
+    if (deadlineTimer !== undefined) {
+      window.clearTimeout(deadlineTimer);
+      deadlineTimer = undefined;
+    }
     await synthesise(runToken, input.runId);
+    if (runToken === currentRunToken) clearFleetTimers();
   })();
 }
 
@@ -734,6 +774,11 @@ export function hydrateSwarmFromRun(input: Readonly<{
   durationMs?: number;
   checkpointIntervalMs?: number;
 }>): void {
+  // A live fleet's module state is fresher than any persisted row, and agent
+  // keys are formulaic across runs — hydrating over it would splice one run's
+  // agents into another. The live orchestrator owns the store until it
+  // settles (defect: cross-run state bleed).
+  if ((fleetActive || snapshot.synthesising) && snapshot.runId !== null) return;
   agentStates = new Map();
   agentOrder = input.agents.map((agent) => agent.key);
   for (const agent of input.agents) {

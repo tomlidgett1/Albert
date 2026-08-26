@@ -158,3 +158,61 @@ evidence-recovery path and discard those valid rows. Once a turn has successful
 current-turn evidence, availability failures now publish only a revalidated
 Qualified recovery over those immutable result cells. Isolation, tenant-scope,
 explicit cancellation, and unverified Pro-mode failures remain fail-closed.
+
+## Update — 2026-08-26: the fleet survives the browser that started it
+
+Production diagnosis of a stranded owner run ("tell me everything about Jack
+Lidgett employee", 2026-08-25) found two compounding failures. The first was
+outside Swarm entirely: every conversation turn lease renewal had 404'd since
+migration 0084, because the RPC only ever existed in the private
+`control_plane` schema (see migration 0174). Child turns therefore lost their
+lease at exactly six minutes, every later governed query was rejected, and the
+turn died with the generic hard-failure message — which swarm children at max
+effort hit almost every run. The second was that nothing settles a
+browser-orchestrated run whose tab is gone. Migration 0175, still within the
+original decision (browser-authenticated leases; `service_role` never begins a
+turn):
+
+1. **Stranded runs reconcile on hydrate.** Reopening a conversation whose
+   run is still open, with no fleet in that browser, asks
+   `/api/swarm/reconcile`. The RPC is gated on the parent turn's lease —
+   a live orchestrator renews it from the heartbeat and agent lifecycle
+   routes (real renewals, after 0174) — so an expired lease is proof the
+   browser is gone, and a live run on another device is untouched.
+   Still-open agents fail with a disconnect note, the run settles, and the
+   normal hydration path then asks synthesis to salvage whatever completed.
+2. **Child answers are recovered server-side.** Each child turn persists
+   its answer on its own conversation before the browser relays it.
+   Synthesis re-reads every child's persisted answer by its stored
+   conversation/turn ids, prefers it over the browser-relayed copy, and
+   recovers a 'failed' agent row whose analysis actually finished
+   (`albert_swarm_agent_completed` now accepts recovery from 'failed';
+   'stopped' stays terminal because the owner chose it). The controller no
+   longer marks a finished analysis failed because only the completed-record
+   POST failed, and lifecycle records retry transient failures.
+3. **A synthesised parent turn completes instead of failing.**
+   `albert_swarm_complete_parent_turn` closes the turn as completed with
+   the answer state taken from the persisted synthesis — lineage the
+   retired browser-callable `complete_albert_turn` could not establish.
+   History and model context accept the swarm completion receipt in
+   `result_digest` in place of an answer artifact. Unavailable synthesis
+   still releases the turn as failed, matching the other runtimes.
+4. **Child conversations are excluded at the source.**
+   `albert_list_conversations` anti-joins `swarm_agents`, replacing the
+   capped client-side id subtraction that leaked old children back into the
+   sidebar past 400 rows.
+5. **The live fleet owns the module store.** `hydrateSwarmFromRun` is a
+   no-op while a fleet is active or synthesising, so a hydration racing a
+   live run can no longer splice one run's formulaic agent keys into
+   another's panel.
+6. **The main conversation shows the fleet working.** The parent thread now
+   mirrors fleet milestones as live commentary (specialist started /
+   reported / failed, a rewriting fleet-status line with the governed query
+   count, and the synthesis stage), and the Reasoning panel lists one entry
+   per specialist streaming that child's provider reasoning summary. The
+   slide-out remains the detailed view; the parent trace stays synthesized
+   client-side and is never merged into child traces (ADR 0111).
+
+Relaunching unfinished agents from their persisted prompts on hydrate was
+considered and deliberately left out: a page visit must not silently spend
+model budget; salvage-then-settle is deterministic.

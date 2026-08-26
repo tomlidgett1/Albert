@@ -31,6 +31,7 @@ import {
   type SwarmSynthesisFinding,
 } from "../../services/swarm/src/synthesis.ts";
 import { swarmPlanSteps } from "../../services/swarm/src/parent-events.ts";
+import { swarmChildAnswerFromHistory } from "../../services/swarm/src/child-answers.ts";
 import {
   SALES_DEEP_BRIEFING_PATH,
   SALES_DEEP_FAST_MODE,
@@ -61,6 +62,9 @@ const repository = read("services/control-plane/src/swarm-repository.ts");
 const webRepository = read("services/control-plane/src/web-repository.ts");
 const migration = read("infra/migrations/control-plane/0168_m8_codex_swarm.sql");
 const briefingMigration = read("infra/migrations/control-plane/0169_m8_sales_deep_briefing.sql");
+const leaseMigration = read("infra/migrations/control-plane/0174_m8_public_turn_lease_renewal.sql");
+const reconcileMigration = read("infra/migrations/control-plane/0175_m8_swarm_run_reconciliation.sql");
+const reconcileRoute = read("app/api/swarm/reconcile/route.ts");
 const adr = read("docs/adr/0120-codex-swarm-subagents.md");
 const agentsWorkspace = read("app/dash/components/AgentsWorkspace.tsx");
 const salesDeepStore = read("services/swarm/src/sales-deep-store.ts");
@@ -397,7 +401,8 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(panel, /Pro did not finish inside its limit/u);
   assert.match(panel, /Albert preserved the governed findings in a deterministic brief/u);
   assert.match(controller, /synthesisSource: payload\.synthesis\.source \?\? null/u);
-  assert.match(synthesisRoute, /failureCode: answerState === "Unavailable" \? "albert_swarm_unavailable" : "albert_swarm_answered"/u);
+  assert.match(synthesisRoute, /completeSwarmParentTurn\(run\.runId\)/u);
+  assert.match(synthesisRoute, /failureCode: "albert_swarm_unavailable"/u);
   assert.match(stopRoute, /assertSameOriginMutation\(request\)/u);
   assert.match(heartbeatRoute, /loadSwarmRun\(parsed\.runId\)/u);
   assert.match(repository, /albert_swarm_get_run/u);
@@ -753,4 +758,119 @@ test("the sales-deep test fleet stays inside sales and writes a briefing", () =>
   assert.match(briefingMigration, /albert_swarm_latest_briefing/u);
   assert.match(briefingMigration, /GRANT EXECUTE ON FUNCTION public\.albert_swarm_save_briefing\(text, text\) TO authenticated/u);
   assert.match(adr, /sales-deep test briefing/u);
+});
+
+test("turn lease renewal is reachable through PostgREST and observable when it fails", () => {
+  // The RPC lived only in control_plane, so every renewal 404'd and long
+  // turns died at the 360-second mark (ADR 0128).
+  assert.match(leaseMigration, /CREATE OR REPLACE FUNCTION public\.renew_albert_turn_lease\(/u);
+  assert.match(leaseMigration, /SECURITY DEFINER/u);
+  assert.match(leaseMigration, /require_current_tenant_id\(\)/u);
+  assert.match(leaseMigration, /turn\.created_by = actor/u);
+  assert.match(leaseMigration, /turn\.status = 'running'/u);
+  assert.match(leaseMigration, /turn\.lease_expires_at > clock_timestamp\(\)/u);
+  assert.match(leaseMigration, /GRANT EXECUTE ON FUNCTION public\.renew_albert_turn_lease\(text, integer\)\s+TO authenticated/u);
+  assert.match(leaseMigration, /REVOKE ALL ON FUNCTION public\.renew_albert_turn_lease\(text, integer\)\s+FROM PUBLIC, anon, service_role/u);
+  assert.match(leaseMigration, /NOTIFY pgrst, 'reload schema'/u);
+  const artifactStore = read("services/conversation/src/artifact-store.ts");
+  assert.match(artifactStore, /conversation\.turn_lease_renewal_failed/u);
+});
+
+test("a stranded run reconciles from the parent lease, not a guess", () => {
+  // The gate is the lease a live orchestrator keeps renewing: expired means
+  // the browser is gone, live means hands off (another device may be driving).
+  assert.match(reconcileMigration, /CREATE OR REPLACE FUNCTION public\.albert_swarm_reconcile_run\(p_run_id text\)/u);
+  assert.match(reconcileMigration, /v_turn_lease > clock_timestamp\(\)/u);
+  assert.match(reconcileMigration, /status IN \('pending', 'running'\)/u);
+  assert.match(reconcileMigration, /disconnected before the specialist finished/u);
+  assert.match(reconcileMigration, /albert_swarm_browser_disconnected/u);
+  assert.match(reconcileMigration, /swarm_settle_run/u);
+  assert.match(reconcileMigration, /GRANT EXECUTE ON FUNCTION public\.albert_swarm_reconcile_run\(text\) TO authenticated/u);
+  assert.match(reconcileMigration, /NOTIFY pgrst, 'reload schema'/u);
+  assert.match(reconcileRoute, /assertSameOriginMutation\(request\)/u);
+  assert.match(reconcileRoute, /reconcileSwarmRun\(parsed\.runId\)/u);
+  assert.match(repository, /albert_swarm_reconcile_run/u);
+  // Hydration reconciles only when this browser is not driving the run, then
+  // lets the existing all-settled path trigger synthesis to salvage findings.
+  assert.match(page, /\/api\/swarm\/reconcile/u);
+  assert.match(page, /swarmRunSnapshot\(\)\.active && swarmRunSnapshot\(\)\.runId === run\.runId/u);
+});
+
+test("a persisted child answer outlives the browser relay", () => {
+  const history = {
+    conversation_id: "01K0000000000000000000000A",
+    turns: [
+      {
+        turn_id: "01K0000000000000000000000B",
+        status: "failed",
+        events: [
+          { type: "narrative", text: "working" },
+          { type: "answer", text: "Sales fell $8,200.", state: "Derived", followUps: ["Why?"] },
+        ],
+      },
+      {
+        turn_id: "01K0000000000000000000000C",
+        status: "failed",
+        events: [{ type: "error", message: "died mid-stream" }],
+      },
+    ],
+  };
+  assert.deepEqual(swarmChildAnswerFromHistory(history, "01K0000000000000000000000B"), {
+    text: "Sales fell $8,200.",
+    answerState: "Derived",
+    followUps: ["Why?"],
+  });
+  assert.equal(swarmChildAnswerFromHistory(history, "01K0000000000000000000000C"), null);
+  assert.equal(swarmChildAnswerFromHistory(history, "01K0000000000000000000000D"), null);
+  assert.equal(swarmChildAnswerFromHistory(null, "01K0000000000000000000000B"), null);
+
+  // Synthesis re-reads each child's persisted answer by its stored ids,
+  // prefers it over the browser-relayed copy, and recovers false failures.
+  assert.match(synthesisRoute, /albert_conversation_history/u);
+  assert.match(synthesisRoute, /recoverChildAnswers\(/u);
+  assert.match(synthesisRoute, /recordSwarmAgentCompleted\(/u);
+  assert.match(synthesisRoute, /childAnswers\.get\(agent\.agentKey\)/u);
+  assert.match(reconcileMigration, /status IN \('pending', 'running', 'failed'\)/u);
+  // A record POST that fails must not turn a finished analysis into a failure.
+  assert.match(controller, /A failed record must not overwrite a successful analysis/u);
+});
+
+test("a synthesised parent turn completes; only Unavailable fails it", () => {
+  assert.match(synthesisRoute, /completeSwarmParentTurn\(run\.runId\)/u);
+  assert.match(synthesisRoute, /failureCode: "albert_swarm_unavailable"/u);
+  assert.match(repository, /albert_swarm_complete_parent_turn/u);
+  assert.match(reconcileMigration, /CREATE OR REPLACE FUNCTION public\.albert_swarm_complete_parent_turn\(p_run_id text\)/u);
+  assert.match(reconcileMigration, /v_state := 'no_data'/u);
+  assert.match(reconcileMigration, /result_digest = 'albert_swarm_answered'/u);
+  // The completed swarm turn has no answer artifact; its result digest is the
+  // visibility receipt in history and model context.
+  assert.match(reconcileMigration, /OR turn\.result_digest = 'albert_swarm_answered'/u);
+  assert.match(reconcileMigration, /GRANT EXECUTE ON FUNCTION public\.albert_swarm_complete_parent_turn\(text\) TO authenticated/u);
+});
+
+test("swarm child conversations are excluded from the sidebar at the source", () => {
+  assert.match(reconcileMigration, /CREATE OR REPLACE FUNCTION public\.albert_list_conversations\(p_limit integer DEFAULT 30\)/u);
+  assert.match(reconcileMigration, /NOT EXISTS \(\s*SELECT 1\s*FROM control_plane\.swarm_agents AS agent/u);
+  assert.match(reconcileMigration, /swarm_agents_by_conversation/u);
+});
+
+test("a live fleet owns the module store; hydration cannot splice runs", () => {
+  assert.match(controller, /if \(\(fleetActive \|\| snapshot\.synthesising\) && snapshot\.runId !== null\) return;/u);
+});
+
+test("the main conversation mirrors fleet progress and per-specialist reasoning", () => {
+  // Milestones stream into the parent thread as live commentary with stable
+  // ids and first-seen timestamps, so nothing reorders or resets the clock.
+  assert.match(page, /swarm_live_\$\{snap\.runId\}_\$\{agent\.key\}_start/u);
+  assert.match(page, /swarm_live_\$\{snap\.runId\}_\$\{agent\.key\}_done/u);
+  assert.match(page, /swarm_live_\$\{snap\.runId\}_now/u);
+  assert.match(page, /Combining their findings into one answer/u);
+  assert.match(page, /swarmEventTimesRef/u);
+  const trace = read("app/dash/components/InsightsStyleTrace.tsx");
+  assert.match(trace, /swarm-live-commentary/u);
+  // The Reasoning panel lists one entry per specialist, streaming that
+  // child's provider reasoning summary captured by the controller.
+  assert.match(controller, /event\.purpose === "reasoning_summary"/u);
+  assert.match(controller, /reasoningSummary: event\.text\.slice\(0, 2_000\)/u);
+  assert.match(page, /agent\.reasoningSummary \?\? null/u);
 });

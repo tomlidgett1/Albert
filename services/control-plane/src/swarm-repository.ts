@@ -96,10 +96,22 @@ export const swarmPanelSchema = z.object({
   conversationIds: z.array(ulidSchema).max(400),
 }).strict();
 
+export const swarmReconcileSchema = z.object({
+  reconciled: z.boolean(),
+  run: swarmRunSchema,
+}).strict();
+
+export const swarmParentTurnCompletionSchema = z.object({
+  turnStatus: z.string().min(1).max(40),
+  completed: z.boolean(),
+}).strict();
+
 export type SwarmAgent = z.infer<typeof swarmAgentSchema>;
 export type SwarmRun = z.infer<typeof swarmRunSchema>;
 export type SwarmPanel = z.infer<typeof swarmPanelSchema>;
 export type SwarmStoredSynthesis = z.infer<typeof swarmStoredSynthesisSchema>;
+export type SwarmReconcileResult = z.infer<typeof swarmReconcileSchema>;
+export type SwarmParentTurnCompletion = z.infer<typeof swarmParentTurnCompletionSchema>;
 
 function parseAgent(data: unknown): SwarmAgent {
   const parsed = swarmAgentSchema.safeParse(data);
@@ -251,6 +263,34 @@ export async function recordSwarmSynthesis(input: Readonly<{
 
 export async function stopSwarmRun(runId: string): Promise<SwarmRun> {
   return parseRun(await rpc("albert_swarm_stop", { p_run_id: runId }));
+}
+
+/**
+ * Settle a run whose orchestrating browser is gone. The RPC is gated on the
+ * parent turn's lease (a live fleet keeps renewing it), so calling this for a
+ * run that is still being driven is a no-op that returns the current state.
+ */
+export async function reconcileSwarmRun(runId: string): Promise<SwarmReconcileResult> {
+  const data = await rpc("albert_swarm_reconcile_run", { p_run_id: runId });
+  const parsed = swarmReconcileSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("The swarm run returned invalid state.", 503);
+  }
+  return parsed.data;
+}
+
+/**
+ * Close a synthesised run's parent turn as completed. The RPC derives the
+ * answer state from the persisted synthesis, so it refuses runs that have not
+ * recorded one.
+ */
+export async function completeSwarmParentTurn(runId: string): Promise<SwarmParentTurnCompletion> {
+  const data = await rpc("albert_swarm_complete_parent_turn", { p_run_id: runId });
+  const parsed = swarmParentTurnCompletionSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("The swarm parent turn returned invalid state.", 503);
+  }
+  return parsed.data;
 }
 
 export async function saveSwarmBriefing(input: Readonly<{
