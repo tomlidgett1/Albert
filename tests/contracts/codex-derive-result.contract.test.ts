@@ -793,3 +793,41 @@ test("derive_result groupBy aggregate average produces a citable per-period run-
   assert.equal(validated.final.state, "Qualified");
   assert.match(validated.final.answer, /\$300/u);
 });
+
+test("scale multiplies a column by an owner-stated factor and discloses it", () => {
+  const request = codexDeriveToolInputSchema.parse({
+    caption: "30% clearance scenario on slow movers",
+    resultId: salesByEmployee.resultId,
+    expressions: [{
+      name: "clearance_proceeds",
+      label: "Clearance proceeds at 30% off",
+      operation: "scale",
+      leftKey: "sales_analytics.gross_profit",
+      factor: 0.7,
+    }],
+  });
+  const decision = deriveCodexResult({ request, evidence: [salesByEmployee] });
+  assert.equal(decision.ok, true);
+  if (!decision.ok) return;
+  assert.equal(decision.result.rows[0]!.clearance_proceeds, 700);
+  assert.equal(decision.result.rows[1]!.clearance_proceeds, 630);
+  const column = decision.result.columns.find((candidate) => candidate.key === "clearance_proceeds");
+  assert.equal(column?.type, "currency");
+  assert.equal(column?.currency, "AUD");
+  assert.ok(decision.notes.some((note) => note.includes("×0.7") && note.includes("owner-stated")));
+  const calculations = decision.result.provenance.calculations ?? [];
+  assert.ok(calculations.some((calculation) => calculation.formula.includes("× 0.7")));
+});
+
+test("scale requires its factor and rejects factor on other operations", () => {
+  assert.throws(() => codexDeriveToolInputSchema.parse({
+    caption: "Missing factor",
+    resultId: salesByEmployee.resultId,
+    expressions: [{ name: "bad", label: "Bad scale", operation: "scale", leftKey: "sales_analytics.gross_profit" }],
+  }));
+  assert.throws(() => codexDeriveToolInputSchema.parse({
+    caption: "Stray factor",
+    resultId: salesByEmployee.resultId,
+    expressions: [{ name: "bad", label: "Bad sum", operation: "sum", leftKey: "sales_analytics.gross_profit", rightKey: "sales_analytics.gross_profit", factor: 2 }],
+  }));
+});

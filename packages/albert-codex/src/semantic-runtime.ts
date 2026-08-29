@@ -492,6 +492,7 @@ Security and truth contract:
 - sourceFindings are curated corrections from the application about this tenant's data. When a finding says a surface is unreliable, absent or double-counted, that verdict overrides whatever a raw query seems to show: repeat the finding instead of re-deriving the opposite, and never report a figure a finding marks untrustworthy without its caveat.
 - For a seasonality or long-run pattern, first establish how far back the data goes and use the full available history (or the longest few comparable cycles); one recent cycle does not establish a pattern, and if you narrow the window, say why.
 - A comparison ask ("how are we tracking against", "compared to last year") implies the difference and percentage change, not just the two levels: derive both and state them.
+- A hypothetical or scenario ask ("what would a 30% clearance bring in", "if I raised prices 4%", "what would trimming ten hours save") deserves a computed estimate, never a refusal: query the best available observed basis (realized selling prices, actual hours and rates), then apply the owner's stated rate with an albert.derive_result scale expression (factor 0.7 for 30% off, 1.04 for a 4% rise) so the scenario figures are governed cells. Name the basis and its limits in one sentence (for example "based on realized selling prices over the last 90 days, not shelf prices"); an imperfect basis with a disclosed assumption beats declining to estimate.
 - A cross-source reconciliation is not complete at “the totals differ.” State whether they match, quantify the governed gap, explain any proven difference in scope or timing, and—when totals alone cannot establish the cause—say that explicitly and name the transaction/tax-code detail needed to reconcile it. Never invent the cause of a mismatch.
 - Between tool calls you may narrate the analytical journey through ordinary commentary: one short owner-facing sentence about what was just found or what is being checked next ("June looks unusually strong — checking whether refunds explain it"). Albert forwards only clean narration — a sentence is dropped unless every figure in it already appears in a returned cell and it contains no drafts, JSON, tool names or internal mechanics. Never narrate private reasoning, and never rely on commentary to deliver findings: the answer and report_evidence_update remain the record.
 - After a successful semantic query reveals a material finding, call report_evidence_update before a major investigative shift. State one short concrete fact, copy every figure exactly from the referenced result rows, and pass the exact resultId values returned by run_semantic_query. Skip the update when the answer is ready. Never call it before evidence exists.
@@ -1280,6 +1281,7 @@ const DERIVE_OPERATION_FORMULAE = Object.freeze({
   sum: (left: string, right: string) => `${left} + ${right}`,
   percent_of: (left: string, right: string) => `${left} ÷ ${right} × 100`,
   share_of_total_pct: (left: string) => `${left} as % of the column total`,
+  scale: (left: string, _right: string, factor?: number) => `${left} × ${factor ?? "the stated scenario rate"}`,
 } as const);
 
 const MONTH_OF_YEAR_NAMES = Object.freeze([
@@ -1342,8 +1344,12 @@ function deriveOperationValue(
   left: number | null,
   right: number | null,
   columnTotal: number,
+  factor?: number,
 ): number | null {
   if (left === null) return null;
+  if (operation === "scale") {
+    return factor === undefined ? null : Number((left * factor).toFixed(4));
+  }
   if (operation === "share_of_total_pct") {
     return columnTotal === 0 ? null : Number(((left / columnTotal) * 100).toFixed(4));
   }
@@ -1361,6 +1367,9 @@ function derivedColumnType(
   right: TraceTableColumn | undefined,
 ): Readonly<{ type: TraceTableColumn["type"]; currency?: string }> {
   if (operation === "percent_of" || operation === "share_of_total_pct") return { type: "percent" };
+  if (operation === "scale") {
+    return { type: left.type, ...(left.currency ? { currency: left.currency } : {}) };
+  }
   if (operation === "difference" || operation === "sum") {
     return left.type === right?.type && left.currency === right?.currency
       ? { type: left.type, ...(left.currency ? { currency: left.currency } : {}) }
@@ -1621,7 +1630,7 @@ export function deriveCodexResult(input: Readonly<{
     const right = expression.rightKey
       ? columns.find((column) => column.key === expression.rightKey && isNumeric(column))
       : undefined;
-    if (!left || (expression.operation !== "share_of_total_pct" && !right)) {
+    if (!left || (expression.operation !== "share_of_total_pct" && expression.operation !== "scale" && !right)) {
       return {
         ok: false,
         error: "invalid_expression_key",
@@ -1635,7 +1644,11 @@ export function deriveCodexResult(input: Readonly<{
         numericCell(row, left.key),
         right ? numericCell(row, right.key) : null,
         columnTotal,
+        expression.factor,
       );
+    }
+    if (expression.operation === "scale") {
+      notes.push(`${sanitizeTraceText(expression.label, 120)} scales ${left.label} by ×${expression.factor} — an owner-stated scenario rate, not a measured figure.`);
     }
     // A derived column whose label duplicates an existing one renders as an
     // unreadable table (a dozen columns all named "Quarter"). Fall back to the
@@ -1796,7 +1809,7 @@ export function deriveCodexResult(input: Readonly<{
   const derivedDefinitions = request.expressions.map((expression) => ({
     metric: `derived.${expression.name}`,
     label: sanitizeTraceText(expression.label, 120),
-    definition: `Computed by trusted Albert code as ${DERIVE_OPERATION_FORMULAE[expression.operation](workingLabel(expression.leftKey), workingLabel(expression.rightKey))} over exact governed cells.`,
+    definition: `Computed by trusted Albert code as ${DERIVE_OPERATION_FORMULAE[expression.operation](workingLabel(expression.leftKey), workingLabel(expression.rightKey), expression.factor)} over exact governed cells.`,
   }));
   const provenance: TraceProvenance = {
     sources,
@@ -1815,6 +1828,7 @@ export function deriveCodexResult(input: Readonly<{
         formula: DERIVE_OPERATION_FORMULAE[expression.operation](
           workingLabel(expression.leftKey),
           workingLabel(expression.rightKey),
+          expression.factor,
         ),
       })),
     } : {}),

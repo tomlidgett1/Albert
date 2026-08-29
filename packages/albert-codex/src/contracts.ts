@@ -276,10 +276,17 @@ export type CodexDeriveDateBucket = z.infer<typeof codexDeriveDateBucketSchema>;
 export const codexDeriveExpressionSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/u),
   label: z.string().trim().min(2).max(120),
-  operation: z.enum(["ratio", "difference", "sum", "percent_of", "share_of_total_pct"]),
+  operation: z.enum(["ratio", "difference", "sum", "percent_of", "share_of_total_pct", "scale"]),
   leftKey: deriveColumnKeySchema,
   rightKey: deriveColumnKeySchema.optional(),
-}).strict();
+  /** Owner-stated scenario rate for `scale` (a 30% clearance is factor 0.7).
+   * The factor is disclosed in the derived column's formula and notes. */
+  factor: z.number().finite().optional(),
+}).strict().refine((value) => (value.operation === "scale") === (value.factor !== undefined), {
+  message: "scale requires factor; other operations must not pass factor.",
+}).refine((value) => value.factor === undefined || (value.factor !== 0 && Math.abs(value.factor) <= 1_000_000), {
+  message: "factor must be non-zero and within ±1,000,000.",
+});
 
 export const codexDeriveToolInputSchema = z.object({
   caption: z.string().trim().min(3).max(160),
@@ -553,9 +560,10 @@ export const CODEX_DYNAMIC_TOOL_SPECS = Object.freeze([
                 properties: {
                   name: { type: "string", pattern: "^[a-z][a-z0-9_]{1,63}$" },
                   label: { type: "string", minLength: 2, maxLength: 120 },
-                  operation: { type: "string", enum: ["ratio", "difference", "sum", "percent_of", "share_of_total_pct"] },
+                  operation: { type: "string", enum: ["ratio", "difference", "sum", "percent_of", "share_of_total_pct", "scale"] },
                   leftKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
                   rightKey: { type: "string", pattern: "^[a-z_][a-z0-9_.]{0,119}$" },
+                  factor: { type: "number", description: "Required for scale, forbidden otherwise: multiply leftKey by this owner-stated scenario rate (a 30% clearance is 0.7, a 4% rise is 1.04). The factor is disclosed to the owner." },
                 },
               },
             },
