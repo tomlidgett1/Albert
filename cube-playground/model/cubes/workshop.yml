@@ -169,9 +169,13 @@ cubes:
       - name: open_workorders
         type: count
         title: Open workorders
-        description: Jobs not yet archived (still live in the workshop).
+        description: >
+          Jobs still live in the workshop: not archived and not yet charged
+          through a sale. (Shops that never archive close jobs by invoicing
+          them — Ashburton has 17k unarchived workorders since 2015, of which
+          all but a few dozen are invoiced and done.)
         filters:
-          - sql: "COALESCE({CUBE}.archived, false) = false"
+          - sql: "COALESCE({CUBE}.archived, false) = false AND ({CUBE}.sale_id IS NULL OR {CUBE}.sale_id = 0)"
       - name: closed_workorders
         type: count
         description: Jobs that have been archived / closed off.
@@ -192,9 +196,9 @@ cubes:
       - name: overdue_workorders
         type: count
         title: Overdue workorders
-        description: Open jobs whose promised date has already passed.
+        description: Open (uninvoiced, unarchived) jobs whose promised date has already passed.
         filters:
-          - sql: "COALESCE({CUBE}.archived, false) = false AND {CUBE}.eta_out IS NOT NULL AND {CUBE}.eta_out < NOW()"
+          - sql: "COALESCE({CUBE}.archived, false) = false AND ({CUBE}.sale_id IS NULL OR {CUBE}.sale_id = 0) AND {CUBE}.eta_out IS NOT NULL AND {CUBE}.eta_out < NOW()"
       - name: avg_promised_turnaround_days
         type: avg
         sql: "EXTRACT(EPOCH FROM ({CUBE}.eta_out - {CUBE}.time_in)) / 86400.0"
@@ -208,8 +212,8 @@ cubes:
 
     segments:
       - name: open_jobs
-        sql: "COALESCE({CUBE}.archived, false) = false"
-        description: Workorders still live in the workshop (not archived).
+        sql: "COALESCE({CUBE}.archived, false) = false AND ({CUBE}.sale_id IS NULL OR {CUBE}.sale_id = 0)"
+        description: Workorders still live in the workshop (not archived, not yet invoiced).
       - name: warranty_jobs
         sql: "COALESCE({CUBE}.warranty, false) = true"
         description: Warranty jobs.
