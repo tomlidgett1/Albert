@@ -380,7 +380,9 @@ test("isolated Codex runtime reaches the existing Cube semantic layer and return
     assert.equal(result.durationMs, 24);
     assert.equal(authorization, token);
     assert.deepEqual(events.map((event) => event.type), [
-      "progress", "plan", "narrative", "progress", "query", "table", "plan", "narrative",
+      // The extra progress after each query settles the owner's "Querying …"
+      // trail step; without it every query step rendered as running forever.
+      "progress", "plan", "narrative", "progress", "query", "progress", "table", "plan", "narrative",
       "table", "chart", "progress", "plan", "validation", "table", "answer",
     ]);
     // Clean commentary now streams through the truth gate as the owner's
@@ -397,19 +399,19 @@ test("isolated Codex runtime reaches the existing Cube semantic layer and return
     assert.deepEqual((events[1]?.steps as Array<{ status: string }>).map((step) => step.status), [
       "active", "pending", "pending",
     ]);
-    assert.equal(events[7]?.text, "Net sales were $100.00.");
+    assert.equal(events[8]?.text, "Net sales were $100.00.");
     assert.equal(events.filter((event) => event.type === "narrative").length, 2);
     assert.doesNotMatch(JSON.stringify(events), /mapping the question|checking their definitions/iu);
     assert.doesNotMatch(JSON.stringify(events), /draft total/u);
     assert.doesNotMatch(JSON.stringify(events), /structured candidate/u);
     assert.doesNotMatch(JSON.stringify(events), /\$999/u);
-    assert.equal(events[9]?.chartType, "bar");
+    assert.equal(events[10]?.chartType, "bar");
     assert.equal(
-      (events[9]?.flint as { chart_spec?: { chartType?: string } })?.chart_spec?.chartType,
+      (events[10]?.flint as { chart_spec?: { chartType?: string } })?.chart_spec?.chartType,
       "Bar Chart",
     );
-    assert.equal(events[9]?.dataRef, events[8]?.resultId);
-    assert.match(String(events[10]?.label), /repairing/u);
+    assert.equal(events[10]?.dataRef, events[9]?.resultId);
+    assert.match(String(events[11]?.label), /repairing/u);
     const planEvents = events.filter((event) => event.type === "plan");
     assert.equal(planEvents.length, 3);
     assert.deepEqual((planEvents.at(-1)?.steps as Array<{ status: string }>).map((step) => step.status), [

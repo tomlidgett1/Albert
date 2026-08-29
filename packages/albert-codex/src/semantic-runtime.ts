@@ -486,6 +486,9 @@ Security and truth contract:
 - When a query response includes derivedProductivity, use that trusted result for per-worked-hour comparisons. It is calculated from exact same-period POS and Deputy cells; disclose its exact-unique-label alignment limitation and never recalculate the ratios yourself.
 - PriorResults are governed evidence already retrieved in this conversation. You may cite their exact resultId, rowIndex and columnKey values directly. Do not search, load a schema or query again when the prior result already answers the follow-up. Query only for a genuinely different period, measure, dimension or finer grain.
 - Keep investigating recoverable schema/query errors, but stop after sufficient evidence. Do not repeatedly run equivalent queries.
+- Never re-query the same members at a coarser grain or a sub-window a finer-grained result already covers: a daily series over the window IS the weekly total, the week-to-date total, and any sub-period total — compute them with one albert.derive_result groupBy/sum call. Spending the query budget re-slicing cells you already hold is the top cause of running out exactly when the decisive drill-down (for example day-by-item on a spike day) is still missing.
+- Never write that evidence "was not returned" or is unavailable when a returned result covers that surface at any grain. If a result answers at a different grain than the ideal (a week-level top-products table when the spike was one day), present that result at its own grain and say what finer grain would confirm — "the week's top item was X at $Y; a day-level item split would confirm it drove the spike" — instead of denying the evidence exists. A followUp must never offer to fetch something a returned result already shows.
+- When one day, product or customer dominates a change, naming it IS the answer. Present the top rows of the evidence that identifies it before any decomposition of averages: an owner asking "why was this week so good" wants "you sold the F26 road bike for $8,000 on Wednesday", not a basket-arithmetic lecture.
 - Treat an expected field that is blank, null, or empty as a coverage signal, not immediate proof that the business fact does not exist. Before concluding unavailable, search for an alternative governed surface or grain, load its schema, and test the most plausible fallback. State exactly which paths were exhausted. Continue while a materially different governed route remains.
 - Activity-driven results silently drop entities with zero activity, and those entities are often the point: staff with no recorded hours, products with stock but no sales, categories active in only one of the compared periods. For any per-entity ask, screening or ranking, check the entity roster or catalogue surface for members absent from the activity result and include them as zeroes rather than omitting them.
 - semanticMemory entries are deterministic vocabulary rules this owner taught Albert in earlier conversations (they review them in Settings). When a rule's term appears in the question, interpret the term exactly as the rule says — including its governed binding — and state that interpretation briefly in the answer ("Interpreting 'general service' as the item Service - General Service"). A rule maps words to governed members or preferences; it never supplies figures, which still come only from result cells. When a phrase matches both a category-level and an item-level member and no rule decides it, state the interpretation you chose and offer the other as a followUp.
@@ -3292,6 +3295,7 @@ export async function runCodexSemanticTurn(
     maxUpdates: 48,
     lastEmitted: "",
     lastEmittedAt: 0,
+    lastFullLength: 0,
   };
   // Turn-local dedupe only: re-proposing a term that already has a stored rule
   // is a legitimate update (the repository upserts on the normalised term).
@@ -3757,6 +3761,16 @@ export async function runCodexSemanticTurn(
       rowCount: result.rows.length,
       executionMs: result.executionMs,
     });
+    // Settle the "Querying …" trail step: the dash replaces the open running
+    // step of the same stage, so without this every query step in the owner's
+    // trace stays "running" forever.
+    await options.emit({
+      type: "progress",
+      status: "complete",
+      stage: "query",
+      label: sanitizeTraceText(`Queried ${parsed.data.topic}`, 160),
+      detail: sanitizeTraceText(`${result.rows.length} rows from ${validated.view}`, 120),
+    });
     const keys = columnKeys(result, validated.members).map((sourceKey) => ({
       sourceKey,
       publicKey: publicColumnKey(sourceKey),
@@ -4134,7 +4148,18 @@ export async function runCodexSemanticTurn(
   const emitReasoningSummary = async (force: boolean): Promise<void> => {
     const maxBeforeFinal = reasoningSummaryState.maxUpdates - 1;
     if (reasoningSummaryState.emitted >= (force ? reasoningSummaryState.maxUpdates : maxBeforeFinal)) return;
-    const snapshot = [...reasoningSummaryState.parts.values()].join("\n\n");
+    const full = [...reasoningSummaryState.parts.values()].join("\n\n");
+    // Emit a rolling tail window, not the whole accumulated essay: the dash
+    // replaces the panel with the latest snapshot, but every emission is also
+    // a persisted trace narrative — cumulative snapshots stored ~48 copies of
+    // the same text per turn and re-ran the grounding gate over up to 19KB
+    // each time. The window is the freshest few sentences at a boundary.
+    let snapshot = full;
+    if (snapshot.length > 420) {
+      const tail = snapshot.slice(-420);
+      const boundary = tail.search(/(?<=[.!?])\s+/u);
+      snapshot = (boundary >= 0 ? tail.slice(boundary + 1) : tail).trim();
+    }
     const safe = gatedCodexReasoningSummary(snapshot, evidence);
     if (!safe || safe === reasoningSummaryState.lastEmitted) return;
     const now = Date.now();
@@ -4142,8 +4167,9 @@ export async function runCodexSemanticTurn(
       !force
       && reasoningSummaryState.lastEmittedAt > 0
       && now - reasoningSummaryState.lastEmittedAt < 400
-      && safe.length - reasoningSummaryState.lastEmitted.length < 80
+      && full.length - reasoningSummaryState.lastFullLength < 80
     ) return;
+    reasoningSummaryState.lastFullLength = full.length;
     reasoningSummaryState.emitted += 1;
     reasoningSummaryState.lastEmitted = safe;
     reasoningSummaryState.lastEmittedAt = now;
