@@ -26,8 +26,11 @@ views:
         reference dimensions, but do not mix two different event grains (for
         example inventory_logs_* with transfer_items_*) in one query. Stock
         value is at cost, ex tax; it is not retail value. Price-list questions
-        ("what price types does X have") use item_prices_* with items_*;
-        bundle contents use item_components_*. Blank catalogue-price members
+        ("what price types does X have") use item_prices_* with items_* ONLY —
+        item_prices_* cannot join item_shops_* stock members in one query (no
+        join path); query prices and stock separately and align the two
+        results with albert.derive_result on the item name.
+        Bundle contents use item_components_*. Blank catalogue-price members
         do not prove an item is unpriced: for a selling-price fallback, query
         completed sale-line `normal_unit_price`, `unit_price`, and
         `average_selling_price` in product_sales_analytics and label them as
