@@ -216,6 +216,16 @@ export class CodexRuntimeHttpHandler {
     if (!parsed.success) return jsonError("invalid_request", 400, "The Codex turn request is invalid.");
     this.pruneReplayIds();
     if (this.requestIds.has(parsed.data.requestId) || this.jobs.has(parsed.data.requestId)) {
+      // A background-job submit is idempotent while its job is alive: a client
+      // whose submit response was lost to a transient network failure retries
+      // the same signed request and re-attaches to the running job by id
+      // (polling carries its own cursor). Anything else stays a hard replay.
+      if (url.pathname === JOBS_PATH && this.jobs.has(parsed.data.requestId)) {
+        return Response.json({ jobId: parsed.data.requestId }, {
+          status: 202,
+          headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+        });
+      }
       return jsonError("replayed_request", 409, "This Codex turn request has already been used.");
     }
     if (url.pathname === JOBS_PATH) {

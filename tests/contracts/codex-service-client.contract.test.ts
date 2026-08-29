@@ -188,3 +188,55 @@ test("Codex query-audit wire events reach the durable sink and never enter the o
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a transient proxy failure mid-poll retries and the turn survives", async () => {
+  const originalFetch = globalThis.fetch;
+  let polls = 0;
+  globalThis.fetch = (async (input) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    if (url.pathname === "/v1/codex/jobs") {
+      return Response.json({ jobId: turn.requestId }, { status: 202 });
+    }
+    polls += 1;
+    if (polls === 1) {
+      // A proxy-level failure body is not the runtime's JSON envelope.
+      return new Response("connection reset", { status: 502 });
+    }
+    return Response.json({
+      jobId: turn.requestId,
+      cursor: 1,
+      events: [],
+      result: {
+        answerState: "Verified",
+        queriesExecuted: 1,
+        codexThreadId: "thr_fixture",
+        codexTurnId: "turn_fixture",
+        durationMs: 12,
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new CodexRuntimeServiceClient("https://runtime.example", secret);
+    const result = await client.runTurn(turn, async () => {});
+    assert.equal(result.answerState, "Verified");
+    assert.equal(polls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a non-transient rejection still fails without retries", async () => {
+  const originalFetch = globalThis.fetch;
+  let submits = 0;
+  globalThis.fetch = (async () => {
+    submits += 1;
+    return Response.json({ error: { code: "replayed_request", message: "This Codex turn request has already been used." } }, { status: 409 });
+  }) as typeof fetch;
+  try {
+    const client = new CodexRuntimeServiceClient("https://runtime.example", secret);
+    await assert.rejects(client.runTurn(turn, async () => {}), /already been used/u);
+    assert.equal(submits, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

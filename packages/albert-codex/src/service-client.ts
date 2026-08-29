@@ -96,6 +96,12 @@ export class CodexRuntimeServiceClient {
     signal?: AbortSignal,
     emitQueryAudit?: (event: CodexQueryAuditEvent) => Promise<void>,
   ): Promise<CodexSemanticTurnResult> {
+    // A severed connection or a proxy-level 5xx does not mean the turn died:
+    // the job keeps running server-side, submits are idempotent while their
+    // job is alive, and polls carry an explicit cursor. Ride out transient
+    // failures instead of failing a live analysis (a single Fly proxy TLS
+    // reset killed four healthy in-flight production turns on 2026-08-29).
+    const TRANSIENT_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 8_000];
     const requestJson = async (path: string, requestBody: string): Promise<Record<string, unknown>> => {
       const signed = await signInternalRequest({
         method: "POST",
@@ -103,34 +109,47 @@ export class CodexRuntimeServiceClient {
         body: requestBody,
         secret: this.signingSecret,
       });
-      let response: Response;
-      try {
-        response = await fetch(new URL(path, `${this.baseUrl}/`), {
-          method: "POST",
-          headers: { "content-type": "application/json", accept: "application/json", ...signed },
-          body: requestBody,
-          signal,
-        });
-      } catch (error) {
-        throw new CodexRuntimeServiceError(
-          signal?.aborted
-            ? "The Codex turn was cancelled."
-            : `The Codex runtime could not be reached (${error instanceof Error ? error.message : "unknown error"}).`,
-          503,
-          signal?.aborted ? "codex_cancelled" : "codex_runtime_unavailable",
-        );
+      for (let attempt = 0; ; attempt += 1) {
+        const retryDelay = TRANSIENT_RETRY_DELAYS_MS[attempt];
+        let transient: string | undefined;
+        try {
+          let response: Response;
+          try {
+            response = await fetch(new URL(path, `${this.baseUrl}/`), {
+              method: "POST",
+              headers: { "content-type": "application/json", accept: "application/json", ...signed },
+              body: requestBody,
+              signal,
+            });
+          } catch (error) {
+            throw new CodexRuntimeServiceError(
+              signal?.aborted
+                ? "The Codex turn was cancelled."
+                : `The Codex runtime could not be reached (${error instanceof Error ? error.message : "unknown error"}).`,
+              503,
+              signal?.aborted ? "codex_cancelled" : "codex_runtime_unavailable",
+            );
+          }
+          const text = await response.text();
+          if (Buffer.byteLength(text, "utf8") > MAX_STREAM_LINE_BYTES * 8) {
+            throw new CodexRuntimeServiceError("The Codex job poll response was oversized.", 502, "codex_stream_oversized");
+          }
+          if (!response.ok) throw runtimeRejectedError(response.status, text);
+          let payload: unknown;
+          try { payload = JSON.parse(text); } catch {
+            throw new CodexRuntimeServiceError("The Codex job response was malformed.", 502, "codex_stream_invalid");
+          }
+          if (!isObject(payload)) throw new CodexRuntimeServiceError("The Codex job response was invalid.", 502, "codex_stream_invalid");
+          return payload;
+        } catch (error) {
+          if (error instanceof CodexRuntimeServiceError && !signal?.aborted) {
+            if (error.code === "codex_runtime_unavailable") transient = error.code;
+            else if ([429, 502, 503, 504].includes(error.status) && error.code !== "codex_cancelled") transient = error.code;
+          }
+          if (transient === undefined || retryDelay === undefined) throw error;
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        }
       }
-      const text = await response.text();
-      if (Buffer.byteLength(text, "utf8") > MAX_STREAM_LINE_BYTES * 8) {
-        throw new CodexRuntimeServiceError("The Codex job poll response was oversized.", 502, "codex_stream_oversized");
-      }
-      if (!response.ok) throw runtimeRejectedError(response.status, text);
-      let payload: unknown;
-      try { payload = JSON.parse(text); } catch {
-        throw new CodexRuntimeServiceError("The Codex job response was malformed.", 502, "codex_stream_invalid");
-      }
-      if (!isObject(payload)) throw new CodexRuntimeServiceError("The Codex job response was invalid.", 502, "codex_stream_invalid");
-      return payload;
     };
 
     const started = await requestJson(JOBS_PATH, body);
