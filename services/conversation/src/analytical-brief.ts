@@ -59,7 +59,9 @@ export function explicitSubQuestions(message: string): readonly string[] {
         .replace(/[.!]+$/u, "");
       if (cleaned.length < 12) continue;
       if (FACET_INTERROGATIVE.test(cleaned) || FACET_IMPERATIVE.test(cleaned) || cleaned.endsWith("?")) {
-        facets.push(cleaned.slice(0, 220));
+        // The brief contract caps answerMustCover entries at 300 chars; the
+        // "Answer the owner's explicit sub-question" prefix takes ~45.
+        facets.push(cleaned.slice(0, 250));
       }
     }
   }
@@ -228,10 +230,13 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
   const finalBrief = facets.length >= 2
     ? Object.freeze({
         ...brief,
+        // The contract caps answerMustCover at 10 entries; enumerated facets
+        // replace the generic brief's abstract "answer every sub-question"
+        // line rather than stacking on top of it.
         answerMustCover: Object.freeze([
           ...facets.map((facet) => `Answer the owner's explicit sub-question: "${facet}"`),
-          ...brief.answerMustCover,
-        ]),
+          ...brief.answerMustCover.filter((line) => !line.startsWith("Answer every explicit sub-question")),
+        ].slice(0, 10)),
       })
     : brief;
   return Object.freeze({ ...finalBrief, digest: stableDigest(finalBrief) });

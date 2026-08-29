@@ -136,7 +136,10 @@ export const codexAnalyticalBriefSchema = z.object({
   version: z.number().int().positive(),
   digest: z.string().regex(/^[a-f0-9]{24}$/u),
   ownerGoal: z.string().trim().min(1).max(300),
-  answerMustCover: z.array(z.string().trim().min(3).max(240)).max(6),
+  // 10×300 leaves room for up to four enumerated owner sub-questions on top
+  // of a typed brief's own requirements (the 6×240 cap silently rejected
+  // whole turns when facet enumeration landed).
+  answerMustCover: z.array(z.string().trim().min(3).max(300)).max(10),
   requiredViews: z.array(z.object({
     view: z.string().regex(/^[a-z][a-z0-9_]*$/u),
     reason: z.string().trim().min(3).max(200),
