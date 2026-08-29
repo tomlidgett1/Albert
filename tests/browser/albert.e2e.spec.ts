@@ -16,7 +16,7 @@ async function openDashboard(page: Parameters<typeof installAppApiRoutes>[0]) {
 
 function analysisRuntimeTrigger(
   page: Parameters<typeof installAppApiRoutes>[0],
-  runtime?: "Albert" | "Codex" | "Compare",
+  runtime?: "Albert" | "Codex" | "Omni" | "Compare",
 ) {
   return runtime
     ? page.getByRole("button", { name: `Analysis runtime: ${runtime}` })
@@ -25,7 +25,7 @@ function analysisRuntimeTrigger(
 
 async function selectAnalysisRuntime(
   page: Parameters<typeof installAppApiRoutes>[0],
-  runtime: "Albert" | "Codex" | "Compare",
+  runtime: "Albert" | "Codex" | "Omni" | "Compare",
 ) {
   const trigger = analysisRuntimeTrigger(page);
   if (await trigger.getAttribute("aria-expanded") !== "true") {
@@ -1120,4 +1120,48 @@ test("mobile layout has no page overflow and reduced motion disables analytical 
   }));
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
   expect(layout.sidebarWidth).toBe(45);
+});
+
+test("Omni harness renders tasks, research steps, query cards and the answer", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await selectAnalysisRuntime(page, "Omni");
+  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+
+  const composer = page.getByRole("textbox", { name: "Ask Omni about your business" });
+  await expect(composer).toHaveAttribute(
+    "placeholder",
+    "Ask anything about your connected data…",
+  );
+  await composer.fill("Show me revenue by week for the last 12 complete weeks.");
+  await composer.press("Enter");
+
+  // The Omni task checklist arrives first and settles fully completed.
+  await expect(page.getByText("Tasks (3 of 3)")).toBeVisible();
+  await expect(page.getByText("Find the revenue fields")).toBeVisible();
+
+  // Research group with the semantic model search card and its YAML body.
+  await expect(page.getByRole("button", { name: /Research · 1 step/u })).toBeVisible();
+  const searchCard = page.getByRole("button", {
+    name: /Search model.*2 fields found matching/u,
+  });
+  await expect(searchCard).toBeVisible();
+  await searchCard.click();
+  await expect(page.getByText('Search: "revenue"')).toBeVisible();
+  await expect(page.getByText(/view_name: sales_analytics/u)).toBeVisible();
+
+  // The named query card with its topic, row count and result table.
+  await expect(page.getByRole("button", { name: /Query.*Weekly revenue.*From Sales analytics · 2 rows/u })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /8,379\.02/u })).toBeVisible();
+
+  // Interim narration and the final verified answer with a follow-up chip.
+  await expect(page.getByText("I found the governed revenue measure. Querying weekly revenue now.")).toBeVisible();
+  await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
+  await expect(page.getByRole("button", { name: "How does this compare to last year?" })).toBeVisible();
+
+  // The request went to the Omni endpoint with model preferences attached.
+  expect(capture.omniConversationPayloads.length).toBe(1);
+  const payload = capture.omniConversationPayloads[0] as Record<string, unknown>;
+  expect(payload.message).toBe("Show me revenue by week for the last 12 complete weeks.");
+  expect((payload.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
 });

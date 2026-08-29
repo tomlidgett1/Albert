@@ -41,6 +41,7 @@ import {
 } from "@/packages/albert-v3/src/specialist-agents/registry";
 import { createClient } from "@/utils/supabase/client";
 import InsightsStyleTrace from "./components/InsightsStyleTrace";
+import OmniTrace from "./components/OmniTrace";
 import AdminWorkspace from "./components/AdminWorkspace";
 import ConnectionsWorkspace, {
   buildSidebarSyncCommentary,
@@ -374,11 +375,14 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
+  if (profile.runtime === "omni-agent" || profile.analyticalRuntime === "cube-omni-v1") {
+    return "omni";
+  }
   if (profile.runtime === "codex-app-server" || profile.analyticalRuntime === "cube-codex-v1") {
     return "codex";
   }
@@ -680,6 +684,8 @@ const traceEventTypes = new Set([
   "validation",
   "answer",
   "clarification",
+  "tasks",
+  "research",
   "error",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
@@ -2729,6 +2735,8 @@ export default function DashPage() {
       ? options.forceRuntime
       : activeChatRuntimeRef.current === "codex"
       ? "codex"
+      : activeChatRuntimeRef.current === "omni"
+      ? "omni"
       : isAnthropicModel(runPreferences.model)
       ? "v3"
       : activeChatRuntimeRef.current === "xero_mcp"
@@ -3025,7 +3033,7 @@ export default function DashPage() {
       }
       const requestBody = {
         message: text,
-        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
         ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
         ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
@@ -3035,6 +3043,8 @@ export default function DashPage() {
       };
       const endpoint = runRuntime === "codex"
         ? "/api/codex-conversation"
+        : runRuntime === "omni"
+        ? "/api/omni-conversation"
         : runRuntime === "anthropic"
         ? "/api/anthropic-conversation"
         : runRuntime === "cubecore"
@@ -3070,6 +3080,8 @@ export default function DashPage() {
         ? "fixture"
         : runtimeHeader === "codex"
           ? "codex"
+        : runtimeHeader === "omni"
+          ? "omni"
         : runtimeHeader === "anthropic"
           ? "anthropic"
           : runtimeHeader === "cubecore"
@@ -3093,9 +3105,9 @@ export default function DashPage() {
         await response.body?.cancel("runtime_lock_mismatch");
         throw new Error("The conversation runtime did not match the selected method.");
       }
-      if (runtime === "codex" && response.headers.get("X-Albert-Model") !== runPreferences.model) {
+      if ((runtime === "codex" || runtime === "omni") && response.headers.get("X-Albert-Model") !== runPreferences.model) {
         await response.body?.cancel("codex_model_mismatch");
-        throw new Error("The Codex conversation did not use the selected model.");
+        throw new Error("The conversation did not use the selected model.");
       }
       if (runtime === "v3" && responseSpecialistAgentId !== runSpecialistAgentId) {
         await response.body?.cancel("specialist_agent_lock_mismatch");
@@ -3402,7 +3414,7 @@ export default function DashPage() {
             ? {
               ...item,
               lastTurnStatus: controller.signal.aborted
-                ? (runRuntime === "codex" ? "running" : "cancelled")
+                ? (runRuntime === "codex" || runRuntime === "omni" ? "running" : "cancelled")
                 : "completed",
             }
             : item
@@ -3641,7 +3653,7 @@ export default function DashPage() {
       liveTurnsRef.current.delete(key);
     }
     setIsChatResponding(false);
-    const continuesInBackground = Boolean(live && live.runtime === "codex" && !swarmHere);
+    const continuesInBackground = Boolean(live && (live.runtime === "codex" || live.runtime === "omni") && !swarmHere);
     setChatMessages((messages) => {
       const next = finalizeStreamingMessages(
         messages,
@@ -3993,6 +4005,12 @@ export default function DashPage() {
   const startCompareChat = () => {
     resetChat("compare", "general");
   };
+  const startOmniChat = () => {
+    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    resetChat("omni", "general");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
   const startSalesDeepSwarm = () => {
     if (swarmRunSnapshot().active) return;
     const url = new URL(window.location.href);
@@ -4022,7 +4040,11 @@ export default function DashPage() {
       if (activeChatRuntimeRef.current !== "codex") startCodexChat();
       return;
     }
-    if (activeChatRuntimeRef.current === "codex" || activeChatRuntimeRef.current === "compare") {
+    if (tab === "omni") {
+      if (activeChatRuntimeRef.current !== "omni") startOmniChat();
+      return;
+    }
+    if (activeChatRuntimeRef.current === "codex" || activeChatRuntimeRef.current === "omni" || activeChatRuntimeRef.current === "compare") {
       resetChat("v3", "general");
       window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
     }
@@ -4268,6 +4290,15 @@ export default function DashPage() {
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
+                          ) : activeChatRuntime === "omni" ? (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              allowedModelIds={CODEX_MODEL_IDS}
+                              allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
                           ) : activeChatRuntime === "anthropic" ? (
                             <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
                           ) : activeChatRuntime === "cubecore" ? (
@@ -4318,6 +4349,12 @@ export default function DashPage() {
                 {message.events?.length || message.isStreaming ? (
                   message.trailVisible === false ? (
                     <div className={styles.chatTrailDeferred} aria-hidden="true" />
+                  ) : message.runtime === "omni" ? (
+                    <OmniTrace
+                      events={message.events ?? []}
+                      streaming={message.isStreaming}
+                      onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                    />
                   ) : (
                     <InsightsStyleTrace
                       events={message.events ?? []}
@@ -5035,7 +5072,7 @@ export default function DashPage() {
               </div>
               <div className={styles.chatTopActions}>
                 <ConversationRuntimeTabs
-                  value={activeChatRuntime === "codex" ? "codex" : "albert"}
+                  value={activeChatRuntime === "codex" ? "codex" : activeChatRuntime === "omni" ? "omni" : "albert"}
                   onChange={selectConversationRuntime}
                 />
                 {chatMessages.length > 0 ? (
@@ -5209,7 +5246,7 @@ export default function DashPage() {
                     <h2 className={styles.chatHeroTitle}>
                       {activeChatRuntime === "xero_mcp"
                         ? "Ask Xero anything"
-                        : activeChatRuntime === "codex"
+                        : activeChatRuntime === "codex" || activeChatRuntime === "omni"
                           ? "Ask about your business"
                         : isCustomerAgent
                           ? activeSpecialistAgent.ui.emptyStateTitle
@@ -5448,6 +5485,8 @@ export default function DashPage() {
                         ? "Ask Xero anything"
                         : activeChatRuntime === "codex"
                           ? "Ask Codex about your business"
+                        : activeChatRuntime === "omni"
+                          ? "Ask Omni about your business"
                         : isCustomerAgent
                           ? "Ask the Customer Agent"
                           : "Ask me anything"
@@ -5465,6 +5504,10 @@ export default function DashPage() {
                         ? chatMessages.length > 0
                           ? "Ask Codex a follow-up…"
                           : "Ask Codex anything about your connected data…"
+                      : activeChatRuntime === "omni"
+                        ? chatMessages.length > 0
+                          ? "Ask a follow-up…"
+                          : "Ask anything about your connected data…"
                       : isCustomerAgent
                         ? chatMessages.length > 0
                           ? "Ask a follow-up about your customers…"
@@ -5583,6 +5626,13 @@ export default function DashPage() {
                       onSolPlannerChange={setCodexSolPlannerEnabled}
                       proModeEnabled={codexProModeEnabled}
                       onProModeChange={setCodexProModeEnabled}
+                    />
+                  ) : activeChatRuntime === "omni" ? (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                      allowedModelIds={CODEX_MODEL_IDS}
+                      allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                     />
                   ) : activeChatRuntime === "anthropic" ? (
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>

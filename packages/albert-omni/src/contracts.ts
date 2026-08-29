@@ -1,0 +1,170 @@
+import { z } from "zod";
+import type { CubeFilter, CubeQuery } from "../../albert-v3/src/cube/types.js";
+
+export const ALBERT_OMNI_RUNTIME = "omni-agent" as const;
+export const ALBERT_OMNI_ANALYTICAL_RUNTIME = "cube-omni-v1" as const;
+export const ALBERT_OMNI_PROTOCOL_VERSION = 1 as const;
+export const ALBERT_OMNI_MODEL_IDS = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+] as const;
+export const ALBERT_OMNI_DEFAULT_MODEL = "gpt-5.6-luna" as const;
+export const ALBERT_OMNI_DEFAULT_EFFORT = "max" as const;
+export const ALBERT_OMNI_DEFAULT_FAST_MODE = true as const;
+export const ALBERT_OMNI_ANALYSIS_TIMEOUT_MS = 720_000 as const;
+/**
+ * The Omni harness deliberately carries no small caps: the owner's question
+ * and the final answer are bounded only by transport safety, never by a
+ * product limit that truncates an analysis mid-sentence.
+ */
+export const ALBERT_OMNI_MESSAGE_MAX_CHARS = 32_000 as const;
+export const ALBERT_OMNI_ANSWER_MAX_CHARS = 120_000 as const;
+
+const ulidSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
+const roleSchema = z.enum(["owner", "manager", "bookkeeper", "internal_operator"]);
+
+export const omniConversationRequestSchema = z.object({
+  message: z.string().trim().min(1).max(ALBERT_OMNI_MESSAGE_MAX_CHARS),
+  preferences: z.unknown().optional(),
+  conversationId: ulidSchema.optional(),
+  replaceTurnId: ulidSchema.optional(),
+}).strict();
+
+export const omniPriorMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  text: z.string().max(ALBERT_OMNI_MESSAGE_MAX_CHARS),
+}).strict();
+
+export const omniConnectorFreshnessSchema = z.object({
+  connector: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u),
+  domain: z.string().trim().min(1).max(80),
+  dataFrom: z.string().max(80).nullable().optional(),
+  dataThrough: z.string().max(80).nullable(),
+}).strict();
+
+export const omniServiceTurnSchema = z.object({
+  protocolVersion: z.literal(ALBERT_OMNI_PROTOCOL_VERSION),
+  requestId: ulidSchema,
+  tenantId: ulidSchema,
+  actorId: z.string().uuid(),
+  role: roleSchema,
+  conversationId: ulidSchema,
+  turnId: ulidSchema,
+  message: z.string().trim().min(1).max(ALBERT_OMNI_MESSAGE_MAX_CHARS),
+  priorConversation: z.array(omniPriorMessageSchema).max(24),
+  activeConnectors: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u)).max(24),
+  connectorFreshness: z.array(omniConnectorFreshnessSchema).max(80),
+  businessContext: z.string().max(20_000).optional(),
+  timezone: z.string().trim().min(1).max(80).optional(),
+  ownerName: z.string().trim().min(1).max(120).optional(),
+  organisationName: z.string().trim().min(1).max(160).optional(),
+  cubeBearer: z.string().regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u).max(12_000),
+  model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
+  fastMode: z.boolean(),
+}).strict();
+
+export type OmniServiceTurn = z.infer<typeof omniServiceTurnSchema>;
+
+const cubeMemberFilterSchema = z.object({
+  member: z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u),
+  operator: z.enum([
+    "equals", "notEquals", "contains", "notContains", "startsWith", "notStartsWith",
+    "endsWith", "notEndsWith", "gt", "gte", "lt", "lte", "set", "notSet",
+    "inDateRange", "notInDateRange", "beforeDate", "afterDate",
+  ]),
+  values: z.array(z.string().max(240)).max(40).optional(),
+}).strict();
+
+const cubeFilterSchema: z.ZodType<CubeFilter> = z.lazy(() => z.union([
+  cubeMemberFilterSchema,
+  z.object({ and: z.array(cubeFilterSchema).min(1).max(20) }).strict(),
+  z.object({ or: z.array(cubeFilterSchema).min(1).max(20) }).strict(),
+])) as z.ZodType<CubeFilter>;
+
+const cubeTimeDimensionSchema = z.object({
+  dimension: z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u),
+  granularity: z.enum(["second", "minute", "hour", "day", "week", "month", "quarter", "year"]).optional(),
+  dateRange: z.union([
+    z.string().trim().min(1).max(80),
+    z.tuple([z.string().max(40), z.string().max(40)]),
+  ]).optional(),
+  compareDateRange: z.array(z.union([
+    z.string().trim().min(1).max(80),
+    z.tuple([z.string().max(40), z.string().max(40)]),
+  ])).min(2).max(6).optional(),
+}).strict();
+
+export const omniCubeQuerySchema: z.ZodType<CubeQuery> = z.object({
+  measures: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u)).max(12).optional(),
+  dimensions: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u)).max(12).optional(),
+  segments: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u)).max(8).optional(),
+  timeDimensions: z.array(cubeTimeDimensionSchema).max(4).optional(),
+  filters: z.array(cubeFilterSchema).max(20).optional(),
+  order: z.record(
+    z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u),
+    z.enum(["asc", "desc"]),
+  ).refine((value) => Object.keys(value).length <= 8, "At most eight order keys are allowed.").optional(),
+  limit: z.number().int().min(1).transform((value) => Math.min(value, 500)).optional(),
+  offset: z.number().int().min(0).max(10_000).optional(),
+  timezone: z.string().trim().min(1).max(80).optional(),
+}).strict().refine((query) => (
+  (query.measures?.length ?? 0) + (query.dimensions?.length ?? 0) + (query.timeDimensions?.length ?? 0) > 0
+), "A semantic query must select at least one measure or dimension.") as z.ZodType<CubeQuery>;
+
+/** ManageTaskList: the agent's whole visible checklist, replacing the prior one. */
+export const omniTaskListInputSchema = z.object({
+  tasks: z.array(z.object({
+    label: z.string().trim().min(3).max(200),
+    completed: z.boolean(),
+  }).strict()).min(1).max(12),
+}).strict();
+
+/** SearchSemanticModel: whole-topic lookup or a field search across topics. */
+export const omniSearchModelInputSchema = z.object({
+  topicName: z.string().trim().min(1).max(160).optional(),
+  searchPattern: z.string().trim().min(1).max(200).optional(),
+}).strict().refine((value) => value.topicName !== undefined || value.searchPattern !== undefined, {
+  message: "Pass topicName to load a topic, searchPattern to search fields, or both to scope a search.",
+});
+
+/** FetchFieldValues: distinct stored values of one dimension for filter validation. */
+export const omniFieldValuesInputSchema = z.object({
+  field: z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u),
+  matching: z.string().trim().min(1).max(160).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}).strict();
+
+/** GenerateSemanticQuery: a named, governed Cube JSON query. */
+export const omniGenerateQueryInputSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  topic: z.string().trim().min(1).max(160),
+  query: omniCubeQuerySchema,
+}).strict();
+
+export const omniSummarizeInputSchema = z.object({
+  resultId: ulidSchema,
+}).strict();
+
+export const omniVisualizeInputSchema = z.object({
+  resultId: ulidSchema,
+  purpose: z.enum(["trend", "ranking", "comparison", "composition"]),
+  caption: z.string().trim().min(3).max(160),
+  chartType: z.enum(["auto", "bar", "line", "stacked_bar"]),
+  xKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u),
+  yKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u),
+  seriesKey: z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u).optional(),
+  extraYKeys: z.array(z.string().regex(/^[a-z_][a-z0-9_.]{0,119}$/u)).max(3).optional(),
+  limit: z.number().int().min(3).max(15).optional(),
+  transform: z.enum(["cumulative"]).optional(),
+}).strict();
+
+export const omniSemanticTurnResultSchema = z.object({
+  answerState: z.enum(["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"]),
+  queriesExecuted: z.number().int().min(0),
+  modelRequests: z.number().int().min(0),
+  durationMs: z.number().int().min(0).nullable(),
+}).strict();
+
+export type OmniSemanticTurnResult = z.infer<typeof omniSemanticTurnResultSchema>;

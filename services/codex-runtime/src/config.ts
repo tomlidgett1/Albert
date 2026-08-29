@@ -17,6 +17,8 @@ export type CodexRuntimeConfig = Readonly<{
   pinnedCliVersion: string;
   releaseSha: string;
   deploymentId: string;
+  /** Direct Responses credentials for the Omni agent runtime (no CLI child). */
+  omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string }>;
 }>;
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
@@ -84,6 +86,13 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     }
     authentication = Object.freeze({ mode: "chatgpt", codexHome });
   }
+  // The Omni agent runtime talks to the Responses API directly. In api mode
+  // it reuses the same deployer credentials; in local chatgpt mode it works
+  // whenever an OPENAI_API_KEY is present in the environment.
+  const omniApiKey = authenticationMode === "api"
+    ? required(source, "OPENAI_API_KEY")
+    : source.OPENAI_API_KEY?.trim();
+  const omniBaseUrl = source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
   return Object.freeze({
     port,
     listenHost,
@@ -95,5 +104,11 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     pinnedCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
     releaseSha,
     deploymentId,
+    ...(omniApiKey ? {
+      omniOpenAi: Object.freeze({
+        apiKey: omniApiKey,
+        baseUrl: serviceUrl(omniBaseUrl, "OPENAI_BASE_URL"),
+      }),
+    } : {}),
   });
 }

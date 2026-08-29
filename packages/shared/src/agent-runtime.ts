@@ -457,6 +457,8 @@ export interface TraceQueryEvent extends TraceEventBase {
   executionMs?: number;
   /** Which tool the queried view draws its data from (drives the UI logo). */
   connector?: TraceConnector;
+  /** Owner-readable query title authored by the agent ("Revenue by week"). */
+  name?: string;
 }
 
 export type TraceTableColumn = Readonly<{
@@ -708,6 +710,46 @@ export interface TraceClarificationEvent extends TraceEventBase {
   }>[];
 }
 
+/**
+ * The Omni runtime's visible task checklist ("Tasks (1 of 4)"). Unlike the
+ * strict evidence-backed `plan` contract, tasks are the agent's own working
+ * list: each event carries the full current list and the latest one wins.
+ * Completion is a claim by the runtime, clamped monotonic by the emitter.
+ */
+export interface TraceTasksEvent extends TraceEventBase {
+  type: "tasks";
+  items: readonly Readonly<{
+    /** Stable within one turn. */
+    id: string;
+    label: string;
+    completed: boolean;
+  }>[];
+}
+
+/**
+ * One completed research step card in the Omni runtime's trail: a semantic
+ * model search, a field-value lookup, or a small trusted lookup. `document`
+ * carries only governed semantic-model renderings (member names, types and
+ * definitions as YAML) — the same class of content as `queryYaml` — never
+ * raw provider output, SQL, or prompts.
+ */
+export interface TraceResearchEvent extends TraceEventBase {
+  type: "research";
+  tool: "search_model" | "value_lookup" | "docs" | "current_time";
+  /** Card headline, e.g. "Look up refund fields in the Sales topic". */
+  label: string;
+  /** Right-aligned outcome, e.g. "98 fields found matching \"refund\"". */
+  summary?: string;
+  /** The search term or match pattern the step used. */
+  query?: string;
+  /** Governed markdown body (field definitions grouped by view, as YAML). */
+  document?: string;
+  /** Stored values a lookup matched, in match order. */
+  values?: readonly string[];
+  /** Owner-readable field label a value lookup ran against. */
+  field?: string;
+}
+
 export interface TraceErrorEvent extends TraceEventBase {
   type: "error";
   message: string;
@@ -728,6 +770,8 @@ export type TraceEvent =
   | TraceValidationEvent
   | TraceAnswerEvent
   | TraceClarificationEvent
+  | TraceTasksEvent
+  | TraceResearchEvent
   | TraceErrorEvent;
 
 const forbiddenTraceKeys = new Set([

@@ -1,6 +1,6 @@
 import { sanitizeTraceText } from "./agent-runtime.js";
 
-export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare";
+export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
 
 export type ChatFailureContext = Readonly<{
   runtime?: ChatFailureRuntime;

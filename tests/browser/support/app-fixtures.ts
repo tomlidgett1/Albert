@@ -156,6 +156,7 @@ export type AppApiCapture = {
   bootstrapPayloads: unknown[];
   conversationPayloads: unknown[];
   codexConversationPayloads: unknown[];
+  omniConversationPayloads: unknown[];
   swarmPayloads: unknown[];
   runtimeRequestStartedAt: { v3: number[]; codex: number[] };
   anthropicConversationPayloads: unknown[];
@@ -814,6 +815,7 @@ export async function installAppApiRoutes(
     bootstrapPayloads: [],
     conversationPayloads: [],
     codexConversationPayloads: [],
+    omniConversationPayloads: [],
     swarmPayloads: [],
     runtimeRequestStartedAt: { v3: [], codex: [] },
     anthropicConversationPayloads: [],
@@ -1451,6 +1453,103 @@ export async function installAppApiRoutes(
         ...(requestPayload.comparisonMode === true
           ? { "X-Albert-Analysis-Brief": "fixture-shared-brief" }
           : {}),
+      },
+    }).catch(() => undefined);
+  });
+
+  await page.route(/\/api\/omni-conversation$/u, async (route) => {
+    const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
+    capture.omniConversationPayloads.push(requestPayload);
+    const stamp = "2026-08-03T00:44:00.000Z";
+    const omniResultId = "01J0000000000000000000OMN1";
+    const omniProvenance = {
+      sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-02" }],
+      timeRange: { label: "last 12 weeks", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+      definitions: [
+        { metric: "sales_analytics.gross_takings", label: "Gross takings", definition: "Total completed sale value including tax.", view: "sales_analytics", kind: "measure" },
+        { metric: "sales_analytics.completed_at", label: "Completed", definition: "Completion time of the sale.", view: "sales_analytics", kind: "time" },
+      ],
+      semanticBundleHash: "albert-omni-fixture",
+      identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+      view: { name: "sales_analytics", label: "Sales analytics", description: "Completed POS sales." },
+    };
+    const omniEvents = [
+      { id: "omni_fx_ack", sequence: 1, type: "narrative", purpose: "acknowledgement", occurredAt: stamp, text: "I’ll analyse weekly revenue over the last 12 complete weeks." },
+      {
+        id: "omni_fx_tasks", sequence: 2, type: "tasks", status: "running", occurredAt: stamp,
+        items: [
+          { id: "task-1", label: "Find the revenue fields", completed: false },
+          { id: "task-2", label: "Query weekly revenue for the last 12 complete weeks", completed: false },
+          { id: "task-3", label: "Summarise the trend", completed: false },
+        ],
+      },
+      {
+        id: "omni_fx_research", sequence: 3, type: "research", status: "complete", occurredAt: stamp,
+        tool: "search_model",
+        label: "Look up revenue fields in the Sales analytics topic",
+        summary: "2 fields found matching \"revenue\"",
+        query: "revenue",
+        document: "## Field Definitions\n\nYAML representation of all available fields, grouped by view:\n```yaml\n- view_name: sales_analytics\n  label: Sales analytics\n  measures:\n    - name: sales_analytics.gross_takings\n      data_type: NUMBER\n      description: Total completed sale value including tax.\n```\nSee instructions in system prompt around field selection in topics.",
+      },
+      { id: "omni_fx_narrative", sequence: 4, type: "narrative", occurredAt: stamp, text: "I found the governed revenue measure. Querying weekly revenue now." },
+      {
+        id: "omni_fx_query", sequence: 5, type: "query", status: "complete", occurredAt: stamp,
+        topic: "Sales analytics", name: "Weekly revenue", metrics: ["sales_analytics.gross_takings"],
+        dimensions: ["sales_analytics.completed_at"],
+        timeRange: omniProvenance.timeRange,
+        lens: "Cube view: sales_analytics", view: "sales_analytics", cubesUsed: ["sales_analytics"],
+        queryYaml: "measures:\n  - sales_analytics.gross_takings\ntimeDimensions:\n  - dimension: sales_analytics.completed_at\n    granularity: week\n    dateRange: last 12 weeks",
+        rowCount: 2, executionMs: 1200, connector: "lightspeed",
+      },
+      {
+        id: "omni_fx_table", sequence: 6, type: "table", status: "complete", occurredAt: stamp,
+        caption: "Weekly revenue",
+        columns: [
+          { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+          { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+        ],
+        rows: [
+          { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
+          { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
+        ],
+        resultId: omniResultId,
+        provenance: omniProvenance,
+        presentation: "evidence",
+      },
+      {
+        id: "omni_fx_tasks_done", sequence: 7, type: "tasks", status: "complete", occurredAt: stamp,
+        items: [
+          { id: "task-1", label: "Find the revenue fields", completed: true },
+          { id: "task-2", label: "Query weekly revenue for the last 12 complete weeks", completed: true },
+          { id: "task-3", label: "Summarise the trend", completed: true },
+        ],
+      },
+      {
+        id: "omni_fx_answer", sequence: 8, type: "answer", status: "complete", occurredAt: stamp,
+        state: "Verified",
+        text: "Revenue held steady across the last 12 complete weeks, finishing at $8,379.02 in the latest week.",
+        provenance: omniProvenance,
+        followUps: ["How does this compare to last year?"],
+        presentedResultIds: [omniResultId],
+        claims: [],
+      },
+    ];
+    const body = omniEvents
+      .map((event) => `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`)
+      .join("");
+    const requestedPreferences = requestPayload.preferences && typeof requestPayload.preferences === "object"
+      ? requestPayload.preferences as Record<string, unknown>
+      : {};
+    await route.fulfill({
+      status: 200,
+      body,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Albert-Runtime": "omni",
+        "X-Albert-Model": typeof requestedPreferences.model === "string" ? requestedPreferences.model : "gpt-5.6-luna",
+        "X-Albert-Conversation-Id": "01J00000000000000000000041",
+        "X-Albert-Turn-Id": "01J00000000000000000000042",
       },
     }).catch(() => undefined);
   });

@@ -4,11 +4,12 @@ import { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import styles from "../dash.module.css";
 
-export type ConversationRuntimeTab = "albert" | "codex" | "compare";
+export type ConversationRuntimeTab = "albert" | "codex" | "omni" | "compare";
 
 const options = [
   { value: "albert", label: "Albert" },
   { value: "codex", label: "Codex" },
+  { value: "omni", label: "Omni" },
   { value: "compare", label: "Compare" },
 ] as const;
 

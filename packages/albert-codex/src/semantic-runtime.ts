@@ -154,7 +154,7 @@ function toTraceCell(value: unknown): TraceCell {
   return JSON.stringify(value).slice(0, 400);
 }
 
-function timeRangeFromQuery(query: CubeQuery, timezone: string): TraceTimeRange {
+export function timeRangeFromQuery(query: CubeQuery, timezone: string): TraceTimeRange {
   const dimension = query.timeDimensions?.[0];
   if (dimension?.compareDateRange?.length) {
     return {
@@ -178,7 +178,7 @@ function timeRangeFromQuery(query: CubeQuery, timezone: string): TraceTimeRange 
   return { label: "All recorded history", start: "unknown", end: "unknown", timezone };
 }
 
-function scopedDescriptors(
+export function scopedDescriptors(
   descriptors: readonly CatalogueViewDescriptor[],
   activeConnectors: readonly string[],
 ): readonly CatalogueViewDescriptor[] {
@@ -210,7 +210,7 @@ export function preferredCodexConnectors(question: string): readonly string[] {
   return [];
 }
 
-function filteredCatalogue(
+export function filteredCatalogue(
   catalogue: CubeCatalogue,
   descriptors: readonly CatalogueViewDescriptor[],
 ): CubeCatalogue {
@@ -238,7 +238,7 @@ function memberDefinition(
   };
 }
 
-function provenanceForQuery(input: Readonly<{
+export function provenanceForQuery(input: Readonly<{
   query: CubeQuery;
   view: string;
   connector: string;

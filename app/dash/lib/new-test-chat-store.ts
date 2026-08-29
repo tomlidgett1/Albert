@@ -2,7 +2,7 @@ import type { TraceEvent } from "@/packages/shared/src";
 
 const traceEventTypes = new Set([
   "progress", "narrative", "plan", "query", "table", "chart",
-  "validation", "answer", "clarification", "error",
+  "validation", "answer", "clarification", "tasks", "research", "error",
 ]);
 
 export type NewTestTurn = Readonly<{

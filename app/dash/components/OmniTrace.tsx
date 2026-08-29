@@ -1,0 +1,492 @@
+"use client";
+
+import { lazy, Suspense, useMemo, useState } from "react";
+import type {
+  TraceChartEvent,
+  TraceEvent,
+  TraceQueryEvent,
+  TraceResearchEvent,
+  TraceTableEvent,
+  TraceTasksEvent,
+} from "../../../packages/shared/src/agent-runtime";
+import { formatTraceCell } from "./analytical-values";
+import { renderAssistantMarkdown } from "../lib/render-assistant-markdown";
+import styles from "./omni-trace.module.css";
+
+const ResultChart = lazy(() => import("./AnalyticalTrace").then((module) => ({
+  default: module.ResultChart,
+})));
+
+type OmniResearchEntry =
+  | Readonly<{ kind: "step"; id: string; event: TraceResearchEvent }>
+  | Readonly<{ kind: "prose"; id: string; text: string }>;
+
+type OmniBlock =
+  | Readonly<{ kind: "tasks"; id: string; event: TraceTasksEvent }>
+  | Readonly<{ kind: "prose"; id: string; text: string; warning?: boolean }>
+  | { kind: "research"; id: string; entries: OmniResearchEntry[]; stepCount: number }
+  | { kind: "query"; id: string; query: TraceQueryEvent; table?: TraceTableEvent }
+  | Readonly<{ kind: "chart"; id: string; chart: TraceChartEvent; table?: TraceTableEvent }>;
+
+type OmniModel = Readonly<{
+  blocks: readonly OmniBlock[];
+  answer?: Readonly<{ text: string; followUps: readonly string[] }>;
+  clarification?: Readonly<{ question: string; options: readonly Readonly<{ id: string; label: string }>[] }>;
+  error?: string;
+  thinkingLabel: string;
+}>;
+
+const NUMERIC_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
+
+function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
+  const blocks: OmniBlock[] = [];
+  const tablesByResultId = new Map<string, TraceTableEvent>();
+  let tasksBlock: { kind: "tasks"; id: string; event: TraceTasksEvent } | undefined;
+  let answer: OmniModel["answer"];
+  let clarification: OmniModel["clarification"];
+  let error: string | undefined;
+  let runningLabel = "Thinking";
+
+  const openResearch = (): Extract<OmniBlock, { kind: "research" }> => {
+    const last = blocks.at(-1);
+    if (last && last.kind === "research") return last;
+    const block: Extract<OmniBlock, { kind: "research" }> = {
+      kind: "research",
+      id: `research-${blocks.length}`,
+      entries: [],
+      stepCount: 0,
+    };
+    blocks.push(block);
+    return block;
+  };
+
+  for (const event of events) {
+    switch (event.type) {
+      case "tasks": {
+        if (tasksBlock) {
+          tasksBlock.event = event;
+        } else {
+          tasksBlock = { kind: "tasks", id: event.id, event };
+          blocks.push(tasksBlock as OmniBlock);
+        }
+        break;
+      }
+      case "research": {
+        const group = openResearch();
+        group.entries.push({ kind: "step", id: event.id, event });
+        group.stepCount += 1;
+        break;
+      }
+      case "narrative": {
+        const text = event.text.trim();
+        if (!text) break;
+        const last = blocks.at(-1);
+        if (last && last.kind === "research" && event.purpose === undefined) {
+          last.entries.push({ kind: "prose", id: event.id, text });
+        } else {
+          blocks.push({ kind: "prose", id: event.id, text });
+        }
+        break;
+      }
+      case "query": {
+        blocks.push({ kind: "query", id: event.id, query: event });
+        break;
+      }
+      case "table": {
+        tablesByResultId.set(event.resultId, event);
+        const pending = [...blocks].reverse().find((block): block is Extract<OmniBlock, { kind: "query" }> => (
+          block.kind === "query" && block.table === undefined
+        ));
+        const queryName = pending?.query.name ?? pending?.query.topic;
+        if (pending && (event.caption === queryName || event.caption === pending.query.name)) {
+          pending.table = event;
+        }
+        break;
+      }
+      case "chart": {
+        blocks.push({
+          kind: "chart",
+          id: event.id,
+          chart: event,
+          table: tablesByResultId.get(event.dataRef),
+        });
+        break;
+      }
+      case "progress": {
+        if (event.status === "running") {
+          runningLabel = event.label;
+        } else if (event.status === "warning") {
+          blocks.push({
+            kind: "prose",
+            id: event.id,
+            text: event.detail ? `${event.label} — ${event.detail}` : event.label,
+            warning: true,
+          });
+        }
+        break;
+      }
+      case "answer": {
+        answer = { text: event.text, followUps: event.followUps };
+        break;
+      }
+      case "clarification": {
+        clarification = { question: event.question, options: event.options };
+        break;
+      }
+      case "error": {
+        error = event.message;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return Object.freeze({
+    blocks,
+    ...(answer ? { answer } : {}),
+    ...(clarification ? { clarification } : {}),
+    ...(error ? { error } : {}),
+    thinkingLabel: runningLabel,
+  });
+}
+
+function Chevron({ open, className }: { open: boolean; className: string }) {
+  return (
+    <svg className={className} data-open={open} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function CheckGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m5 12.5 4.5 4.5L19 7" />
+    </svg>
+  );
+}
+
+function TasksCard({ event }: { event: TraceTasksEvent }) {
+  const done = event.items.filter((item) => item.completed).length;
+  return (
+    <section className={styles.tasksCard} aria-label="Tasks">
+      <div className={styles.tasksHeader}>{`Tasks (${done} of ${event.items.length})`}</div>
+      <div className={styles.tasksList}>
+        {event.items.map((item) => (
+          <div className={styles.taskRow} data-completed={item.completed} key={item.id}>
+            <span className={styles.taskCheck} data-completed={item.completed} aria-hidden="true">
+              <CheckGlyph />
+            </span>
+            <span>{item.label}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const RESEARCH_TOOL_NAMES: Readonly<Record<TraceResearchEvent["tool"], string>> = {
+  search_model: "Search model",
+  value_lookup: "Value lookup",
+  docs: "Docs",
+  current_time: "Current time",
+};
+
+function StepIcon({ tool }: { tool: TraceResearchEvent["tool"] }) {
+  if (tool === "value_lookup") {
+    return (
+      <svg className={styles.stepIcon} viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.2" />
+        <path d="m15.3 15.3 4.6 4.6" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={styles.stepIcon} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m12 3 9 4.6-9 4.6-9-4.6L12 3Z" />
+      <path d="m3.6 12.4 8.4 4.3 8.4-4.3" />
+      <path d="m3.6 16.6 8.4 4.3 8.4-4.3" />
+    </svg>
+  );
+}
+
+function ResearchStepCard({ event }: { event: TraceResearchEvent }) {
+  const [open, setOpen] = useState(false);
+  const hasBody = Boolean(event.document || event.values?.length || event.query);
+  return (
+    <div className={styles.stepCard}>
+      <button
+        className={styles.stepHeader}
+        type="button"
+        aria-expanded={open}
+        onClick={() => hasBody && setOpen((current) => !current)}
+      >
+        <Chevron open={open} className={styles.stepChevron} />
+        <StepIcon tool={event.tool} />
+        <span className={styles.stepTool}>{RESEARCH_TOOL_NAMES[event.tool]}</span>
+        <span className={styles.stepLabel}>{event.label}</span>
+        {event.summary ? <span className={styles.stepSummary}>{event.summary}</span> : null}
+      </button>
+      {hasBody ? (
+        <div className={styles.stepBody} data-open={open}>
+          <div className={styles.stepBodyInner}>
+            {event.query ? (
+              <div className={styles.stepQueryLine}>{`Search: "${event.query}"`}</div>
+            ) : null}
+            {event.values?.length ? (
+              <div className={styles.stepValues}>
+                {event.values.map((value, index) => <span key={`${value}-${index}`}>{value}</span>)}
+              </div>
+            ) : null}
+            {event.document ? (
+              <div className={styles.stepDocument}>{event.document}</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ResearchGroup({ block }: { block: Extract<OmniBlock, { kind: "research" }> }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section className={styles.researchGroup} aria-label="Research">
+      <button
+        className={styles.researchHeader}
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Chevron open={open} className={styles.researchChevron} />
+        <span>{`Research · ${block.stepCount} ${block.stepCount === 1 ? "step" : "steps"}`}</span>
+      </button>
+      <div className={styles.researchBody} data-open={open}>
+        <div className={styles.researchBodyInner}>
+          <div className={styles.researchRail}>
+            {block.entries.map((entry) => entry.kind === "step" ? (
+              <ResearchStepCard event={entry.event} key={entry.id} />
+            ) : (
+              <Prose text={entry.text} key={entry.id} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function describeChipFilter(filter: NonNullable<TraceTableEvent["provenance"]["filters"]>[number]): {
+  field: string;
+  condition: string;
+} {
+  const text = filter.text.trim();
+  if (text.toLowerCase().startsWith(filter.label.toLowerCase())) {
+    return { field: filter.label, condition: text.slice(filter.label.length).trim() };
+  }
+  return { field: filter.label, condition: text };
+}
+
+function QueryCard({ block }: { block: Extract<OmniBlock, { kind: "query" }> }) {
+  const [open, setOpen] = useState(true);
+  const { query, table } = block;
+  const title = query.name ?? query.topic;
+  const rowCount = query.rowCount ?? table?.rows.length;
+  const summary = `From ${query.topic}${rowCount !== undefined ? ` · ${rowCount} ${rowCount === 1 ? "row" : "rows"}` : ""}`;
+  const filters = table?.provenance.filters ?? [];
+  const timeLabel = query.timeRange.label;
+  const chips: Array<{ field: string; condition: string }> = [];
+  if (timeLabel && timeLabel !== "All recorded history") {
+    const timeField = table?.provenance.definitions.find((definition) => definition.kind === "time");
+    chips.push({ field: timeField?.label ?? "Date", condition: timeLabel });
+  }
+  for (const filter of filters.slice(0, 6)) chips.push(describeChipFilter(filter));
+  return (
+    <section className={styles.queryCard} aria-label={`Query: ${title}`}>
+      <button
+        className={styles.stepHeader}
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Chevron open={open} className={styles.stepChevron} />
+        <svg className={styles.stepIcon} viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="1.6" />
+          <path d="M3.5 9.5h17M9.5 9.5v10" />
+        </svg>
+        <span className={styles.stepTool}>Query</span>
+        <span className={styles.stepLabel}>{title}</span>
+        <span className={styles.stepSummary}>{summary}</span>
+      </button>
+      <div className={styles.stepBody} data-open={open}>
+        <div className={styles.stepBodyInner}>
+          {chips.length > 0 ? (
+            <div className={styles.queryChips}>
+              {chips.map((chip, index) => (
+                <span className={styles.queryChip} key={`${chip.field}-${index}`}>
+                  <span className={styles.queryChipField}>{chip.field}</span>
+                  <span>{chip.condition}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {table ? (
+            <>
+              <div className={styles.queryTableWrap}>
+                <table className={styles.queryTable}>
+                  <thead>
+                    <tr>
+                      <th aria-label="Row" />
+                      {table.columns.map((column) => (
+                        <th key={column.key} data-numeric={NUMERIC_COLUMN_TYPES.has(column.type)}>
+                          <span className={styles.queryColTopic}>{query.topic}</span>
+                          <span className={styles.queryColLabel}>{column.label}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.rows.slice(0, 50).map((row, rowIndex) => (
+                      <tr key={rowIndex}>
+                        <td className={styles.queryRowIndex}>{rowIndex + 1}</td>
+                        {table.columns.map((column) => (
+                          <td key={column.key} data-numeric={NUMERIC_COLUMN_TYPES.has(column.type)}>
+                            {formatTraceCell(row[column.key] ?? null, column, table.rowFormats?.[rowIndex])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {(rowCount ?? 0) > 50 || table.rows.length > 50 ? (
+                <div className={styles.queryFooter}>
+                  {`Showing the first ${Math.min(table.rows.length, 50)} of ${rowCount ?? table.rows.length} rows.`}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className={styles.queryFooter}>Running…</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Prose({ text, warning, onFollowUp }: {
+  text: string;
+  warning?: boolean;
+  onFollowUp?: (prompt: string) => void;
+}) {
+  const html = useMemo(() => renderAssistantMarkdown(text), [text]);
+  return (
+    <div
+      className={styles.prose}
+      style={warning ? { color: "light-dark(#92400e, #f0b04e)" } : undefined}
+      onClick={(clickEvent) => {
+        if (!onFollowUp) return;
+        const anchor = (clickEvent.target as HTMLElement).closest("a");
+        if (!anchor) return;
+        const href = anchor.getAttribute("href") ?? "";
+        const match = /[?&]ai-query=([^&]+)/u.exec(href);
+        if (!match) return;
+        clickEvent.preventDefault();
+        try {
+          onFollowUp(decodeURIComponent(match[1]!.replaceAll("+", " ")));
+        } catch {
+          onFollowUp(match[1]!);
+        }
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+export default function OmniTrace({ events, streaming = false, onFollowUp }: {
+  events: readonly TraceEvent[];
+  streaming?: boolean;
+  onFollowUp?: (prompt: string) => void;
+}) {
+  const model = useMemo(() => buildOmniModel(events), [events]);
+  const showThinking = streaming && !model.answer && !model.error && !model.clarification;
+  return (
+    <div className={styles.root}>
+      {model.blocks.map((block) => {
+        switch (block.kind) {
+          case "tasks":
+            return <TasksCard event={block.event} key={block.id} />;
+          case "prose":
+            return <Prose text={block.text} warning={block.warning} onFollowUp={onFollowUp} key={block.id} />;
+          case "research":
+            return <ResearchGroup block={block} key={block.id} />;
+          case "query":
+            return <QueryCard block={block} key={block.id} />;
+          case "chart":
+            return (
+              <div className={styles.chartCard} key={block.id}>
+                <div className={styles.chartCaption}>{block.chart.caption}</div>
+                <Suspense fallback={null}>
+                  <ResultChart event={block.chart} table={block.table} />
+                </Suspense>
+              </div>
+            );
+          default:
+            return null;
+        }
+      })}
+      {showThinking ? (
+        <div className={styles.thinking} aria-live="polite">
+          <span className={styles.thinkingDots} aria-hidden="true">
+            <span /><span /><span /><span />
+          </span>
+          <span className={styles.thinkingLabel}>
+            {model.thinkingLabel === "Thinking" ? "Thinking" : model.thinkingLabel}
+          </span>
+        </div>
+      ) : null}
+      {model.answer ? (
+        <div className={styles.answer}>
+          <Prose text={model.answer.text} onFollowUp={onFollowUp} />
+          {model.answer.followUps.length > 0 && onFollowUp ? (
+            <div className={styles.followUps}>
+              {model.answer.followUps.map((followUp) => (
+                <button
+                  className={styles.followUp}
+                  type="button"
+                  key={followUp}
+                  onClick={() => onFollowUp(followUp)}
+                >
+                  {followUp}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {model.clarification ? (
+        <div className={styles.clarification}>
+          <div className={styles.clarificationQuestion}>{model.clarification.question}</div>
+          {onFollowUp ? (
+            <div className={styles.clarificationOptions}>
+              {model.clarification.options.map((option) => (
+                <button
+                  className={styles.followUp}
+                  type="button"
+                  key={option.id}
+                  onClick={() => onFollowUp(option.label)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {model.error ? (
+        <div className={styles.error} role="alert">{model.error}</div>
+      ) : null}
+    </div>
+  );
+}

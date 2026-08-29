@@ -15,12 +15,16 @@ import {
   type CodexSemanticTurnResult,
   type CodexTraceEventInput,
 } from "../../../packages/albert-codex/src/semantic-runtime.js";
+import { omniServiceTurnSchema, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
+import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.js";
 import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
 
 const TURN_PATH = "/v1/codex/turn";
 const JOBS_PATH = "/v1/codex/jobs";
 const JOB_POLL_PATH = /^\/v1\/codex\/jobs\/([0-9A-HJKMNP-TV-Z]{26})\/poll$/u;
+const OMNI_JOBS_PATH = "/v1/omni/jobs";
+const OMNI_JOB_POLL_PATH = /^\/v1\/omni\/jobs\/([0-9A-HJKMNP-TV-Z]{26})\/poll$/u;
 const MAX_BODY_BYTES = 180 * 1024;
 const REPLAY_TTL_MS = 10 * 60_000;
 const JOB_POLL_WAIT_MS = 8_000;
@@ -40,7 +44,7 @@ type CodexBackgroundJob = {
   updatedAt: number;
   lastPolledAt: number;
   eventBytes: number;
-  result?: CodexSemanticTurnResult;
+  result?: CodexSemanticTurnResult | OmniSemanticTurnResult;
   failure?: Readonly<{ code: string; message: string }>;
 };
 
@@ -105,6 +109,32 @@ function publicFailure(error: unknown): Readonly<{ code: string; message: string
   return { code: "codex_runtime_failed", message: "The Codex analysis could not be completed safely." };
 }
 
+function omniPublicFailure(error: unknown): Readonly<{ code: string; message: string }> {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return { code: "omni_cancelled", message: "The analysis was cancelled." };
+  }
+  const message = unknownErrorMessage(error);
+  if (/cancelled/iu.test(message)) {
+    return { code: "omni_cancelled", message: "The analysis was cancelled." };
+  }
+  if (/timed out/iu.test(message)) {
+    return { code: "omni_turn_timeout", message: "The analysis ran out of time before finishing." };
+  }
+  if (/Max turns/iu.test(message)) {
+    return { code: "omni_turn_budget", message: "The analysis reached its step budget before finishing." };
+  }
+  if (/Cube|semantic|catalogue/iu.test(message)) {
+    return { code: "omni_semantic_unavailable", message: "The governed semantic layer was unavailable." };
+  }
+  if (/401|429|api key|authentication|quota/iu.test(message)) {
+    return { code: "omni_model_rejected", message: "The model request was rejected by the provider." };
+  }
+  if (/without a final answer/iu.test(message)) {
+    return { code: "omni_missing_answer", message: "The analysis finished without a final answer." };
+  }
+  return { code: "omni_runtime_failed", message: "The analysis could not be completed safely." };
+}
+
 function diagnosticFailureCode(error: unknown): string {
   // A defect in our own code is its own diagnosis; message regexes below can
   // mislabel it (a ReferenceError naming an identifier that contains "model"
@@ -140,7 +170,7 @@ export class CodexRuntimeHttpHandler {
   private activeTurns = 0;
   private readonly requestIds = new Map<string, number>();
   private readonly jobs = new Map<string, CodexBackgroundJob>();
-  private readonly waitingJobs: Array<Readonly<{ job: CodexBackgroundJob; turn: CodexServiceTurn }>> = [];
+  private readonly waitingJobs: Array<Readonly<{ job: CodexBackgroundJob; begin: () => void }>> = [];
 
   constructor(private readonly config: CodexRuntimeConfig) {
     const reaper = setInterval(() => this.reapAbandonedJobs(), 30_000);
@@ -182,10 +212,11 @@ export class CodexRuntimeHttpHandler {
         return jsonError("not_ready", 503, "The pinned Codex runtime is unavailable.");
       }
     }
-    const pollMatch = JOB_POLL_PATH.exec(url.pathname);
+    const pollMatch = JOB_POLL_PATH.exec(url.pathname) ?? OMNI_JOB_POLL_PATH.exec(url.pathname);
+    const isOmniSubmit = url.pathname === OMNI_JOBS_PATH;
     if (
       request.method !== "POST"
-      || (url.pathname !== TURN_PATH && url.pathname !== JOBS_PATH && !pollMatch)
+      || (url.pathname !== TURN_PATH && url.pathname !== JOBS_PATH && !isOmniSubmit && !pollMatch)
     ) {
       return jsonError("not_found", 404, "Not found.");
     }
@@ -211,6 +242,35 @@ export class CodexRuntimeHttpHandler {
       const cursor = isObject(payload) && Number.isInteger(payload.cursor) ? Number(payload.cursor) : -1;
       if (cursor < 0) return jsonError("invalid_request", 400, "The Codex job poll request is invalid.");
       return this.pollJob(pollMatch[1]!, cursor, request.signal);
+    }
+    if (isOmniSubmit) {
+      const omniParsed = omniServiceTurnSchema.safeParse(payload);
+      if (!omniParsed.success) return jsonError("invalid_request", 400, "The Omni turn request is invalid.");
+      if (!this.config.omniOpenAi) {
+        return jsonError("omni_unavailable", 503, "The Omni runtime is not configured on this environment.");
+      }
+      this.pruneReplayIds();
+      if (this.requestIds.has(omniParsed.data.requestId) || this.jobs.has(omniParsed.data.requestId)) {
+        if (this.jobs.has(omniParsed.data.requestId)) {
+          return Response.json({ jobId: omniParsed.data.requestId }, {
+            status: 202,
+            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+          });
+        }
+        return jsonError("replayed_request", 409, "This Omni turn request has already been used.");
+      }
+      if (
+        this.activeTurns >= this.config.maxConcurrentTurns
+        && this.waitingJobs.length >= MAX_WAITING_JOBS
+      ) {
+        return jsonError("omni_overloaded", 429, "Albert is unusually busy right now. Try again in a minute.");
+      }
+      this.requestIds.set(omniParsed.data.requestId, Date.now());
+      this.startAgentJob(omniParsed.data.requestId, (job) => this.beginOmniJob(job, omniParsed.data));
+      return Response.json({ jobId: omniParsed.data.requestId }, {
+        status: 202,
+        headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+      });
     }
     const parsed = codexServiceTurnSchema.safeParse(payload);
     if (!parsed.success) return jsonError("invalid_request", 400, "The Codex turn request is invalid.");
@@ -311,9 +371,14 @@ export class CodexRuntimeHttpHandler {
   }
 
   private startJob(turn: CodexServiceTurn): void {
+    this.startAgentJob(turn.requestId, (job) => this.beginJob(job, turn));
+  }
+
+  /** Shared job bookkeeping for both harnesses; `begin` runs the actual turn. */
+  private startAgentJob(requestId: string, begin: (job: CodexBackgroundJob) => void): void {
     const now = Date.now();
     const job: CodexBackgroundJob = {
-      id: turn.requestId,
+      id: requestId,
       events: [],
       waiters: new Set(),
       abort: new AbortController(),
@@ -324,7 +389,7 @@ export class CodexRuntimeHttpHandler {
     };
     this.jobs.set(job.id, job);
     if (this.activeTurns >= this.config.maxConcurrentTurns) {
-      this.waitingJobs.push({ job, turn });
+      this.waitingJobs.push({ job, begin: () => begin(job) });
       const ahead = this.waitingJobs.length - 1;
       this.publishJobEvent(job, {
         type: "progress",
@@ -337,7 +402,7 @@ export class CodexRuntimeHttpHandler {
       });
       return;
     }
-    this.beginJob(job, turn);
+    begin(job);
   }
 
   private publishJobEvent(job: CodexBackgroundJob, event: CodexRuntimeBufferedEvent): void {
@@ -402,6 +467,46 @@ export class CodexRuntimeHttpHandler {
     });
   }
 
+  private beginOmniJob(job: CodexBackgroundJob, turn: OmniServiceTurn): void {
+    this.activeTurns += 1;
+    const queryRecorder: AnalyticalQueryRecorder = {
+      start: async (attempt) => this.publishJobEvent(job, {
+        type: "query_audit",
+        phase: "start",
+        attempt: { ...attempt, runtime: "codex-app-server" },
+      }),
+      finish: async (outcome) => this.publishJobEvent(job, {
+        type: "query_audit",
+        phase: "finish",
+        outcome,
+      }),
+    };
+    void runOmniSemanticTurn({
+      turn,
+      cubeApiUrl: this.config.cubeApiUrl,
+      openai: this.config.omniOpenAi!,
+      signal: job.abort.signal,
+      emit: (event) => this.publishJobEvent(job, event),
+      queryRecorder,
+    }).then((result) => {
+      job.result = result;
+    }).catch((error) => {
+      const failure = omniPublicFailure(error);
+      job.failure = failure;
+      process.stdout.write(`${JSON.stringify({
+        event: "omni_job_failed",
+        code: failure.code,
+        errorClass: error instanceof Error ? error.name : "unknown",
+        ...(localDiagnosticDetail(error) ? { detail: localDiagnosticDetail(error) } : {}),
+      })}\n`);
+    }).finally(() => {
+      job.updatedAt = Date.now();
+      this.activeTurns -= 1;
+      this.notifyJob(job);
+      this.startNextWaitingJob();
+    });
+  }
+
   private startNextWaitingJob(): void {
     while (this.activeTurns < this.config.maxConcurrentTurns) {
       const next = this.waitingJobs.shift();
@@ -417,7 +522,7 @@ export class CodexRuntimeHttpHandler {
       } catch {
         continue;
       }
-      this.beginJob(next.job, next.turn);
+      next.begin();
     }
   }
 
