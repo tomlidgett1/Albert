@@ -60,6 +60,12 @@ test("Codex deterministic recipes match scalar periods and reject grouped, compa
     "How's the workshop going?",
     "What share of sales came from repeat customers?",
     "Give me every customer's email and private notes",
+    // Production misroutes 2026-08-29: analytical questions sharing one
+    // keyword with a recipe were answered by that recipe in 2-3 seconds
+    // ("Explain working capital…" → "Today's roster has 1 shift.").
+    "The workshop guys reckon they're carrying the shop. Are they right?",
+    "Explain working capital in terms of my actual business, and tell me where mine is tied up right now.",
+    "Is the workshop actually worth it?",
   ]) {
     assert.equal(matchCodexDeterministicRecipe(fixtureTurn(risky), config), undefined, risky);
   }

@@ -18,7 +18,7 @@ const PERIOD_ONLY_CLAUSE = /^(?:today|yesterday|tomorrow|this week|last week|nex
  * privacy/action decision; measured subscription evals showed that forcing
  * them through a scalar template was fast but wrong or materially incomplete.
  */
-const FAST_PATH_ANALYSIS_REQUIRED = /\b(?:why|what happened|how did .*\bgo|doing well|how(?:'s| is).*(?:going|doing)|looking like|trend(?:ed|ing)?|improv(?:e|ed|ing)|grow(?:n|ing)?|declin(?:e|ed|ing)|match(?:es|ed|ing)?|line up|compar(?:e|ed|ing|ison)|versus|vs\.?|share|percentage|concentrat(?:e|ed|ion)|best|biggest|largest|smallest|oldest|newest|most|least|across everything|real unique|what can you tell me|worth it|overstaffed)\b/iu;
+const FAST_PATH_ANALYSIS_REQUIRED = /\b(?:why|what happened|how did .*\bgo|doing well|how(?:'s| is).*(?:going|doing)|looking like|trend(?:ed|ing)?|improv(?:e|ed|ing)|grow(?:n|ing)?|declin(?:e|ed|ing)|match(?:es|ed|ing)?|line up|compar(?:e|ed|ing|ison)|versus|vs\.?|share|percentage|concentrat(?:e|ed|ion)|best|biggest|largest|smallest|oldest|newest|most|least|across everything|real unique|what can you tell me|worth it|overstaffed|explain|reckon|assess|audit|diagnose|teach|walk me through|are they right|is that right)\b/iu;
 const FAST_PATH_SENSITIVE_OR_ACTION = /\b(?:email|phone|birthday|private notes?|pregnant|injured|wealthy|likely to churn|market to|send|write back|contact everyone)\b/iu;
 const FAST_PATH_ABSOLUTE_OR_FISCAL_PERIOD = /\b(?:financial year|fytd|fy\s*\d{2,4}|\d{4}-\d{2}-\d{2}|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+\d{1,2}\s+[a-z]+|\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})\b/iu;
 const FAST_PATH_NAMED_ENTITY = /\b[A-Z][a-z]+(?:\s+&\s+|\s+)[A-Z][A-Za-z]+\b/u;
@@ -100,7 +100,7 @@ function clauseDistinctiveTokens(clause: string): readonly string[] {
         ? token.slice(0, -1)
         : token
     ))
-    .filter((token) => !PERIOD_ONLY_CLAUSE.test(token) && !/^(?:show|the|this|that|last|next|much|many|did|were|have|total|period|today|yesterday|tomorrow|week|month|year|quarter|value|average|count|number|figure|amount)$/u.test(token));
+    .filter((token) => !PERIOD_ONLY_CLAUSE.test(token) && !/^(?:show|the|this|that|last|next|much|many|did|were|have|total|period|today|yesterday|tomorrow|week|month|year|quarter|value|average|count|number|figure|amount|what|whats|how|who|whos|whose|when|where|can|could|would|should|you|your|our|out|off|for|and|with|about|please|tell|give|know|just|quick|right|now|still|need|someone|anyone|they|them|their|there|are|was|being|been|make|made|making|get|got|its|will|other)$/u.test(token));
 }
 
 function questionCoverageCount(message: string, recipe: CertifiedQuery): number {
@@ -206,6 +206,14 @@ export function matchCodexDeterministicRecipe(
     : uniqueEligibleRecipe(turn.message, config, connectors, isDeterministicFastPathRecipe);
   if (!recipe) return undefined;
   if (hasUncoveredFastPathClause(turn.message, recipe, config, connectors)) return undefined;
+  // A recipe answers only its own question. When the ask carries several
+  // content words the winning recipe's vocabulary does not know, this is a
+  // different (usually analytical) question that happens to share a keyword —
+  // the production battery saw "explain working capital…" answered by the
+  // roster recipe as "Today's roster has 1 shift". Fail open to the runtime.
+  const covered = recipeCoverageTokens(recipe);
+  const uncovered = clauseDistinctiveTokens(turn.message).filter((token) => !covered.has(token));
+  if (uncovered.length >= 3) return undefined;
 
   const period = extractRecipePeriod(turn.message);
   // Never silently substitute a recipe's default period. Explicitly
