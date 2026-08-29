@@ -17,6 +17,12 @@ const TARGET_AMOUNT = /(?:\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?\b|\b\d[\d,]*(?:\.\d
 const TARGET_GOAL_VERB = /\b(?:save|savings?|cut(?:ting)?|trim|reduce|reduc(?:e|ing|tion)|shave|free\s+up|find|unlock|claw\s+back|recover|make|earn|add|extra|additional|increase|grow|boost|lift|bring\s+in|generate|get\s+(?:it|that|[a-z\s]{0,24})\s*(?:under|below|down\s+to)|keep\s+[a-z\s]{0,24}\s*(?:under|below)|under|below|target(?:ing)?)\b/iu;
 const FRAMEWORK_QUESTION = /\b(?:how\s+(?:should|do|would)\s+(?:i|we)\s+(?:best\s+)?(?:think\s+about|approach|price|structure|evaluate|reason\s+about)|what(?:'s|\s+is)\s+a\s+(?:sensible|good|healthy)\s+(?:way|target|benchmark)|what\s+(?:kpis?|metrics)\s+should|frameworks?\s+appl)/iu;
 const PROFITABILITY_REVIEW = /\b(?:how\s+(?:can|could|should)\s+(?:i|we).*(?:improve|increase|grow|lift).*(?:profit|profitability)|profitability\s+(?:review|drivers?|improvement)|what.*(?:driv|improv).*(?:profit|profitability))\b/iu;
+// A cause-of-change ask wants the concrete driver named, not decomposed
+// averages: "why is this week so good", "what drove the jump", "why were
+// sales weaker in June". The production failure this brief exists for
+// answered a one-expensive-bike week with basket arithmetic and told the
+// owner to go read the tickets themselves.
+const CAUSE_OF_CHANGE = /\b(?:why\s+(?:is|are|was|were|did|does|has|have)\b.*\b(?:good|great|strong|well|bad|weak|quiet|slow|busy|up|down|high|low|better|worse|spike|jump|surge|drop|fall|fell|rose|grew|tracking)|what(?:'s| is| was| actually)?\s+(?:driv(?:ing|es|ed)|caused|behind|explains?)\b|what\s+drove\b)/iu;
 
 function connectorFamily(value: string): "lightspeed" | "deputy" | string {
   const normalized = value.toLowerCase().replaceAll("_", "-");
@@ -82,7 +88,9 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
   const frameworkQuestion = !employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && FRAMEWORK_QUESTION.test(input.message);
   const profitabilityReview = !employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion
     && PROFITABILITY_REVIEW.test(input.message);
-  if (!employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion && !profitabilityReview && !input.includeGeneric) return undefined;
+  const causeOfChange = !employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion
+    && !profitabilityReview && CAUSE_OF_CHANGE.test(input.message);
+  if (!employeePerformance && !testableOpportunity && !targetGoal && !decisionModel && !frameworkQuestion && !profitabilityReview && !causeOfChange && !input.includeGeneric) return undefined;
   const active = new Set((input.activeConnectors ?? []).map(connectorFamily));
   const hasDeputy = active.has("deputy");
   const latestByConnector = new Map<string, string>();
@@ -206,6 +214,29 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
       ] : []),
     ]),
     requiredCalculations: Object.freeze(["profit_bridge", "ranked_opportunity_sizes"]),
+    commonPeriodEnd: null,
+  } satisfies Omit<AnalyticalBrief, "digest">) : causeOfChange ? Object.freeze({
+    id: "cause_of_change_v1",
+    version: 1,
+    ownerGoal: "Name the concrete driver behind the change the owner is asking about, at the grain they would recognise on a receipt.",
+    answerMustCover: Object.freeze([
+      "Locate the movement precisely first: which day(s), segment or channel concentrate the change, with the concentration quantified as a derived share of the total change.",
+      ...(active.has("lightspeed") ? [
+        "Name the driver at item grain from the product evidence (specific products or services by name with their dollar contribution). A category label or a basket-arithmetic decomposition alone does not satisfy this; query the item grain if no returned result carries it.",
+      ] : [
+        "Name the driver at the finest grain the connected sources support, with its dollar contribution.",
+      ]),
+      "Quantify how much of the total change the named drivers explain, as a derived figure.",
+      "Separate volume from price/basket effects with derived comparisons, after the driver is named — never instead of naming it.",
+      "Present the driver rows and the period comparison as tables.",
+    ]),
+    requiredViews: Object.freeze([
+      ...(active.has("lightspeed") ? [
+        Object.freeze({ view: "sales_analytics", reason: "when and how much the movement concentrated" }),
+        Object.freeze({ view: "product_sales_analytics", reason: "the named item-level driver of the change" }),
+      ] : []),
+    ]),
+    requiredCalculations: Object.freeze(["driver_contribution_share"]),
     commonPeriodEnd: null,
   } satisfies Omit<AnalyticalBrief, "digest">) : Object.freeze({
     id: "general_analysis_v1",
