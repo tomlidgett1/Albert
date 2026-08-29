@@ -208,6 +208,28 @@ export function bindCodexPlanEvidence(
   return Object.freeze({ ...next, steps: normalizeOpenStep(next.steps, nextOpen) });
 }
 
+/**
+ * A saturated evidence step (its governed-result budget is full) used to
+ * bounce the next query back to the model with advance-your-plan guidance —
+ * a full model round-trip per bounce, 80 of them in one production battery.
+ * When a later evidence step is waiting, the host advances the plan itself:
+ * the saturated step completes with its evidence intact (the durable trace
+ * contract forbids removing any) and the next step activates, so the query
+ * proceeds and binds there. With no waiting step the caller keeps rejecting,
+ * which is what forces composition at the end of a plan.
+ */
+export function advanceSaturatedCodexPlanStep(state: CodexVisiblePlanState): CodexVisiblePlanState {
+  const activeIndex = state.steps.findIndex((step) => step.kind === "evidence" && step.status === "active");
+  const nextPending = state.steps.findIndex((step) => step.kind === "evidence" && step.status === "pending");
+  if (activeIndex < 0 || nextPending < 0) return state;
+  const steps = state.steps.map((step, index): TracePlanStep => (
+    index === activeIndex ? { ...step, status: "done" }
+      : index === nextPending ? { ...step, status: "active" }
+        : step
+  ));
+  return Object.freeze({ ...state, steps: freezeSteps(steps) });
+}
+
 export function settleCodexPlan(
   state: CodexVisiblePlanState,
   answerState: AnswerState,

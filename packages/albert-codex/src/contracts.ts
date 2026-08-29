@@ -241,7 +241,10 @@ export const codexCubeQuerySchema: z.ZodType<CubeQuery> = z.object({
     z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u),
     z.enum(["asc", "desc"]),
   ).refine((value) => Object.keys(value).length <= 8, "At most eight order keys are allowed.").optional(),
-  limit: z.number().int().min(1).max(500).optional(),
+  // Models regularly ask for more rows than the governed ceiling (12 rejected
+  // queries in one production battery); a clamp keeps the query productive
+  // where a rejection cost a full model round-trip.
+  limit: z.number().int().min(1).transform((value) => Math.min(value, 500)).optional(),
   offset: z.number().int().min(0).max(10_000).optional(),
   timezone: z.string().trim().min(1).max(80).optional(),
 }).strict().refine((query) => (

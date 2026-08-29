@@ -174,3 +174,23 @@ test("evidence-bound Codex plan snapshots satisfy the shared ordered trace contr
   ];
   assert.doesNotThrow(() => assertOrderedSanitizedTrace(events));
 });
+
+test("a saturated evidence step advances to the waiting step without touching evidence", async () => {
+  const { advanceSaturatedCodexPlanStep } = await import("../../packages/albert-codex/src/plan-runtime.ts");
+  let plan = applyCodexNativePlan(undefined, "turn/plan/updated", nativePlan([
+    "inProgress", "pending", "pending",
+  ]))!;
+  plan = bindCodexPlanEvidence(plan, firstResultId);
+  plan = bindCodexPlanEvidence(plan, secondResultId);
+  const advanced = advanceSaturatedCodexPlanStep(plan);
+  assert.equal(advanced.steps[0]?.status, "done");
+  assert.equal(advanced.steps[1]?.status, "active");
+  assert.deepEqual([...advanced.steps[0]!.evidenceResultIds], [firstResultId, secondResultId]);
+  // No waiting evidence step: the state is unchanged so the caller keeps
+  // rejecting, which is what forces composition at the end of a plan.
+  const exhausted = advanceSaturatedCodexPlanStep(advanced.steps[1] ? {
+    ...advanced,
+    steps: advanced.steps.map((step, index) => (index === 1 ? { ...step, status: "done" as const } : step)),
+  } : advanced);
+  assert.equal(exhausted.steps.filter((step) => step.status === "active").length, 0);
+});

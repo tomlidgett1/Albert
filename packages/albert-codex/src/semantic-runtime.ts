@@ -75,6 +75,7 @@ import { assertCubeBearerScope, CubeBearerClient } from "./cube-bearer-client.js
 import {
   applyCodexNativePlan,
   bindCodexPlanEvidence,
+  advanceSaturatedCodexPlanStep,
   codexPlanStepsEqual,
   createCodexFallbackPlan,
   settleCodexPlan,
@@ -3651,15 +3652,23 @@ export async function runCodexSemanticTurn(
       const nextPending = codexPlanState?.steps.find((step) => (
         step.kind === "evidence" && step.status === "pending"
       ));
-      await recordRejectedQuery("codex_plan_step_saturated", "The active evidence plan step already has its maximum governed results.");
-      return {
-        success: false,
-        text: JSON.stringify({
-          ok: false,
-          error: "plan_step_saturated",
-          guidance: `The active plan step already has ${activeEvidenceStep.evidenceResultIds.length} governed results. Mark “${activeEvidenceStep.label}” done and ${nextPending ? `advance “${nextPending.label}” to active` : "move to synthesis"} before another query. Reuse or derive from the existing cells; do not attach another optional surface to this step.`,
-        }),
-      };
+      if (nextPending) {
+        // The host advances the plan itself instead of bouncing the query —
+        // each bounce cost a model round-trip (80 in one production battery).
+        // The saturated step completes with its evidence intact; the query
+        // proceeds and binds to the newly active step.
+        await transitionCodexPlan((current) => current ? advanceSaturatedCodexPlanStep(current) : current);
+      } else {
+        await recordRejectedQuery("codex_plan_step_saturated", "The active evidence plan step already has its maximum governed results.");
+        return {
+          success: false,
+          text: JSON.stringify({
+            ok: false,
+            error: "plan_step_saturated",
+            guidance: `The active plan step already has ${activeEvidenceStep.evidenceResultIds.length} governed results and no later evidence step is waiting. Move to synthesis: reuse or derive from the existing cells; do not attach another optional surface to this step.`,
+          }),
+        };
+      }
     }
     // Unbounded investigation is the top latency and padding driver measured
     // in evals (turns reaching 26-40 queries). The budget is generous for a
