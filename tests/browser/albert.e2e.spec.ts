@@ -1164,4 +1164,7 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   const payload = capture.omniConversationPayloads[0] as Record<string, unknown>;
   expect(payload.message).toBe("Show me revenue by week for the last 12 complete weeks.");
   expect((payload.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
+
+  // A full-turn visual artifact for review, kept outside version control.
+  await page.screenshot({ path: ".playwright/omni-harness-turn.png", fullPage: true });
 });
