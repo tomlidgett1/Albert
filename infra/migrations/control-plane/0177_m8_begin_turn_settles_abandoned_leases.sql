@@ -9,6 +9,8 @@
 -- conversation advisory lock before enforcing the single-live-turn guard.
 -- The guard still refuses while a lease is genuinely live.
 
+BEGIN;
+
 CREATE OR REPLACE FUNCTION public.begin_albert_turn_core_v1(
   p_conversation_id text,
   p_turn_id text,
@@ -237,3 +239,4 @@ BEGIN
 END;
 $$;
 
+COMMIT;

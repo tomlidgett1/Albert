@@ -34,6 +34,38 @@ function stableDigest(value: Omit<AnalyticalBrief, "digest">): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 }
 
+const FACET_INTERROGATIVE = /^(?:what|whats|how|which|who|whos|why|where|when|whether|is|are|do|does|did|can|could|should|would|will|was|were|am\s+i)\b/iu;
+const FACET_IMPERATIVE = /^(?:tell|show|give|compare|rank|explain|find|work\s+out|estimate|put|break|list|name|walk|calculate|quantify|identify|chart|design|build|recommend|pick|take|order|include|state|prove|check|test|run|redo|lock|collapse|decompose|hunt|line\s+up|use|teach|apply|reconcile|flag|judge)\b/iu;
+
+/**
+ * The owner's own coordinated sub-questions, extracted deterministically.
+ * "…what would trimming ten hours save per month, and what the risk is?"
+ * is two asks; the measured top failure mode on hard multi-part questions
+ * (51 of 100 turns in the 2026-08-29 battery) was answering only one of
+ * them. Enumerating the facets in answerMustCover turns the sufficiency
+ * reviewer's abstract "answer every sub-question" into a concrete checklist.
+ */
+export function explicitSubQuestions(message: string): readonly string[] {
+  const sentences = message.split(/(?<=[.?!])\s+/u).map((part) => part.trim()).filter(Boolean);
+  const facets: string[] = [];
+  for (const sentence of sentences) {
+    const clauses = sentence.split(
+      /(?:[,;—–]\s*|\s)\band\b\s+(?=(?:what|whats|how|which|who|whos|why|where|when|whether|is|are|does|did|tell|show|give|name|state|how'?s)\b)|[—–:]\s*(?=(?:what|whats|how|which|who|whos|why|whether)\b)/iu,
+    );
+    for (const clause of clauses) {
+      const cleaned = clause.trim()
+        .replace(/^[-–—,;\s]+/u, "")
+        .replace(/^(?:now|then|also|next|please|first|finally|so|ok|okay)[,\s]+/iu, "")
+        .replace(/[.!]+$/u, "");
+      if (cleaned.length < 12) continue;
+      if (FACET_INTERROGATIVE.test(cleaned) || FACET_IMPERATIVE.test(cleaned) || cleaned.endsWith("?")) {
+        facets.push(cleaned.slice(0, 220));
+      }
+    }
+  }
+  return Object.freeze([...new Set(facets)].slice(0, 4));
+}
+
 export function buildSharedAnalyticalBrief(input: Readonly<{
   message: string;
   activeConnectors?: readonly string[];
@@ -188,5 +220,19 @@ export function buildSharedAnalyticalBrief(input: Readonly<{
     requiredCalculations: Object.freeze([]),
     commonPeriodEnd: null,
   } satisfies Omit<AnalyticalBrief, "digest">);
-  return Object.freeze({ ...brief, digest: stableDigest(brief) });
+  // A multi-part question gets its own facets enumerated as concrete
+  // requirements, whatever brief type it routed to: dropped facets were the
+  // top judged failure on hard questions, and the reviewer can only check a
+  // list it can see.
+  const facets = explicitSubQuestions(input.message);
+  const finalBrief = facets.length >= 2
+    ? Object.freeze({
+        ...brief,
+        answerMustCover: Object.freeze([
+          ...facets.map((facet) => `Answer the owner's explicit sub-question: "${facet}"`),
+          ...brief.answerMustCover,
+        ]),
+      })
+    : brief;
+  return Object.freeze({ ...finalBrief, digest: stableDigest(finalBrief) });
 }
