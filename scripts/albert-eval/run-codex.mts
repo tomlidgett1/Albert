@@ -48,6 +48,7 @@ import {
 } from "../../services/swarm/src/super-agent.js";
 import { CODEX_300_QUESTIONS } from "./questions-codex-300.js";
 import { CODEX_QUESTIONS } from "./questions-codex-bikeshop.js";
+import { CODEX_HARD100_QUESTIONS } from "./questions-codex-hard100.js";
 import type { EvalQuestion } from "./questions.js";
 import { subscriptionAuthentication } from "./subscription-auth.js";
 import {
@@ -83,7 +84,7 @@ type Args = {
   serviceUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
-  corpus: "codex56" | "subscription300";
+  corpus: "codex56" | "subscription300" | "hard100";
   authMode: "api" | "chatgpt";
   transport: "service" | "in-process";
   workerStaggerMs: number;
@@ -131,8 +132,8 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--sol-planner") args.solPlanner = true;
     else if (a === "--pro") args.proMode = true;
   }
-  if (args.corpus !== "codex56" && args.corpus !== "subscription300") {
-    throw new Error("--corpus must be codex56 or subscription300");
+  if (args.corpus !== "codex56" && args.corpus !== "subscription300" && args.corpus !== "hard100") {
+    throw new Error("--corpus must be codex56, subscription300 or hard100");
   }
   if (args.authMode !== "api" && args.authMode !== "chatgpt") {
     throw new Error("--auth must be api or chatgpt");
@@ -292,7 +293,9 @@ engineVersion = `codex-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${pro
 
 const corpus: readonly EvalQuestion[] = args.corpus === "subscription300"
   ? CODEX_300_QUESTIONS
-  : CODEX_QUESTIONS;
+  : args.corpus === "hard100"
+    ? CODEX_HARD100_QUESTIONS
+    : CODEX_QUESTIONS;
 const allSuperAgentQuestions: EvalQuestion[] | null = args.superAgentQuestion
   ? prepareSuperAgentPasses(
       superAgentPlan({ timezone: "Australia/Melbourne" }),

@@ -188,11 +188,20 @@ function parseNumberWords(value: string): number | null {
  * stored "31-60 days" as "31–60 days" — same label, different dash. Grounding
  * must compare content, not glyph choice.
  */
+const comparableLabelCache = new Map<string, string>();
 function comparableLabelText(value: string): string {
-  return value
+  // Grounding scans compare every narrative token against every governed
+  // label; normalizing the same labels repeatedly measured as an event-loop
+  // stall in production (health checks timed out during compose phases).
+  const cached = comparableLabelCache.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = value
     .toLocaleLowerCase("en-AU")
     .replace(/[‐-―−]/gu, "-")
     .replace(/\s+/gu, " ");
+  if (comparableLabelCache.size >= 20_000) comparableLabelCache.clear();
+  comparableLabelCache.set(value, normalized);
+  return normalized;
 }
 
 function copiedSourceLabel(
@@ -280,6 +289,23 @@ function dateCellComponents(value: TraceCell): readonly number[] {
   if (!match) return [];
   const [, year, month, day] = match;
   return [Number(year), Number(month), Number(day)];
+}
+
+/**
+ * Streaming validators (commentary, reasoning summaries, key insights) ground
+ * every event against the same accumulated result rows. Re-scanning each
+ * result's cells per event blocked the event loop for seconds on production;
+ * result row arrays are frozen once created, so their extraction is cacheable.
+ */
+const rowsEvidenceCache = new WeakMap<object, GroundingEvidence>();
+export function cachedGroundingEvidenceFromRows(
+  rows: readonly Readonly<Record<string, TraceCell>>[],
+): GroundingEvidence {
+  const cached = rowsEvidenceCache.get(rows);
+  if (cached) return cached;
+  const evidence = groundingEvidenceFromRows(rows);
+  rowsEvidenceCache.set(rows, evidence);
+  return evidence;
 }
 
 export function groundingEvidenceFromRows(
@@ -514,7 +540,7 @@ export function redactUngroundedProse(
   return dropEmptyTables(kept).join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
-function findUngroundedNumbersWithEvidence(
+export function findUngroundedNumbersWithEvidence(
   narrative: string,
   cellValues: readonly number[],
   copiedLabels: readonly string[],

@@ -46,14 +46,22 @@ kill_timeout = 30
     interval = "30s"
     method = "GET"
     path = "/livez"
-    timeout = "3s"
+    # 3s tripped during heavy compose phases: an event-loop stall marked the
+    # machine unhealthy and Fly's proxy cut ALL routing (turn submissions and
+    # job polls), killing healthy in-flight turns. Liveness here means "will
+    # recover", not "instantly responsive" — keep it lenient.
+    timeout = "10s"
 
 [[restart]]
   policy = "always"
   processes = ["app"]
 
 [[vm]]
-  cpu_kind = "shared"
+  # Shared CPUs starved the event loop under ~4 concurrent max-effort turns
+  # (2026-08-29): health checks flapped and Fly's proxy refused routing,
+  # cascading into turn failures. Dedicated cores hold the health loop and
+  # SSE/poll handlers responsive while codex children and validation run.
+  cpu_kind = "performance"
   cpus = 2
   memory = "4gb"
   processes = ["app"]

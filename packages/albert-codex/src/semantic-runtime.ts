@@ -6,7 +6,7 @@ import {
   containsComparativeClaim,
   validateEvidenceClaims,
 } from "../../../services/conversation/src/claims.js";
-import { findUngroundedNumbers, ownerStatedGroundingValues, redactUngroundedProse } from "../../../services/conversation/src/grounding.js";
+import { cachedGroundingEvidenceFromRows, findUngroundedNumbers, findUngroundedNumbersWithEvidence, ownerStatedGroundingValues, redactUngroundedProse } from "../../../services/conversation/src/grounding.js";
 import type { GovernedResult } from "../../agent/src/v3-contracts.js";
 import {
   hydrateViewSchemas,
@@ -2482,6 +2482,47 @@ function periodGroundingEvidence(
   return { values: [...values], labels: [...labels] };
 }
 
+type StreamGroundingEvidence = Readonly<{
+  values: readonly number[];
+  labels: readonly string[];
+  rowCount: number;
+}>;
+
+/**
+ * Streaming gates (commentary, reasoning summaries, key insights) fire dozens
+ * of times per turn against the same accumulating evidence list. Re-scanning
+ * every governed cell per event blocked the Node event loop for seconds in
+ * production — long enough for Fly health checks to fail and the proxy to cut
+ * live turns. Per-result extraction is cached (results are immutable) and the
+ * combined pool is rebuilt only when a new result lands.
+ */
+const combinedEvidenceCache = new WeakMap<object, { resultCount: number; evidence: StreamGroundingEvidence }>();
+function streamGroundingEvidence(
+  results: readonly CodexEvidenceResult[],
+): StreamGroundingEvidence {
+  const cached = combinedEvidenceCache.get(results);
+  if (cached && cached.resultCount === results.length) return cached.evidence;
+  const values: number[] = [];
+  const labels: string[] = [];
+  let rowCount = 0;
+  for (const result of results) {
+    const rowEvidence = cachedGroundingEvidenceFromRows(result.rows);
+    values.push(...rowEvidence.values);
+    labels.push(...rowEvidence.labels);
+    rowCount += result.rows.length;
+  }
+  const period = periodGroundingEvidence(results);
+  values.push(...period.values);
+  labels.push(...period.labels);
+  const evidence: StreamGroundingEvidence = Object.freeze({
+    values: Object.freeze(values),
+    labels: Object.freeze(labels),
+    rowCount,
+  });
+  combinedEvidenceCache.set(results, { resultCount: results.length, evidence });
+  return evidence;
+}
+
 /**
  * Sentences that explicitly attribute a figure to general industry knowledge
  * rather than the owner's data ("as a general industry rule of thumb, …") may
@@ -2523,9 +2564,8 @@ export function gatedCodexCommentary(
   const cleaned = sanitizeTraceText(text, 280);
   if (cleaned.length < 12 || cleaned.length > 280) return null;
   if (COMMENTARY_INTERNAL_SMELL.test(cleaned)) return null;
-  const allRows = evidence.flatMap((result) => result.rows);
-  const periodEvidence = periodGroundingEvidence(evidence);
-  if (findUngroundedNumbers(cleaned, allRows, periodEvidence.values, periodEvidence.labels).length > 0) {
+  const pooled = streamGroundingEvidence(evidence);
+  if (findUngroundedNumbersWithEvidence(cleaned, pooled.values, pooled.labels, pooled.rowCount).length > 0) {
     return null;
   }
   return formatCodexAnswerText(cleaned, evidence);
@@ -2544,19 +2584,18 @@ export function gatedCodexReasoningSummary(
 ): string | null {
   const cleaned = sanitizeTraceText(text, 1_400);
   if (cleaned.length < 12) return null;
-  const allRows = evidence.flatMap((result) => result.rows);
-  const periodEvidence = periodGroundingEvidence(evidence);
+  const pooled = streamGroundingEvidence(evidence);
   const sentences = cleaned
     .split(/(?<=[.!?])\s+/u)
     .map((sentence) => sentence.trim())
     .filter((sentence) => (
       sentence.length >= 8
       && !REASONING_SUMMARY_INTERNAL_SMELL.test(sentence)
-      && findUngroundedNumbers(
+      && findUngroundedNumbersWithEvidence(
         sentence,
-        allRows,
-        periodEvidence.values,
-        periodEvidence.labels,
+        pooled.values,
+        pooled.labels,
+        pooled.rowCount,
       ).length === 0
     ))
     .slice(0, 6);
@@ -2576,9 +2615,8 @@ export function filterCodexKeyInsights(
   ownerStatedValues: readonly number[] = [],
 ): readonly Readonly<{ value: string; label: string; detail?: string; sentiment?: "positive" | "negative" | "neutral" }>[] {
   if (insights.length === 0) return [];
-  const allRows = results.flatMap((result) => result.rows);
-  const periodEvidence = periodGroundingEvidence(results);
-  const groundedValues = [...periodEvidence.values, ...ownerStatedValues];
+  const pooled = streamGroundingEvidence(results);
+  const groundedValues = [...pooled.values, ...ownerStatedValues];
   const seen = new Set<string>();
   return insights
     .map((insight) => ({
@@ -2592,11 +2630,11 @@ export function filterCodexKeyInsights(
       const dedupeKey = `${insight.value}|${insight.label}`.toLowerCase();
       if (seen.has(dedupeKey)) return false;
       seen.add(dedupeKey);
-      return findUngroundedNumbers(
+      return findUngroundedNumbersWithEvidence(
         `${insight.value} ${insight.detail}`,
-        allRows,
         groundedValues,
-        periodEvidence.labels,
+        pooled.labels,
+        pooled.rowCount,
       ).length === 0;
     })
     .map((insight) => ({
