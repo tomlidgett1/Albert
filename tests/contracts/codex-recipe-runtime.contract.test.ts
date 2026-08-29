@@ -162,7 +162,7 @@ test("Codex executes a certified sales-period recipe without starting the app-se
       ((executedQuery?.timeDimensions as Array<{ dateRange?: string }> | undefined)?.[0]?.dateRange),
       "this week",
     );
-    assert.deepEqual(events.map(({ type }) => type), ["progress", "query", "table", "validation", "answer"]);
+    assert.deepEqual(events.map(({ type }) => type), ["progress", "query", "table", "progress", "validation", "answer"]);
     const answer = events.at(-1);
     assert.equal(
       answer?.text,

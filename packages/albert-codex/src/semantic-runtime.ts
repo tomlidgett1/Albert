@@ -488,7 +488,8 @@ Security and truth contract:
 - Keep investigating recoverable schema/query errors, but stop after sufficient evidence. Do not repeatedly run equivalent queries.
 - Never re-query the same members at a coarser grain or a sub-window a finer-grained result already covers: a daily series over the window IS the weekly total, the week-to-date total, and any sub-period total — compute them with one albert.derive_result groupBy/sum call. Spending the query budget re-slicing cells you already hold is the top cause of running out exactly when the decisive drill-down (for example day-by-item on a spike day) is still missing.
 - Never write that evidence "was not returned" or is unavailable when a returned result covers that surface at any grain. If a result answers at a different grain than the ideal (a week-level top-products table when the spike was one day), present that result at its own grain and say what finer grain would confirm — "the week's top item was X at $Y; a day-level item split would confirm it drove the spike" — instead of denying the evidence exists. A followUp must never offer to fetch something a returned result already shows.
-- When one day, product or customer dominates a change, naming it IS the answer. Present the top rows of the evidence that identifies it before any decomposition of averages: an owner asking "why was this week so good" wants "you sold the F26 road bike for $8,000 on Wednesday", not a basket-arithmetic lecture.
+- When one day, product or customer dominates a change, naming it IS the answer. Present the top rows of the evidence that identifies it before any decomposition of averages: an owner asking "why was this week so good" wants "you sold the F26 road bike for $8,000 on Wednesday", not a basket-arithmetic lecture. Identify the driver at ITEM grain (items_name), not just its category — "one Bikes/Road unit" is a clue, the item's name is the answer — and spend a query on the item grain when no returned result carries it.
+- A cause-of-change answer that cites period-comparison figures presents its comparison as a table: the aligned before/after metrics or the top driver rows, whichever carries the story. Prose citing four or more compared figures with no presented table is incomplete.
 - Treat an expected field that is blank, null, or empty as a coverage signal, not immediate proof that the business fact does not exist. Before concluding unavailable, search for an alternative governed surface or grain, load its schema, and test the most plausible fallback. State exactly which paths were exhausted. Continue while a materially different governed route remains.
 - Activity-driven results silently drop entities with zero activity, and those entities are often the point: staff with no recorded hours, products with stock but no sales, categories active in only one of the compared periods. For any per-entity ask, screening or ranking, check the entity roster or catalogue surface for members absent from the activity result and include them as zeroes rather than omitting them.
 - semanticMemory entries are deterministic vocabulary rules this owner taught Albert in earlier conversations (they review them in Settings). When a rule's term appears in the question, interpret the term exactly as the rule says — including its governed binding — and state that interpretation briefly in the answer ("Interpreting 'general service' as the item Service - General Service"). A rule maps words to governed members or preferences; it never supplies figures, which still come only from result cells. When a phrase matches both a category-level and an item-level member and no rule decides it, state the interpretation you chose and offer the other as a followUp.
@@ -3043,6 +3044,15 @@ async function runCodexDeterministicRecipeFastPath(
     resultId,
     provenance,
     presentation: isList && rowCount > 0 ? "answer" : "evidence",
+  });
+  // Settle the "Recognised question ·" trail step — without this the
+  // fast path's only step rendered as running forever on success.
+  await options.emit({
+    type: "progress",
+    status: "complete",
+    stage: "query",
+    label: sanitizeTraceText(`Answered from the certified ${matched.recipe.name.replace(/^recipe-/u, "").replace(/-/gu, " ")} query`, 160),
+    detail: sanitizeTraceText(`${rowCount} row${rowCount === 1 ? "" : "s"} from ${loaded.validated.view}`, 120),
   });
   await options.emit({
     type: "validation",
