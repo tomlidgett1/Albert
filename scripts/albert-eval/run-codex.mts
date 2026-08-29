@@ -358,6 +358,20 @@ console.log(`[codex-eval] run=${args.run} corpus=${args.corpus} engine=${engineV
 type Lease = { conversationId: string; turnId: string };
 
 async function mintLease(question: EvalQuestion, existingConversationId?: string): Promise<Lease> {
+  if (existingConversationId) {
+    // A killed runner strands its in-flight turn as 'running' for the whole
+    // 45-minute eval lease, and begin_albert_turn refuses the thread's next
+    // turn while one is live. The runner is the only writer for its own eval
+    // conversations, so any running row here is an orphan — settle it.
+    await db(
+      `update control_plane.conversation_turns
+          set status = 'failed',
+              result_digest = coalesce(result_digest, 'albert_eval_abandoned'),
+              completed_at = now()
+        where conversation_id = $1 and status = 'running'`,
+      [existingConversationId],
+    ).catch(() => undefined);
+  }
   const turnId = ulid();
   const runtimeProfile = {
     provider: "openai",
@@ -585,7 +599,7 @@ async function runTurnOnce(
   return { record, ...(lease ? { conversationId: lease.conversationId } : {}) };
 }
 
-const TRANSIENT = /overloaded|429|rate limit|usage limit|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up/iu;
+const TRANSIENT = /overloaded|429|rate limit|usage limit|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|another turn is already running/iu;
 
 let done = 0;
 const queue = [...selectedUnits];
