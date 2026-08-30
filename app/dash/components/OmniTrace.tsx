@@ -73,6 +73,28 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
         }
         break;
       }
+      case "plan": {
+        // Plan events (e.g. a reloaded swarm parent turn) render through the
+        // same checklist card; a done step reads as a completed task.
+        const asTasks: TraceTasksEvent = {
+          id: event.id,
+          sequence: event.sequence,
+          type: "tasks",
+          occurredAt: event.occurredAt,
+          items: event.steps.map((step) => ({
+            id: step.id,
+            label: step.label,
+            completed: step.status === "done",
+          })),
+        };
+        if (tasksBlock) {
+          tasksBlock.event = asTasks;
+        } else {
+          tasksBlock = { kind: "tasks", id: event.id, event: asTasks };
+          blocks.push(tasksBlock as OmniBlock);
+        }
+        break;
+      }
       case "research": {
         const group = openResearch();
         group.entries.push({ kind: "step", id: event.id, event });
@@ -291,7 +313,9 @@ function describeChipFilter(filter: NonNullable<TraceTableEvent["provenance"]["f
 }
 
 function QueryCard({ block }: { block: Extract<OmniBlock, { kind: "query" }> }) {
-  const [open, setOpen] = useState(true);
+  // Evidence stays a click away: the answer carries the story, so query
+  // cards open collapsed with their name, topic and row count on show.
+  const [open, setOpen] = useState(false);
   const { query, table } = block;
   const title = query.name ?? query.topic;
   const rowCount = query.rowCount ?? table?.rows.length;

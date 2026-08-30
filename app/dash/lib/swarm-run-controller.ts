@@ -26,6 +26,9 @@ export type SwarmAgentPhase =
 
 export type SwarmRunKind = "question" | "sales-deep" | "super-agent";
 
+/** Which harness executes the worker turns. */
+export type SwarmRunRuntime = "codex" | "omni";
+
 export type SwarmAgentLiveState = Readonly<{
   key: string;
   title: string;
@@ -50,6 +53,7 @@ export type SwarmRunSnapshot = Readonly<{
   question: string | null;
   periodLabel: string | null;
   kind: SwarmRunKind;
+  runtime: SwarmRunRuntime;
   startedAtMs: number | null;
   durationMs: number | null;
   elapsedMs: number;
@@ -91,6 +95,7 @@ const EMPTY_SNAPSHOT: SwarmRunSnapshot = Object.freeze({
   question: null,
   periodLabel: null,
   kind: "question",
+  runtime: "codex",
   startedAtMs: null,
   durationMs: null,
   elapsedMs: 0,
@@ -287,11 +292,17 @@ async function runAgent(
   const controller = new AbortController();
   abortByAgent.set(agent.key, controller);
   setAgent(agent.key, { phase: "starting", statusLine: "Contacting Albert…" });
+  // The run's harness decides where workers execute. Omni's request schema is
+  // strict and has no Codex-only reasoning switches, so those fields are
+  // never sent on the omni path.
+  const workerEndpoint = snapshot.runtime === "omni"
+    ? "/api/omni-conversation"
+    : "/api/codex-conversation";
   try {
     let response: Response | null = null;
     for (let attempt = 0; ; attempt += 1) {
       if (runToken !== currentRunToken) return;
-      response = await fetch("/api/codex-conversation", {
+      response = await fetch(workerEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -301,8 +312,8 @@ async function runAgent(
             reasoningEffort: preferences.reasoningEffort,
             fastMode: preferences.fastMode,
           },
-          ...(preferences.solPlanner ? { solPlanner: true } : {}),
-          ...(preferences.proMode ? { proMode: true } : {}),
+          ...(snapshot.runtime !== "omni" && preferences.solPlanner ? { solPlanner: true } : {}),
+          ...(snapshot.runtime !== "omni" && preferences.proMode ? { proMode: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -461,7 +472,7 @@ async function runAgent(
     if (retryable && attempt < 2 && runToken === currentRunToken) {
       setAgent(agent.key, {
         phase: "starting",
-        statusLine: `Codex dropped, retrying (attempt ${attempt + 2})…`,
+        statusLine: `The analysis dropped, retrying (attempt ${attempt + 2})…`,
         error: null,
       });
       await new Promise((resolve) => setTimeout(resolve, 4_000));
@@ -633,6 +644,7 @@ export function startSwarmFleet(input: Readonly<{
   preferences: SwarmFleetPreferences;
   concurrency: number;
   kind?: SwarmRunKind;
+  runtime?: SwarmRunRuntime;
   durationMs?: number;
   checkpointIntervalMs?: number;
 }>): void {
@@ -676,6 +688,7 @@ export function startSwarmFleet(input: Readonly<{
     question: input.question,
     periodLabel: input.periodLabel,
     kind: input.kind ?? "question",
+    runtime: input.runtime ?? "codex",
     startedAtMs,
     durationMs: input.durationMs ?? null,
     checkpointIntervalMs: input.checkpointIntervalMs ?? null,
@@ -770,6 +783,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
   synthesisRecovery?: "standard-after-pro" | null;
   followUps?: readonly string[];
   kind?: SwarmRunKind;
+  runtime?: SwarmRunRuntime;
   startedAt?: string;
   durationMs?: number;
   checkpointIntervalMs?: number;
@@ -799,6 +813,7 @@ export function hydrateSwarmFromRun(input: Readonly<{
     question: input.question,
     periodLabel: input.periodLabel,
     kind: input.kind ?? "question",
+    runtime: input.runtime ?? "codex",
     startedAtMs: startedAtMs !== null && Number.isFinite(startedAtMs) ? startedAtMs : null,
     durationMs: input.durationMs ?? null,
     elapsedMs: startedAtMs !== null && Number.isFinite(startedAtMs)

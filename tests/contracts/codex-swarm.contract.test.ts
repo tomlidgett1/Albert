@@ -409,10 +409,14 @@ test("routes are same-origin, rate-limited, and keyed by run id", () => {
   assert.match(route, /Cache-Control": "no-store/u);
 });
 
-test("the fleet is client-orchestrated through the real Codex pipeline", () => {
-  assert.match(controller, /fetch\("\/api\/codex-conversation"/u);
-  assert.match(controller, /preferences\.solPlanner \? \{ solPlanner: true \} : \{\}/u);
-  assert.match(controller, /preferences\.proMode \? \{ proMode: true \} : \{\}/u);
+test("the fleet is client-orchestrated through the selected harness pipeline", () => {
+  // The run's harness decides where workers execute: Codex by default, Omni
+  // for question swarms started on the Omni tab. Codex-only reasoning
+  // switches never reach the strict Omni schema.
+  assert.match(controller, /snapshot\.runtime === "omni"\s*\?\s*"\/api\/omni-conversation"\s*:\s*"\/api\/codex-conversation"/u);
+  assert.match(controller, /fetch\(workerEndpoint/u);
+  assert.match(controller, /snapshot\.runtime !== "omni" && preferences\.solPlanner \? \{ solPlanner: true \} : \{\}/u);
+  assert.match(controller, /snapshot\.runtime !== "omni" && preferences\.proMode \? \{ proMode: true \} : \{\}/u);
   assert.match(page, /solPlanner: runSolPlanner/u);
   assert.match(page, /proMode: runProMode/u);
   assert.match(route, /solPlanner: z\.boolean\(\)\.optional\(\)/u);
@@ -873,4 +877,24 @@ test("the main conversation mirrors fleet progress and per-specialist reasoning"
   assert.match(controller, /event\.purpose === "reasoning_summary"/u);
   assert.match(controller, /reasoningSummary: event\.text\.slice\(0, 2_000\)/u);
   assert.match(page, /agent\.reasoningSummary \?\? null/u);
+});
+
+test("omni question swarms carry the omni identity end to end", () => {
+  // Body accepts the runtime; curated programs stay Codex-tuned.
+  assert.match(route, /runtime: z\.enum\(\["codex", "omni"\]\)\.optional\(\)/u);
+  assert.match(route, /!salesDeep && !superAgent && parsed\.runtime === "omni"/u);
+  // Omni workers never receive Codex-only reasoning switches.
+  assert.match(route, /runtime === "omni" \? false : !salesDeep && parsed\.solPlanner === true/u);
+  assert.match(route, /const reasoningMode = runtime === "omni"\s*\?\s*"standard" as const/u);
+  // The parent turn's profile and headers round-trip as omni so hydration
+  // reopens the conversation on the right harness.
+  assert.match(route, /runtime: ALBERT_OMNI_RUNTIME/u);
+  assert.match(route, /analyticalRuntime: ALBERT_OMNI_ANALYTICAL_RUNTIME/u);
+  assert.match(route, /"X-Albert-Runtime": runtime/u);
+  assert.match(route, /runtime,\s*\n\s*\.\.\.\(salesDeep \? \{ kind: SALES_DEEP_KIND \} : \{\}\)/u);
+  // The page keeps omni swarms on omni and persists the settled runtime.
+  assert.match(page, /activeChatRuntimeRef\.current === "omni"\s*\?\s*"omni"/u);
+  assert.match(page, /const swarmRuntime = runRuntime === "omni" \? "omni" as const : "codex" as const/u);
+  assert.match(page, /const settledSwarmRuntime = payload\.runtime \?\? swarmRuntime/u);
+  assert.match(page, /runtime: run\.plan\?\.runtime/u);
 });

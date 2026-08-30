@@ -53,6 +53,9 @@ import {
   routeCodexMessage,
 } from "@/services/conversation/src";
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
+import { loadLatestSalesBriefing } from "@/services/control-plane/src/swarm-repository";
+import { readSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
+import { salesBriefingContextBlock } from "@/services/swarm/src/sales-deep";
 import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import {
   ControlPlaneError,
@@ -332,15 +335,21 @@ export async function POST(request: Request): Promise<Response> {
   let connectorFreshness: readonly OmniServiceTurn["connectorFreshness"][number][] = [];
   let businessContext: string | undefined;
   try {
-    const [history, routing, context] = await Promise.all([
+    const [history, routing, context, salesBriefing] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch(() => undefined),
       loadBusinessContext(auth.supabase).catch(() => null),
+      loadLatestSalesBriefing().catch(() => null)
+        .then((briefing) => briefing ?? readSalesBriefingFile()),
     ]);
     priorConversation = history.slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 24_000) }));
     activeConnectors = routing?.activeConnectors ?? [];
     connectorFreshness = routing?.freshness ?? [];
-    businessContext = context?.rendered.slice(0, 20_000) || undefined;
+    const existingContext = context?.rendered.slice(0, 12_000) ?? "";
+    const briefingBlock = typeof salesBriefing === "string" && salesBriefing.trim()
+      ? salesBriefingContextBlock(salesBriefing)
+      : "";
+    businessContext = [existingContext, briefingBlock].filter(Boolean).join("\n\n").slice(0, 20_000) || undefined;
   } catch (error) {
     await failConversationTurn({
       conversationId,

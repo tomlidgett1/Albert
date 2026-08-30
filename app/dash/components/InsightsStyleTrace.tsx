@@ -55,7 +55,7 @@ type InsightsStyleTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
   detailedMode?: boolean;
-  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare";
+  runtime?: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onAddToChat?: (text: string) => void;
@@ -549,7 +549,7 @@ export function collectProgressShimmerLines(input: {
 export function buildTrailModel(
   events: readonly TraceEvent[],
   streaming: boolean,
-  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "compare",
+  runtime: "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare",
 ): TrailModel {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
   const visibleResultIds = responseVisibleResultIds(ordered);
@@ -943,6 +943,8 @@ export function buildTrailModel(
         ? "Fixture"
         : runtime === "codex"
           ? "Codex"
+        : runtime === "omni"
+          ? "Omni"
         : runtime === "compare"
           ? "Compare"
         : runtime === "anthropic"

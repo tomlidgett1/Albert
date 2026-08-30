@@ -70,6 +70,8 @@ export const swarmPlanDocumentSchema = z.object({
   solPlanner: z.boolean().optional(),
   reasoningMode: z.enum(["standard", "pro"]).optional(),
   kind: z.enum(["question", "sales-deep", "super-agent"]).optional(),
+  /** Which harness executes the worker turns; absent on pre-omni runs. */
+  runtime: z.enum(["codex", "omni"]).optional(),
   durationMs: z.number().int().min(60_000).max(45 * 60_000).optional(),
   checkpointIntervalMs: z.number().int().min(30_000).max(10 * 60_000).optional(),
 }).passthrough();
@@ -180,6 +182,7 @@ export async function beginSwarmRun(input: Readonly<{
     solPlanner?: boolean;
     reasoningMode?: "standard" | "pro";
     kind?: "question" | "sales-deep" | "super-agent";
+    runtime?: "codex" | "omni";
     durationMs?: number;
     checkpointIntervalMs?: number;
   }>;

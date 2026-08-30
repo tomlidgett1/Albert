@@ -5,6 +5,7 @@ import { useReducedMotion } from "framer-motion";
 import { ThinkingOrb } from "thinking-orbs";
 import type { TraceEvent } from "@/packages/shared/src";
 import InsightsStyleTrace from "./InsightsStyleTrace";
+import OmniTrace from "./OmniTrace";
 import {
   stopSwarmFleet,
   subscribeSwarmRun,
@@ -301,6 +302,11 @@ export default function SwarmPanel({
             <p className={styles.traceState}>This specialist&apos;s conversation could not be loaded.</p>
           ) : inspectEvents.length === 0 ? (
             <p className={styles.traceState}>{inspect.statusLine}</p>
+          ) : snapshot.runtime === "omni" ? (
+            <OmniTrace
+              events={inspectEvents}
+              streaming={isActive(inspect.phase)}
+            />
           ) : (
             <InsightsStyleTrace
               events={inspectEvents}

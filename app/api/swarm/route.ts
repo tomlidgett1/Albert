@@ -1,10 +1,12 @@
 /**
- * Codex Swarm (ADR 0120).
+ * Albert Swarm (ADR 0120).
  *
  * GET  → latest run (or the run for ?conversationId=) plus child conversation
  *         ids the dash hides from sidebar history.
- * POST → plan the work, begin the parent Codex turn, persist the run, return
- *         the agents for the browser to fan out through /api/codex-conversation.
+ * POST → plan the work, begin the parent turn on the selected harness (Codex
+ *         by default, Omni for question swarms on the Omni tab), persist the
+ *         run, and return the agents for the browser to fan out through the
+ *         matching conversation endpoint.
  */
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
@@ -16,6 +18,12 @@ import {
   ALBERT_CODEX_PROTOCOL_VERSION,
   ALBERT_CODEX_RUNTIME,
 } from "@/packages/albert-codex/src";
+import {
+  ALBERT_OMNI_ANALYTICAL_RUNTIME,
+  ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
+  ALBERT_OMNI_MODEL_IDS,
+  ALBERT_OMNI_RUNTIME,
+} from "@/packages/albert-omni/src";
 import { normalizeAgentPreferences } from "@/packages/shared/src";
 import {
   appendConversationEvent,
@@ -78,6 +86,9 @@ const bodySchema = z.object({
   solPlanner: z.boolean().optional(),
   proMode: z.boolean().optional(),
   kind: z.enum(["question", "sales-deep", "super-agent"]).optional(),
+  /** Which harness executes the worker turns. Question swarms only; the
+   * sales-deep and super-agent programs remain Codex-tuned. */
+  runtime: z.enum(["codex", "omni"]).optional(),
 }).strict();
 
 function jsonError(message: string, status: number, correlationId: string): Response {
@@ -127,17 +138,26 @@ export async function POST(request: Request): Promise<Response> {
     const parsed = bodySchema.parse(await readBoundedJsonBody(request));
     const salesDeep = parsed.kind === SALES_DEEP_KIND;
     const superAgent = parsed.kind === SUPER_AGENT_KIND;
+    // The Omni harness runs question swarms only; the curated sales-deep and
+    // super-agent programs stay on their Codex-tuned settings.
+    const runtime = !salesDeep && !superAgent && parsed.runtime === "omni" ? "omni" as const : "codex" as const;
     const preferences = salesDeep
       ? SALES_DEEP_PREFERENCES
       : superAgent
         ? SUPER_AGENT_PREFERENCES
       : normalizeAgentPreferences(parsed.preferences);
+    if (runtime === "omni" && !(ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(preferences.model)) {
+      return jsonError("Omni swarms support GPT-5.6 Luna, Terra, and Sol only.", 400, correlationId);
+    }
+    // Codex-only reasoning switches never reach Omni workers.
     const solPlanner = superAgent
       ? SUPER_AGENT_SOL_PLANNER
-      : !salesDeep && parsed.solPlanner === true;
-    const reasoningMode = superAgent || (!salesDeep && parsed.proMode === true)
-      ? "pro" as const
-      : "standard" as const;
+      : runtime === "omni" ? false : !salesDeep && parsed.solPlanner === true;
+    const reasoningMode = runtime === "omni"
+      ? "standard" as const
+      : superAgent || (!salesDeep && parsed.proMode === true)
+        ? "pro" as const
+        : "standard" as const;
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
 
@@ -192,21 +212,34 @@ export async function POST(request: Request): Promise<Response> {
       : prepareSwarmAgents(plan, parsed.message);
 
     turnId = ulid();
-    const runtimeProfile = {
-      provider: "openai",
-      runtime: ALBERT_CODEX_RUNTIME,
-      analyticalRuntime: ALBERT_CODEX_ANALYTICAL_RUNTIME,
-      model: preferences.model,
-      reasoningEffort: preferences.reasoningEffort,
-      reasoningMode,
-      fastMode: preferences.fastMode,
-      solPlanner,
-      codexCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
-      codexProtocolVersion: ALBERT_CODEX_PROTOCOL_VERSION,
-      analysisTimeoutMs: ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
-      swarm: true,
-      ...(superAgent ? { superAgent: true, superAgentDurationMs: SUPER_AGENT_DURATION_MS } : {}),
-    } as const;
+    const runtimeProfile = runtime === "omni"
+      ? {
+          provider: "openai",
+          runtime: ALBERT_OMNI_RUNTIME,
+          analyticalRuntime: ALBERT_OMNI_ANALYTICAL_RUNTIME,
+          model: preferences.model,
+          reasoningEffort: preferences.reasoningEffort,
+          reasoningMode,
+          fastMode: preferences.fastMode,
+          solPlanner,
+          analysisTimeoutMs: ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
+          swarm: true,
+        } as const
+      : {
+          provider: "openai",
+          runtime: ALBERT_CODEX_RUNTIME,
+          analyticalRuntime: ALBERT_CODEX_ANALYTICAL_RUNTIME,
+          model: preferences.model,
+          reasoningEffort: preferences.reasoningEffort,
+          reasoningMode,
+          fastMode: preferences.fastMode,
+          solPlanner,
+          codexCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
+          codexProtocolVersion: ALBERT_CODEX_PROTOCOL_VERSION,
+          analysisTimeoutMs: ALBERT_CODEX_ANALYSIS_TIMEOUT_MS,
+          swarm: true,
+          ...(superAgent ? { superAgent: true, superAgentDurationMs: SUPER_AGENT_DURATION_MS } : {}),
+        } as const;
 
     begun = await beginConversationTurn({
       conversationId: parsed.conversationId,
@@ -236,6 +269,7 @@ export async function POST(request: Request): Promise<Response> {
         fastMode: preferences.fastMode,
         solPlanner,
         reasoningMode,
+        runtime,
         ...(salesDeep ? { kind: SALES_DEEP_KIND } : {}),
         ...(superAgent ? {
           kind: SUPER_AGENT_KIND,
@@ -329,6 +363,7 @@ export async function POST(request: Request): Promise<Response> {
       synthesisProMode: superAgent ? SUPER_AGENT_PRO_MODE : reasoningMode === "pro",
       concurrency: superAgent ? SUPER_AGENT_CONCURRENCY : SWARM_CLIENT_CONCURRENCY,
       kind: superAgent ? SUPER_AGENT_KIND : salesDeep ? SALES_DEEP_KIND : "question",
+      runtime,
       ...(superAgent ? {
         durationMs: SUPER_AGENT_DURATION_MS,
         checkpointIntervalMs: SUPER_AGENT_CHECKPOINT_INTERVAL_MS,
@@ -339,7 +374,7 @@ export async function POST(request: Request): Promise<Response> {
       headers: {
         "Cache-Control": "no-store",
         "x-request-id": correlationId,
-        "X-Albert-Runtime": "codex",
+        "X-Albert-Runtime": runtime,
         "X-Albert-Conversation-Id": conversationId,
         "X-Albert-Turn-Id": turnId,
       },
