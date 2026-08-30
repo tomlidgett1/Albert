@@ -1152,12 +1152,20 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
 
   // The named query card with its topic, row count and result table.
   await expect(page.getByRole("button", { name: /Query.*Weekly revenue.*From Sales analytics · 2 rows/u })).toBeVisible();
-  await expect(page.getByRole("cell", { name: /8,379\.02/u })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "AUD 8,379.02" })).toBeVisible();
 
   // Interim narration and the final verified answer with a follow-up chip.
   await expect(page.getByText("I found the governed revenue measure. Querying weekly revenue now.")).toBeVisible();
   await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
   await expect(page.getByRole("button", { name: "How does this compare to last year?" })).toBeVisible();
+
+  // Markdown structure in the answer renders styled: heading, table, and
+  // figure columns right-aligned by the numeric-column pass.
+  await expect(page.getByRole("heading", { name: "Weekly detail", level: 3 })).toBeVisible();
+  const answerFigureCell = page.getByRole("cell", { name: "+3.2%" });
+  await expect(answerFigureCell).toBeVisible();
+  await expect(answerFigureCell).toHaveAttribute("data-numeric", "true");
+  await expect(page.getByRole("cell", { name: "27 July", exact: true })).toHaveAttribute("data-numeric", "false");
 
   // The request went to the Omni endpoint with model preferences attached.
   expect(capture.omniConversationPayloads.length).toBe(1);
@@ -1166,5 +1174,6 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   expect((payload.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
 
   // A full-turn visual artifact for review, kept outside version control.
+  await page.getByText("The lift came from stronger weekend trade.").scrollIntoViewIfNeeded();
   await page.screenshot({ path: ".playwright/omni-harness-turn.png", fullPage: true });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type {
   TraceChartEvent,
   TraceEvent,
@@ -375,14 +375,57 @@ function QueryCard({ block }: { block: Extract<OmniBlock, { kind: "query" }> }) 
   );
 }
 
+/** True for figure-shaped cells: money, counts, percentages, deltas, hours. */
+function isFigureCell(raw: string): boolean {
+  const text = raw.trim();
+  if (text === "" || text === "—" || text === "-" || text === "n/a") return true;
+  if (!/\d/u.test(text)) return false;
+  const withoutUnits = text.replace(/\b(?:AUD|USD|EUR|GBP|NZD|hrs?|hours?|pp|wk|mo)\b\.?/giu, "");
+  return !/[A-Za-z]{3,}/u.test(withoutUnits);
+}
+
+/**
+ * Marks figure columns so the stylesheet can right-align them while label
+ * and note columns stay left-aligned.
+ */
+function alignAnswerTables(root: HTMLElement): void {
+  for (const table of root.querySelectorAll("table")) {
+    const bodyRows = [...table.querySelectorAll("tbody tr")];
+    if (bodyRows.length === 0) continue;
+    const columnCount = Math.max(...bodyRows.map((row) => row.children.length));
+    for (let column = 0; column < columnCount; column += 1) {
+      const cells = bodyRows
+        .map((row) => row.children[column])
+        .filter((cell): cell is Element => cell !== undefined);
+      const filled = cells.filter((cell) => {
+        const text = (cell.textContent ?? "").trim();
+        return text !== "" && text !== "—" && text !== "-";
+      });
+      const numeric = filled.length > 0 && filled.every((cell) =>
+        isFigureCell((cell.textContent ?? "").trim()));
+      for (const cell of cells) cell.setAttribute("data-numeric", String(numeric));
+      const header = table.querySelectorAll("thead th")[column];
+      header?.setAttribute("data-numeric", String(numeric));
+    }
+  }
+}
+
 function Prose({ text, warning, onFollowUp }: {
   text: string;
   warning?: boolean;
   onFollowUp?: (prompt: string) => void;
 }) {
   const html = useMemo(() => renderAssistantMarkdown(text), [text]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // No dependency list: innerHTML only changes on a commit, and re-walking a
+  // handful of table cells is cheap, so aligning after every commit is the
+  // robust way to survive React swapping the injected markup underneath us.
+  useEffect(() => {
+    if (rootRef.current) alignAnswerTables(rootRef.current);
+  });
   return (
     <div
+      ref={rootRef}
       className={styles.prose}
       style={warning ? { color: "light-dark(#92400e, #f0b04e)" } : undefined}
       onClick={(clickEvent) => {
