@@ -1,6 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import type {
   TraceChartEvent,
   TraceEvent,
@@ -318,6 +320,19 @@ function QueryCard({ block }: { block: Extract<OmniBlock, { kind: "query" }> }) 
         <span className={styles.stepTool}>Query</span>
         <span className={styles.stepLabel}>{title}</span>
         <span className={styles.stepSummary}>{summary}</span>
+        {query.connector && CONNECTOR_LOGOS[query.connector] ? (
+          <span
+            className={styles.stepConnectorLogo}
+            title={`Data from ${CONNECTOR_NAMES[query.connector]}`}
+          >
+            <Image
+              src={CONNECTOR_LOGOS[query.connector]}
+              alt={CONNECTOR_NAMES[query.connector]}
+              width={16}
+              height={16}
+            />
+          </span>
+        ) : null}
       </button>
       <div className={styles.stepBody} data-open={open}>
         <div className={styles.stepBodyInner}>

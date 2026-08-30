@@ -1150,9 +1150,13 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await expect(page.getByText('Search: "revenue"')).toBeVisible();
   await expect(page.getByText(/view_name: sales_analytics/u)).toBeVisible();
 
-  // The named query card with its topic, row count and result table.
+  // The named query card with its topic, row count, result table, and the
+  // source tool's logo in the top-right corner.
   await expect(page.getByRole("button", { name: /Query.*Weekly revenue.*From Sales analytics · 2 rows/u })).toBeVisible();
   await expect(page.getByRole("cell", { name: "AUD 8,379.02" })).toBeVisible();
+  const connectorLogo = page.getByTitle("Data from Lightspeed");
+  await expect(connectorLogo).toBeVisible();
+  await expect(connectorLogo.getByAltText("Lightspeed")).toBeVisible();
 
   // Interim narration and the final verified answer with a follow-up chip.
   await expect(page.getByText("I found the governed revenue measure. Querying weekly revenue now.")).toBeVisible();

@@ -342,6 +342,21 @@
   white-space: nowrap;
 }
 
+/* The source tool's logo pinned to the card's top-right corner. */
+.stepConnectorLogo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+
+.stepConnectorLogo img {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
 .stepBody {
   display: grid;
   grid-template-rows: 1fr;
