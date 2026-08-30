@@ -1,5 +1,4 @@
 import { ulid } from "ulid";
-import type { TraceEvent } from "../../../packages/shared/src/index.js";
 import type {
   OmniServiceTurn,
   OmniTraceEventInput,

@@ -191,31 +191,34 @@ export default function DashboardMasterWorkspace({
   const autoStartedRef = useRef(false);
   const conversationIdsRef = useRef<string>("");
 
-  const fetchPanel = useCallback(async () => {
-    try {
-      const response = await fetch("/api/dashboard-master", { cache: "no-store" });
-      const payload = await response.json().catch(() => null) as (PanelData & { error?: string }) | null;
-      if (!response.ok || !payload) {
-        throw new Error(payload?.error || "The dashboard could not be loaded.");
+  const fetchPanel = useCallback(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/dashboard-master", { cache: "no-store" });
+        const payload = await response.json().catch(() => null) as (PanelData & { error?: string }) | null;
+        if (!response.ok || !payload) {
+          throw new Error(payload?.error || "The dashboard could not be loaded.");
+        }
+        setPanel({ kind: "ready", data: payload });
+        const idsKey = (payload.conversationIds ?? []).join(",");
+        if (idsKey !== conversationIdsRef.current) {
+          conversationIdsRef.current = idsKey;
+          onDashboardConversationIds?.(payload.conversationIds ?? []);
+        }
+      } catch (error) {
+        setPanel({ kind: "error", message: error instanceof Error ? error.message : "The dashboard could not be loaded." });
       }
-      setPanel({ kind: "ready", data: payload });
-      const idsKey = (payload.conversationIds ?? []).join(",");
-      if (idsKey !== conversationIdsRef.current) {
-        conversationIdsRef.current = idsKey;
-        onDashboardConversationIds?.(payload.conversationIds ?? []);
-      }
-    } catch (error) {
-      setPanel({ kind: "error", message: error instanceof Error ? error.message : "The dashboard could not be loaded." });
-    }
+    })();
   }, [onDashboardConversationIds]);
 
   useEffect(() => {
-    void fetchPanel();
+    const timer = setTimeout(fetchPanel, 0);
+    return () => clearTimeout(timer);
   }, [fetchPanel]);
 
   useEffect(() => {
     if (live.settledCount === 0) return;
-    const timer = setTimeout(() => void fetchPanel(), 600);
+    const timer = setTimeout(fetchPanel, 600);
     return () => clearTimeout(timer);
   }, [live.settledCount, fetchPanel]);
 
@@ -228,13 +231,20 @@ export default function DashboardMasterWorkspace({
     startDashboardMasterSession();
   }, [panel, live.active]);
 
-  // Elapsed-minutes ticker while a session runs.
-  const [, setTick] = useState(0);
+  // Elapsed-minutes ticker while a session runs (updated only from timer
+  // callbacks so render stays pure).
+  const [elapsedMinutes, setElapsedMinutes] = useState(0);
   useEffect(() => {
-    if (!live.active) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 30_000);
-    return () => clearInterval(timer);
-  }, [live.active]);
+    if (!live.active || !live.startedAtMs) return;
+    const started = live.startedAtMs;
+    const update = () => setElapsedMinutes(Math.max(0, Math.round((Date.now() - started) / 60_000)));
+    const kickoff = setTimeout(update, 0);
+    const timer = setInterval(update, 30_000);
+    return () => {
+      clearTimeout(kickoff);
+      clearInterval(timer);
+    };
+  }, [live.active, live.startedAtMs]);
 
   const report = useMemo<DashboardMasterReport | null>(() => {
     if (panel.kind !== "ready" || !panel.data.latest?.report) return null;
@@ -249,7 +259,6 @@ export default function DashboardMasterWorkspace({
     return <div className={styles.stateNote} role="alert">{panel.message}</div>;
   }
 
-  const elapsedMinutes = live.startedAtMs ? Math.round((Date.now() - live.startedAtMs) / 60_000) : 0;
   const doneWorkers = live.workers.filter((worker) => worker.phase === "done" || worker.phase === "failed").length;
 
   return (
