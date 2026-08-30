@@ -128,6 +128,9 @@ test("the migration history contains no unreviewed literal-only lifecycle vocabu
     "control-plane/0161_m8_semantic_memory.sql",
     "control-plane/0168_m8_codex_swarm.sql",
     "control-plane/0168_m8_codex_swarm.sql",
+    // 0178 reuses the reviewed run-lifecycle vocabulary of 0158/0168
+    // (running/completed/failed/abandoned) for the daily dashboard session.
+    "control-plane/0178_m6_dashboard_master.sql",
     "analytical/0081_m2_reconciliation_and_connector_stream_health.sql",
   ]);
 });
