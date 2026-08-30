@@ -48,8 +48,11 @@ test("renders a real Dashboard Master report", async ({ page }) => {
   await page.goto("/dash");
   await page.getByRole("button", { name: "Dashboard Master" }).click();
   await expect(page.getByRole("heading", { name: String(report.headline) })).toBeVisible();
+  // The dash layout scrolls inside an inner container, so a fullPage shot
+  // only sees the viewport — grow the viewport to the content instead.
+  await page.setViewportSize({ width: 1440, height: 6000 });
   // Give the Flint charts a beat to draw their SVGs before capturing.
-  await page.waitForTimeout(4_000);
+  await page.waitForTimeout(5_000);
   const out = path.join(path.dirname(reportPath!), "dashboard.png");
   await page.screenshot({ path: out, fullPage: true });
   console.log(`screenshot → ${out}`);

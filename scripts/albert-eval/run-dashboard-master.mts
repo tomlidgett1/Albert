@@ -120,6 +120,7 @@ const client = new OmniRuntimeServiceClient(
 const dir = runDir(args.run);
 mkdirSync(dir, { recursive: true });
 
+const sessionConversationIds: string[] = [];
 const deps: DashboardSessionDeps = {
   mintTurn: async (label: string): Promise<DashboardTurnGrant> => {
     const turnId = ulid();
@@ -147,6 +148,7 @@ const deps: DashboardSessionDeps = {
         conversation_id: conversationId, turn_id: turnId,
       },
     });
+    sessionConversationIds.push(conversationId);
     return { conversationId, turnId, cubeBearer, tenantId: TENANT_ID, actorId: ACTOR_ID, role: ROLE };
   },
   settleTurn: async (grant, answered) => {
@@ -191,7 +193,10 @@ for (let tick = 1; state.phase !== "compose" && state.phase !== "completed"; tic
     director,
     tickBudgetMs: DASHBOARD_MASTER_TICK_BUDGET_MS,
   });
-  state = result.state;
+  state = {
+    ...result.state,
+    conversationIds: [...new Set([...result.state.conversationIds, ...sessionConversationIds])].slice(-48),
+  };
   writeFileSync(statePath, JSON.stringify(state, null, 2));
   if (!result.advanced) break;
   if (tick > 24) throw new Error("session did not converge within 24 ticks");
