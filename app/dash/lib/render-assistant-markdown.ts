@@ -52,7 +52,10 @@ function renderTextSegment(segment: string, linkMode: LinkMode): string {
     lastIndex = index + match[0].length;
   }
   output += renderBareUrls(renderEmphasis(escapeHtml(segment.slice(lastIndex))), linkMode);
-  return output;
+  // Models indent financial-statement lines with `&nbsp;` entities. Escaping
+  // turned them into literal "&nbsp;" text; restoring exactly this one entity
+  // keeps the escape hatch closed while letting the indentation render.
+  return output.replaceAll("&amp;nbsp;", "&nbsp;");
 }
 
 function renderInlineMarkdown(value: string, linkMode: LinkMode): string {

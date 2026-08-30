@@ -192,6 +192,14 @@
 
 .prose :global(.answerTableScroll tr:last-child td) { border-bottom: 0; }
 
+/* Statement rows: a bolded first cell marks a subtotal/total line, which gets
+ * the accountant's rule above it and a quiet emphasis background. */
+.prose :global(.answerTableScroll tr[data-statement-row="true"] td) {
+  border-top: 2px solid light-dark(#cfd3d9, #3a3e47);
+  background: light-dark(#fafbfc, #1b1d22);
+  font-weight: 600;
+}
+
 .prose :global(.answerTableScroll td[data-numeric="true"]),
 .prose :global(.answerTableScroll th[data-numeric="true"]) {
   text-align: right;

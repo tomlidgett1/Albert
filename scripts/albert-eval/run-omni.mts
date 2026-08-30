@@ -33,6 +33,7 @@ import {
 } from "../../packages/albert-omni/src/index.js";
 import { OMNI_20_QUESTIONS } from "./questions-omni-20.js";
 import { OMNI_HARD30_QUESTIONS } from "./questions-omni-hard30.js";
+import { OMNI_DAILY60_QUESTIONS } from "./questions-omni-daily60.js";
 import type { EvalQuestion } from "./questions.js";
 import {
   ACTIVE_CONNECTORS,
@@ -62,7 +63,7 @@ type Args = {
   serviceUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
-  corpus: "omni20" | "hard30";
+  corpus: "omni20" | "hard30" | "daily60";
 };
 
 function parseArgs(argv: string[]): Args {
@@ -93,8 +94,8 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--effort") args.effort = next() as Args["effort"];
     else if (a === "--corpus") args.corpus = next() as Args["corpus"];
   }
-  if (args.corpus !== "omni20" && args.corpus !== "hard30") {
-    throw new Error("--corpus must be omni20 or hard30");
+  if (args.corpus !== "omni20" && args.corpus !== "hard30" && args.corpus !== "daily60") {
+    throw new Error("--corpus must be omni20, hard30 or daily60");
   }
   return args;
 }
@@ -178,7 +179,7 @@ let engineVersion = "unknown";
 try { engineVersion = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* ignore */ }
 engineVersion = `omni-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${process.env.EVAL_ENGINE_LABEL}` : ""}`;
 
-const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : OMNI_20_QUESTIONS;
+const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : args.corpus === "daily60" ? OMNI_DAILY60_QUESTIONS : OMNI_20_QUESTIONS;
 let selected: EvalQuestion[] = args.question
   ? [{
     id: "ADHOC",

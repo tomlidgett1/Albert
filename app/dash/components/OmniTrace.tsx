@@ -392,6 +392,12 @@ function alignAnswerTables(root: HTMLElement): void {
   for (const table of root.querySelectorAll("table")) {
     const bodyRows = [...table.querySelectorAll("tbody tr")];
     if (bodyRows.length === 0) continue;
+    // A bolded first cell marks a statement subtotal/total line; the row is
+    // tagged so the stylesheet can draw the accountant's rule above it.
+    for (const row of bodyRows) {
+      const statement = Boolean(row.children[0]?.querySelector("strong"));
+      row.setAttribute("data-statement-row", String(statement));
+    }
     const columnCount = Math.max(...bodyRows.map((row) => row.children.length));
     for (let column = 0; column < columnCount; column += 1) {
       const cells = bodyRows

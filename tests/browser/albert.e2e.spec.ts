@@ -1167,6 +1167,23 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await expect(answerFigureCell).toHaveAttribute("data-numeric", "true");
   await expect(page.getByRole("cell", { name: "27 July", exact: true })).toHaveAttribute("data-numeric", "false");
 
+  // Statement-style rows: a bolded total line carries the accountant's rule,
+  // and parenthesised negatives still count as figure cells.
+  const grossProfitCell = page.getByRole("cell", { name: "Gross profit" });
+  await expect(grossProfitCell).toBeVisible();
+  const ruledRow = page.locator("tr", { has: grossProfitCell });
+  await expect(ruledRow).toHaveAttribute("data-statement-row", "true");
+  await expect(ruledRow.locator("td").first()).toHaveCSS("border-top-width", "2px");
+  await expect(page.locator("tr", { has: page.getByRole("cell", { name: "Sales revenue" }) })).toHaveAttribute("data-statement-row", "false");
+  await expect(page.getByRole("cell", { name: "($16,908.12)" })).toHaveAttribute("data-numeric", "true");
+
+  // Statement detail lines indented with &nbsp; render as real indentation,
+  // never as literal entity text.
+  const wagesCell = page.getByRole("cell", { name: "Wages and salaries" });
+  await expect(wagesCell).toBeVisible();
+  await expect(wagesCell).not.toContainText("&nbsp;");
+  expect(await wagesCell.evaluate((cell) => cell.textContent?.startsWith("  "))).toBe(true);
+
   // The request went to the Omni endpoint with model preferences attached.
   expect(capture.omniConversationPayloads.length).toBe(1);
   const payload = capture.omniConversationPayloads[0] as Record<string, unknown>;
