@@ -1361,7 +1361,7 @@ export async function installAppApiRoutes(
       ],
       tables: rank === 1
         ? [{
-            resultId: "01J0000000000000000000OMN1",
+            resultId: "01J00000000000000000000091",
             caption: "Weekly revenue",
             connector: "lightspeed",
             timeRangeLabel: "last 12 weeks",
@@ -1379,7 +1379,7 @@ export async function installAppApiRoutes(
         : [],
       charts: rank === 1
         ? [{
-            resultId: "01J0000000000000000000OMN1",
+            resultId: "01J00000000000000000000091",
             caption: "Weekly revenue trend",
             chartType: "line",
             xKey: "sales_analytics_completed_at",
