@@ -95,6 +95,39 @@ void test("the director advances rounds and lands in compose, never re-assigning
   assert.deepEqual(directorCalls.at(-1), { round: 3, findings: 7 });
 });
 
+void test("a failed round-1 domain is retried automatically in round 2", async () => {
+  let state = await directDashboardPhase(newDashboardSessionState(), async () => [], PERIOD);
+  for (const objective of pendingDashboardObjectives(state)) {
+    const finding = fakeFinding(objective.key, 1);
+    state = dashboardSessionStateSchema.parse({
+      ...state,
+      findings: [...state.findings, objective.key === "cash-and-capital"
+        ? { ...finding, failed: true, answer: "", answerState: null, headline: null }
+        : finding],
+      completedKeys: [...state.completedKeys, objective.key],
+      investigationMs: state.investigationMs + 60_000,
+    });
+  }
+  state = dashboardSessionStateSchema.parse(await directDashboardPhase(state, async () => [], PERIOD));
+  assert.equal(state.phase, "round-2");
+  const pending = pendingDashboardObjectives(state);
+  assert.deepEqual(pending.map((objective) => objective.key), ["cash-and-capital-retry"]);
+  assert.equal(pending[0]!.title, "Cash, working capital and stock");
+
+  // The retry is not re-queued a second time if it fails again.
+  state = dashboardSessionStateSchema.parse({
+    ...state,
+    findings: [...state.findings, {
+      ...fakeFinding("cash-and-capital-retry", 2),
+      failed: true, answer: "", answerState: null, headline: null,
+    }],
+    completedKeys: [...state.completedKeys, "cash-and-capital-retry"],
+    investigationMs: state.investigationMs + 60_000,
+  });
+  state = dashboardSessionStateSchema.parse(await directDashboardPhase(state, async () => [], PERIOD));
+  assert.equal(state.phase, "compose");
+});
+
 void test("a spent budget forces compose instead of another round", async () => {
   let state = await directDashboardPhase(newDashboardSessionState(10 * 60_000), async () => [], PERIOD);
   for (const objective of pendingDashboardObjectives(state)) {

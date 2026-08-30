@@ -321,20 +321,34 @@ export async function directDashboardPhase(
       return { ...state, phase: "compose", notes: [...state.notes, `Budget spent after ${state.phase}; composing.`] };
     }
     const round = state.phase === "round-1" ? 2 as const : 3 as const;
+    // A worker that produced nothing gets one automatic retry in the next
+    // round — a stalled turn must not leave a whole domain out of the report.
+    const failedKeys = new Set(state.findings.filter((finding) => finding.failed).map((finding) => finding.key));
+    const alreadyQueued = new Set(state.objectives.map((objective) => objective.key));
+    const retries = state.objectives
+      .filter((objective) => (
+        failedKeys.has(objective.key)
+        && !objective.key.endsWith("-retry")
+        && !alreadyQueued.has(`${objective.key}-retry`)
+        && `${objective.key}-retry`.length <= 61
+      ))
+      .slice(0, 2)
+      .map((objective) => ({ ...objective, key: `${objective.key}-retry`, round }));
     const next = await director({
       round,
       maxObjectives: round === 2 ? MAX_ROUND_2_OBJECTIVES : MAX_ROUND_3_OBJECTIVES,
       findings: state.findings,
       periodLabel,
     });
-    if (next.length === 0) {
+    const assigned = [...retries, ...next.filter((objective) => !retries.some((retry) => retry.key === objective.key))];
+    if (assigned.length === 0) {
       return { ...state, phase: "compose", notes: [...state.notes, `Nothing further to assign after ${state.phase}.`] };
     }
     return {
       ...state,
       phase: round === 2 ? "round-2" : "round-3",
-      objectives: [...state.objectives, ...next],
-      notes: [...state.notes, `Director assigned ${next.length} ${round === 2 ? "drill" : "challenge"} objectives.`],
+      objectives: [...state.objectives, ...assigned],
+      notes: [...state.notes, `Director assigned ${assigned.length} ${round === 2 ? "drill" : "challenge"} objectives${retries.length > 0 ? ` (${retries.length} retrying a failed domain)` : ""}.`],
     };
   }
   if (state.phase === "round-3" && pendingDashboardObjectives(state).length === 0) {
