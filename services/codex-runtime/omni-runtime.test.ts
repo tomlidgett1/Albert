@@ -8,6 +8,7 @@ import {
   searchModelFields,
 } from "../../packages/albert-omni/src/semantic-model.js";
 import { extractOmniFollowUps } from "../../packages/albert-omni/src/runtime.js";
+import { normalizeOmniCubeQuery } from "../../packages/albert-omni/src/query-normalize.js";
 import { omniServiceTurnSchema } from "../../packages/albert-omni/src/contracts.js";
 import type { CubeCatalogue } from "../../packages/albert-v3/src/cube/types.js";
 import { loadCodexRuntimeConfig } from "./src/config.js";
@@ -237,4 +238,93 @@ test("Omni jobs endpoint fails closed when Responses credentials are missing", a
   assert.equal(response.status, 503);
   const payload = await response.json() as { error?: { code?: string } };
   assert.equal(payload.error?.code, "omni_unavailable");
+});
+
+test("Omni query normalizer repairs the common compareDateRange and phrasing mistakes", () => {
+  // A one-entry comparison is a plain period: it becomes the dateRange.
+  const single = normalizeOmniCubeQuery({
+    measures: ["xero_profit_and_loss_analytics.net_profit"],
+    timeDimensions: [{
+      dimension: "xero_profit_and_loss_analytics.period_start",
+      granularity: "month",
+      compareDateRange: ["2026-07-01 to 2026-08-31"],
+    }],
+  });
+  assert.equal(single.query.timeDimensions?.[0]?.compareDateRange, undefined);
+  assert.deepEqual(single.query.timeDimensions?.[0]?.dateRange, "2026-07-01 to 2026-08-31");
+  assert.equal(single.adjustments.length, 1);
+
+  // Five comparison periods clamp to the governed four.
+  const five = normalizeOmniCubeQuery({
+    measures: ["sales_analytics.gross_takings"],
+    timeDimensions: [{
+      dimension: "sales_analytics.completed_at",
+      compareDateRange: ["a", "b", "c", "d", "e"],
+    }],
+  });
+  assert.equal(five.query.timeDimensions?.[0]?.compareDateRange?.length, 4);
+
+  // "last 12 complete weeks" becomes Cube-parseable "last 12 weeks".
+  const phrase = normalizeOmniCubeQuery({
+    measures: ["sales_analytics.gross_takings"],
+    timeDimensions: [{
+      dimension: "sales_analytics.completed_at",
+      granularity: "week",
+      dateRange: "last 12 complete weeks",
+    }],
+  });
+  assert.equal(phrase.query.timeDimensions?.[0]?.dateRange, "last 12 weeks");
+
+  // A bucketed member duplicated as a plain dimension loses the duplicate.
+  const duplicate = normalizeOmniCubeQuery({
+    measures: ["xero_profit_and_loss_analytics.net_profit"],
+    dimensions: ["xero_profit_and_loss_analytics.period_start"],
+    timeDimensions: [{
+      dimension: "xero_profit_and_loss_analytics.period_start",
+      granularity: "month",
+      dateRange: "last 6 months",
+    }],
+  });
+  assert.equal(duplicate.query.dimensions, undefined);
+
+  // A well-formed query passes through untouched with no adjustments.
+  const clean = normalizeOmniCubeQuery({
+    measures: ["sales_analytics.gross_takings"],
+    dimensions: ["sales_analytics.store_name"],
+    timeDimensions: [{
+      dimension: "sales_analytics.completed_at",
+      granularity: "week",
+      dateRange: "last 12 weeks",
+    }],
+    limit: 100,
+  });
+  assert.equal(clean.adjustments.length, 0);
+  assert.deepEqual(clean.query.dimensions, ["sales_analytics.store_name"]);
+});
+
+test("Omni query normalizer reclassifies misfiled members and rejects text operators on time fields", () => {
+  const memberKinds = new Map([
+    ["xero_profit_and_loss_analytics.net_profit", { kind: "measure", type: "number" }],
+    ["xero_profit_and_loss_analytics.reconciles_to_xero", { kind: "dimension", type: "boolean" }],
+    ["sales_analytics.completed_at", { kind: "dimension", type: "time" }],
+  ] as const);
+
+  const misfiled = normalizeOmniCubeQuery({
+    measures: [
+      "xero_profit_and_loss_analytics.net_profit",
+      "xero_profit_and_loss_analytics.reconciles_to_xero",
+    ],
+  }, memberKinds);
+  assert.deepEqual(misfiled.query.measures, ["xero_profit_and_loss_analytics.net_profit"]);
+  assert.deepEqual(misfiled.query.dimensions, ["xero_profit_and_loss_analytics.reconciles_to_xero"]);
+  assert.equal(misfiled.errors.length, 0);
+  assert.match(misfiled.adjustments[0]!, /moved to dimensions/u);
+
+  const timeMisuse = normalizeOmniCubeQuery({
+    measures: ["xero_profit_and_loss_analytics.net_profit"],
+    filters: [{ member: "sales_analytics.completed_at", operator: "contains", values: ["2026-08"] }],
+  }, memberKinds);
+  assert.equal(timeMisuse.errors.length, 1);
+  assert.match(timeMisuse.errors[0]!, /time field/u);
+  assert.match(timeMisuse.errors[0]!, /inDateRange/u);
 });

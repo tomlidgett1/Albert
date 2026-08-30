@@ -1,5 +1,6 @@
 export * from "./contracts.js";
 export * from "./semantic-model.js";
+export { normalizeOmniCubeQuery } from "./query-normalize.js";
 export {
   runOmniSemanticTurn,
   extractOmniFollowUps,

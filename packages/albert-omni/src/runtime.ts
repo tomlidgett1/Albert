@@ -40,6 +40,7 @@ import {
   resolveTopic,
   searchModelFields,
 } from "./semantic-model.js";
+import { normalizeOmniCubeQuery } from "./query-normalize.js";
 import {
   ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
   ALBERT_OMNI_ANSWER_MAX_CHARS,
@@ -178,7 +179,7 @@ ${input.freshnessLines}
 
 # Workspace Defaults
 
-- Default time range when the user names none: the last 12 complete weeks at weekly granularity. Say which range you used.
+- Default time range when the user names none: the last 12 complete weeks at weekly granularity — written in queries as dateRange "last 12 weeks" (Cube's relative ranges cover complete periods only, current period excluded). Say which range you used.
 - Financial metrics: report values in ${input.currency}.
 - Timezone: ${input.timezone}. ${input.todayLine}
 - Never assume a different year than the one in the current date above.
@@ -314,6 +315,10 @@ export async function runOmniSemanticTurn(
     });
     const catalogue = filteredCatalogue(await cube.fetchCatalogue(signal), descriptors);
     const connectorByView = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor.connector]));
+    const memberKinds = new Map(catalogue.views.flatMap((view) => view.members.map((member) => [
+      member.name,
+      { kind: member.kind, ...(member.type ? { type: member.type } : {}) },
+    ] as const)));
 
     const todayLine = (() => {
       try {
@@ -523,7 +528,15 @@ export async function runOmniSemanticTurn(
         label: sanitizeTraceText(`Running query: ${queryName}`, 200),
         detail: sanitizeTraceText(topicView ? `From ${topicView.title || topicView.name}` : input.topic, 200),
       });
-      const withTimezone: CubeQuery = { ...input.query, timezone: input.query.timezone ?? timezone };
+      const normalized = normalizeOmniCubeQuery(input.query, memberKinds);
+      if (normalized.errors.length > 0) {
+        return JSON.stringify({
+          ok: false,
+          error: normalized.errors.join(" "),
+          guidance: "Fix the named members or operators and run the query again.",
+        });
+      }
+      const withTimezone: CubeQuery = { ...normalized.query, timezone: normalized.query.timezone ?? timezone };
       const loaded = await cube.loadQuery(withTimezone, {
         signal,
         audit: { operation: "omni_semantic_query", topic: input.topic, branchLabel: queryName },
@@ -627,6 +640,7 @@ export async function runOmniSemanticTurn(
           truncationNote: `Showing the first ${MAX_MODEL_RESULT_ROWS} of ${rows.length} rows. Use SummarizeFullResults for the full set, or refine the query.`,
         } : {}),
         ...(repeated ? { note: "This exact query already ran this turn; reuse earlier results instead of repeating queries." } : {}),
+        ...(normalized.adjustments.length > 0 ? { queryAdjustments: normalized.adjustments } : {}),
       });
     };
 
@@ -674,7 +688,7 @@ export async function runOmniSemanticTurn(
 
     const generateSemanticQuery = tool({
       name: "GenerateSemanticQuery",
-      description: "Generate and run one governed semantic query against a topic. Give it a short business-readable name (shown to the user), the topic, and the semantic query: measures/dimensions/segments (fully qualified), timeDimensions ({dimension, granularity, dateRange as a string — relative like \"last 12 weeks\" / \"this month\", or explicit \"2026-07-01 to 2026-07-31\"}), filters (member+operator+values, or and/or lists of them), order (list of {field, direction}), limit. compareDateRange compares 2-4 periods in one query; every entry must be an explicit \"YYYY-MM-DD to YYYY-MM-DD\" range, never a relative phrase. One topic per query. The result returns rows plus a resultId for charts and summaries.",
+      description: "Generate and run one governed semantic query against a topic. Give it a short business-readable name (shown to the user), the topic, and the semantic query: measures/dimensions/segments (fully qualified), timeDimensions ({dimension, granularity, dateRange as a string — relative like \"last 12 weeks\" / \"this month\", or explicit \"2026-07-01 to 2026-07-31\"}), filters (member+operator+values, or and/or lists of them), order (list of {field, direction}), limit. A SINGLE period always goes in dateRange; compareDateRange is only for comparing 2-4 periods and every entry must be an explicit \"YYYY-MM-DD to YYYY-MM-DD\" range, never a relative phrase. Constrain time with timeDimensions.dateRange, not filters, unless filtering a second time field. One topic per query. The result returns rows plus a resultId for charts and summaries.",
       parameters: z.object({
         name: z.string().min(3).max(160),
         topic: z.string().min(1).max(160),
@@ -686,7 +700,7 @@ export async function runOmniSemanticTurn(
             dimension: z.string().regex(memberNamePattern),
             granularity: z.enum(["hour", "day", "week", "month", "quarter", "year"]).nullable(),
             dateRange: z.string().min(1).max(80).nullable(),
-            compareDateRange: z.array(z.string().min(1).max(80)).max(6).nullable(),
+            compareDateRange: z.array(z.string().min(1).max(80)).max(4).nullable(),
           }).strict()).max(4).nullable(),
           filters: z.array(filterInputSchema).max(20).nullable(),
           order: z.array(z.object({
