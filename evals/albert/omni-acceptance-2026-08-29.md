@@ -67,3 +67,61 @@ Candidate improvement: expose a bounded aggregate tool like codex `derive_result
 - Browser acceptance (stubbed harness): "Omni harness renders tasks, research steps,
   query cards and the answer" + codex default-harness regression — both pass.
 - Raw event streams per turn: `evals/albert/runs/omni-acceptance-20/events/`.
+
+---
+
+# Hard30 quality program — 2026-08-30
+
+The owner's verdict on the first release: fast, but answers not thorough enough when
+needed, and formatting poor. Two root causes found and fixed, validated by a 30-turn
+hard battery run twice (baseline vs improved), every answer read and graded.
+
+**Corpus** (`questions-omni-hard30.ts`): 7 open-ended/strategic, 5 data-model/meta,
+7 cross-connector, 8 hard single-domain, one 3-turn diagnostic thread. Luna, max
+effort, fast off, fresh prod-shaped leases per turn.
+
+## Root causes
+
+1. **Formatting**: answer markdown rendered unstyled in the UI — the omni prose class
+   only styled paragraphs, so headings, lists and tables fell back to browser defaults.
+   Fixed with a complete prose treatment (card-styled tables, figure-column
+   right-alignment via a post-commit DOM pass) — commit ecf96b6.
+2. **Depth + rates**: the prompt had no depth calibration, and the blanket mental-math
+   ban made the model refuse to state implied rates (staff sales-per-hour answered
+   with raw pairs and an explicit refusal to divide). Fixed with the answer-quality
+   contract and bounded arithmetic — commit 97e0304.
+
+## Baseline → v2 (same 30 questions, both 30/30 complete, zero infra failures)
+
+| Signal | Baseline | v2 |
+| --- | --- | --- |
+| Answers using tables | 18/30 | **27/30** |
+| Rankings presented as tables | 3/4 | **4/4** |
+| Implied rates computed and stated | 1/3 | **3/3** |
+| Thin (<300 words) hard/xhard answers | 8 | **5** (3 of them correctly scoped) |
+| Median answer length | 452 words | 604 words |
+| Median turn time | 125s | 184s |
+| Verified terminal states | 27/30 | 26/30 (4 correctly-scoped no-query answers) |
+
+## Deep grade (every v2 answer read; 12-point rubric: directness, depth match,
+anchors/rates, formatting, tone, actionability)
+
+- **27/30 met the world-class bar (≥10/12, no accuracy flags)**; mean ≈ 11.2/12.
+- ~20 derived figures spot-checked against their shown components: **zero arithmetic
+  errors** (sales/hour, wage shares, stock-weeks, discount burdens, percent changes).
+- Standouts: OH-DM-04 reconciles Lightspeed vs Xero to within $92 of the identified
+  journal noise; OH-TH-02 traces the August workshop backlog to 91 rostered vs 7.18
+  recorded hours in the final week; OH-XT-02 delivers the exact weekly staffing table
+  with per-hour rates and a roster trial recommendation; OH-XT-04 identifies the
+  $157k Funds In Transfer clearing pattern behind the cash-vs-profit gap.
+- Sub-bar: OH-DM-05 (trusted stale business context for freshness — fixed: freshness
+  questions now verify with latest-date queries; rerun produced an exact per-source
+  freshness table and Verified state), OH-DM-01 (orphaned lead-in line after follow-up
+  extraction — fixed + regression test), OH-LS-02 (borderline lean, acceptable scope).
+- Known eval-environment distortion: eval turns carry no connector freshness lines and
+  a stale business-context doc, which seeded "data ends 31 July" claims in several
+  baseline/v2 answers; production turns carry live freshness. The prompt now forbids
+  using business context as freshness evidence regardless.
+
+Runs: `evals/albert/runs/omni-hard30-baseline`, `omni-hard30-v2`, `omni-hard30-v3-spot`.
+Deployed to production 2026-08-30: Fly `omni-quality-97e0304`, Vercel aliased.
