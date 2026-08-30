@@ -125,3 +125,35 @@ anchors/rates, formatting, tone, actionability)
 
 Runs: `evals/albert/runs/omni-hard30-baseline`, `omni-hard30-v2`, `omni-hard30-v3-spot`.
 Deployed to production 2026-08-30: Fly `omni-quality-97e0304`, Vercel aliased.
+
+---
+
+# Daily60 program — 2026-08-31
+
+The 20 most commonly asked questions per system (Lightspeed, Xero, Deputy), written
+as an owner types them (`questions-omni-daily60.ts`, `--corpus daily60`). Luna, max
+effort, fast off. **60/60 complete, 59 Verified + one honest No-data** ("is anyone
+clocked in right now" with no live clock-in data). Latency: p50 40s, p90 135s, mean
+56s (deputy mean 36s, lightspeed 59s, xero 74s).
+
+## Critical findings
+
+- **Statements are now statement-grade.** "Show me my P&L" returns accounting order
+  with itemised expenses largest-first, bolded ruled subtotal/total rows, a June
+  comparison column, parenthesised negatives, and an accrual/ex-GST basis note — and
+  reconciles to Xero. "Show me my balance sheet" returns sectioned assets/liabilities/
+  equity with section totals, proves A = L + E, and flags oddities (GST debit position,
+  vehicle depreciation placement). Verified again through the production runtime
+  (85s, all statement markers present).
+- **One genuine defect found in 60 answers**: statement detail lines indented with
+  `&nbsp;` entities rendered as literal text. Fixed in the shared inline renderer
+  (restores exactly that entity after escaping), codified in the prompt, asserted in
+  browser acceptance (real non-breaking indentation, zero literal entities).
+- Crispness held where it should: simple questions get correctly tight answers
+  ("13 staff on the books: 9 active, 4 archived"), with partial periods flagged
+  ("one-day-to-one-day comparison because today is Monday") and named-entity
+  questions (Pon Bike spend, Jack's hours) resolving through value lookups with
+  cross-checked figures.
+
+Runs: `evals/albert/runs/omni-daily60`, `omni-prod-statements`.
+Deployed 2026-08-31: Fly `omni-statements-b914be8`, Vercel aliased, routes verified.
