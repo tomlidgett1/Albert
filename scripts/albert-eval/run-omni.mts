@@ -32,6 +32,7 @@ import {
   type OmniTraceEventInput,
 } from "../../packages/albert-omni/src/index.js";
 import { OMNI_20_QUESTIONS } from "./questions-omni-20.js";
+import { OMNI_HARD30_QUESTIONS } from "./questions-omni-hard30.js";
 import type { EvalQuestion } from "./questions.js";
 import {
   ACTIVE_CONNECTORS,
@@ -61,6 +62,7 @@ type Args = {
   serviceUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
+  corpus: "omni20" | "hard30";
 };
 
 function parseArgs(argv: string[]): Args {
@@ -73,6 +75,7 @@ function parseArgs(argv: string[]): Args {
     serviceUrl: process.env.REPRO_SERVICE_URL ?? "http://127.0.0.1:8799",
     model: "gpt-5.6-luna",
     effort: "max",
+    corpus: "omni20",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -88,6 +91,10 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--service-url") args.serviceUrl = next();
     else if (a === "--model") args.model = next();
     else if (a === "--effort") args.effort = next() as Args["effort"];
+    else if (a === "--corpus") args.corpus = next() as Args["corpus"];
+  }
+  if (args.corpus !== "omni20" && args.corpus !== "hard30") {
+    throw new Error("--corpus must be omni20 or hard30");
   }
   return args;
 }
@@ -171,6 +178,7 @@ let engineVersion = "unknown";
 try { engineVersion = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* ignore */ }
 engineVersion = `omni-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${process.env.EVAL_ENGINE_LABEL}` : ""}`;
 
+const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : OMNI_20_QUESTIONS;
 let selected: EvalQuestion[] = args.question
   ? [{
     id: "ADHOC",
@@ -180,10 +188,10 @@ let selected: EvalQuestion[] = args.question
     pattern: "cold",
     question: args.question,
   }]
-  : OMNI_20_QUESTIONS.filter((question) => !args.ids || args.ids.has(question.id));
+  : CORPUS.filter((question) => !args.ids || args.ids.has(question.id));
 if (args.ids) {
   const selectedThreads = new Set(selected.flatMap((question) => question.thread ? [question.thread] : []));
-  selected = OMNI_20_QUESTIONS.filter((question) => (
+  selected = CORPUS.filter((question) => (
     args.ids!.has(question.id)
     || Boolean(question.thread && selectedThreads.has(question.thread))
   ));

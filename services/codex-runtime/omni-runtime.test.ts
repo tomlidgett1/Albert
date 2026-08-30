@@ -129,6 +129,21 @@ test("Omni follow-up extraction pulls ai-query links and strips the trailing blo
   assert.match(extracted.text, /Fitzroy store\.$/u);
 });
 
+test("Omni follow-up extraction removes an orphaned lead-in line with its block", () => {
+  const answer = [
+    "Here is the tour of your connected data.",
+    "",
+    "I can next run any of these:",
+    "",
+    "[Rank my categories by profit](?ai-query=Rank%20my%20categories%20by%20profit)",
+    "[Compare wages to sales](?ai-query=Compare%20wages%20to%20sales)",
+  ].join("\n");
+  const extracted = extractOmniFollowUps(answer);
+  assert.equal(extracted.followUps.length, 2);
+  assert.match(extracted.text, /connected data\.$/u);
+  assert.doesNotMatch(extracted.text, /run any of these:/u);
+});
+
 test("Omni runtime config carries direct Responses credentials in api mode", () => {
   const config = loadCodexRuntimeConfig({
     NODE_ENV: "test",
