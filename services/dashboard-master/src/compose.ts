@@ -86,7 +86,7 @@ export function createDashboardDirector(transport: DashboardModelTransport) {
       const response = await client.responses.create({
         model: DIRECTOR_MODEL,
         store: false,
-        max_output_tokens: 4_000,
+        max_output_tokens: 12_000,
         reasoning: { effort: DIRECTOR_EFFORT },
         safety_identifier: transport.safetyIdentifier,
         text: { verbosity: "low", format: zodTextFormat(directorOutputSchema, "dashboard_direction") },
@@ -175,7 +175,9 @@ export async function composeDashboardReport(input: Readonly<{
     const response = await client.responses.create({
       model: COMPOSER_MODEL,
       store: false,
-      max_output_tokens: 16_000,
+      // Reasoning tokens count against this cap; max-effort reasoning over
+      // ten findings needs real headroom or output_text comes back empty.
+      max_output_tokens: 60_000,
       reasoning: { effort: COMPOSER_EFFORT },
       safety_identifier: input.transport.safetyIdentifier,
       text: { verbosity: "medium", format: zodTextFormat(composerOutputSchema, "dashboard_master_report") },
@@ -197,8 +199,12 @@ export async function composeDashboardReport(input: Readonly<{
     });
     const raw = typeof response.output_text === "string" ? response.output_text : "";
     if (!raw.trim()) return null;
-    const parsed = composerOutputSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    try {
+      const parsed = composerOutputSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
   };
 
   // Evidence corpus: every currency and percent figure the findings and their
@@ -236,6 +242,11 @@ export async function composeDashboardReport(input: Readonly<{
   ].join("\n");
 
   let draft = await attempt();
+  if (!draft) {
+    draft = await attempt(
+      "RETRY: your previous response was empty or did not match the schema. Respond with the complete JSON object only.",
+    ).catch(() => null);
+  }
   const cautions: string[] = [];
   if (draft) {
     const unsupported = unsupportedIn(draftText(draft));

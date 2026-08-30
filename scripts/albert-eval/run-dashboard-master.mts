@@ -11,7 +11,7 @@
  *   ... --budget-minutes 60 --service-url https://albert-codex-runtime.fly.dev
  */
 import path from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import pg from "pg";
 import { ulid } from "ulid";
@@ -46,7 +46,7 @@ import {
   runDir,
 } from "./lib.js";
 
-type Args = { run: string; serviceUrl: string; budgetMinutes: number; persist: boolean };
+type Args = { run: string; serviceUrl: string; budgetMinutes: number; persist: boolean; resume: boolean };
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -54,6 +54,7 @@ function parseArgs(argv: string[]): Args {
     serviceUrl: process.env.REPRO_SERVICE_URL ?? "http://127.0.0.1:8799",
     budgetMinutes: 60,
     persist: false,
+    resume: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -62,6 +63,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--service-url") args.serviceUrl = next();
     else if (a === "--budget-minutes") args.budgetMinutes = Number(next());
     else if (a === "--persist") args.persist = true;
+    else if (a === "--resume") args.resume = true;
   }
   return args;
 }
@@ -174,9 +176,12 @@ const periodLabel = DASHBOARD_MASTER_PERIOD_LABEL;
 const ready = await fetch(`${args.serviceUrl.replace(/\/+$/u, "")}/readyz`).then((r) => r.json()) as { ready?: boolean };
 if (ready.ready !== true) throw new Error("agent runtime not ready");
 
-let state: DashboardSessionState = newDashboardSessionState(args.budgetMinutes * 60_000);
+const statePath = path.join(dir, "session-state.json");
+let state: DashboardSessionState = args.resume && existsSync(statePath)
+  ? { ...JSON.parse(readFileSync(statePath, "utf8")) as DashboardSessionState, budgetMs: args.budgetMinutes * 60_000 }
+  : newDashboardSessionState(args.budgetMinutes * 60_000);
 const sessionStarted = Date.now();
-console.log(`[dashboard-master] session start budget=${args.budgetMinutes}m service=${args.serviceUrl}`);
+console.log(`[dashboard-master] session ${args.resume ? `resume phase=${state.phase} findings=${state.findings.length}` : "start"} budget=${args.budgetMinutes}m service=${args.serviceUrl}`);
 for (let tick = 1; state.phase !== "compose" && state.phase !== "completed"; tick += 1) {
   console.log(`[dashboard-master] tick ${tick}: phase=${state.phase} findings=${state.findings.length} spent=${Math.round(state.investigationMs / 60_000)}m`);
   const result = await advanceDashboardSession({
@@ -187,7 +192,7 @@ for (let tick = 1; state.phase !== "compose" && state.phase !== "completed"; tic
     tickBudgetMs: DASHBOARD_MASTER_TICK_BUDGET_MS,
   });
   state = result.state;
-  writeFileSync(path.join(dir, "session-state.json"), JSON.stringify(state, null, 2));
+  writeFileSync(statePath, JSON.stringify(state, null, 2));
   if (!result.advanced) break;
   if (tick > 24) throw new Error("session did not converge within 24 ticks");
 }
