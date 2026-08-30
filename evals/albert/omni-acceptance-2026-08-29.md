@@ -157,3 +157,27 @@ clocked in right now" with no live clock-in data). Latency: p50 40s, p90 135s, m
 
 Runs: `evals/albert/runs/omni-daily60`, `omni-prod-statements`.
 Deployed 2026-08-31: Fly `omni-statements-b914be8`, Vercel aliased, routes verified.
+
+---
+
+# Query-repair pass — 2026-08-31 (commit cda3fe8)
+
+Owner-reported recurring failure: `Query failed: FYTD P&L headline — compareDateRange
+needs between two and four date ranges.` Telemetry across every Omni run ranked the
+wasted-round-trip classes: 28x one-entry/oversized compareDateRange, 22x
+"last 12 complete weeks" phrasing Cube can't parse, 5x duplicate bucketed+plain time
+member, 4x dimension misfiled under measures, 2x text operators on time fields.
+
+Fix: `normalizeOmniCubeQuery` repairs the meaning-preserving classes before
+validation (single compare period → dateRange; >4 periods → first four; "complete"
+phrasing → Cube's own complete-period form; duplicate time member dropped; misfiled
+members moved to their catalogue kind) with every adjustment disclosed to the model
+as `queryAdjustments`; time-field text operators fail fast with the exact operator to
+use. Tool schema caps compareDateRange at 4; prompt/description now state
+single-period-goes-in-dateRange and "last 12 weeks" phrasing. 11 unit tests.
+
+Verified: DL-XO-11 re-run local with zero warnings (3 queries, was 6 with retries);
+the FYTD comparison Verified through the production runtime with both
+compareDateRange queries clean and zero warnings. Deployed Fly `omni-queryfix-cda3fe8`
+(runtime-only change; no web deploy needed). Cube-side residuals (63-char alias
+truncation on the Xero account view, join-path gaps) filed separately.
