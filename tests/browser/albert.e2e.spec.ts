@@ -1150,13 +1150,18 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await expect(page.getByText('Search: "revenue"')).toBeVisible();
   await expect(page.getByText(/view_name: sales_analytics/u)).toBeVisible();
 
-  // The named query card with its topic, row count, result table, and the
-  // source tool's logo in the top-right corner.
-  await expect(page.getByRole("button", { name: /Query.*Weekly revenue.*From Sales analytics · 2 rows/u })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "AUD 8,379.02" })).toBeVisible();
+  // The named query card starts collapsed with its name, topic, row count
+  // and the source tool's logo in the top-right corner; expanding reveals
+  // the evidence table.
+  const queryCardHeader = page.getByRole("button", { name: /Query.*Weekly revenue.*From Sales analytics · 2 rows/u });
+  await expect(queryCardHeader).toBeVisible();
+  await expect(queryCardHeader).toHaveAttribute("aria-expanded", "false");
   const connectorLogo = page.getByTitle("Data from Lightspeed");
   await expect(connectorLogo).toBeVisible();
   await expect(connectorLogo.getByAltText("Lightspeed")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "AUD 8,379.02" })).not.toBeVisible();
+  await queryCardHeader.click();
+  await expect(page.getByRole("cell", { name: "AUD 8,379.02" })).toBeVisible();
 
   // Interim narration and the final verified answer with a follow-up chip.
   await expect(page.getByText("I found the governed revenue measure. Querying weekly revenue now.")).toBeVisible();
@@ -1197,4 +1202,79 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   // A full-turn visual artifact for review, kept outside version control.
   await page.getByText("The lift came from stronger weekend trade.").scrollIntoViewIfNeeded();
   await page.screenshot({ path: ".playwright/omni-harness-turn.png", fullPage: true });
+});
+
+test("Swarm on the Omni tab keeps the omni harness end to end", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await selectAnalysisRuntime(page, "Omni");
+  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+
+  // Toggling Swarm must not yank the conversation over to Codex.
+  await page.getByRole("button", { name: "Swarm", exact: true }).click();
+  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+
+  const composer = page.getByRole("textbox", { name: "Ask a harder question for Swarm" });
+  await composer.fill("Where is the business leaking money across sales, costs and labour?");
+  await composer.press("Enter");
+
+  // The run registers on the omni harness and the fleet fans out through the
+  // omni conversation endpoint.
+  await expect.poll(() => capture.swarmPayloads.length).toBe(1);
+  const swarmBody = capture.swarmPayloads[0] as Record<string, unknown>;
+  expect(swarmBody.runtime).toBe("omni");
+  await expect.poll(() => capture.omniConversationPayloads.length).toBeGreaterThan(0);
+  const workerBody = capture.omniConversationPayloads.at(-1) as Record<string, unknown>;
+  expect(workerBody.message).toBe("Measure the sales trajectory for the governed period.");
+  expect(workerBody).not.toHaveProperty("solPlanner");
+  expect(workerBody).not.toHaveProperty("proMode");
+
+  // The panel tracks the omni worker and the conversation stays on Omni.
+  await expect(page.getByRole("heading", { name: "Sales trajectory" }).or(page.getByText("Sales trajectory")).first()).toBeVisible();
+  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+});
+
+test("Dashboard Master runs a session through the omni harness and renders the report", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+
+  await page.getByRole("button", { name: "Dashboard Master" }).click();
+  await expect(page.getByRole("heading", { name: "Dashboard Master" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your daily deep dive" })).toBeVisible();
+
+  // Start the first session: one objective fans out through the omni
+  // conversation endpoint with Luna at max effort.
+  await page.getByRole("button", { name: "Run the first deep dive" }).click();
+  await expect(page.getByText("Deep-dive session in progress")).toBeVisible();
+  await expect.poll(() => capture.omniConversationPayloads.length).toBeGreaterThan(0);
+  const workerBody = capture.omniConversationPayloads.at(-1) as Record<string, unknown>;
+  expect(workerBody.message).toBe("Investigate the sales trajectory for the daily dashboard.");
+  expect((workerBody.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
+  expect((workerBody.preferences as Record<string, unknown>).reasoningEffort).toBe("max");
+
+  // The worker's governed evidence is captured from the stream and recorded.
+  await expect.poll(() => (capture.dashboardMasterPayloads as Array<{ endpoint: string }>)
+    .filter((entry) => entry.endpoint === "finding").length).toBe(1);
+  const finding = (capture.dashboardMasterPayloads as Array<{ endpoint: string; body: Record<string, unknown> }>)
+    .find((entry) => entry.endpoint === "finding")!.body;
+  expect(finding.key).toBe("sales-trajectory");
+  expect(finding.failed).toBe(false);
+  expect((finding.tables as unknown[]).length).toBe(1);
+  expect(finding.queries).toBe(1);
+  expect(finding.answerState).toBe("Verified");
+
+  // Direction reaches compose and the composed report renders: hero headline,
+  // five focus sections, key figures, evidence table and chart, actions.
+  await expect.poll(() => (capture.dashboardMasterPayloads as Array<{ endpoint: string }>)
+    .filter((entry) => entry.endpoint === "compose").length).toBe(1);
+  await expect(page.getByRole("heading", { name: "Margins, not sales volume, are the biggest profit lever this month." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Stop the discount leakage on bikes" })).toBeVisible();
+  await expect(page.getByText("Fixture focus area 5")).toBeVisible();
+  await expect(page.getByText("$5,209.42").first()).toBeVisible();
+  await expect(page.getByText("214 governed queries")).toBeVisible();
+  const evidenceCell = page.getByRole("cell", { name: "$8,120.50" });
+  await expect(evidenceCell).toBeVisible();
+  await expect(page.locator("figure").filter({ hasText: "Weekly revenue trend" }).locator("svg").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Set a discount approval threshold for anything over 10%.")).toBeVisible();
+  await expect(page.getByText("The latest labour week is partial; wage ratios exclude it.")).toBeVisible();
 });

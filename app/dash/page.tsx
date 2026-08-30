@@ -83,6 +83,7 @@ import TenantDeletionWorkspace, {
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
 import ProactiveWorkspace from "./components/ProactiveWorkspace";
+import DashboardMasterWorkspace from "./components/DashboardMasterWorkspace";
 import SwarmPanel, { SWARM_PANEL_DEFAULT_WIDTH } from "./components/SwarmPanel";
 import RecommendedAnalysis from "./components/RecommendedAnalysis";
 import {
@@ -138,12 +139,14 @@ type IconName =
   | "chart"
   | "list"
   | "radar"
+  | "target"
   | "voice";
 
 type ActiveItem =
   | "Chat"
   | "Agents"
   | "Proactive"
+  | "DashboardMaster"
   | "Dashboard"
   | "My Data"
   | "Test chart"
@@ -320,6 +323,8 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       );
     case "radar":
       return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.6" /><path d="M12 12l5.5-6.4" /><circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" /></svg>;
+    case "target":
+      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5v3.2M12 17.3v3.2M3.5 12h3.2M17.3 12h3.2" /><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" /></svg>;
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
@@ -480,6 +485,7 @@ type PersistedSwarmRun = Readonly<{
   plan?: {
     periodLabel?: string;
     kind?: "question" | "sales-deep" | "super-agent";
+    runtime?: "codex" | "omni";
     durationMs?: number;
     checkpointIntervalMs?: number;
   };
@@ -1314,6 +1320,28 @@ export default function DashPage() {
       cancelled = true;
     };
   }, []);
+  const [dashboardMasterConversationIds, setDashboardMasterConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    // Dashboard Master worker conversations stay out of sidebar history too;
+    // the workspace refreshes this set whenever its panel reloads.
+    let cancelled = false;
+    void fetch("/api/dashboard-master", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setDashboardMasterConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/swarm", { cache: "no-store" })
@@ -1362,12 +1390,13 @@ export default function DashPage() {
       // Proactive research conversations live in the control panel, not history.
       if (proactiveConversationIds.has(conversation.conversationId)) return false;
       if (swarmConversationIds.has(conversation.conversationId)) return false;
+      if (dashboardMasterConversationIds.has(conversation.conversationId)) return false;
       if (!needle) return true;
       return conversation.title.toLowerCase().includes(needle)
         || conversation.lastMessage.toLowerCase().includes(needle)
         || conversation.status.toLowerCase().includes(needle);
     });
-  }, [archivedConversationIds, conversationSummaries, proactiveConversationIds, query, swarmConversationIds]);
+  }, [archivedConversationIds, conversationSummaries, dashboardMasterConversationIds, proactiveConversationIds, query, swarmConversationIds]);
   const conversationGroups = useMemo(() => {
     const byId = new Map(
       filteredConversations.map((conversation) => [conversation.conversationId, conversation]),
@@ -1408,6 +1437,7 @@ export default function DashPage() {
       !archivedConversationIds.has(conversation.conversationId)
       && !proactiveConversationIds.has(conversation.conversationId)
       && !swarmConversationIds.has(conversation.conversationId)
+      && !dashboardMasterConversationIds.has(conversation.conversationId)
     ));
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
@@ -2036,6 +2066,7 @@ export default function DashPage() {
         synthesisRecovery: run.synthesis?.recovery ?? null,
         followUps: run.synthesis?.followUps,
         kind: run.plan?.kind,
+        runtime: run.plan?.runtime,
         startedAt: run.startedAt,
         durationMs: run.plan?.durationMs,
         checkpointIntervalMs: run.plan?.checkpointIntervalMs,
@@ -2089,6 +2120,7 @@ export default function DashPage() {
           synthesisRecovery: synthesis.recovery ?? null,
           followUps: synthesis.followUps,
           kind: finalRun.plan?.kind,
+          runtime: finalRun.plan?.runtime,
           startedAt: finalRun.startedAt,
           durationMs: finalRun.plan?.durationMs,
           checkpointIntervalMs: finalRun.plan?.checkpointIntervalMs,
@@ -2729,7 +2761,9 @@ export default function DashPage() {
       : null;
     const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
     const runSpecialistAgentId = specialistAgentIdRef.current;
-    const runRuntime = swarmEnabledRef.current || superAgentEnabledRef.current
+    const runRuntime = swarmEnabledRef.current && !superAgentEnabledRef.current && activeChatRuntimeRef.current === "omni"
+      ? "omni"
+      : swarmEnabledRef.current || superAgentEnabledRef.current
       ? "codex"
       : options?.forceRuntime
       ? options.forceRuntime
@@ -2897,12 +2931,14 @@ export default function DashPage() {
       if (swarmEnabledRef.current || superAgentEnabledRef.current) {
         const swarmKind = options?.swarmKind
           ?? (superAgentEnabledRef.current ? SUPER_AGENT_KIND : undefined);
+        const swarmRuntime = runRuntime === "omni" ? "omni" as const : "codex" as const;
         debug.request("/api/swarm", {
           message: text,
           preferences: runPreferences,
           solPlanner: runSolPlanner,
           proMode: runProMode,
           ...(swarmKind ? { kind: swarmKind } : {}),
+          ...(swarmRuntime === "omni" ? { runtime: swarmRuntime } : {}),
         });
         const response = await fetch("/api/swarm", {
           method: "POST",
@@ -2915,6 +2951,7 @@ export default function DashPage() {
             ...(requestConversationId ? { conversationId: requestConversationId } : {}),
             ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
             ...(swarmKind ? { kind: swarmKind } : {}),
+            ...(swarmRuntime === "omni" ? { runtime: swarmRuntime } : {}),
           }),
           signal: controller.signal,
         });
@@ -2922,7 +2959,7 @@ export default function DashPage() {
         if (!response.ok) {
           const payload = await response.json().catch(() => null) as { error?: string } | null;
           throw new Error(describeChatFailure(payload?.error || `HTTP ${response.status}`, {
-            runtime: "codex",
+            runtime: swarmRuntime,
             httpStatus: response.status,
             phase: "start",
           }));
@@ -2947,6 +2984,7 @@ export default function DashPage() {
           };
           concurrency?: number;
           kind?: "question" | "sales-deep" | "super-agent";
+          runtime?: "codex" | "omni";
           durationMs?: number;
           checkpointIntervalMs?: number;
         };
@@ -2984,8 +3022,9 @@ export default function DashPage() {
           setActiveConversationId(responseConversationId);
           activeConversationIdRef.current = responseConversationId;
         }
-        setActiveChatRuntime("codex");
-        activeChatRuntimeRef.current = "codex";
+        const settledSwarmRuntime = payload.runtime ?? swarmRuntime;
+        setActiveChatRuntime(settledSwarmRuntime);
+        activeChatRuntimeRef.current = settledSwarmRuntime;
         const now = new Date().toISOString();
         setConversationSummaries((current) => {
           const existingSummary = current.find((item) => item.conversationId === responseConversationId);
@@ -2997,12 +3036,12 @@ export default function DashPage() {
             updatedAt: now,
             lastMessage: text,
             lastTurnStatus: "running",
-            runtime: "codex",
+            runtime: settledSwarmRuntime,
             specialistAgentId: runSpecialistAgentId,
           }, ...current.filter((item) => item.conversationId !== responseConversationId)];
         });
         updateAssistant({
-          runtime: "codex",
+          runtime: settledSwarmRuntime,
           conversationId: responseConversationId,
           turnId: responseTurnId,
         });
@@ -3022,6 +3061,7 @@ export default function DashPage() {
           },
           concurrency: payload.concurrency ?? 3,
           kind: payload.kind,
+          runtime: settledSwarmRuntime,
           durationMs: payload.durationMs,
           checkpointIntervalMs: payload.checkpointIntervalMs,
         });
@@ -3594,7 +3634,7 @@ export default function DashPage() {
         isStreaming: !snap.answer && !snap.error && snap.active,
         conversationId: snap.parentConversationId ?? message.conversationId,
         turnId: snap.parentTurnId ?? message.turnId,
-        runtime: "codex",
+        runtime: snap.runtime,
         events,
       };
     });
@@ -3963,8 +4003,11 @@ export default function DashPage() {
     setTakeawaysOpen(false);
     setReasoningPanelOpen(false);
     setSwarmPanelOpen(false);
-    if (runtime !== "codex") {
+    // Swarm runs on Codex and Omni; Super agent stays Codex-only.
+    if (runtime !== "codex" && runtime !== "omni") {
       setSwarmMode(false);
+      setSuperAgentMode(false);
+    } else if (runtime === "omni") {
       setSuperAgentMode(false);
     }
     setChatClarification(null);
@@ -4349,7 +4392,9 @@ export default function DashPage() {
                 {message.events?.length || message.isStreaming ? (
                   message.trailVisible === false ? (
                     <div className={styles.chatTrailDeferred} aria-hidden="true" />
-                  ) : message.runtime === "omni" ? (
+                  ) : message.runtime === "omni" && !message.events?.some((event) => (
+                    event.type === "plan" && event.id.startsWith("swarm_")
+                  )) ? (
                     <OmniTrace
                       events={message.events ?? []}
                       streaming={message.isStreaming}
@@ -4573,6 +4618,16 @@ export default function DashPage() {
           >
             <Icon name="radar" />
             <span className={styles.sidebarActionLabel}>Proactive</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Dashboard Master"
+            aria-current={activeItem === "DashboardMaster" ? "page" : undefined}
+            onClick={() => setActiveItem("DashboardMaster")}
+          >
+            <Icon name="target" />
+            <span className={styles.sidebarActionLabel}>Dashboard Master</span>
           </button>
           <button
             hidden
@@ -5025,7 +5080,7 @@ export default function DashPage() {
         {activeItem !== "Chat" ? (
           <header className={`${styles.pageHeader} ${styles.pageHeaderSimple}`}>
             <div className={styles.pageHeaderTop}>
-              <h1 id="dash-title">{activeItem === "SemanticMemory" ? "Albert's memory" : activeItem === "BusinessContext" ? "About your business" : activeItem}</h1>
+              <h1 id="dash-title">{activeItem === "SemanticMemory" ? "Albert's memory" : activeItem === "BusinessContext" ? "About your business" : activeItem === "DashboardMaster" ? "Dashboard Master" : activeItem}</h1>
             </div>
           </header>
         ) : null}
@@ -5598,7 +5653,9 @@ export default function DashPage() {
                     aria-label="Swarm"
                     title="Split a hard question across specialists, then combine their findings"
                     onClick={() => {
-                      if (activeChatRuntime !== "codex") {
+                      // Swarm runs on Codex and Omni alike; only the other
+                      // runtimes need switching to a swarm-capable harness.
+                      if (activeChatRuntime !== "codex" && activeChatRuntime !== "omni") {
                         startCodexChat();
                         setSuperAgentMode(false);
                         setSwarmMode(true);
@@ -5887,6 +5944,10 @@ export default function DashPage() {
           <ProactiveWorkspace
             onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}
             onProactiveConversationIds={(ids) => setProactiveConversationIds(new Set(ids))}
+          />
+        ) : activeItem === "DashboardMaster" ? (
+          <DashboardMasterWorkspace
+            onDashboardConversationIds={(ids) => setDashboardMasterConversationIds(new Set(ids))}
           />
         ) : activeItem === "Dashboard" ? (
           <DashboardWorkspace onOpenSource={(conversationId) => void openSavedConversation(conversationId)} />

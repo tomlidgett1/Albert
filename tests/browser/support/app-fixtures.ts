@@ -158,6 +158,7 @@ export type AppApiCapture = {
   codexConversationPayloads: unknown[];
   omniConversationPayloads: unknown[];
   swarmPayloads: unknown[];
+  dashboardMasterPayloads: unknown[];
   runtimeRequestStartedAt: { v3: number[]; codex: number[] };
   anthropicConversationPayloads: unknown[];
   oauthSelectionPayloads: unknown[];
@@ -817,6 +818,7 @@ export async function installAppApiRoutes(
     codexConversationPayloads: [],
     omniConversationPayloads: [],
     swarmPayloads: [],
+    dashboardMasterPayloads: [],
     runtimeRequestStartedAt: { v3: [], codex: [] },
     anthropicConversationPayloads: [],
     oauthSelectionPayloads: [],
@@ -1265,19 +1267,32 @@ export async function installAppApiRoutes(
       ? requestPayload.preferences as Record<string, unknown>
       : {};
     const superAgent = requestPayload.kind === "super-agent";
+    const swarmRuntime = requestPayload.runtime === "omni" ? "omni" : "codex";
     await route.fulfill({
       status: 200,
       headers: {
         "Cache-Control": "no-store",
+        "X-Albert-Runtime": swarmRuntime,
         "X-Albert-Conversation-Id": "01J00000000000000000000061",
         "X-Albert-Turn-Id": "01J00000000000000000000062",
       },
       json: {
         run: {
           runId: "01J00000000000000000000063",
-          plan: { periodLabel: "As asked" },
+          plan: { periodLabel: "As asked", runtime: swarmRuntime },
         },
-        agents: [],
+        // Omni swarms carry one worker so the browser exercises the real
+        // fan-out through the omni conversation fixture; codex fixtures keep
+        // the historical empty fleet.
+        agents: swarmRuntime === "omni"
+          ? [{
+              key: "sales-measure",
+              title: "Sales trajectory",
+              tagline: "Measure the sales trend",
+              role: "measure",
+              prompt: "Measure the sales trajectory for the governed period.",
+            }]
+          : [],
         preferences: {
           model: typeof preferences.model === "string" ? preferences.model : "gpt-5.6-luna",
           reasoningEffort: typeof preferences.reasoningEffort === "string" ? preferences.reasoningEffort : "max",
@@ -1288,12 +1303,21 @@ export async function installAppApiRoutes(
         synthesisProMode: requestPayload.proMode === true,
         concurrency: superAgent ? 1 : 3,
         kind: superAgent ? "super-agent" : "question",
+        runtime: swarmRuntime,
         ...(superAgent ? {
           durationMs: 45 * 60_000,
           checkpointIntervalMs: 2 * 60_000,
         } : {}),
       },
     });
+  });
+
+  await page.route(/\/api\/swarm\/agent$/u, async (route) => {
+    await route.fulfill({ json: { agent: { headline: null, answerState: null, keyNumbers: [] } } });
+  });
+
+  await page.route(/\/api\/swarm\/heartbeat$/u, async (route) => {
+    await route.fulfill({ json: { ok: true } });
   });
 
   await page.route(/\/api\/swarm\/synthesis$/u, async (route) => {
@@ -1306,6 +1330,123 @@ export async function installAppApiRoutes(
         },
       },
     });
+  });
+
+  // Dashboard Master: a stateful mock of the daily deep-dive family. The
+  // session assigns one objective; once compose is requested the panel serves
+  // a completed five-focus report whose first item carries governed evidence.
+  const dashboardMasterState = { composed: false };
+  const dashboardMasterReportFixture = {
+    reportId: "01J000000000000000000000DM",
+    generatedAt: "2026-08-30T05:00:00.000Z",
+    periodLabel: "the last 12 complete weeks, with the latest complete month in focus",
+    model: "gpt-5.6-luna",
+    investigationMinutes: 58.4,
+    workerTurns: 11,
+    governedQueries: 214,
+    headline: "Margins, not sales volume, are the biggest profit lever this month.",
+    overview: "Sales are steady across the last 12 weeks, but discounting and labour-data gaps are eroding profit. The five focus areas below carry the most money and are ranked by how quickly you can act on them.",
+    focus: [1, 2, 3, 4, 5].map((rank) => ({
+      rank,
+      title: rank === 1 ? "Stop the discount leakage on bikes" : `Fixture focus area ${rank}`,
+      verdict: "Discounts of $5,209.42 in twelve weeks sit almost entirely on the bike floor, at margins already below benchmark.",
+      whyItMatters: "Bikes carry most of the revenue but the thinnest margin, so pricing moves swing profit more than sales volume does.",
+      keyFigures: [
+        { label: "Discounts (12 wks)", value: "$5,209.42", sentiment: "negative" },
+        { label: "Floor margin", value: "43.3%", sentiment: "neutral" },
+      ],
+      actions: [
+        "Set a discount approval threshold for anything over 10%.",
+        "Review pricing on the top ten discounted bikes this week.",
+      ],
+      tables: rank === 1
+        ? [{
+            resultId: "01J0000000000000000000OMN1",
+            caption: "Weekly revenue",
+            connector: "lightspeed",
+            timeRangeLabel: "last 12 weeks",
+            columns: [
+              { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+              { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+            ],
+            rows: [
+              { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
+              { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
+              { sales_analytics_completed_at: "2026-08-03", sales_analytics_gross_takings: 8654.1 },
+            ],
+            rowCount: 3,
+          }]
+        : [],
+      charts: rank === 1
+        ? [{
+            resultId: "01J0000000000000000000OMN1",
+            caption: "Weekly revenue trend",
+            chartType: "line",
+            xKey: "sales_analytics_completed_at",
+            yKey: "sales_analytics_gross_takings",
+            columns: [
+              { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+              { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+            ],
+            rows: [
+              { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
+              { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
+              { sales_analytics_completed_at: "2026-08-03", sales_analytics_gross_takings: 8654.1 },
+            ],
+          }]
+        : [],
+    })),
+    cautions: ["The latest labour week is partial; wage ratios exclude it."],
+  };
+  await page.route(/\/api\/dashboard-master(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({
+      json: {
+        latest: dashboardMasterState.composed
+          ? {
+              reportId: dashboardMasterReportFixture.reportId,
+              status: "completed",
+              model: "gpt-5.6-luna",
+              reasoningEffort: "max",
+              startedAt: "2026-08-30T04:00:00.000Z",
+              completedAt: "2026-08-30T05:00:00.000Z",
+              report: dashboardMasterReportFixture,
+              failureNote: null,
+            }
+          : null,
+        running: null,
+        conversationIds: [],
+        refreshDue: false,
+        canRun: true,
+      },
+    });
+  });
+  await page.route(/\/api\/dashboard-master\/session$/u, async (route) => {
+    capture.dashboardMasterPayloads.push({ endpoint: "session", body: route.request().postDataJSON() });
+    await route.fulfill({
+      json: {
+        reportId: "01J000000000000000000000DM",
+        state: { phase: "round-1" },
+        turns: [{
+          key: "sales-trajectory",
+          round: 1,
+          title: "Sales trajectory and demand",
+          message: "Investigate the sales trajectory for the daily dashboard.",
+        }],
+      },
+    });
+  });
+  await page.route(/\/api\/dashboard-master\/finding$/u, async (route) => {
+    capture.dashboardMasterPayloads.push({ endpoint: "finding", body: route.request().postDataJSON() });
+    await route.fulfill({ json: { state: { phase: "round-1" } } });
+  });
+  await page.route(/\/api\/dashboard-master\/direct$/u, async (route) => {
+    capture.dashboardMasterPayloads.push({ endpoint: "direct", body: route.request().postDataJSON() });
+    await route.fulfill({ json: { state: { phase: "compose" }, turns: [] } });
+  });
+  await page.route(/\/api\/dashboard-master\/compose$/u, async (route) => {
+    capture.dashboardMasterPayloads.push({ endpoint: "compose", body: route.request().postDataJSON() });
+    dashboardMasterState.composed = true;
+    await route.fulfill({ json: { latest: { reportId: "01J000000000000000000000DM" } } });
   });
 
   await page.route(/\/api\/codex-conversation$/u, async (route) => {
