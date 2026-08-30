@@ -181,3 +181,59 @@ the FYTD comparison Verified through the production runtime with both
 compareDateRange queries clean and zero warnings. Deployed Fly `omni-queryfix-cda3fe8`
 (runtime-only change; no web deploy needed). Cube-side residuals (63-char alias
 truncation on the Xero account view, join-path gaps) filed separately.
+
+## Swarm on the Omni harness (2026-08-30)
+
+The Swarm feature is runtime-dimensional: an Omni conversation's swarm plans with
+the same planner, fans workers through `/api/omni-conversation` (no codex-only
+switches), and keeps the omni identity across panel, sidebar, hydration and
+tap-through traces. Sales-deep and super-agent stay codex. 26/26 swarm contract
+tests; e2e proves toggle-stays-Omni + worker body shape + no solPlanner/proMode.
+
+Live proof (run `omni-swarm-q1`, private runtime, Luna max): "Where is the business
+leaking money right now across sales, margins, costs and labour?" → planner allocated
+4 workers (sales/measure, labour/explain, cash/reconcile, challenge); all four
+Verified; synthesis from the model with **zero unsupported figures**. The answer
+ranks five leak areas with dollar sizes and levers (discounts $5,209.42, refunds
+$2,664.99 incl. the $2,058.99 Dyson return, negative-margin bikes, labour-data
+integrity, cash discipline), carries a "strongest contrary evidence" section from
+the challenge worker (Lightspeed↔Xero COGS within 0.81%), a 30/60/90 owner plan
+with guardrails, and honest limitations about the partial latest week.
+
+## Dashboard Master (2026-08-30)
+
+New tab: a daily deep-dive report — the five most important things the business
+should focus on, from a ~60-minute Omni investigation (Luna max). Architecture:
+migration 0178 session/report row + SECURITY DEFINER RPC family; phased session
+machine (6 breadth objectives → Terra director assigns drill + challenge rounds →
+Luna composes 5 focus items with figure-grounding validation against captured
+evidence); workers are real omni turns whose governed tables/charts are captured
+from the trace stream and rendered on the tab (Flint charts, formatTraceCell
+tables, sentiment key-figure cards). Browser-orchestrated like Proactive/Swarm with
+24h staleness auto-refresh; worker conversations hidden from history. 6/6 contract
+tests on the machine; e2e drives a full session through fixtures (evidence capture
+asserted from the worker stream). Real prod session recorded below.
+
+### The real Ashburton session (dm-ashburton-1, 2026-08-30, prod)
+
+75.5 investigated minutes · 11 worker turns · 257 governed queries · report
+01M1ADTPRFDV2GN40DW3B8WABK persisted to the prod control plane and rendering on
+the tab. Round 1: 5/6 Verified (cash-and-capital stalled to timeout with zero
+queries — now auto-retried by directDashboardPhase); director round 2 assigned 4
+sharp drills (workshop cash release, COGS reconciliation, labour record
+integrity, expense/break-even), all Verified at ~30 queries each; the cash
+domain re-ran as round 3 (Verified, 21 queries) via the durable-state resume.
+Composer initially returned empty — max-effort reasoning consumed the 16k output
+cap — fixed with 60k headroom + blank-retry; final compose passed figure
+grounding with zero cautions.
+
+The five focus items: (1) $106,086.62 aged stock >180 days vs $81,319.66 bank
+balance — freeze replenishment, work 506 >365-day positions; (2) 53/67 workshop
+jobs overdue with $21,562.18 parts attached — invoice the 27 Finished/Staff jobs
+by Friday; (3) ($16,614.37) May–July net loss with the COGS-gap/below-cost/
+Workshop-Supplies detail to reconcile first; (4) 3,060 lapsed repeat buyers
+($2.8M lifetime spend) behind a 21.9% transaction drop — targeted reactivation,
+no blanket discounts; (5) final-week Deputy/Xero labour capture failure making
+the apparent $2,184 wage saving unusable — reconcile before staffing changes.
+Every item ships evidence tables and bar/line charts captured from the workers'
+own governed queries; each carries do-this-next actions with guardrails.
