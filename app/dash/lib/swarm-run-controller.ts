@@ -263,6 +263,87 @@ async function recordAgent(body: Record<string, unknown>): Promise<RecordedFindi
   }
 }
 
+/**
+ * Transport failures that sever the browser's view of a worker stream while
+ * the child turn keeps running server-side. Covers the messages Chrome
+ * ("network error", "Failed to fetch"), Safari ("Load failed", "The network
+ * connection was lost.") and Firefox ("NetworkError…") actually throw.
+ */
+const TRANSIENT_STREAM_FAILURE =
+  /could not be reached|network|failed to fetch|load failed|timed out|connection|premature close/iu;
+
+const RECOVERY_POLL_INTERVAL_MS = 10_000;
+const RECOVERY_POLL_ATTEMPTS = 24;
+
+type RecoveredAgentFinding = Readonly<{
+  headline: string | null;
+  answerState: string | null;
+  keyNumbers: readonly Readonly<{ label: string; value: string }>[];
+}>;
+
+type ChildRecoveryOutcome =
+  | Readonly<{ kind: "recovered"; finding: RecoveredAgentFinding }>
+  /** The child turn settled without an answer — a fresh attempt is safe. */
+  | Readonly<{ kind: "dead" }>
+  /** The child turn was still running when the poll budget (or run) ended —
+   * re-POSTing now would duplicate a live analysis. */
+  | Readonly<{ kind: "still-running" }>;
+
+/**
+ * Poll the persisted child turn for the answer a broken stream never
+ * relayed. The child keeps executing server-side after a disconnect, so this
+ * waits while the server reports the turn still running and gives up as soon
+ * as the turn settles without an answer (or the poll budget ends).
+ */
+async function recoverAgentFinding(
+  runToken: number,
+  runId: string,
+  agentKey: string,
+  signal: AbortSignal,
+): Promise<ChildRecoveryOutcome> {
+  for (let poll = 0; poll < RECOVERY_POLL_ATTEMPTS; poll += 1) {
+    if (signal.aborted || runToken !== currentRunToken) return { kind: "still-running" };
+    try {
+      const response = await fetch("/api/swarm/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recover", runId, agentKey }),
+      });
+      if (response.ok) {
+        const payload = await response.json().catch(() => null) as {
+          recovered?: boolean;
+          pending?: boolean;
+          agent?: { headline?: unknown; answerState?: unknown; keyNumbers?: unknown };
+        } | null;
+        if (payload?.recovered && payload.agent) {
+          return {
+            kind: "recovered",
+            finding: {
+              headline: typeof payload.agent.headline === "string" ? payload.agent.headline : null,
+              answerState: typeof payload.agent.answerState === "string" ? payload.agent.answerState : null,
+              keyNumbers: Array.isArray(payload.agent.keyNumbers)
+                ? payload.agent.keyNumbers
+                  .filter((item): item is { label: string; value: string } => (
+                    typeof item === "object" && item !== null
+                    && typeof (item as { label?: unknown }).label === "string"
+                    && typeof (item as { value?: unknown }).value === "string"
+                  ))
+                  .slice(0, 6)
+                : [],
+            },
+          };
+        }
+        if (payload && payload.pending !== true) return { kind: "dead" };
+      }
+    } catch {
+      // The same drop that broke the stream can break a poll; the next
+      // attempt answers either way.
+    }
+    await new Promise((resolve) => setTimeout(resolve, RECOVERY_POLL_INTERVAL_MS));
+  }
+  return { kind: "still-running" };
+}
+
 type ParsedSseBlock = Readonly<{ event: string; data: string }>;
 
 function parseSseBlock(block: string): ParsedSseBlock | null {
@@ -445,7 +526,7 @@ async function runAgent(
       headline,
     }, 1);
   } catch (error) {
-    if (controller.signal.aborted || runToken !== currentRunToken) {
+    const settleInterrupted = async (): Promise<void> => {
       if (runToken === currentRunToken && superAgentDeadlineReached) {
         const failureNote = "The 45-minute Super agent budget ended during this pass.";
         await recordAgent({
@@ -465,10 +546,51 @@ async function runAgent(
       } else {
         setAgent(agent.key, { phase: "stopped", statusLine: "Stopped" }, 1);
       }
+    };
+    if (controller.signal.aborted || runToken !== currentRunToken) {
+      await settleInterrupted();
       return;
     }
     const message = error instanceof Error ? error.message.slice(0, 280) : "The analysis failed.";
-    const retryable = /could not be reached|network connection lost|timed out/iu.test(message);
+    const transientStream = TRANSIENT_STREAM_FAILURE.test(message);
+    const liveState = agentStates.get(agent.key);
+    const hasChildTurn = Boolean(liveState?.conversationId && liveState?.turnId);
+    // A severed stream does not mean the child died: the server keeps
+    // executing after a disconnect and persists the answer on the child's
+    // conversation. Recover that answer instead of recording a false failure
+    // (and instead of re-POSTing a duplicate of a still-running analysis).
+    let childOutcome: ChildRecoveryOutcome | null = null;
+    if (transientStream && hasChildTurn) {
+      setAgent(agent.key, {
+        phase: "recording",
+        statusLine: "Connection dropped — recovering the analysis…",
+        error: null,
+      });
+      childOutcome = await recoverAgentFinding(runToken, runId, agent.key, controller.signal);
+      if (controller.signal.aborted || runToken !== currentRunToken) {
+        await settleInterrupted();
+        return;
+      }
+      if (childOutcome.kind === "recovered") {
+        const finding = childOutcome.finding;
+        waveFindings.set(agent.key, {
+          title: agent.title,
+          headline: finding.headline,
+          answerState: finding.answerState,
+          keyNumbers: finding.keyNumbers,
+          failed: false,
+        });
+        setAgent(agent.key, {
+          phase: "done",
+          statusLine: "Done",
+          answerState: finding.answerState,
+          headline: finding.headline,
+          error: null,
+        }, 1);
+        return;
+      }
+    }
+    const retryable = transientStream && childOutcome?.kind !== "still-running";
     if (retryable && attempt < 2 && runToken === currentRunToken) {
       setAgent(agent.key, {
         phase: "starting",

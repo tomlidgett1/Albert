@@ -13,6 +13,7 @@ import { buildSwarmSynthesis, governedSwarmAnswerState } from "@/services/swarm/
 import { swarmParentAnswerEvent, swarmPlanSteps } from "@/services/swarm/src/parent-events";
 import {
   swarmChildAnswerFromHistory,
+  swarmChildTurnStatusFromHistory,
   type SwarmChildAnswer,
 } from "@/services/swarm/src/child-answers";
 import { distillProactiveAnswer } from "@/services/proactive/src/distill";
@@ -67,14 +68,23 @@ async function loadChildAnswer(
   supabase: ConversationSupabase,
   conversationId: string,
   turnId: string,
-): Promise<SwarmChildAnswer | null> {
+): Promise<Readonly<{ answer: SwarmChildAnswer | null; turnRunning: boolean }>> {
   const { data, error } = await supabase.rpc("albert_conversation_history", {
     p_conversation_id: conversationId,
     p_after_sequence: 0,
   });
-  if (error) return null;
-  return swarmChildAnswerFromHistory(Array.isArray(data) ? data[0] ?? null : data, turnId);
+  if (error) return { answer: null, turnRunning: false };
+  const history = Array.isArray(data) ? data[0] ?? null : data;
+  return {
+    answer: swarmChildAnswerFromHistory(history, turnId),
+    turnRunning: swarmChildTurnStatusFromHistory(history, turnId) === "running",
+  };
 }
+
+/** One bounded wait for children finishing their final write: a stream that
+ * broke in the browser settles server-side seconds later, and synthesis must
+ * not read the transcript in that gap and count the child as failed. */
+const CHILD_SETTLE_RETRY_DELAY_MS = 8_000;
 
 /**
  * Re-read every child's persisted answer. The browser-relayed copy in
@@ -90,13 +100,16 @@ async function recoverChildAnswers(
 ): Promise<Readonly<{ run: SwarmRun; answers: ReadonlyMap<string, SwarmChildAnswer> }>> {
   const answers = new Map<string, SwarmChildAnswer>();
   let recovered = false;
-  for (const agent of run.agents) {
-    if (!agent.conversationId || !agent.turnId) continue;
-    if (agent.status === "stopped") continue;
-    const answer = await loadChildAnswer(supabase, agent.conversationId, agent.turnId);
-    if (!answer) continue;
-    answers.set(agent.agentKey, answer);
-    if (agent.status === "completed") continue;
+  const recoverAgent = async (
+    agent: SwarmRun["agents"][number],
+  ): Promise<Readonly<{ turnRunning: boolean }>> => {
+    if (!agent.conversationId || !agent.turnId) return { turnRunning: false };
+    if (agent.status === "stopped") return { turnRunning: false };
+    const child = await loadChildAnswer(supabase, agent.conversationId, agent.turnId);
+    if (!child.answer) return { turnRunning: child.turnRunning };
+    answers.set(agent.agentKey, child.answer);
+    if (agent.status === "completed") return { turnRunning: false };
+    const answer = child.answer;
     const distilled = distillProactiveAnswer(answer.text);
     const parsedState = swarmAnswerStateSchema.safeParse(answer.answerState);
     await recordSwarmAgentCompleted({
@@ -115,6 +128,16 @@ async function recoverChildAnswers(
         priorStatus: agent.status,
       }, correlationId);
     }).catch(() => undefined);
+    return { turnRunning: false };
+  };
+  const settling: SwarmRun["agents"][number][] = [];
+  for (const agent of run.agents) {
+    const outcome = await recoverAgent(agent);
+    if (outcome.turnRunning && agent.status !== "completed") settling.push(agent);
+  }
+  if (settling.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, CHILD_SETTLE_RETRY_DELAY_MS));
+    for (const agent of settling) await recoverAgent(agent);
   }
   return {
     run: recovered ? await loadSwarmRun(run.runId) : run,

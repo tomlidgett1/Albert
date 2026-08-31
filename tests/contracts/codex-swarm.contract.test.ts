@@ -31,7 +31,10 @@ import {
   type SwarmSynthesisFinding,
 } from "../../services/swarm/src/synthesis.ts";
 import { swarmPlanSteps } from "../../services/swarm/src/parent-events.ts";
-import { swarmChildAnswerFromHistory } from "../../services/swarm/src/child-answers.ts";
+import {
+  swarmChildAnswerFromHistory,
+  swarmChildTurnStatusFromHistory,
+} from "../../services/swarm/src/child-answers.ts";
 import {
   SALES_DEEP_BRIEFING_PATH,
   SALES_DEEP_FAST_MODE,
@@ -837,6 +840,45 @@ test("a persisted child answer outlives the browser relay", () => {
   assert.match(reconcileMigration, /status IN \('pending', 'running', 'failed'\)/u);
   // A record POST that fails must not turn a finished analysis into a failure.
   assert.match(controller, /A failed record must not overwrite a successful analysis/u);
+});
+
+test("a severed worker stream recovers the child's persisted answer instead of failing", () => {
+  const history = {
+    turns: [
+      { turn_id: "01K0000000000000000000000B", status: "running", events: [] },
+      { turn_id: "01K0000000000000000000000C", status: "failed", events: [] },
+    ],
+  };
+  // The status probe distinguishes "still writing" from "settled without an
+  // answer": the server keeps executing a child after a browser disconnect.
+  assert.equal(swarmChildTurnStatusFromHistory(history, "01K0000000000000000000000B"), "running");
+  assert.equal(swarmChildTurnStatusFromHistory(history, "01K0000000000000000000000C"), "failed");
+  assert.equal(swarmChildTurnStatusFromHistory(history, "01K0000000000000000000000D"), null);
+  assert.equal(swarmChildTurnStatusFromHistory(null, "01K0000000000000000000000B"), null);
+
+  // The agent route exposes the recover action over the same persisted
+  // transcript synthesis recovery reads, reporting pending while the child
+  // turn is still running.
+  assert.match(agentRoute, /z\.literal\("recover"\)/u);
+  assert.match(agentRoute, /recoverAgentFromChildTurn\(/u);
+  assert.match(agentRoute, /swarmChildAnswerFromHistory\(/u);
+  assert.match(agentRoute, /swarmChildTurnStatusFromHistory\(/u);
+  assert.match(agentRoute, /pending: turnStatus === "running"/u);
+
+  // The orchestrator routes transport failures (Chrome "network error" /
+  // "Failed to fetch", Safari "Load failed") through recovery polling rather
+  // than recording a false failure, and never re-POSTs while the child turn
+  // is still running server-side.
+  assert.match(controller, /TRANSIENT_STREAM_FAILURE/u);
+  assert.match(controller, /network|failed to fetch|load failed/u);
+  assert.match(controller, /recoverAgentFinding\(runToken, runId, agent\.key, controller\.signal\)/u);
+  assert.match(controller, /childOutcome\?\.kind !== "still-running"/u);
+
+  // Synthesis waits one bounded beat for children still writing their final
+  // answer, so a break in the last agent's stream cannot race the recovery
+  // read (observed 2026-08-31: answer landed 11s after the relay failed).
+  assert.match(synthesisRoute, /CHILD_SETTLE_RETRY_DELAY_MS/u);
+  assert.match(synthesisRoute, /turnRunning: swarmChildTurnStatusFromHistory\(history, turnId\) === "running"/u);
 });
 
 test("a synthesised parent turn completes; only Unavailable fails it", () => {

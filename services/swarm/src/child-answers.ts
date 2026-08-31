@@ -15,6 +15,28 @@ export type SwarmChildAnswer = Readonly<{
 }>;
 
 /**
+ * The persisted status of one turn from an `albert_conversation_history`
+ * payload, or null when the turn is missing. A child whose stream broke in
+ * the browser can still be "running" here: the server keeps executing after
+ * a client disconnect, so a missing answer is not yet a dead child.
+ */
+export function swarmChildTurnStatusFromHistory(
+  history: unknown,
+  turnId: string,
+): string | null {
+  if (!history || typeof history !== "object" || Array.isArray(history)) return null;
+  const turns = (history as { turns?: unknown }).turns;
+  if (!Array.isArray(turns)) return null;
+  for (const turn of turns) {
+    if (!turn || typeof turn !== "object" || Array.isArray(turn)) continue;
+    const row = turn as Record<string, unknown>;
+    if (row.turn_id !== turnId) continue;
+    return typeof row.status === "string" ? row.status : null;
+  }
+  return null;
+}
+
+/**
  * Extract the terminal answer of one turn from an
  * `albert_conversation_history` payload. Returns null when the turn is
  * missing or never persisted an answer event — a child that died mid-stream
