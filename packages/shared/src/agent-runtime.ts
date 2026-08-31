@@ -459,6 +459,12 @@ export interface TraceQueryEvent extends TraceEventBase {
   connector?: TraceConnector;
   /** Owner-readable query title authored by the agent ("Revenue by week"). */
   name?: string;
+  /**
+   * The result id of the evidence table this query produced. Remote runtimes
+   * cannot know web-stamped event ids, so the web relay uses this to pair a
+   * table's `dashboardReplay.queryEventId` with its query event.
+   */
+  resultId?: string;
 }
 
 export type TraceTableColumn = Readonly<{
@@ -756,6 +762,49 @@ export interface TraceErrorEvent extends TraceEventBase {
   recoverable: boolean;
 }
 
+/** Grid width steps a dashboard plan may request; the host maps them to columns. */
+export const DASHBOARD_PLAN_WIDTHS = Object.freeze([
+  "quarter", "third", "half", "twoThirds", "full",
+] as const);
+export type DashboardPlanWidth = (typeof DASHBOARD_PLAN_WIDTHS)[number];
+
+/**
+ * One tile of a composed dashboard plan. Every `resultId` must reference a
+ * governed table the same turn executed successfully — the compose tool
+ * enforces this before the event is emitted, and the apply route re-resolves
+ * ids against the persisted trace, so a plan can never cite unexecuted data.
+ */
+export type TraceDashboardPlanTile = Readonly<{
+  resultId: string;
+  kind: "kpi" | "chart" | "table";
+  title: string;
+  /** Optional sub-caption, e.g. "vs previous 30 days". */
+  note?: string;
+  width: DashboardPlanWidth;
+  /** KPI tiles: the column holding the headline value. */
+  valueKey?: string;
+  /** Chart tiles: grounded-flint configuration over the result's columns. */
+  chartType?: "bar" | "line";
+  xKey?: string;
+  yKey?: string;
+  series?: readonly Readonly<{ key: string; label: string }>[];
+  stacked?: boolean;
+  orientation?: "vertical" | "horizontal";
+}>;
+
+/**
+ * The dashboard-architect turn's composed plan: which executed governed
+ * results become tiles, with presentation and layout intent. Emitted at most
+ * once per accepted composition (a later plan supersedes an earlier one).
+ */
+export interface TraceDashboardPlanEvent extends TraceEventBase {
+  type: "dashboard_plan";
+  dashboardTitle: string;
+  /** The coherent window statement, e.g. "Last 30 days vs the previous 30". */
+  timeframe: string;
+  tiles: readonly TraceDashboardPlanTile[];
+}
+
 /**
  * Public execution events. There are intentionally no raw prompt, reasoning,
  * tool-argument, provider-payload, or SQL fields in this union.
@@ -772,6 +821,7 @@ export type TraceEvent =
   | TraceClarificationEvent
   | TraceTasksEvent
   | TraceResearchEvent
+  | TraceDashboardPlanEvent
   | TraceErrorEvent;
 
 const forbiddenTraceKeys = new Set([

@@ -29,6 +29,8 @@ export const omniConversationRequestSchema = z.object({
   preferences: z.unknown().optional(),
   conversationId: ulidSchema.optional(),
   replaceTurnId: ulidSchema.optional(),
+  /** Runs the turn in dashboard-architect mode (ADR 0129). */
+  dashboardBuild: z.boolean().optional(),
 }).strict();
 
 export const omniPriorMessageSchema = z.object({
@@ -63,6 +65,14 @@ export const omniServiceTurnSchema = z.object({
   model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
   fastMode: z.boolean(),
+  /**
+   * Dashboard-architect mode (ADR 0129): swaps the answer-formatting
+   * instructions for the dashboard design system, replaces the chat chart
+   * tool with ComposeDashboard, and requires a composed `dashboard_plan`
+   * before the final summary. Optional so existing callers are unaffected;
+   * the runtime must deploy before any caller sends it.
+   */
+  dashboardBuild: z.boolean().optional(),
 }).strict();
 
 export type OmniServiceTurn = z.infer<typeof omniServiceTurnSchema>;
@@ -159,6 +169,37 @@ export const omniVisualizeInputSchema = z.object({
   limit: z.number().int().min(3).max(15).optional(),
   transform: z.enum(["cumulative"]).optional(),
 }).strict();
+
+/**
+ * ComposeDashboard: the dashboard-architect turn's composed plan. Every
+ * resultId must reference a query the same turn executed; the executor
+ * enforces that and bounces violations back to the model for repair.
+ * Strict-schema constraints apply: nullables instead of optionals, no
+ * records or tuples.
+ */
+export const omniComposeDashboardInputSchema = z.object({
+  dashboardTitle: z.string().trim().min(3).max(80),
+  timeframe: z.string().trim().min(3).max(120),
+  tiles: z.array(z.object({
+    resultId: ulidSchema,
+    kind: z.enum(["kpi", "chart", "table"]),
+    title: z.string().trim().min(3).max(120),
+    note: z.string().max(160).nullable(),
+    width: z.enum(["quarter", "third", "half", "twoThirds", "full"]),
+    valueKey: z.string().max(160).nullable(),
+    chartType: z.enum(["bar", "line"]).nullable(),
+    xKey: z.string().max(160).nullable(),
+    yKey: z.string().max(160).nullable(),
+    series: z.array(z.object({
+      key: z.string().min(1).max(160),
+      label: z.string().min(1).max(160),
+    }).strict()).max(6).nullable(),
+    stacked: z.boolean().nullable(),
+    orientation: z.enum(["vertical", "horizontal"]).nullable(),
+  }).strict()).min(3).max(12),
+}).strict();
+
+export type OmniComposeDashboardInput = z.infer<typeof omniComposeDashboardInputSchema>;
 
 export const omniSemanticTurnResultSchema = z.object({
   answerState: z.enum(["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"]),

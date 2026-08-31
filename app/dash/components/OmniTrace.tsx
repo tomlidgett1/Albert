@@ -101,6 +101,17 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
         group.stepCount += 1;
         break;
       }
+      case "dashboard_plan": {
+        // A build turn's composition reads as one prose line in the trail;
+        // the dashboard itself is the product, over on the Dashboard tab.
+        const group = openResearch();
+        group.entries.push({
+          kind: "prose",
+          id: event.id,
+          text: `Composed the dashboard “${event.dashboardTitle}” — ${event.tiles.length} tiles · ${event.timeframe}.`,
+        });
+        break;
+      }
       case "narrative": {
         const text = event.text.trim();
         if (!text) break;

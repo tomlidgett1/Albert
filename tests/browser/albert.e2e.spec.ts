@@ -1204,6 +1204,54 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await page.screenshot({ path: ".playwright/omni-harness-turn.png", fullPage: true });
 });
 
+test("Build dashboard turns natural language into live governed tiles", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+
+  // The main-UI entry point: the chat home carries a Build a dashboard CTA.
+  await page.getByRole("button", { name: "Build a dashboard" }).click();
+
+  // The empty dashboard is the builder hero: describe it in natural language.
+  const input = page.getByRole("textbox", { name: "Describe the dashboard you want" });
+  await input.fill("I need a dashboard that shows top level metrics");
+  await page.getByRole("button", { name: "Build dashboard" }).click();
+
+  // The hand-over banner names the composed dashboard once the build settles
+  // (the fixture stream completes near-instantly, so the transient progress
+  // card is asserted implicitly by the applied outcome, not by racing it).
+  await expect(page.getByText("Ashburton at a glance")).toBeVisible();
+
+  // The applied dashboard renders KPI cards with governed values and
+  // like-for-like deltas, the chart tile, and the detail table.
+  await expect(page.getByText("$41,230.55")).toBeVisible();
+  await expect(page.getByText("▲ 12.1%")).toBeVisible();
+  await expect(page.getByText("▼ 26.7%")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Revenue by week" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Revenue by week" }).locator("svg").first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("region", { name: "Top products by revenue" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Gravel bike hire" })).toBeVisible();
+
+  await expect(page.getByText("Last 30 days vs the previous 30")).toBeVisible();
+
+  // The build ran on the Omni harness in dashboard-architect mode with the
+  // server-composed brief carrying the owner's words.
+  const buildPayload = capture.omniConversationPayloads.find((payload) => (
+    (payload as Record<string, unknown>).dashboardBuild === true
+  )) as Record<string, unknown> | undefined;
+  expect(buildPayload).toBeTruthy();
+  expect(String(buildPayload?.message)).toContain("top level metrics");
+  expect((buildPayload?.preferences as Record<string, unknown>).fastMode).toBe(false);
+  const applyCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as Record<string, unknown>).endpoint === "apply"
+  )) as Record<string, unknown> | undefined;
+  expect((applyCall?.body as Record<string, unknown>).conversationId).toBe("01J00000000000000000DBCV01");
+  expect((applyCall?.body as Record<string, unknown>).turnId).toBe("01J00000000000000000DBTN01");
+
+  await page.screenshot({ path: ".playwright/dashboard-build.png", fullPage: true });
+});
+
 test("Swarm on the Omni tab keeps the omni harness end to end", async ({ page }) => {
   const capture = await installAppApiRoutes(page);
   await page.goto("/dash");

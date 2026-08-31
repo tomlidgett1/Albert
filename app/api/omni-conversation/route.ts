@@ -263,18 +263,22 @@ export async function POST(request: Request): Promise<Response> {
     return response;
   };
 
-  const socialKind = detectCodexSocialMessage(parsed.message);
+  // A dashboard build is always an analytical turn: its server-composed brief
+  // must never be diverted by the social/conversational short-circuits.
+  const socialKind = parsed.dashboardBuild ? null : detectCodexSocialMessage(parsed.message);
   if (socialKind) {
     const reply = codexSocialReply(socialKind, parsed.message);
     return localConversationResponse(reply.text, reply.followUps, "albert_omni_social_answered");
   }
 
-  const directConversationReply = directCodexConversationReply(parsed.message, tenant.timezone);
+  const directConversationReply = parsed.dashboardBuild
+    ? null
+    : directCodexConversationReply(parsed.message, tenant.timezone);
   if (directConversationReply) {
     return localConversationResponse(directConversationReply, [], "albert_omni_direct_conversation_answered");
   }
 
-  const clearlyAnalytical = isClearlyAnalyticalCodexMessage(
+  const clearlyAnalytical = Boolean(parsed.dashboardBuild) || isClearlyAnalyticalCodexMessage(
     parsed.message,
     Boolean(parsed.conversationId),
   );
@@ -449,12 +453,40 @@ export async function POST(request: Request): Promise<Response> {
           model: preferences.model,
           effort: reasoningEffort,
           fastMode: preferences.fastMode,
+          ...(parsed.dashboardBuild ? { dashboardBuild: true } : {}),
         };
         const bufferedRuntimeEvents: OmniTraceEventInput[] = [];
         let runtimeTraceReleased = false;
+        // The runtime cannot know web-stamped event ids, so replayable tables
+        // arrive with an empty dashboardReplay.queryEventId and a resultId
+        // that pairs them with their query event. The pairing happens here,
+        // before the emitter stamps and persists; an unpairable reference is
+        // stripped so a broken replay ref can never persist.
+        const queryEventIdByResultId = new Map<string, string>();
         const deliverRuntimeEvent = async (event: OmniTraceEventInput) => {
           try {
-            await emit(event);
+            let outbound = event;
+            if (
+              outbound.type === "table"
+              && outbound.dashboardReplay?.kind === "cube_v3"
+              && !outbound.dashboardReplay.queryEventId
+            ) {
+              const queryEventId = queryEventIdByResultId.get(outbound.resultId);
+              if (queryEventId) {
+                outbound = {
+                  ...outbound,
+                  dashboardReplay: { ...outbound.dashboardReplay, queryEventId },
+                };
+              } else {
+                const withoutReplay = { ...outbound };
+                delete (withoutReplay as { dashboardReplay?: unknown }).dashboardReplay;
+                outbound = withoutReplay;
+              }
+            }
+            const stamped = await emit(outbound);
+            if (stamped.type === "query" && stamped.resultId) {
+              queryEventIdByResultId.set(stamped.resultId, stamped.id);
+            }
           } catch (error) {
             logger.error("omni.trace_event_rejected", {
               conversationId,

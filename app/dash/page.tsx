@@ -692,6 +692,7 @@ const traceEventTypes = new Set([
   "clarification",
   "tasks",
   "research",
+  "dashboard_plan",
   "error",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
@@ -1482,6 +1483,7 @@ export default function DashPage() {
       && requestedView !== "NewTest"
       && requestedView !== "Proactive"
       && requestedView !== "Agents"
+      && requestedView !== "Dashboard"
       && !nextOAuthNotice
     ) return;
     if (requestedView === "NewTest") setActiveItem("New test");
@@ -1491,6 +1493,7 @@ export default function DashPage() {
       else if (requestedView === "NewTest") setActiveItem("New test");
       else if (requestedView === "Proactive") setActiveItem("Proactive");
       else if (requestedView === "Agents") setActiveItem("Agents");
+      else if (requestedView === "Dashboard") setActiveItem("Dashboard");
       else if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
       setOAuthNotice(nextOAuthNotice);
     }, 0);
@@ -4574,7 +4577,6 @@ export default function DashPage() {
             <span className={styles.sidebarActionLabel}>Dashboard Master</span>
           </button>
           <button
-            hidden
             className={styles.sidebarAction}
             type="button"
             aria-label="Dashboard"
@@ -5324,6 +5326,16 @@ export default function DashPage() {
                           ))}
                         </div>
                       </>
+                    ) : null}
+                    {activeChatRuntime === "codex" || activeChatRuntime === "omni" ? (
+                      <button
+                        className={styles.chatHeroDashboardCta}
+                        type="button"
+                        onClick={() => setActiveItem("Dashboard")}
+                      >
+                        <Icon name="dashboard" />
+                        <span>Build a dashboard</span>
+                      </button>
                     ) : null}
                   </motion.div>
                 ) : null}

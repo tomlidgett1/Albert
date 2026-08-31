@@ -18732,3 +18732,30 @@
   .archBikeChain button,
   .archDictChipButton { transition: none; }
 }
+
+.chatHeroDashboardCta {
+  display: inline-flex;
+  height: var(--dash-control-height);
+  align-items: center;
+  gap: 8px;
+  margin: 14px auto 0;
+  padding: 0 14px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 999px;
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 160ms ease;
+}
+.chatHeroDashboardCta:hover { background: var(--dash-surface-hover); border-color: var(--dash-border-input); transform: translateY(-1px); }
+.chatHeroDashboardCta:active { transform: scale(.985); }
+.chatHeroDashboardCta:focus-visible { outline: 2px solid var(--dash-focus); outline-offset: 2px; }
+.chatHeroDashboardCta svg { width: 15px; height: 15px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chatHeroDashboardCta { transition: none; }
+}

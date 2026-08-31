@@ -173,6 +173,9 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "swarm.run": Object.freeze({ limit: 10, windowSeconds: 3_600 }),
   // A Dashboard Master session is an hour-long fleet; a handful per day.
   "dashboard_master.refresh": Object.freeze({ limit: 6, windowSeconds: 86_400 }),
+  // Each build is a full architect turn (up to 30 governed queries); generous
+  // enough to iterate on a dashboard all day, far below click speed.
+  "dashboard.build": Object.freeze({ limit: 24, windowSeconds: 86_400 }),
   // Luna rewrite of homepage next questions; cache hits never consume this.
   "conversation.recommended_analysis": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
 } as const);

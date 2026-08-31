@@ -122,6 +122,39 @@ export const dashboardSnapshotSchema = z.object({
   empty: z.boolean(),
 }).strict();
 
+/**
+ * How a tile presents its governed snapshot: the classic table, a KPI card
+ * over a single-value (optionally two-period compare) result, or a
+ * grounded-flint chart compiled from the snapshot's columns and rows.
+ * Column keys are matched tolerantly by the renderer (`sales_gross` ≡
+ * `sales.gross`) because runtimes publish underscore keys while refresh
+ * snapshots carry raw member keys.
+ */
+export const dashboardTileDisplaySchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("table"),
+    note: z.string().max(160).optional(),
+  }).strict(),
+  z.object({
+    mode: z.literal("kpi"),
+    valueKey: z.string().min(1).max(160).optional(),
+    note: z.string().max(160).optional(),
+  }).strict(),
+  z.object({
+    mode: z.literal("chart"),
+    chartType: z.enum(["bar", "line"]),
+    xKey: z.string().min(1).max(160),
+    yKey: z.string().min(1).max(160),
+    series: z.array(z.object({
+      key: z.string().min(1).max(160),
+      label: z.string().min(1).max(160),
+    }).strict()).max(6).optional(),
+    stacked: z.boolean().optional(),
+    orientation: z.enum(["vertical", "horizontal"]).optional(),
+    note: z.string().max(160).optional(),
+  }).strict(),
+]);
+
 export const dashboardTileSchema = z.object({
   tileId: ulidSchema,
   title: z.string().min(1).max(120),
@@ -134,6 +167,7 @@ export const dashboardTileSchema = z.object({
   replayKind: z.enum(["cube_v3", "semantic_v2", "derived_v1"]),
   snapshot: dashboardSnapshotSchema.nullable(),
   columnPresentation: dashboardColumnPresentationSchema,
+  display: dashboardTileDisplaySchema,
   refreshState: z.enum(["current", "refreshing", "stale", "error"]),
   lastErrorCode: z.string().nullable(),
   lastRefreshAttemptAt: z.string().nullable(),
@@ -202,6 +236,7 @@ export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;
 export type DashboardColumnFormat = z.infer<typeof dashboardColumnFormatSchema>;
 export type DashboardColumnPresentationItem = z.infer<typeof dashboardColumnPresentationItemSchema>;
 export type DashboardColumnPresentation = z.infer<typeof dashboardColumnPresentationSchema>;
+export type DashboardTileDisplay = z.infer<typeof dashboardTileDisplaySchema>;
 export type DashboardTile = z.infer<typeof dashboardTileSchema>;
 export type DashboardDocument = z.infer<typeof dashboardDocumentSchema>;
 export type DashboardRefreshClaim = z.infer<typeof refreshClaimSchema>;
@@ -295,6 +330,7 @@ export async function updateDashboardTile(input: Readonly<{
   expectedRevision: number;
   title?: string;
   columnPresentation?: DashboardColumnPresentation;
+  display?: DashboardTileDisplay;
 }>): Promise<DashboardDocument> {
   const { supabase } = await requireUser();
   return resolveMutation(supabase, await supabase.rpc("albert_dashboard_tile_update", {
@@ -302,6 +338,7 @@ export async function updateDashboardTile(input: Readonly<{
     p_expected_revision: input.expectedRevision,
     p_title: input.title ?? null,
     p_column_presentation: input.columnPresentation ?? null,
+    p_display: input.display ?? null,
   }));
 }
 

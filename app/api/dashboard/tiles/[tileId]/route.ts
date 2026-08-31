@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   dashboardColumnPresentationSchema,
+  dashboardTileDisplaySchema,
   DashboardRevisionConflict,
   deleteDashboardTile,
   updateDashboardTile,
@@ -12,8 +13,11 @@ const ulid = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
 const updateSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   columnPresentation: dashboardColumnPresentationSchema.optional(),
+  display: dashboardTileDisplaySchema.optional(),
   expectedRevision: z.number().int().nonnegative(),
-}).strict().refine((value) => value.title !== undefined || value.columnPresentation !== undefined);
+}).strict().refine((value) => (
+  value.title !== undefined || value.columnPresentation !== undefined || value.display !== undefined
+));
 const deleteSchema = z.object({ expectedRevision: z.number().int().nonnegative() }).strict();
 
 function responseError(error: unknown) {

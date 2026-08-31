@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
 import {
   ResponsiveGridLayout,
   useContainerWidth,
@@ -19,9 +20,67 @@ import type {
   DashboardLayouts,
   DashboardSnapshot,
   DashboardTile,
+  DashboardTileDisplay,
 } from "@/services/control-plane/src/dashboard-repository";
+import { compileGroundedFlint, type TraceCell, type TraceTableColumn } from "@/packages/shared/src";
+import {
+  getServerThemePreference,
+  getThemePreference,
+  subscribeToThemePreference,
+} from "@/app/theme-preference";
+import {
+  dashboardBuildSnapshot,
+  dismissDashboardBuildResult,
+  startDashboardBuild,
+  stopDashboardBuild,
+  subscribeDashboardBuild,
+} from "../lib/dashboard-build-controller";
 import { formatDashboardCell } from "./dashboard-values";
+import { traceCellNumber } from "./analytical-values";
 import styles from "./dashboard-workspace.module.css";
+
+const FlintChartView = dynamic(() => import("./FlintChartView"), { ssr: false });
+
+const NUMERIC_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
+
+/**
+ * Runtimes publish underscore column keys (sales_analytics.gross_takings →
+ * sales_analytics_gross_takings) while refresh snapshots carry raw member
+ * keys, so display configs match tolerantly across both spellings.
+ */
+function resolveSnapshotColumn(
+  columns: DashboardSnapshot["columns"],
+  wanted: string | undefined,
+): DashboardSnapshot["columns"][number] | null {
+  if (!wanted) return null;
+  return columns.find((column) => column.key === wanted)
+    ?? columns.find((column) => column.key.replaceAll(".", "_") === wanted)
+    ?? null;
+}
+
+function firstNumericColumn(
+  columns: DashboardSnapshot["columns"],
+): DashboardSnapshot["columns"][number] | null {
+  return columns.find((column) => NUMERIC_COLUMN_TYPES.has(column.type)) ?? null;
+}
+
+/** Start date of a compare label like "2026-08-01 - 2026-08-30", for ordering. */
+function compareRangeStart(value: unknown): number {
+  if (typeof value !== "string") return Number.NaN;
+  return Date.parse(value.slice(0, 10));
+}
+
+function useChartAppearance(): "light" | "dark" {
+  const theme = useSyncExternalStore(
+    subscribeToThemePreference,
+    getThemePreference,
+    getServerThemePreference,
+  );
+  return theme === "dark"
+    || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    ? "dark"
+    : "light";
+}
 
 type Breakpoint = "desktop" | "tablet" | "mobile";
 type ColumnEditorFormat = "auto" | DashboardColumnFormat;
@@ -271,6 +330,335 @@ function SnapshotTable({
   );
 }
 
+function KpiTileBody({ tile }: Readonly<{ tile: DashboardTile }>) {
+  const { snapshot } = tile;
+  if (!snapshot) return <div className={styles.tileEmpty}>Run refresh to load this governed result.</div>;
+  if (snapshot.empty || snapshot.rows.length === 0) {
+    return <div className={styles.tileEmpty}>No data for the governed period.</div>;
+  }
+  const display = tile.display.mode === "kpi" ? tile.display : null;
+  const valueColumn = resolveSnapshotColumn(snapshot.columns, display?.valueKey)
+    ?? firstNumericColumn(snapshot.columns);
+  if (!valueColumn) return <div className={styles.tileEmpty}>This result has no numeric value to feature.</div>;
+
+  // A compare query's two periods are told apart by their range labels; the
+  // later start is the current period. Without labels, plan order stands.
+  const compareColumn = resolveSnapshotColumn(snapshot.columns, "compareDateRange");
+  let currentRow = snapshot.rows[0]!;
+  let previousRow: DashboardSnapshot["rows"][number] | null = snapshot.rows.length === 2 ? snapshot.rows[1]! : null;
+  if (compareColumn && snapshot.rows.length >= 2) {
+    const ordered = [...snapshot.rows].sort((left, right) => (
+      compareRangeStart(right[compareColumn.key]) - compareRangeStart(left[compareColumn.key])
+    ));
+    currentRow = ordered[0]!;
+    previousRow = ordered[1] ?? null;
+  }
+
+  const value = formatDashboardCell(
+    currentRow[valueColumn.key],
+    valueColumn as TraceTableColumn,
+    tile.columnPresentation[valueColumn.key],
+  );
+  const currentNumber = traceCellNumber((currentRow[valueColumn.key] ?? null) as TraceCell);
+  const previousNumber = previousRow
+    ? traceCellNumber((previousRow[valueColumn.key] ?? null) as TraceCell)
+    : null;
+  // Percent measures compare in points; everything else as relative change.
+  const percentColumn = valueColumn.type === "percent";
+  let delta: number | null = null;
+  if (currentNumber !== null && previousNumber !== null) {
+    if (percentColumn) delta = currentNumber - previousNumber;
+    else if (previousNumber !== 0) delta = ((currentNumber - previousNumber) / Math.abs(previousNumber)) * 100;
+  }
+  const direction = delta === null || Math.abs(delta) < 0.05 ? "flat" : delta > 0 ? "up" : "down";
+  const magnitude = delta === null
+    ? null
+    : `${Math.abs(delta) >= 100 ? Math.round(Math.abs(delta)).toLocaleString("en-AU") : Math.abs(delta).toFixed(1)}${percentColumn ? " pts" : "%"}`;
+
+  return (
+    <div className={styles.kpiBody}>
+      <span className={styles.kpiValue}>{value}</span>
+      <span className={styles.kpiMeta}>
+        {magnitude !== null ? (
+          <span className={styles.kpiDelta} data-direction={direction}>
+            {direction === "up" ? "▲" : direction === "down" ? "▼" : "＝"} {magnitude}
+          </span>
+        ) : null}
+        {display?.note ? <span className={styles.kpiNote}>{display.note}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function ChartTileBody({ tile }: Readonly<{ tile: DashboardTile }>) {
+  const appearance = useChartAppearance();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(220);
+  useEffect(() => {
+    const node = bodyRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(() => {
+      setHeight(Math.max(150, Math.floor(node.clientHeight) - 6));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const { snapshot } = tile;
+  const display = tile.display.mode === "chart" ? tile.display : null;
+  const plan = useMemo(() => {
+    if (!snapshot || !display) return null;
+    const xColumn = resolveSnapshotColumn(snapshot.columns, display.xKey);
+    const yColumn = resolveSnapshotColumn(snapshot.columns, display.yKey);
+    if (!xColumn || !yColumn) return null;
+    const series = (display.series ?? []).flatMap((entry) => {
+      const column = resolveSnapshotColumn(snapshot.columns, entry.key);
+      return column ? [{ key: column.key, label: entry.label }] : [];
+    });
+    try {
+      return compileGroundedFlint({
+        caption: tile.title,
+        chartType: display.chartType,
+        ...(display.stacked !== undefined ? { stacked: display.stacked } : {}),
+        ...(display.orientation ? { orientation: display.orientation } : {}),
+        xKey: xColumn.key,
+        yKey: yColumn.key,
+        ...(series.length > 0 ? { series } : {}),
+        columns: snapshot.columns as readonly TraceTableColumn[],
+        rows: snapshot.rows as unknown as readonly Readonly<Record<string, TraceCell>>[],
+      });
+    } catch {
+      return null;
+    }
+  }, [snapshot, display, tile.title]);
+  if (!snapshot) return <div className={styles.tileEmpty}>Run refresh to load this governed result.</div>;
+  if (snapshot.empty || snapshot.rows.length === 0) {
+    return <div className={styles.tileEmpty}>No data for the governed period.</div>;
+  }
+  if (!plan) {
+    return <div className={styles.tileEmpty}>This result no longer fits its chart. Switch the tile to table view.</div>;
+  }
+  return (
+    <div ref={bodyRef} className={styles.chartBody}>
+      <FlintChartView plan={plan} appearance={appearance} title={tile.title} height={height} />
+    </div>
+  );
+}
+
+/** Which display modes a tile's snapshot can actually support. */
+function availableDisplayModes(tile: DashboardTile): readonly DashboardTileDisplay["mode"][] {
+  const modes: DashboardTileDisplay["mode"][] = ["table"];
+  const snapshot = tile.snapshot;
+  if (!snapshot || snapshot.rows.length === 0) return modes;
+  const numeric = firstNumericColumn(snapshot.columns);
+  if (numeric && snapshot.rows.length <= 2) modes.push("kpi");
+  if (numeric && snapshot.rows.length >= 2 && snapshot.columns.length >= 2) modes.push("chart");
+  return modes;
+}
+
+/** A sensible default config when the owner flips a tile's display mode. */
+function defaultDisplayForMode(
+  tile: DashboardTile,
+  mode: DashboardTileDisplay["mode"],
+): DashboardTileDisplay | null {
+  const note = tile.display.mode !== "table" || tile.display.note ? tile.display.note : undefined;
+  if (mode === "table") return { mode: "table", ...(note ? { note } : {}) };
+  const snapshot = tile.snapshot;
+  if (!snapshot) return null;
+  const numeric = firstNumericColumn(snapshot.columns);
+  if (!numeric) return null;
+  if (mode === "kpi") {
+    const existing = tile.display.mode === "kpi" ? tile.display.valueKey : undefined;
+    const valueKey = resolveSnapshotColumn(snapshot.columns, existing)?.key ?? numeric.key;
+    return { mode: "kpi", valueKey, ...(note ? { note } : {}) };
+  }
+  const xColumn = snapshot.columns.find((column) => !NUMERIC_COLUMN_TYPES.has(column.type)) ?? snapshot.columns[0];
+  if (!xColumn || xColumn.key === numeric.key) return null;
+  const timeAxis = xColumn.type === "date" || xColumn.type === "datetime";
+  return {
+    mode: "chart",
+    chartType: timeAxis ? "line" : "bar",
+    xKey: xColumn.key,
+    yKey: numeric.key,
+    ...(note ? { note } : {}),
+  };
+}
+
+const displayModeLabels: Readonly<Record<DashboardTileDisplay["mode"], string>> = Object.freeze({
+  table: "Table",
+  kpi: "Big number",
+  chart: "Chart",
+});
+
+function displayModeIcon(mode: DashboardTileDisplay["mode"]): React.ReactNode {
+  if (mode === "kpi") return icon(<><path d="M9.5 4.5 8 19.5M16 4.5l-1.5 15M4.5 9h15.2M4.3 15h15.2" /></>);
+  if (mode === "chart") return icon(<><path d="M4 19h16" /><path d="M7 19v-6M12 19V6M17 19v-9" /></>);
+  return icon(<><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M4 10h16M10 10v9" /></>);
+}
+
+function DisplayToggle({
+  tile,
+  onDisplayChange,
+}: Readonly<{
+  tile: DashboardTile;
+  onDisplayChange: (display: DashboardTileDisplay) => void;
+}>) {
+  const available = availableDisplayModes(tile);
+  if (available.length < 2) return null;
+  return (
+    <span className={styles.displayToggle} role="group" aria-label="Tile display mode">
+      {available.map((mode) => (
+        <span key={mode} className={styles.tooltipWrap}>
+          <button
+            type="button"
+            aria-label={`Show as ${displayModeLabels[mode].toLowerCase()}`}
+            aria-pressed={tile.display.mode === mode}
+            aria-describedby={`dashboard-display-${tile.tileId}-${mode}`}
+            data-active={tile.display.mode === mode ? "true" : undefined}
+            onClick={() => {
+              if (tile.display.mode === mode) return;
+              const next = defaultDisplayForMode(tile, mode);
+              if (next) onDisplayChange(next);
+            }}
+          >
+            {displayModeIcon(mode)}
+          </button>
+          <span className={styles.tooltip} id={`dashboard-display-${tile.tileId}-${mode}`} role="tooltip">
+            {displayModeLabels[mode]}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const buildExamples: readonly string[] = Object.freeze([
+  "Top-level business metrics",
+  "Sales and labour, side by side",
+  "Cash position and money owed",
+]);
+
+function BuildComposer({
+  hasTiles,
+  onStart,
+}: Readonly<{
+  hasTiles: boolean;
+  onStart: (instruction: string) => void;
+}>) {
+  const [draft, setDraft] = useState("");
+  const submit = () => {
+    if (draft.trim().length >= 4) onStart(draft);
+  };
+  return (
+    <div className={styles.buildComposer}>
+      <textarea
+        className={styles.buildInput}
+        value={draft}
+        rows={2}
+        maxLength={2_000}
+        placeholder='Describe the dashboard you want — "I need a dashboard that shows top level metrics"'
+        aria-label="Describe the dashboard you want"
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <div className={styles.buildComposerRow}>
+        <div className={styles.buildExamples}>
+          {buildExamples.map((example) => (
+            <button key={example} type="button" onClick={() => setDraft(example)}>
+              {example}
+            </button>
+          ))}
+        </div>
+        <button
+          className={styles.buildStart}
+          type="button"
+          disabled={draft.trim().length < 4}
+          onClick={submit}
+        >
+          {icon(<><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" /></>)}
+          Build dashboard
+        </button>
+      </div>
+      {hasTiles ? (
+        <p className={styles.buildHint}>Building designs a fresh dashboard in place of the current tiles. Albert sees what is here now and keeps what still earns its spot.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function BuildProgressCard() {
+  const build = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
+  if (!build.active) return null;
+  const phaseLabel = build.phase === "starting"
+    ? "Preparing"
+    : build.phase === "applying"
+      ? "Placing tiles"
+      : "Designing";
+  return (
+    <section className={styles.buildCard} aria-label="Dashboard build in progress">
+      <header className={styles.buildCardHeader}>
+        <span className={styles.buildPulse} aria-hidden="true" />
+        <div className={styles.buildCardTitles}>
+          <h2>{phaseLabel} your dashboard</h2>
+          <p>“{build.instruction}”</p>
+        </div>
+        <span className={styles.buildQueries}>
+          {build.queries > 0 ? `${build.queries} ${build.queries === 1 ? "query" : "queries"}` : ""}
+        </span>
+        <button type="button" className={styles.buildStop} onClick={stopDashboardBuild}>Stop</button>
+      </header>
+      {build.tasks.length > 0 ? (
+        <ul className={styles.buildTasks}>
+          {build.tasks.map((task) => (
+            <li key={task.id} data-completed={task.completed ? "true" : undefined}>
+              <span className={styles.buildTaskMark} aria-hidden="true">
+                {task.completed ? icon(<path d="m5 12.5 4.5 4.5L19 7.5" />) : null}
+              </span>
+              {task.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className={styles.buildStatusLine} role="status">{build.statusLine}</p>
+    </section>
+  );
+}
+
+function BuildResultBanner() {
+  const build = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
+  if (build.active || (build.phase !== "completed" && build.phase !== "failed")) return null;
+  return (
+    <section
+      className={styles.buildResult}
+      data-state={build.phase}
+      aria-label={build.phase === "completed" ? "Dashboard build finished" : "Dashboard build failed"}
+    >
+      <div className={styles.buildResultBody}>
+        {build.phase === "completed" ? (
+          <>
+            <strong>{build.appliedTitle ?? "Dashboard ready"}</strong>
+            {build.appliedTimeframe ? <span className={styles.buildResultTimeframe}>{build.appliedTimeframe}</span> : null}
+            {build.summary ? <p>{build.summary}</p> : null}
+            {build.skipped.map((entry) => <p key={entry} className={styles.buildResultSkipped}>{entry}</p>)}
+          </>
+        ) : (
+          <>
+            <strong>The build did not finish</strong>
+            <p>{build.error ?? "Something went wrong while building the dashboard."}</p>
+          </>
+        )}
+      </div>
+      <button type="button" aria-label="Dismiss build result" onClick={dismissDashboardBuildResult}>
+        {icon(<path d="m6 6 12 12M18 6 6 18" />)}
+      </button>
+    </section>
+  );
+}
+
 function ColumnFormatMenu({
   tile,
   columnKey,
@@ -407,6 +795,7 @@ function DashboardTileCard({
   onRefresh,
   onRemove,
   onColumnPresentationChange,
+  onDisplayChange,
 }: Readonly<{
   tile: DashboardTile;
   breakpoint: Breakpoint;
@@ -418,11 +807,13 @@ function DashboardTileCard({
   onRefresh: () => void;
   onRemove: () => void;
   onColumnPresentationChange: (presentation: DashboardColumnPresentation) => void;
+  onDisplayChange: (display: DashboardTileDisplay) => void;
 }>) {
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
   const [formatOpen, setFormatOpen] = useState(false);
+  const tableMode = tile.display.mode === "table";
   const selectedStillExists = Boolean(
-    selectedColumnKey && tile.snapshot?.columns.some(({ key }) => key === selectedColumnKey),
+    tableMode && selectedColumnKey && tile.snapshot?.columns.some(({ key }) => key === selectedColumnKey),
   );
   const activeColumnKey = selectedStillExists ? selectedColumnKey : null;
   const activeFormatOpen = selectedStillExists && formatOpen;
@@ -457,6 +848,7 @@ function DashboardTileCard({
               onColumnPresentationChange={onColumnPresentationChange}
             />
           ) : null}
+          <DisplayToggle tile={tile} onDisplayChange={onDisplayChange} />
           {breakpoint === "mobile" ? (
             <>
               <button type="button" aria-label="Move tile up" onClick={() => onMoveKeyboard({ key: "ArrowUp", preventDefault() {}, shiftKey: false } as React.KeyboardEvent<HTMLButtonElement>)}>↑</button>
@@ -506,15 +898,24 @@ function DashboardTileCard({
           </button>
         </div>
       </header>
-      <SnapshotTable
-        tile={tile}
-        selectedColumnKey={activeColumnKey}
-        onSelectColumn={(key) => {
-          setSelectedColumnKey(key);
-          if (key !== activeColumnKey) setFormatOpen(false);
-        }}
-        onColumnPresentationChange={onColumnPresentationChange}
-      />
+      {tile.display.mode !== "kpi" && tile.display.note ? (
+        <div className={styles.tileNote}>{tile.display.note}</div>
+      ) : null}
+      {tile.display.mode === "kpi" ? (
+        <KpiTileBody tile={tile} />
+      ) : tile.display.mode === "chart" ? (
+        <ChartTileBody tile={tile} />
+      ) : (
+        <SnapshotTable
+          tile={tile}
+          selectedColumnKey={activeColumnKey}
+          onSelectColumn={(key) => {
+            setSelectedColumnKey(key);
+            if (key !== activeColumnKey) setFormatOpen(false);
+          }}
+          onColumnPresentationChange={onColumnPresentationChange}
+        />
+      )}
     </section>
   );
 }
@@ -527,6 +928,8 @@ export default function DashboardWorkspace({ onOpenSource }: DashboardWorkspaceP
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [announcement, setAnnouncement] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const build = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
   const { width, containerRef, mounted, measureWidth } = useContainerWidth({
     measureBeforeMount: true,
   });
@@ -588,13 +991,25 @@ export default function DashboardWorkspace({ onOpenSource }: DashboardWorkspaceP
     return () => window.clearTimeout(timer);
   }, [loadDashboard]);
   useEffect(() => {
-    if (!dashboardId) return;
-    // The first hook measurement happens while the loading state has no grid
-    // container. Measuring once after the ref mounts activates its observer so
-    // sidebar transitions and viewport changes keep tile pixels responsive.
+    // A settled build (applied, failed, or stopped) may have replaced the
+    // tiles; re-read the document so the grid reflects what was applied.
+    if (build.settledCount === 0) return;
+    const timer = window.setTimeout(() => {
+      setComposerOpen(false);
+      void loadDashboard();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [build.settledCount, loadDashboard]);
+  const hasTiles = (dashboard?.tiles.length ?? 0) > 0;
+  useEffect(() => {
+    if (!dashboardId || !hasTiles) return;
+    // The first hook measurement happens while the loading or empty state has
+    // no grid container. Measuring once after the ref mounts activates its
+    // observer so sidebar transitions and viewport changes keep tile pixels
+    // responsive — including the empty → filled transition a build causes.
     const frame = window.requestAnimationFrame(measureWidth);
     return () => window.cancelAnimationFrame(frame);
-  }, [dashboardId, measureWidth]);
+  }, [dashboardId, hasTiles, measureWidth]);
   useEffect(() => {
     if (!dashboard || dashboard.tiles.length === 0) return;
     const timer = window.setTimeout(() => void refresh(undefined, false), 0);
@@ -696,21 +1111,45 @@ export default function DashboardWorkspace({ onOpenSource }: DashboardWorkspaceP
     <div className={styles.workspace}>
       <div className={styles.toolbar}>
         <div>
-          <p>Your pinned governed tables refresh while this page is open.</p>
+          <p>Your governed tiles refresh while this page is open.</p>
           {error ? <span className={styles.errorNotice} role="status">{error}</span> : null}
         </div>
-        <button className={styles.refreshAll} type="button" disabled={refreshing || dashboard.tiles.length === 0} onClick={() => void refresh(undefined, true)}>
-          {icon(<><path d="M20 7v5h-5" /><path d="M18.5 16a8 8 0 1 1 .5-9l1 5" /></>)}
-          {refreshing ? "Refreshing" : "Refresh all"}
-        </button>
+        <div className={styles.toolbarActions}>
+          {!build.active && dashboard.tiles.length > 0 ? (
+            <button
+              className={styles.buildOpen}
+              type="button"
+              aria-expanded={composerOpen}
+              onClick={() => setComposerOpen((open) => !open)}
+            >
+              {icon(<><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" /></>)}
+              Build dashboard
+            </button>
+          ) : null}
+          <button className={styles.refreshAll} type="button" disabled={refreshing || dashboard.tiles.length === 0} onClick={() => void refresh(undefined, true)}>
+            {icon(<><path d="M20 7v5h-5" /><path d="M18.5 16a8 8 0 1 1 .5-9l1 5" /></>)}
+            {refreshing ? "Refreshing" : "Refresh all"}
+          </button>
+        </div>
       </div>
       <span className={styles.srOnly} aria-live="polite">{announcement}</span>
+      <BuildProgressCard />
+      <BuildResultBanner />
+      {!build.active && composerOpen && dashboard.tiles.length > 0 ? (
+        <BuildComposer hasTiles onStart={startDashboardBuild} />
+      ) : null}
       {dashboard.tiles.length === 0 ? (
-        <div className={styles.emptyState}>
-          <span>{icon(<><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M10 10v10" /></>)}</span>
-          <h2>Pin your first governed table</h2>
-          <p>Open an analysis and use the + action on an eligible table. Charts, text, and unlinked historical results stay in chat.</p>
-        </div>
+        build.active ? null : (
+          <div className={styles.buildHero}>
+            <span className={styles.buildHeroIcon}>
+              {icon(<><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h7v10M10.5 10h10M10.5 15h10" /></>)}
+            </span>
+            <h2>Build your dashboard</h2>
+            <p>Tell Albert what you want to watch. It designs the layout, proves every number with governed queries, and the tiles stay live from then on.</p>
+            <BuildComposer hasTiles={false} onStart={startDashboardBuild} />
+            <p className={styles.buildHeroHint}>You can also pin any eligible governed table from an analysis with its + action.</p>
+          </div>
+        )
       ) : (
         <div ref={containerRef} className={styles.gridMeasure}>
           {mounted ? (
@@ -774,6 +1213,9 @@ export default function DashboardWorkspace({ onOpenSource }: DashboardWorkspaceP
                       onRemove={() => void mutateTile(tile.tileId, "DELETE", {})}
                       onColumnPresentationChange={(columnPresentation) => {
                         void mutateTile(tile.tileId, "PATCH", { columnPresentation });
+                      }}
+                      onDisplayChange={(display) => {
+                        void mutateTile(tile.tileId, "PATCH", { display });
                       }}
                     />
                   </div>

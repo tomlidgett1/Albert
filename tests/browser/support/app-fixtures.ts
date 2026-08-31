@@ -159,6 +159,7 @@ export type AppApiCapture = {
   omniConversationPayloads: unknown[];
   swarmPayloads: unknown[];
   dashboardMasterPayloads: unknown[];
+  dashboardBuildPayloads: unknown[];
   runtimeRequestStartedAt: { v3: number[]; codex: number[] };
   anthropicConversationPayloads: unknown[];
   oauthSelectionPayloads: unknown[];
@@ -819,6 +820,7 @@ export async function installAppApiRoutes(
     omniConversationPayloads: [],
     swarmPayloads: [],
     dashboardMasterPayloads: [],
+    dashboardBuildPayloads: [],
     runtimeRequestStartedAt: { v3: [], codex: [] },
     anthropicConversationPayloads: [],
     oauthSelectionPayloads: [],
@@ -1449,6 +1451,179 @@ export async function installAppApiRoutes(
     await route.fulfill({ json: { latest: { reportId: "01J000000000000000000000DM" } } });
   });
 
+  // ---- Natural-language dashboard builder (ADR 0129) ----------------------
+  const dashboardBuildState = { applied: false };
+  const dashboardBuildDigest = "0f".repeat(32);
+  const dashboardBuildStamp = "2026-08-30T04:10:00.000Z";
+  const dashboardBuildWatermarks = [
+    { connector: "lightspeed", label: "Lightspeed", dataThrough: "2026-08-30T02:00:00.000Z" },
+  ];
+  const dashboardBuildSnapshot = (
+    columns: readonly Record<string, unknown>[],
+    rows: readonly Record<string, unknown>[],
+  ) => ({
+    columns,
+    rows,
+    totalRowCount: rows.length,
+    resultDigest: dashboardBuildDigest,
+    provenance: null,
+    sourceWatermarks: dashboardBuildWatermarks,
+    queryTime: dashboardBuildStamp,
+    refreshedAt: dashboardBuildStamp,
+    empty: rows.length === 0,
+  });
+  const dashboardBuildTile = (
+    tileId: string,
+    title: string,
+    resultSuffix: string,
+    display: Record<string, unknown>,
+    snapshot: Record<string, unknown>,
+  ) => ({
+    tileId,
+    title,
+    source: {
+      conversationId: "01J00000000000000000DBCV01",
+      turnId: "01J00000000000000000DBTN01",
+      tableEventId: `01J00000000000000000DBE${resultSuffix}`,
+      resultId: `01J00000000000000000DBR${resultSuffix}`,
+    },
+    replayKind: "cube_v3",
+    snapshot,
+    columnPresentation: {},
+    display,
+    refreshState: "current",
+    lastErrorCode: null,
+    lastRefreshAttemptAt: null,
+    lastRefreshedAt: dashboardBuildStamp,
+    createdAt: dashboardBuildStamp,
+  });
+  const revenueColumns = [
+    { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+    { key: "compareDateRange", label: "Date range", type: "string" },
+  ];
+  const builtDashboardDocument = () => ({
+    dashboardId: "01J00000000000000000DBRD01",
+    revision: dashboardBuildState.applied ? 9 : 0,
+    layouts: dashboardBuildState.applied
+      ? {
+          desktop: [
+            { i: "01J00000000000000000DBT101", x: 0, y: 0, w: 3, h: 5 },
+            { i: "01J00000000000000000DBT201", x: 3, y: 0, w: 3, h: 5 },
+            { i: "01J00000000000000000DBT301", x: 0, y: 5, w: 6, h: 8 },
+            { i: "01J00000000000000000DBT401", x: 6, y: 5, w: 6, h: 7 },
+          ],
+          tablet: [
+            { i: "01J00000000000000000DBT101", x: 0, y: 0, w: 4, h: 5 },
+            { i: "01J00000000000000000DBT201", x: 4, y: 0, w: 4, h: 5 },
+            { i: "01J00000000000000000DBT301", x: 0, y: 5, w: 4, h: 8 },
+            { i: "01J00000000000000000DBT401", x: 4, y: 5, w: 4, h: 7 },
+          ],
+        }
+      : { desktop: [], tablet: [] },
+    tiles: dashboardBuildState.applied
+      ? [
+          dashboardBuildTile(
+            "01J00000000000000000DBT101",
+            "Revenue",
+            "V01",
+            { mode: "kpi", valueKey: "sales_analytics_gross_takings", note: "vs previous 30 days" },
+            dashboardBuildSnapshot(revenueColumns, [
+              { sales_analytics_gross_takings: 41230.55, compareDateRange: "2026-08-01 - 2026-08-30" },
+              { sales_analytics_gross_takings: 36780.1, compareDateRange: "2026-07-02 - 2026-07-31" },
+            ]),
+          ),
+          dashboardBuildTile(
+            "01J00000000000000000DBT201",
+            "Refunds",
+            "V02",
+            { mode: "kpi", valueKey: "refunds_analytics_refund_total", note: "vs previous 30 days" },
+            dashboardBuildSnapshot([
+              { key: "refunds_analytics_refund_total", label: "Refund total", type: "currency", currency: "AUD" },
+              { key: "compareDateRange", label: "Date range", type: "string" },
+            ], [
+              { refunds_analytics_refund_total: 512.4, compareDateRange: "2026-08-01 - 2026-08-30" },
+              { refunds_analytics_refund_total: 698.9, compareDateRange: "2026-07-02 - 2026-07-31" },
+            ]),
+          ),
+          dashboardBuildTile(
+            "01J00000000000000000DBT301",
+            "Revenue by week",
+            "V03",
+            {
+              mode: "chart",
+              chartType: "line",
+              xKey: "sales_analytics_completed_at",
+              yKey: "sales_analytics_gross_takings",
+              note: "by week, last 12 weeks",
+            },
+            dashboardBuildSnapshot([
+              { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+              { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+            ], [
+              { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
+              { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
+              { sales_analytics_completed_at: "2026-08-03", sales_analytics_gross_takings: 8990.4 },
+              { sales_analytics_completed_at: "2026-08-10", sales_analytics_gross_takings: 9421.83 },
+            ]),
+          ),
+          dashboardBuildTile(
+            "01J00000000000000000DBT401",
+            "Top products by revenue",
+            "V04",
+            { mode: "table" },
+            dashboardBuildSnapshot([
+              { key: "sales_analytics_product", label: "Product", type: "string" },
+              { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+            ], [
+              { sales_analytics_product: "Service — full tune", sales_analytics_gross_takings: 6240 },
+              { sales_analytics_product: "Gravel bike hire", sales_analytics_gross_takings: 4180.5 },
+              { sales_analytics_product: "Helmets", sales_analytics_gross_takings: 2310.9 },
+            ]),
+          ),
+        ]
+      : [],
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: dashboardBuildStamp,
+  });
+  await page.route(/\/api\/dashboard$/u, async (route) => {
+    await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
+  });
+  await page.route(/\/api\/dashboard\/refresh$/u, async (route) => {
+    await route.fulfill({ json: { dashboard: builtDashboardDocument(), refreshedTileIds: [] } });
+  });
+  await page.route(/\/api\/dashboard\/layout$/u, async (route) => {
+    await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
+  });
+  await page.route(/\/api\/dashboard\/tiles(?:\/.*)?$/u, async (route) => {
+    await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
+  });
+  await page.route(/\/api\/dashboard\/build$/u, async (route) => {
+    capture.dashboardBuildPayloads.push({ endpoint: "build", body: route.request().postDataJSON() });
+    const body = route.request().postDataJSON() as { instruction?: string };
+    await route.fulfill({
+      json: {
+        message: `Design and build my dashboard.\n\nWhat I want: ${body.instruction ?? ""}`,
+        preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+        replacesTiles: 0,
+      },
+    });
+  });
+  await page.route(/\/api\/dashboard\/build\/apply$/u, async (route) => {
+    capture.dashboardBuildPayloads.push({ endpoint: "apply", body: route.request().postDataJSON() });
+    dashboardBuildState.applied = true;
+    await route.fulfill({
+      json: {
+        dashboard: builtDashboardDocument(),
+        applied: {
+          dashboardTitle: "Ashburton at a glance",
+          timeframe: "Last 30 days vs the previous 30",
+          tiles: 4,
+          skipped: [],
+        },
+      },
+    });
+  });
+
   await page.route(/\/api\/codex-conversation$/u, async (route) => {
     const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
     capture.codexConversationPayloads.push(requestPayload);
@@ -1601,6 +1776,105 @@ export async function installAppApiRoutes(
   await page.route(/\/api\/omni-conversation$/u, async (route) => {
     const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
     capture.omniConversationPayloads.push(requestPayload);
+    if (requestPayload.dashboardBuild === true) {
+      const buildStamp = "2026-08-30T04:09:00.000Z";
+      const buildEvents = [
+        { id: "omni_db_ack", sequence: 1, type: "narrative", purpose: "acknowledgement", occurredAt: buildStamp, text: "I’ll design your top-level dashboard now." },
+        {
+          id: "omni_db_tasks", sequence: 2, type: "tasks", status: "running", occurredAt: buildStamp,
+          items: [
+            { id: "task-1", label: "Choose the standing questions", completed: true },
+            { id: "task-2", label: "Verify the KPI queries", completed: false },
+            { id: "task-3", label: "Compose the dashboard", completed: false },
+          ],
+        },
+        {
+          id: "omni_db_query", sequence: 3, type: "query", status: "complete", occurredAt: buildStamp,
+          topic: "Sales analytics", name: "Revenue vs previous 30 days",
+          metrics: ["sales_analytics.gross_takings"], dimensions: ["sales_analytics.completed_at"],
+          timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+          lens: "Cube view: sales_analytics", view: "sales_analytics", cubesUsed: ["sales_analytics"],
+          queryYaml: "measures:\n  - sales_analytics.gross_takings",
+          rowCount: 2, executionMs: 900, connector: "lightspeed",
+          resultId: "01J00000000000000000DBRV01",
+        },
+        {
+          id: "omni_db_table", sequence: 4, type: "table", status: "complete", occurredAt: buildStamp,
+          caption: "Revenue vs previous 30 days",
+          columns: [
+            { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+            { key: "compareDateRange", label: "Date range", type: "string" },
+          ],
+          rows: [
+            { sales_analytics_gross_takings: 41230.55, compareDateRange: "2026-08-01 - 2026-08-30" },
+            { sales_analytics_gross_takings: 36780.1, compareDateRange: "2026-07-02 - 2026-07-31" },
+          ],
+          resultId: "01J00000000000000000DBRV01",
+          provenance: {
+            sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-30" }],
+            timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+            definitions: [],
+            semanticBundleHash: "albert-omni-fixture",
+            identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+          },
+          presentation: "evidence",
+          dashboardReplay: {
+            kind: "cube_v3",
+            queryEventId: "omni_db_query",
+            queryDigest: "ab".repeat(32),
+            semanticVersionDigest: "cd".repeat(32),
+          },
+        },
+        {
+          id: "omni_db_plan", sequence: 5, type: "dashboard_plan", status: "complete", occurredAt: buildStamp,
+          dashboardTitle: "Ashburton at a glance",
+          timeframe: "Last 30 days vs the previous 30",
+          tiles: [
+            { resultId: "01J00000000000000000DBRV01", kind: "kpi", title: "Revenue", note: "vs previous 30 days", width: "quarter", valueKey: "sales_analytics_gross_takings" },
+            { resultId: "01J00000000000000000DBRV01", kind: "chart", title: "Revenue by week", width: "half", chartType: "line", xKey: "sales_analytics_completed_at", yKey: "sales_analytics_gross_takings" },
+            { resultId: "01J00000000000000000DBRV01", kind: "table", title: "Top products by revenue", width: "half" },
+          ],
+        },
+        {
+          id: "omni_db_tasks_done", sequence: 6, type: "tasks", status: "complete", occurredAt: buildStamp,
+          items: [
+            { id: "task-1", label: "Choose the standing questions", completed: true },
+            { id: "task-2", label: "Verify the KPI queries", completed: true },
+            { id: "task-3", label: "Compose the dashboard", completed: true },
+          ],
+        },
+        {
+          id: "omni_db_answer", sequence: 7, type: "answer", status: "complete", occurredAt: buildStamp,
+          state: "Verified",
+          text: "Your dashboard watches revenue, refunds, the weekly trend and top products over the last 30 days against the previous 30.",
+          provenance: {
+            sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-30" }],
+            timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+            definitions: [],
+            semanticBundleHash: "albert-omni-fixture",
+            identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+          },
+          followUps: [],
+          presentedResultIds: ["01J00000000000000000DBRV01"],
+          claims: [],
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        body: buildEvents
+          .map((event) => `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "X-Albert-Runtime": "omni",
+          "X-Albert-Model": "gpt-5.6-luna",
+          "X-Albert-Conversation-Id": "01J00000000000000000DBCV01",
+          "X-Albert-Turn-Id": "01J00000000000000000DBTN01",
+        },
+      }).catch(() => undefined);
+      return;
+    }
     const stamp = "2026-08-03T00:44:00.000Z";
     const omniResultId = "01J0000000000000000000OMN1";
     const omniProvenance = {
