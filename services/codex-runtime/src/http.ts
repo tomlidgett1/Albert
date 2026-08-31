@@ -156,12 +156,18 @@ function diagnosticFailureCode(error: unknown): string {
   return "unknown";
 }
 
-function localDiagnosticDetail(error: unknown): string | undefined {
-  if (process.env.NODE_ENV === "production") return undefined;
+/**
+ * Redacted error detail safe to log in every environment. Production job
+ * failures previously logged only { code, errorClass } — an undiagnosable
+ * pair when a provider incident hits (2026-08-31: four Sonnet turns died as
+ * "omni_runtime_failed"/"Error" with nothing else to go on).
+ */
+function redactedDiagnosticDetail(error: unknown): string | undefined {
   const message = unknownErrorMessage(error);
   if (!message) return undefined;
   return message
     .replace(/sk-[A-Za-z0-9_-]{8,}/gu, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gu, "Bearer [redacted]")
     .replace(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[redacted-token]")
     .replace(/\s+/gu, " ")
     .slice(0, 500);
@@ -350,7 +356,7 @@ export class CodexRuntimeHttpHandler {
             code: failure.code,
             diagnosticCode: diagnosticFailureCode(error),
             errorClass: error instanceof Error ? error.name : "unknown",
-            ...(localDiagnosticDetail(error) ? { detail: localDiagnosticDetail(error) } : {}),
+            ...(redactedDiagnosticDetail(error) ? { detail: redactedDiagnosticDetail(error) } : {}),
           })}\n`);
           write({ kind: "error", ...failure });
         }).finally(() => {
@@ -466,7 +472,7 @@ export class CodexRuntimeHttpHandler {
         code: failure.code,
         diagnosticCode: diagnosticFailureCode(error),
         errorClass: error instanceof Error ? error.name : "unknown",
-        ...(localDiagnosticDetail(error) ? { detail: localDiagnosticDetail(error) } : {}),
+        ...(redactedDiagnosticDetail(error) ? { detail: redactedDiagnosticDetail(error) } : {}),
       })}\n`);
     }).finally(() => {
       job.updatedAt = Date.now();
@@ -506,8 +512,9 @@ export class CodexRuntimeHttpHandler {
       process.stdout.write(`${JSON.stringify({
         event: "omni_job_failed",
         code: failure.code,
+        diagnosticCode: diagnosticFailureCode(error),
         errorClass: error instanceof Error ? error.name : "unknown",
-        ...(localDiagnosticDetail(error) ? { detail: localDiagnosticDetail(error) } : {}),
+        ...(redactedDiagnosticDetail(error) ? { detail: redactedDiagnosticDetail(error) } : {}),
       })}\n`);
     }).finally(() => {
       job.updatedAt = Date.now();

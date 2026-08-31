@@ -1287,27 +1287,41 @@ export async function runOmniSemanticTurn(
       return rawFinal;
     };
 
-    // One provider stall must not kill an otherwise healthy analysis: a run
-    // that dies mid-stream restarts once. Query results are cached per turn,
-    // so a retry replays cheaply and the trace simply continues.
+    // Provider stalls must not kill an otherwise healthy analysis: a run
+    // that dies mid-stream restarts. Query results are cached per turn, so a
+    // retry replays cheaply and the trace simply continues.
     // "Invalid request data" is Anthropic's generic wire rejection of one
     // sampled sequence (observed intermittently at high thinking budgets); a
     // fresh run re-samples, so it retries like a stall rather than failing
     // the whole analysis.
+    // Retries back off (2026-08-31: two independent Sonnet turns died at the
+    // same instant and their immediate retries hit the same provider burst —
+    // an instant re-send buys nothing during a shared incident window). The
+    // turn deadline still bounds the whole ladder via `signal`.
     const TRANSIENT_RUN_FAILURE = /did not produce a final response|fetch failed|ECONNRESET|ECONNREFUSED|socket|terminated|premature close|read timeout|Invalid request data|overloaded|429|5\d\d/iu;
-    let rawFinal: string;
-    try {
-      rawFinal = await runAgentOnce();
-    } catch (error) {
-      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-      if (signal.aborted || !TRANSIENT_RUN_FAILURE.test(message)) throw error;
-      await emit({
-        type: "progress",
-        status: "running",
-        stage: "planning",
-        label: "Retrying after a model interruption",
-      });
-      rawFinal = await runAgentOnce();
+    const TRANSIENT_RETRY_BACKOFF_MS = [2_500, 10_000] as const;
+    let rawFinal = "";
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        rawFinal = await runAgentOnce();
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        const backoffMs = TRANSIENT_RETRY_BACKOFF_MS[attempt];
+        if (signal.aborted || backoffMs === undefined || !TRANSIENT_RUN_FAILURE.test(message)) {
+          throw error;
+        }
+        await emit({
+          type: "progress",
+          status: "running",
+          stage: "planning",
+          label: attempt === 0
+            ? "Retrying after a model interruption"
+            : "Retrying again after a model interruption",
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        if (signal.aborted) throw error;
+      }
     }
     if (!rawFinal.trim()) {
       throw new Error("The analysis completed without a final answer.");
