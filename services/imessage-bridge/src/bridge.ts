@@ -218,7 +218,7 @@ export class ImessageBridgeHandler {
       // A running turn from a crashed process holds the conversation; this
       // process is not running one (activeChats gates that), so release and
       // retry once before giving up.
-      if (existingConversationId && /running/iu.test(error instanceof Error ? error.message : "")) {
+      if (existingConversationId && /running|55000/iu.test(error instanceof Error ? error.message : "")) {
         await this.store.releaseRunningTurns(existingConversationId);
         conversationId = await this.store.beginTurn({
           conversationId: existingConversationId,
