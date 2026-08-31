@@ -169,6 +169,26 @@ export function extractOmniFollowUps(answer: string): Readonly<{
 
 type OmniTask = { id: string; label: string; completed: boolean };
 
+/**
+ * Appended to the analyst instructions when the turn's delivery channel is
+ * iMessage (`turn.channel === "imessage"`). The base chat instructions stay
+ * byte-identical (they are eval-pinned); this section overrides only the
+ * answer-formatting contract for a reply that will be read as text-message
+ * bubbles: Linq v3 renders **bold** natively via text decorations, while
+ * tables, headings, list markers, and links have no rendering at all.
+ */
+export const OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS = `# iMessage Delivery Override
+
+This conversation happens over iMessage: the owner reads your final answer as text-message bubbles on their phone, not in the Albert app. Everything above about markdown STRUCTURE in "Answer Quality & Formatting" is replaced by the rules below. The analytical bar — comparison anchors, breadth on open-ended questions, partial-period honesty, arithmetic discipline — is unchanged.
+
+- Plain conversational text only. NO markdown tables, NO headings, NO bullet or numbered list markers, NO code fences, NO links, and NO [follow-up](?ai-query=...) links anywhere.
+- **bold** is the only markup that renders; use it for the headline figure and verdict words, nothing else.
+- Lead with the answer: first sentence carries the figure and its comparison anchor. Then only the two to five numbers that matter most, then one implication or action. Aim for under 900 characters on a simple lookup and under 1,800 even for an open-ended question — tight sentences, no padding, no closing summary.
+- Where you would have used a table, write at most six short lines like "Bikes $12,400 (41% of sales)" with one line per entity, separated by line breaks.
+- Round for texting ($8.4k, 58%) unless the exact figure is the point; keep currency symbols.
+- To split a genuinely long answer into separate bubbles, put --- alone on its own line at the break (at most three bubbles). Most answers should be one bubble.
+- Australian English. No emojis unless the owner used one first. No em dashes — use commas, colons, or hyphens.`;
+
 function renderOmniInstructions(input: Readonly<{
   topicIndex: string;
   topicCount: number;
@@ -1175,11 +1195,13 @@ export async function runOmniSemanticTurn(
       freshnessLines,
       ...(turn.businessContext ? { businessContext: turn.businessContext.slice(0, 20_000) } : {}),
     };
+    const imessageChannel = !dashboardMode && turn.channel === "imessage";
     const agent = new Agent({
       name: dashboardMode ? "Albert dashboard architect" : "Albert Omni analyst",
       instructions: dashboardMode
         ? renderOmniDashboardInstructions(instructionsInput)
-        : renderOmniInstructions(instructionsInput),
+        : renderOmniInstructions(instructionsInput)
+          + (imessageChannel ? `\n\n${OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS}` : ""),
       model: preferences.model,
       modelSettings: {
         ...buildLiveAgentModelSettings(runConfig, {

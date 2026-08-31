@@ -6,6 +6,7 @@ const webhook=await readFile(".albert-build/services/webhook-gateway.js","utf8")
 const deletion=await readFile(".albert-build/services/deletion-worker.js","utf8");
 const diagnostic=await readFile(".albert-build/services/operator-diagnostic.js","utf8");
 const codex=await readFile(".albert-build/services/codex-runtime.js","utf8");
+const imessage=await readFile(".albert-build/services/imessage-bridge.js","utf8");
 const buildIdentity=JSON.parse(await readFile(".albert-build/services/build-identity.json","utf8"));
 
 for(const forbidden of [
@@ -179,6 +180,37 @@ for(const forbidden of [
   "transform_rw",
   "deletion_rw",
 ]){
+}
+
+// The iMessage bridge is a conversation caller (web-equivalent trust): it may
+// hold the Cube signing secret, Linq credentials, and the owner-session
+// Supabase keys, but never raw database URLs, connector secrets, or ingestion
+// role vocabulary.
+for(const required of [
+  "LINQ_WEBHOOK_SIGNING_SECRET",
+  "LINQ_API_TOKEN",
+  "ALBERT_IMESSAGE_ALLOWED_SENDERS",
+  "CUBEJS_API_SECRET",
+  "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+  "begin_albert_turn",
+  "albert_answer_event_append",
+]){
+  assert.equal(imessage.includes(required),true,`imessage-bridge bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "process.env.CONTROL_PLANE_DATABASE_URL",
+  "process.env.ANALYTICAL_DATABASE_URL",
+  "TOKEN_ENCRYPTION_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "XERO_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+  "deletion_rw",
+]){
+  assert.equal(imessage.includes(forbidden),false,`imessage-bridge bundle crossed a forbidden boundary: ${forbidden}`);
 }
 
 for(const required of [

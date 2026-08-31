@@ -19,6 +19,7 @@ await build({
     "webhook-gateway": "services/webhook-gateway/src/main.ts",
     "operator-diagnostic": "services/operator-diagnostic/src/main.ts",
     "codex-runtime": "services/codex-runtime/src/main.ts",
+    "imessage-bridge": "services/imessage-bridge/src/main.ts",
   },
   outdir,
   bundle: true,

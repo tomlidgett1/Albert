@@ -79,6 +79,14 @@ export const omniServiceTurnSchema = z.object({
    * the runtime must deploy before any caller sends it.
    */
   dashboardBuild: z.boolean().optional(),
+  /**
+   * Delivery channel. "imessage" appends a text-message answer contract to
+   * the analyst instructions (no tables/headings/links — short bold-accented
+   * bubbles) for turns whose reply is delivered as iMessage bubbles rather
+   * than rendered in the Albert app. Optional so existing callers are
+   * unaffected; the runtime must deploy before any caller sends it.
+   */
+  channel: z.enum(["imessage"]).optional(),
 }).strict();
 
 export type OmniServiceTurn = z.infer<typeof omniServiceTurnSchema>;
