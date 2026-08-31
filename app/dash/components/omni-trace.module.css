@@ -13,10 +13,10 @@
 .workHeader {
   border-bottom: 1px solid light-dark(#e5e7eb, #33363e);
   padding-bottom: 4px;
-  font-size: calc(15.5px * var(--text-scale, 1));
+  font-size: var(--dash-question-size);
   font-weight: 400;
-  line-height: 1.62;
-  letter-spacing: -0.011em;
+  line-height: var(--dash-question-leading);
+  letter-spacing: var(--dash-question-tracking);
   color: light-dark(#1f2937, #e6e8ec);
   font-variant-numeric: tabular-nums;
 }
@@ -558,10 +558,10 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: calc(15.5px * var(--text-scale, 1));
+  font-size: var(--dash-question-size);
   font-weight: 400;
-  line-height: 1.62;
-  letter-spacing: -0.011em;
+  line-height: var(--dash-question-leading);
+  letter-spacing: var(--dash-question-tracking);
   color: light-dark(#6b7280, #9ba0aa);
   padding: 2px 0;
 }
