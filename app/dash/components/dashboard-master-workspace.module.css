@@ -1,9 +1,14 @@
 .workspace {
+  height: 100%;
+  overflow-y: auto;
+  padding: calc(8px * var(--text-scale, 1)) calc(28px * var(--text-scale, 1)) calc(48px * var(--text-scale, 1));
+}
+
+.inner {
   display: flex;
   flex-direction: column;
   gap: 22px;
   max-width: 1080px;
-  padding-bottom: 48px;
 }
 
 .stateNote {

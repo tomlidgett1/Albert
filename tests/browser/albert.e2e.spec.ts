@@ -1272,9 +1272,28 @@ test("Dashboard Master runs a session through the omni harness and renders the r
   await expect(page.getByText("Fixture focus area 5")).toBeVisible();
   await expect(page.getByText("$5,209.42").first()).toBeVisible();
   await expect(page.getByText("214 governed queries")).toBeVisible();
-  const evidenceCell = page.getByRole("cell", { name: "$8,120.50" });
+  const evidenceCell = page.getByRole("cell", { name: "AUD 8,120.50" });
   await expect(evidenceCell).toBeVisible();
   await expect(page.locator("figure").filter({ hasText: "Weekly revenue trend" }).locator("svg").first()).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText("Set a discount approval threshold for anything over 10%.")).toBeVisible();
+  await expect(page.getByText("Set a discount approval threshold for anything over 10%.").first()).toBeVisible();
   await expect(page.getByText("The latest labour week is partial; wage ratios exclude it.")).toBeVisible();
+
+  // The report must be user-scrollable: an overflow-auto ancestor that
+  // actually scrolls. (Playwright's own visibility auto-scroll also works on
+  // overflow-hidden containers, so assert the real property instead.)
+  const scrolled = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h1")]
+      .find((el) => el.textContent?.startsWith("Margins, not sales volume"));
+    let node = heading?.parentElement ?? null;
+    while (node) {
+      const style = getComputedStyle(node);
+      if ((style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+        node.scrollTop = 500;
+        return node.scrollTop;
+      }
+      node = node.parentElement;
+    }
+    return -1;
+  });
+  expect(scrolled).toBeGreaterThan(0);
 });

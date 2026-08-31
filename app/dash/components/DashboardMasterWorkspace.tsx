@@ -263,6 +263,7 @@ export default function DashboardMasterWorkspace({
 
   return (
     <div className={styles.workspace}>
+      <div className={styles.inner}>
       {live.active ? (
         <section className={styles.liveCard} aria-live="polite">
           <div className={styles.liveHeader}>
@@ -340,6 +341,7 @@ export default function DashboardMasterWorkspace({
           )}
         </section>
       ) : null}
+      </div>
     </div>
   );
 }
