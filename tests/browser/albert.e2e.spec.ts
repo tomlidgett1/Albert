@@ -254,7 +254,9 @@ test("the Agents workspace stays visible while saved Customer Agent conversation
   await page.goto("/dash");
   await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Agents", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toHaveCount(0);
+  // The Dashboard tab is a visible destination since the natural-language
+  // builder landed (ADR 0129); Test chart stays internal.
+  await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test chart", exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Customer review", exact: true }).click();

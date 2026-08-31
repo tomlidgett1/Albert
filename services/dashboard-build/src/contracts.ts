@@ -100,7 +100,7 @@ const TABLET_WIDTHS: Readonly<Record<DashboardPlanTile["width"], number>> = Obje
 });
 const TILE_HEIGHTS: Readonly<Record<DashboardPlanTile["kind"], number>> = Object.freeze({
   kpi: 5,
-  chart: 8,
+  chart: 9,
   table: 7,
 });
 

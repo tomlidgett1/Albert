@@ -249,9 +249,9 @@ test("layout packer fills rows in reading order on both breakpoints", () => {
     { i: "B", x: 3, y: 0, w: 3, h: 5 },
     { i: "C", x: 6, y: 0, w: 3, h: 5 },
     { i: "D", x: 9, y: 0, w: 3, h: 5 },
-    { i: "E", x: 0, y: 5, w: 6, h: 8 },
-    { i: "F", x: 6, y: 5, w: 6, h: 8 },
-    { i: "G", x: 0, y: 13, w: 12, h: 7 },
+    { i: "E", x: 0, y: 5, w: 6, h: 9 },
+    { i: "F", x: 6, y: 5, w: 6, h: 9 },
+    { i: "G", x: 0, y: 14, w: 12, h: 7 },
   ]);
   // Tablet: quarters become halves of an 8-column grid (two per row).
   assert.deepEqual(layouts.tablet.slice(0, 2).map(({ x, y, w }) => ({ x, y, w })), [
@@ -271,7 +271,7 @@ test("a mixed row inherits its tallest tile's height for the next row", () => {
     { tileId: "B", kind: "chart", width: "twoThirds" },
     { tileId: "C", kind: "table", width: "full" },
   ]);
-  assert.equal(layouts.desktop[2]!.y, 8, "the table starts below the chart, not the shorter KPI");
+  assert.equal(layouts.desktop[2]!.y, 9, "the table starts below the chart, not the shorter KPI");
 });
 
 test("the brief carries the instruction and the current tiles", () => {

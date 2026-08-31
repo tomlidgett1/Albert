@@ -354,12 +354,19 @@ function KpiTileBody({ tile }: Readonly<{ tile: DashboardTile }>) {
     previousRow = ordered[1] ?? null;
   }
 
-  const value = formatDashboardCell(
-    currentRow[valueColumn.key],
-    valueColumn as TraceTableColumn,
-    tile.columnPresentation[valueColumn.key],
-  );
-  const currentNumber = traceCellNumber((currentRow[valueColumn.key] ?? null) as TraceCell);
+  // A KPI shows a level, not a change: percent values render unsigned here
+  // (the shared cell formatter's exceptZero sign is for delta columns).
+  const presentation = tile.columnPresentation[valueColumn.key];
+  const rawValue = currentRow[valueColumn.key];
+  const rawNumber = traceCellNumber((rawValue ?? null) as TraceCell);
+  const value = valueColumn.type === "percent" && rawNumber !== null
+    ? new Intl.NumberFormat("en-AU", {
+      style: "percent",
+      minimumFractionDigits: presentation?.decimals,
+      maximumFractionDigits: presentation?.decimals ?? 2,
+    }).format(Math.abs(rawNumber) <= 1 ? rawNumber : rawNumber / 100)
+    : formatDashboardCell(rawValue, valueColumn as TraceTableColumn, presentation);
+  const currentNumber = rawNumber;
   const previousNumber = previousRow
     ? traceCellNumber((previousRow[valueColumn.key] ?? null) as TraceCell)
     : null;
@@ -398,7 +405,9 @@ function ChartTileBody({ tile }: Readonly<{ tile: DashboardTile }>) {
     const node = bodyRef.current;
     if (!node) return;
     const observer = new ResizeObserver(() => {
-      setHeight(Math.max(150, Math.floor(node.clientHeight) - 6));
+      // FlintChartView's height is the plot area; the legend and x-axis draw
+      // beyond it, so leave them headroom or the tile clips the axis labels.
+      setHeight(Math.max(140, Math.floor(node.clientHeight) - 88));
     });
     observer.observe(node);
     return () => observer.disconnect();
