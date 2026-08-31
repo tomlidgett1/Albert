@@ -106,7 +106,7 @@ The build is **one Omni turn in dashboard-architect mode**
 
 12-column grid (existing). The plan speaks in width words — quarter, third,
 half, twoThirds, full — and the apply route packs rows greedily in plan
-order: KPIs at 3×5, charts at 6×8, tables at 6×7 by default. Tablet maps the
+order: KPIs at 3×5, charts at 6×9, tables at 6×7 by default. Tablet maps the
 same words onto 8 columns. No agent-authored x/y; determinism keeps generated
 layouts clean and diffable.
 
