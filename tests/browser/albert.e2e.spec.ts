@@ -1170,6 +1170,11 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
   await expect(page.getByRole("button", { name: "How does this compare to last year?" })).toBeVisible();
 
+  // The Codex-style work header settles from "Working for" into "Worked for"
+  // once the answer lands, above the whole trail under its full-width rule.
+  await expect(page.getByText(/^Worked for \d+[smh]/u)).toBeVisible();
+  await expect(page.getByText(/^Working for /u)).not.toBeVisible();
+
   // Markdown structure in the answer renders styled: heading, table, and
   // figure columns right-aligned by the numeric-column pass.
   await expect(page.getByRole("heading", { name: "Weekly detail", level: 3 })).toBeVisible();

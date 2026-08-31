@@ -186,6 +186,49 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
   });
 }
 
+function formatWorkDuration(ms: number): string {
+  const seconds = Math.max(1, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds % 60;
+  if (minutes < 60) return restSeconds > 0 ? `${minutes}m ${restSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
+}
+
+/**
+ * Codex-style work header: a full-width rule and a live "Working for 12s"
+ * timer that settles into "Worked for 3m 24s" once the turn has produced its
+ * terminal event. Timing prefers the trace's own timestamps so reloaded
+ * history reads the turn's real duration; the mount clock only bridges the
+ * first seconds of a live turn before its first event lands.
+ */
+function WorkHeader({ events, working }: {
+  events: readonly TraceEvent[];
+  working: boolean;
+}) {
+  const mountedAtRef = useRef(Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!working) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [working]);
+  const firstAt = events.length > 0 ? Date.parse(events[0]!.occurredAt) : Number.NaN;
+  const lastAt = events.length > 0 ? Date.parse(events[events.length - 1]!.occurredAt) : Number.NaN;
+  const startedAt = Number.isFinite(firstAt)
+    ? (working ? Math.min(firstAt, mountedAtRef.current) : firstAt)
+    : mountedAtRef.current;
+  const endedAt = working ? now : (Number.isFinite(lastAt) ? lastAt : now);
+  const duration = formatWorkDuration(Math.max(0, endedAt - startedAt));
+  return (
+    <div className={styles.workHeader} data-working={working}>
+      {working ? `Working for ${duration}` : `Worked for ${duration}`}
+    </div>
+  );
+}
+
 function Chevron({ open, className }: { open: boolean; className: string }) {
   return (
     <svg className={className} data-open={open} viewBox="0 0 24 24" aria-hidden="true">
@@ -512,6 +555,7 @@ export default function OmniTrace({ events, streaming = false, onFollowUp }: {
   const showThinking = streaming && !model.answer && !model.error && !model.clarification;
   return (
     <div className={styles.root}>
+      <WorkHeader events={events} working={showThinking} />
       {model.blocks.map((block) => {
         switch (block.kind) {
           case "tasks":
