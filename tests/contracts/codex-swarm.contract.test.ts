@@ -865,10 +865,15 @@ test("a live fleet owns the module store; hydration cannot splice runs", () => {
 test("the main conversation mirrors fleet progress and per-specialist reasoning", () => {
   // Milestones stream into the parent thread as live commentary with stable
   // ids and first-seen timestamps, so nothing reorders or resets the clock.
-  assert.match(page, /swarm_live_\$\{snap\.runId\}_\$\{agent\.key\}_start/u);
-  assert.match(page, /swarm_live_\$\{snap\.runId\}_\$\{agent\.key\}_done/u);
-  assert.match(page, /swarm_live_\$\{snap\.runId\}_now/u);
-  assert.match(page, /Combining their findings into one answer/u);
+  // The projection lives in parent-events.ts; the page just feeds it the
+  // fleet snapshot and the stable-stamp cache.
+  const parentEvents = read("services/swarm/src/parent-events.ts");
+  assert.match(parentEvents, /swarm_live_\$\{input\.runId\}_\$\{agent\.key\}_start/u);
+  assert.match(parentEvents, /swarm_live_\$\{input\.runId\}_\$\{agent\.key\}_done/u);
+  assert.match(parentEvents, /swarm_live_\$\{input\.runId\}_now_\$\{agent\.key\}/u);
+  assert.match(parentEvents, /swarm_live_\$\{input\.runId\}_pulse/u);
+  assert.match(parentEvents, /Combining their findings into one answer/u);
+  assert.match(page, /swarmLiveCommentary\(\{/u);
   assert.match(page, /swarmEventTimesRef/u);
   const trace = read("app/dash/components/InsightsStyleTrace.tsx");
   assert.match(trace, /swarm-live-commentary/u);
@@ -897,4 +902,90 @@ test("omni question swarms carry the omni identity end to end", () => {
   assert.match(page, /const swarmRuntime = runRuntime === "omni" \? "omni" as const : "codex" as const/u);
   assert.match(page, /const settledSwarmRuntime = payload\.runtime \?\? swarmRuntime/u);
   assert.match(page, /runtime: run\.plan\?\.runtime/u);
+});
+
+void test("live commentary shows a status line for every working specialist plus a fleet pulse", async () => {
+  const { swarmLiveCommentary } = await import("../../services/swarm/src/parent-events.ts");
+  const stampTimes = new Map<string, string>();
+  const stamp = (id: string): string => {
+    const cached = stampTimes.get(id);
+    if (cached) return cached;
+    const fresh = `stable-${stampTimes.size}`;
+    stampTimes.set(id, fresh);
+    return fresh;
+  };
+  const agents = [
+    { key: "sales", title: "Sales trajectory", tagline: "Measure the trend", role: "measure", phase: "researching", statusLine: "Querying weekly takings…", queriesSeen: 4, headline: null, answerState: null, error: null },
+    { key: "labour", title: "Labour cost", tagline: "Explain the wage share", role: "explain", phase: "recording", statusLine: "Recording the finding…", queriesSeen: 9, headline: null, answerState: null, error: null },
+    { key: "cash", title: "Cash position", tagline: "Reconcile the balances", role: "reconcile", phase: "done", statusLine: "Finding recorded.", queriesSeen: 12, headline: "Cash held steady at $81k", answerState: "Verified", error: null },
+    { key: "challenge", title: "Challenge the story", tagline: "", role: "challenge", phase: "failed", statusLine: "", queriesSeen: 0, headline: null, answerState: null, error: "worker timeout" },
+    { key: "margin", title: "Margin quality", tagline: "", role: "measure", phase: "pending", statusLine: "", queriesSeen: 0, headline: null, answerState: null, error: null },
+  ];
+  const events = swarmLiveCommentary({
+    runId: "01JTESTRUN0000000000000000",
+    agents,
+    synthesising: false,
+    startedAtMs: 1_000_000,
+    nowMs: 1_000_000 + 95_000,
+    nowIso: "moving-now",
+    startSequence: 3,
+    stamp,
+  });
+  const texts = events.map((event) => (event as { text: string }).text);
+
+  // Milestones: every non-pending specialist has a start line; done carries
+  // the answer state and headline; failed carries the error.
+  assert.ok(texts.includes("Sales trajectory is investigating: Measure the trend"));
+  assert.ok(texts.includes("Cash position reported (Verified): Cash held steady at $81k"));
+  assert.ok(texts.includes("Challenge the story couldn't finish — worker timeout"));
+  assert.ok(!texts.some((text) => text.includes("Margin quality")));
+
+  // Every in-flight specialist gets its own rewriting status line with its
+  // per-agent query count — not just the busiest one.
+  assert.ok(texts.includes("Sales trajectory · Querying weekly takings… (4 queries)"));
+  assert.ok(texts.includes("Labour cost · Recording the finding… (9 queries)"));
+
+  // The fleet pulse aggregates settled count, total queries and elapsed time.
+  assert.ok(texts.includes("2 of 5 specialists finished · 25 governed queries so far · 1m 35s elapsed"));
+
+  // Milestones keep stable timestamps across republishes; live lines move.
+  const done = events.find((event) => event.id.endsWith("_cash_done"))!;
+  assert.equal(done.occurredAt, stamp(done.id));
+  const now = events.find((event) => event.id.endsWith("_now_sales"))!;
+  assert.equal(now.occurredAt, "moving-now");
+  const again = swarmLiveCommentary({
+    runId: "01JTESTRUN0000000000000000",
+    agents,
+    synthesising: false,
+    startedAtMs: 1_000_000,
+    nowMs: 1_000_000 + 120_000,
+    nowIso: "moving-later",
+    startSequence: 3,
+    stamp,
+  });
+  assert.equal(again.find((event) => event.id === done.id)!.occurredAt, done.occurredAt);
+  assert.equal(again.find((event) => event.id === now.id)!.occurredAt, "moving-later");
+
+  // Synthesis replaces the per-agent lines with one combining line.
+  const synth = swarmLiveCommentary({
+    runId: "01JTESTRUN0000000000000000",
+    agents: agents.map((agent) => (agent.phase === "researching" || agent.phase === "recording"
+      ? { ...agent, phase: "done" }
+      : agent)),
+    synthesising: true,
+    startedAtMs: 1_000_000,
+    nowMs: 1_000_000 + 200_000,
+    nowIso: "moving-now",
+    startSequence: 3,
+    stamp,
+  }).map((event) => (event as { text: string }).text);
+  assert.ok(synth.includes("All specialists have reported. Combining their findings into one answer…"));
+  assert.ok(!synth.some((text) => text.includes(" · Querying")));
+  assert.ok(!synth.some((text) => text.includes("specialists finished")));
+});
+
+void test("the parent thread builds its commentary through swarmLiveCommentary", () => {
+  const page = readFileSync(new URL("../../app/dash/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /const commentary = swarmLiveCommentary\(\{/u);
+  assert.match(page, /nowIso: new Date\(\)\.toISOString\(\)/u);
 });

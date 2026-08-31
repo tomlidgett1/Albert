@@ -21,7 +21,7 @@ import {
   type TraceEvent,
   type TraceTableEvent,
 } from "@/packages/shared/src";
-import { swarmEmptyProvenance, swarmPlanSteps } from "@/services/swarm/src/parent-events";
+import { swarmEmptyProvenance, swarmLiveCommentary, swarmPlanSteps } from "@/services/swarm/src/parent-events";
 import {
   SALES_DEEP_OWNER_QUESTION,
   SALES_DEEP_PREFERENCES,
@@ -3514,81 +3514,25 @@ export default function DashPage() {
     };
     const events: TraceEvent[] = [ackEvent, planEvent];
 
-    // Mirror fleet milestones into the parent thread as live commentary, so
-    // the main conversation shows what the specialists are doing without
-    // opening the slide-out. Ids are stable, so settled milestones keep their
-    // place and only the fleet-status line rewrites in place.
+    // Mirror the fleet into the parent thread as live commentary — a status
+    // line per working specialist plus a fleet pulse — so the main
+    // conversation shows what every specialist is doing without opening the
+    // slide-out. Milestone ids are stable; in-flight lines rewrite in place.
     let sequence = 3;
     if (!snap.answer && !snap.error) {
-      for (const agent of snap.agents) {
-        if (agent.phase === "pending") continue;
-        const startId = `swarm_live_${snap.runId}_${agent.key}_start`;
-        events.push({
-          id: startId,
-          sequence: sequence += 1,
-          type: "narrative",
-          occurredAt: stamp(startId),
-          text: agent.tagline
-            ? `${agent.title} is investigating: ${agent.tagline}`
-            : `${agent.title} is investigating.`,
-        });
-        if (agent.phase === "done") {
-          const doneId = `swarm_live_${snap.runId}_${agent.key}_done`;
-          events.push({
-            id: doneId,
-            sequence: sequence += 1,
-            type: "narrative",
-            occurredAt: stamp(doneId),
-            text: agent.headline
-              ? `${agent.title} reported: ${agent.headline}`
-              : `${agent.title} has finished.`,
-          });
-        } else if (agent.phase === "failed") {
-          const failId = `swarm_live_${snap.runId}_${agent.key}_failed`;
-          events.push({
-            id: failId,
-            sequence: sequence += 1,
-            type: "narrative",
-            occurredAt: stamp(failId),
-            text: `${agent.title} couldn't finish${agent.error ? ` — ${agent.error}` : "."}`,
-          });
-        }
-      }
-      const working = [...snap.agents]
-        .filter((agent) => (
-          agent.phase === "starting" || agent.phase === "researching" || agent.phase === "recording"
-        ))
-        .sort((a, b) => b.queriesSeen - a.queriesSeen)[0];
-      if (snap.synthesising) {
-        const synthId = `swarm_live_${snap.runId}_synthesising`;
-        events.push({
-          id: synthId,
-          sequence: sequence += 1,
-          type: "narrative",
-          occurredAt: stamp(synthId),
-          text: "All specialists have reported. Combining their findings into one answer…",
-        });
-      } else if (working) {
-        const totalQueries = snap.agents.reduce((total, agent) => total + agent.queriesSeen, 0);
-        events.push({
-          id: `swarm_live_${snap.runId}_now`,
-          sequence: sequence += 1,
-          type: "narrative",
-          occurredAt: new Date().toISOString(),
-          text: totalQueries > 0
-            ? `${working.title}: ${working.statusLine} · ${totalQueries} governed ${totalQueries === 1 ? "query" : "queries"} so far`
-            : `${working.title}: ${working.statusLine}`,
-        });
-      }
-      if (snap.kind === "super-agent" && snap.checkpointText) {
-        events.push({
-          id: `swarm_live_${snap.runId}_checkpoint`,
-          sequence: sequence += 1,
-          type: "narrative",
-          occurredAt: new Date().toISOString(),
-          text: snap.checkpointText,
-        });
-      }
+      const commentary = swarmLiveCommentary({
+        runId: snap.runId,
+        agents: snap.agents,
+        synthesising: snap.synthesising,
+        startedAtMs: snap.startedAtMs,
+        nowMs: Date.now(),
+        nowIso: new Date().toISOString(),
+        checkpointText: snap.kind === "super-agent" ? snap.checkpointText : null,
+        startSequence: sequence,
+        stamp,
+      });
+      events.push(...commentary);
+      sequence += commentary.length;
     }
     if (snap.answer) {
       const answerState: AnswerState = (
