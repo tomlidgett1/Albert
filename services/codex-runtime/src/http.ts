@@ -17,6 +17,7 @@ import {
 } from "../../../packages/albert-codex/src/semantic-runtime.js";
 import { omniServiceTurnSchema, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
 import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.js";
+import { isAlbertModelId, providerForModel } from "../../../packages/shared/src/agent-runtime.js";
 import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
 
@@ -246,7 +247,15 @@ export class CodexRuntimeHttpHandler {
     if (isOmniSubmit) {
       const omniParsed = omniServiceTurnSchema.safeParse(payload);
       if (!omniParsed.success) return jsonError("invalid_request", 400, "The Omni turn request is invalid.");
-      if (!this.config.omniOpenAi) {
+      // The runtime resolves unknown models to the OpenAI default, so the
+      // credential requirement follows the provider the turn will actually use.
+      const omniProvider = isAlbertModelId(omniParsed.data.model)
+        ? providerForModel(omniParsed.data.model)
+        : "openai";
+      const omniCredentials = omniProvider === "anthropic"
+        ? this.config.omniAnthropic
+        : this.config.omniOpenAi;
+      if (!omniCredentials) {
         return jsonError("omni_unavailable", 503, "The Omni runtime is not configured on this environment.");
       }
       this.pruneReplayIds();
@@ -484,7 +493,8 @@ export class CodexRuntimeHttpHandler {
     void runOmniSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
-      openai: this.config.omniOpenAi!,
+      ...(this.config.omniOpenAi ? { openai: this.config.omniOpenAi } : {}),
+      ...(this.config.omniAnthropic ? { anthropic: this.config.omniAnthropic } : {}),
       signal: job.abort.signal,
       emit: (event) => this.publishJobEvent(job, event),
       queryRecorder,

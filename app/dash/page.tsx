@@ -8,6 +8,7 @@ import { ThinkingOrb } from "thinking-orbs";
 import {
   DEFAULT_AGENT_PREFERENCES,
   CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
   describeChatFailure,
   isAnthropicModel,
   isXaiModel,
@@ -192,6 +193,13 @@ const CODEX_MODEL_IDS = Object.freeze([
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
+] as const satisfies readonly AlbertModelId[]);
+const OMNI_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies readonly AlbertModelId[]);
 const V3_MODEL_IDS = Object.freeze([
   "gpt-5.6-luna",
@@ -4284,7 +4292,7 @@ export default function DashPage() {
                             <ModelRunControls
                               value={agentPreferences}
                               onChange={setAgentPreferences}
-                              allowedModelIds={CODEX_MODEL_IDS}
+                              allowedModelIds={OMNI_MODEL_IDS}
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
@@ -5644,7 +5652,7 @@ export default function DashPage() {
                     <ModelRunControls
                       value={agentPreferences}
                       onChange={setAgentPreferences}
-                      allowedModelIds={CODEX_MODEL_IDS}
+                      allowedModelIds={OMNI_MODEL_IDS}
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                     />
                   ) : activeChatRuntime === "anthropic" ? (

@@ -23,7 +23,7 @@ import {
   detectCodexSocialMessage,
 } from "@/packages/albert-codex/src";
 import { signCubeJwt } from "@/packages/albert-v3/src/cube/jwt";
-import { normalizeAgentPreferences } from "@/packages/shared/src";
+import { isAnthropicModel, normalizeAgentPreferences, providerForModel } from "@/packages/shared/src";
 import {
   correlationIdFromHeader,
   createServiceLogger,
@@ -149,7 +149,21 @@ export async function POST(request: Request): Promise<Response> {
     fastMode: ALBERT_OMNI_DEFAULT_FAST_MODE,
   });
   if (!(ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(preferences.model)) {
-    return jsonError("Omni supports GPT-5.6 Luna, Terra, and Sol only.", 400, correlationId);
+    return jsonError("Omni supports GPT-5.6 Luna, Terra, Sol, Claude Sonnet 5, and Claude Haiku 4.5 only.", 400, correlationId);
+  }
+  if (
+    isAnthropicModel(preferences.model)
+    && process.env.NODE_ENV === "production"
+    && (
+      process.env.ALBERT_ANTHROPIC_APP8_APPROVED !== "true"
+      || process.env.ALBERT_ANTHROPIC_ZDR_APPROVED !== "true"
+    )
+  ) {
+    return jsonError(
+      "Claude models are not approved for production data on this Albert environment.",
+      503,
+      correlationId,
+    );
   }
   const reasoningEffort = preferences.reasoningEffort === "none" ? "low" : preferences.reasoningEffort;
 
@@ -170,7 +184,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const turnId = ulid();
   const runtimeProfile = {
-    provider: "openai",
+    provider: providerForModel(preferences.model),
     runtime: ALBERT_OMNI_RUNTIME,
     analyticalRuntime: ALBERT_OMNI_ANALYTICAL_RUNTIME,
     model: preferences.model,

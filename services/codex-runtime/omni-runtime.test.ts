@@ -9,7 +9,12 @@ import {
 } from "../../packages/albert-omni/src/semantic-model.js";
 import { extractOmniFollowUps } from "../../packages/albert-omni/src/runtime.js";
 import { normalizeOmniCubeQuery } from "../../packages/albert-omni/src/query-normalize.js";
-import { omniServiceTurnSchema } from "../../packages/albert-omni/src/contracts.js";
+import { ALBERT_OMNI_MODEL_IDS, omniServiceTurnSchema } from "../../packages/albert-omni/src/contracts.js";
+import {
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
+  normalizeAgentPreferences,
+} from "../../packages/shared/src/agent-runtime.js";
 import type { CubeCatalogue } from "../../packages/albert-v3/src/cube/types.js";
 import { loadCodexRuntimeConfig } from "./src/config.js";
 import { CodexRuntimeHttpHandler } from "./src/http.js";
@@ -157,9 +162,50 @@ test("Omni runtime config carries direct Responses credentials in api mode", () 
     apiKey: "sk-test",
     baseUrl: "https://au.api.openai.com/v1",
   });
+  assert.equal(config.omniAnthropic, undefined);
 });
 
-function omniHandler(withCredentials: boolean): CodexRuntimeHttpHandler {
+test("Omni runtime config carries Anthropic Messages credentials when the key is present", () => {
+  const config = loadCodexRuntimeConfig({
+    NODE_ENV: "test",
+    ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
+    CUBE_API_URL: "https://cube.example.test",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://au.api.openai.com/v1",
+    ANTHROPIC_API_KEY: "sk-ant-test",
+  });
+  assert.deepEqual(config.omniAnthropic, {
+    apiKey: "sk-ant-test",
+    baseUrl: "https://api.anthropic.com",
+  });
+});
+
+test("Production Omni runtime honours Anthropic credentials only with APP 8 and ZDR approval", () => {
+  const productionEnvironment = {
+    NODE_ENV: "production",
+    ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
+    ALBERT_SERVICE_VERSION: "a".repeat(40),
+    CUBE_API_URL: "https://cube.example.test",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://au.api.openai.com/v1",
+    ANTHROPIC_API_KEY: "sk-ant-test",
+  } as const;
+  assert.equal(loadCodexRuntimeConfig(productionEnvironment).omniAnthropic, undefined);
+  assert.equal(loadCodexRuntimeConfig({
+    ...productionEnvironment,
+    ALBERT_ANTHROPIC_APP8_APPROVED: "true",
+  }).omniAnthropic, undefined);
+  assert.deepEqual(loadCodexRuntimeConfig({
+    ...productionEnvironment,
+    ALBERT_ANTHROPIC_APP8_APPROVED: "true",
+    ALBERT_ANTHROPIC_ZDR_APPROVED: "true",
+  }).omniAnthropic, {
+    apiKey: "sk-ant-test",
+    baseUrl: "https://api.anthropic.com",
+  });
+});
+
+function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boolean }>): CodexRuntimeHttpHandler {
   return new CodexRuntimeHttpHandler(Object.freeze({
     port: 8792,
     listenHost: "127.0.0.1" as const,
@@ -174,8 +220,11 @@ function omniHandler(withCredentials: boolean): CodexRuntimeHttpHandler {
     pinnedCliVersion: "0.148.0",
     releaseSha: "development",
     deploymentId: "test",
-    ...(withCredentials ? {
+    ...(credentials.openai ? {
       omniOpenAi: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1" }),
+    } : {}),
+    ...(credentials.anthropic ? {
+      omniAnthropic: Object.freeze({ apiKey: "sk-ant-fixture", baseUrl: "https://api.anthropic.com" }),
     } : {}),
   }));
 }
@@ -220,7 +269,7 @@ test("Omni turn schema admits long messages the codex contract would reject", ()
 });
 
 test("Omni jobs endpoint rejects unsigned and malformed requests", async () => {
-  const handler = omniHandler(true);
+  const handler = omniHandler({ openai: true });
   const unsigned = await handler.handle(new Request("http://127.0.0.1:8792/v1/omni/jobs", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -233,11 +282,51 @@ test("Omni jobs endpoint rejects unsigned and malformed requests", async () => {
 });
 
 test("Omni jobs endpoint fails closed when Responses credentials are missing", async () => {
-  const handler = omniHandler(false);
+  const handler = omniHandler({});
   const response = await handler.handle(await signedOmniRequest(JSON.stringify(fixtureOmniTurn())));
   assert.equal(response.status, 503);
   const payload = await response.json() as { error?: { code?: string } };
   assert.equal(payload.error?.code, "omni_unavailable");
+});
+
+test("Omni jobs endpoint requires the credentials of the selected model's provider", async () => {
+  for (const model of [CLAUDE_HAIKU_4_5_MODEL_ID, CLAUDE_SONNET_5_MODEL_ID]) {
+    const claudeTurn = { ...fixtureOmniTurn(), model };
+
+    // Anthropic model without Anthropic credentials fails closed even though
+    // the OpenAI side is fully configured — and vice versa.
+    const openaiOnly = await omniHandler({ openai: true })
+      .handle(await signedOmniRequest(JSON.stringify(claudeTurn)));
+    assert.equal(openaiOnly.status, 503, model);
+
+    const anthropicOnly = omniHandler({ anthropic: true });
+    const gptRejected = await anthropicOnly.handle(await signedOmniRequest(JSON.stringify(fixtureOmniTurn())));
+    assert.equal(gptRejected.status, 503, model);
+
+    const accepted = await anthropicOnly.handle(await signedOmniRequest(JSON.stringify({
+      ...claudeTurn,
+      requestId: ulid(),
+    })));
+    assert.equal(accepted.status, 202, model);
+    const payload = await accepted.json() as { jobId?: string };
+    assert.equal(typeof payload.jobId, "string", model);
+  }
+});
+
+test("Omni allowlists the Anthropic models with fast mode clamped off and every effort intact", () => {
+  for (const model of [CLAUDE_HAIKU_4_5_MODEL_ID, CLAUDE_SONNET_5_MODEL_ID]) {
+    assert.ok((ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(model));
+    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+      const preferences = normalizeAgentPreferences({
+        model,
+        reasoningEffort: effort,
+        fastMode: true,
+      });
+      assert.equal(preferences.model, model);
+      assert.equal(preferences.reasoningEffort, effort);
+      assert.equal(preferences.fastMode, false);
+    }
+  }
 });
 
 test("Omni query normalizer repairs the common compareDateRange and phrasing mistakes", () => {

@@ -1,6 +1,6 @@
 import { OpenAIProvider, type ModelProvider } from "@openai/agents";
 import type { ResolvedAlbertModelTransport } from "../../shared/src/index.js";
-import { createAnthropicHaikuModelProvider } from "./anthropic-messages-provider.js";
+import { createAnthropicMessagesModelProvider } from "./anthropic-messages-provider.js";
 
 /**
  * OpenAI-compatible Responses transport. GPT profiles use the configured
@@ -27,6 +27,6 @@ export function createAlbertModelProvider(
   transport: ResolvedAlbertModelTransport,
 ): ModelProvider {
   return transport.provider === "anthropic"
-    ? createAnthropicHaikuModelProvider(transport)
+    ? createAnthropicMessagesModelProvider(transport)
     : createAlbertResponsesProvider(transport);
 }

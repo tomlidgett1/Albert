@@ -147,7 +147,7 @@ export async function POST(request: Request): Promise<Response> {
         ? SUPER_AGENT_PREFERENCES
       : normalizeAgentPreferences(parsed.preferences);
     if (runtime === "omni" && !(ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(preferences.model)) {
-      return jsonError("Omni swarms support GPT-5.6 Luna, Terra, and Sol only.", 400, correlationId);
+      return jsonError("Omni swarms support GPT-5.6 Luna, Terra, Sol, Claude Sonnet 5, and Claude Haiku 4.5 only.", 400, correlationId);
     }
     // Codex-only reasoning switches never reach Omni workers.
     const solPlanner = superAgent

@@ -14,6 +14,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ALBERT_MODELS,
   CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
   isAnthropicModel,
   modelSupportsFastMode,
   normalizeAgentPreferences,
@@ -58,6 +59,7 @@ const MODEL_TAB_ORDER = [
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "grok-4.6",
+  CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies ReadonlyArray<AlbertModelId>;
 
@@ -306,7 +308,9 @@ export function ModelRunControls({
   }, [closePopover, open]);
 
   const updateModel = (model: AlbertModelId) => {
-    const switchingToHaiku = isAnthropicModel(model) && !isAnthropicModel(value.model);
+    // Haiku's manual thinking budgets make Max minutes-slow, so it starts at
+    // Low. Sonnet's adaptive thinking self-regulates and keeps the selection.
+    const switchingToHaiku = model === CLAUDE_HAIKU_4_5_MODEL_ID && value.model !== CLAUDE_HAIKU_4_5_MODEL_ID;
     onChange(normalizeAgentPreferences({
       ...value,
       model,

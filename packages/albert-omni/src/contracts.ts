@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
+} from "../../shared/src/agent-runtime.js";
 import type { CubeFilter, CubeQuery } from "../../albert-v3/src/cube/types.js";
 
 export const ALBERT_OMNI_RUNTIME = "omni-agent" as const;
@@ -8,6 +12,8 @@ export const ALBERT_OMNI_MODEL_IDS = [
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
+  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const;
 export const ALBERT_OMNI_DEFAULT_MODEL = "gpt-5.6-luna" as const;
 export const ALBERT_OMNI_DEFAULT_EFFORT = "max" as const;

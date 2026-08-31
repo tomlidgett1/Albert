@@ -20,16 +20,20 @@ import {
   type StreamEvent,
 } from "@openai/agents";
 import {
+  ANTHROPIC_ADAPTIVE_DEFAULT_MAX_OUTPUT_TOKENS,
   CLAUDE_HAIKU_4_5_MODEL_ID,
   HAIKU_MAX_OUTPUT_TOKENS,
   HAIKU_THINKING_BUDGET_TOKENS,
+  anthropicMaxOutputTokens,
+  anthropicUsesAdaptiveThinking,
+  isAlbertModelId,
+  isAnthropicModel,
   isReasoningEffort,
   type ReasoningEffort,
   type ResolvedAlbertModelTransport,
 } from "../../shared/src/index.js";
 
 const ANTHROPIC_REPLAY_KEY = "albert_anthropic_message";
-const HAIKU_MAX_PROVIDER_OUTPUT_TOKENS = 64_000;
 const ANTHROPIC_MAX_STRICT_TOOLS = 20;
 const ANTHROPIC_SAFE_TEXT_ONLY_STRICT_TOOLS = 4;
 const ANTHROPIC_MAX_OPTIONAL_PARAMETERS = 24;
@@ -248,7 +252,7 @@ function applyAnthropicSchemaBudget(
     || outputComplexity.optionalParameters > ANTHROPIC_MAX_OPTIONAL_PARAMETERS
   ) {
     throw new Error(
-      "Claude Haiku output schema exceeds Anthropic's structured-output complexity limits.",
+      "Claude output schema exceeds Anthropic's structured-output complexity limits.",
     );
   }
 
@@ -303,10 +307,19 @@ function applyAnthropicSchemaBudget(
   });
 }
 
+/**
+ * The Messages API rejects ill-formed Unicode (lone surrogates) anywhere in
+ * the request. Model output and governed data both occasionally carry them,
+ * so every string Albert puts on the wire is well-formed first.
+ */
+function wireText(value: string): string {
+  return value.toWellFormed();
+}
+
 function replayableBlock(value: unknown): ContentBlockParam | undefined {
   if (!isRecord(value) || typeof value.type !== "string") return undefined;
   if (value.type === "text" && typeof value.text === "string") {
-    return { type: "text", text: value.text };
+    return { type: "text", text: wireText(value.text) };
   }
   if (
     value.type === "thinking"
@@ -354,7 +367,7 @@ function replayMarker(value: unknown): AnthropicReplayMarker | undefined {
 function toReplayContent(content: readonly ContentBlock[]): readonly ContentBlockParam[] {
   const replay = content.map(replayableBlock);
   if (replay.some((block) => block === undefined)) {
-    throw new Error("Claude Haiku returned a content block Albert cannot replay safely.");
+    throw new Error("Claude returned a content block Albert cannot replay safely.");
   }
   return Object.freeze(replay as ContentBlockParam[]);
 }
@@ -367,11 +380,11 @@ function textFromUserContent(item: Extract<AgentInputItem, { role: "user" }>): C
   if (typeof item.content === "string") return [{ type: "text", text: item.content }];
   return item.content.map((content) => {
     if (content.type !== "input_text") {
-      throw new Error("Claude Haiku currently accepts text-only Albert conversation input.");
+      throw new Error("Claude currently accepts text-only Albert conversation input.");
     }
     return {
       type: "text" as const,
-      text: content.text,
+      text: wireText(content.text),
       ...(content.promptCacheBreakpoint?.mode === "explicit"
         ? { cache_control: { type: "ephemeral" as const } }
         : {}),
@@ -383,31 +396,33 @@ function textFromAssistantContent(
   item: Extract<AgentInputItem, { role: "assistant" }>,
 ): ContentBlockParam[] {
   return item.content.map((content) => {
-    if (content.type === "output_text") return { type: "text" as const, text: content.text };
-    if (content.type === "refusal") return { type: "text" as const, text: content.refusal };
-    throw new Error("Claude Haiku cannot replay non-text assistant content in this runtime.");
+    if (content.type === "output_text") return { type: "text" as const, text: wireText(content.text) };
+    if (content.type === "refusal") return { type: "text" as const, text: wireText(content.refusal) };
+    throw new Error("Claude cannot replay non-text assistant content in this runtime.");
   });
 }
 
 function toolResultText(output: Extract<AgentInputItem, { type: "function_call_result" }>["output"]): string {
-  if (typeof output === "string") return output;
+  if (typeof output === "string") return wireText(output);
   if (Array.isArray(output)) {
-    return output.map((item) => {
+    return wireText(output.map((item) => {
       if (item.type === "input_text") return item.text;
       return JSON.stringify(item);
-    }).join("\n");
+    }).join("\n"));
   }
   if (isRecord(output) && output.type === "text" && typeof output.text === "string") {
-    return output.text;
+    return wireText(output.text);
   }
-  return JSON.stringify(output);
+  return wireText(JSON.stringify(output));
 }
 
 function parseToolArguments(value: string, toolName: string): unknown {
   try {
-    return JSON.parse(value || "{}");
+    // Well-forming the serialized arguments repairs lone surrogates in every
+    // nested string value before they can reach the wire.
+    return JSON.parse(wireText(value || "{}"));
   } catch {
-    throw new Error(`Claude Haiku could not replay invalid arguments for ${toolName}.`);
+    throw new Error(`Claude could not replay invalid arguments for ${toolName}.`);
   }
 }
 
@@ -421,7 +436,10 @@ function toAnthropicConversation(request: ModelRequest): Readonly<{
     : [];
   const replayedResponses = new Set<string>();
 
-  const append = (role: "user" | "assistant", content: ContentBlockParam[]) => {
+  const append = (role: "user" | "assistant", blocks: ContentBlockParam[]) => {
+    // The API rejects text blocks without visible content; they also carry
+    // nothing, so they are dropped rather than failing the whole request.
+    const content = blocks.filter((block) => block.type !== "text" || block.text.trim().length > 0);
     if (content.length === 0) return;
     const previous = messages.at(-1);
     if (previous?.role === role && Array.isArray(previous.content)) {
@@ -479,15 +497,15 @@ function toAnthropicConversation(request: ModelRequest): Readonly<{
         }]);
         continue;
       }
-      throw new Error(`Claude Haiku does not support Albert input item ${item.type ?? "unknown"}.`);
+      throw new Error(`Claude does not support Albert input item ${item.type ?? "unknown"}.`);
     }
   }
 
   if (messages.length === 0) {
-    throw new Error("Claude Haiku requires at least one conversation message.");
+    throw new Error("Claude requires at least one conversation message.");
   }
   return {
-    system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
+    system: systemParts.length > 0 ? wireText(systemParts.join("\n\n")) : undefined,
     messages,
   };
 }
@@ -496,7 +514,7 @@ function toAnthropicTools(request: ModelRequest): Tool[] {
   const tools: Tool[] = [];
   for (const tool of request.tools) {
     if (tool.type !== "function") {
-      throw new Error(`Claude Haiku does not support hosted Albert tool ${tool.name}.`);
+      throw new Error(`Claude does not support hosted Albert tool ${tool.name}.`);
     }
     tools.push({
       name: tool.name,
@@ -518,7 +536,7 @@ function toAnthropicTools(request: ModelRequest): Tool[] {
 
 function transformedObjectSchema(schema: unknown): Tool.InputSchema {
   if (!isRecord(schema) || schema.type !== "object") {
-    throw new Error("Claude Haiku requires an object JSON schema.");
+    throw new Error("Claude requires an object JSON schema.");
   }
   return jsonSchemaOutputFormat(
     schema as Parameters<typeof jsonSchemaOutputFormat>[0],
@@ -540,9 +558,10 @@ function toAnthropicToolChoice(
   const choice = request.modelSettings.toolChoice;
   if (choice === "none") return { type: "none" };
   if (!choice || choice === "auto") return { type: "auto" };
-  // Haiku manual thinking rejects forced tool choice. Albert's tool-owning
-  // agents already instruct the required call, so preserve thinking and let
-  // Claude choose automatically rather than emitting a provider-invalid body.
+  // Anthropic rejects forced tool choice while thinking is on (manual and
+  // adaptive alike). Albert's tool-owning agents already instruct the
+  // required call, so preserve thinking and let Claude choose automatically
+  // rather than emitting a provider-invalid body.
   if (thinkingEnabled) return { type: "auto" };
   if (choice === "required") return { type: "any" };
   return { type: "tool", name: choice };
@@ -554,7 +573,7 @@ function outputFormat(request: ModelRequest): Readonly<{
 }> {
   if (request.outputType === "text") return { config: undefined };
   if (request.outputType.type !== "json_schema") {
-    throw new Error(`Claude Haiku does not support output type ${request.outputType.type}.`);
+    throw new Error(`Claude does not support output type ${request.outputType.type}.`);
   }
   const restoreSchema = transformedObjectSchema(request.outputType.schema);
   return {
@@ -577,26 +596,37 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
   outputRestoreSchema?: Tool.InputSchema;
 }> {
   if (request.previousResponseId || request.conversationId || request.prompt) {
-    throw new Error("Claude Haiku uses Albert's explicit bounded context, not provider-managed conversation state.");
+    throw new Error("Claude uses Albert's explicit bounded context, not provider-managed conversation state.");
   }
   const conversation = toAnthropicConversation(request);
   const requestedTools = toAnthropicTools(request);
   const effort = selectedEffort(request);
-  const budgetTokens = HAIKU_THINKING_BUDGET_TOKENS[effort];
+  // Haiku 4.5 predates adaptive thinking: Albert's efforts map onto manual
+  // budget_tokens there. The 4.6+ family (Sonnet 5) rejects budget_tokens;
+  // it takes adaptive thinking plus the provider-native output_config.effort.
+  const adaptive = isAlbertModelId(model) && anthropicUsesAdaptiveThinking(model);
+  const budgetTokens = adaptive ? 0 : HAIKU_THINKING_BUDGET_TOKENS[effort];
+  const thinkingEnabled = adaptive ? effort !== "none" : budgetTokens > 0;
   const resolvedOutput = outputFormat(request);
   const schemaBudget = applyAnthropicSchemaBudget(requestedTools, resolvedOutput.config);
   const tools = schemaBudget.tools;
+  const providerMaxTokens = isAlbertModelId(model) ? anthropicMaxOutputTokens(model) : 64_000;
   const configuredMax = request.modelSettings.maxTokens;
-  const maxTokens = configuredMax ?? HAIKU_MAX_OUTPUT_TOKENS[effort];
+  const maxTokens = configuredMax
+    ?? (adaptive ? ANTHROPIC_ADAPTIVE_DEFAULT_MAX_OUTPUT_TOKENS : HAIKU_MAX_OUTPUT_TOKENS[effort]);
   if (
     !Number.isSafeInteger(maxTokens)
     || maxTokens < 1
-    || maxTokens > HAIKU_MAX_PROVIDER_OUTPUT_TOKENS
+    || maxTokens > providerMaxTokens
     || (budgetTokens > 0 && maxTokens <= budgetTokens)
   ) {
-    throw new Error("Claude Haiku max tokens must be positive, at most 64k, and greater than its thinking budget.");
+    throw new Error(`Claude max tokens must be positive, at most ${providerMaxTokens}, and greater than any manual thinking budget.`);
   }
-  const resolvedToolChoice = toAnthropicToolChoice(request, budgetTokens > 0, tools.length > 0);
+  let outputConfig = resolvedOutput.config;
+  if (adaptive && effort !== "none") {
+    outputConfig = { ...(outputConfig ?? {}), effort };
+  }
+  const resolvedToolChoice = toAnthropicToolChoice(request, thinkingEnabled, tools.length > 0);
   const body: MessageCreateParamsNonStreaming = {
     model,
     max_tokens: maxTokens,
@@ -604,10 +634,12 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
     ...(conversation.system ? { system: conversation.system } : {}),
     ...(tools.length > 0 ? { tools } : {}),
     ...(resolvedToolChoice ? { tool_choice: resolvedToolChoice } : {}),
-    ...(resolvedOutput.config ? { output_config: resolvedOutput.config } : {}),
-    thinking: budgetTokens > 0
-      ? { type: "enabled", budget_tokens: budgetTokens, display: "omitted" }
-      : { type: "disabled" },
+    ...(outputConfig ? { output_config: outputConfig } : {}),
+    thinking: adaptive
+      ? (thinkingEnabled ? { type: "adaptive", display: "omitted" } : { type: "disabled" })
+      : budgetTokens > 0
+        ? { type: "enabled", budget_tokens: budgetTokens, display: "omitted" }
+        : { type: "disabled" },
     service_tier: "standard_only",
   };
   return {
@@ -698,12 +730,12 @@ function toModelOutput(message: Message, outputRestoreSchema?: Tool.InputSchema)
     });
   }
   if (output.length === 0) {
-    throw new Error("Claude Haiku returned no text or tool call Albert can consume.");
+    throw new Error("Claude returned no text or tool call Albert can consume.");
   }
   return output;
 }
 
-export class AnthropicHaikuModel implements Model {
+export class AnthropicMessagesModel implements Model {
   constructor(
     private readonly client: AnthropicMessagesClient,
     private readonly model: string = CLAUDE_HAIKU_4_5_MODEL_ID,
@@ -714,14 +746,27 @@ export class AnthropicHaikuModel implements Model {
     // XHigh and Max exceed the SDK's non-streaming long-request threshold.
     // Consume SSE internally and return only the accumulated final Message;
     // provider text/thinking deltas never enter Albert's public trace.
-    const stream = this.client.messages.stream(
+    const openStream = () => this.client.messages.stream(
       prepared.body,
       request.signal ? { signal: request.signal } : undefined,
     );
-    const message = await stream.finalMessage();
+    let stream = openStream();
+    let message: Message;
+    try {
+      message = await stream.finalMessage();
+    } catch (error) {
+      // Anthropic occasionally rejects an accepted stream mid-flight with the
+      // generic "Invalid request data" error event (observed at high thinking
+      // budgets). The SDK's own retries cover only pre-response failures, so
+      // one identical re-send handles this transient here.
+      const detail = error instanceof Error ? error.message : String(error);
+      if (request.signal?.aborted || !/Invalid request data/u.test(detail)) throw error;
+      stream = openStream();
+      message = await stream.finalMessage();
+    }
     if (message.stop_reason !== "end_turn" && message.stop_reason !== "tool_use") {
       const reason = message.stop_reason ?? "missing";
-      throw new Error(`Claude Haiku stopped without a complete Albert response (${reason}).`);
+      throw new Error(`Claude stopped without a complete Albert response (${reason}).`);
     }
     const requestId = (message as Message & { _request_id?: string })._request_id
       ?? stream.request_id
@@ -736,9 +781,7 @@ export class AnthropicHaikuModel implements Model {
         model: message.model,
         stop_reason: message.stop_reason,
         service_tier: message.usage.service_tier,
-        thinking: prepared.budgetTokens > 0
-          ? { type: "enabled", budget_tokens: prepared.budgetTokens, display: "omitted" }
-          : { type: "disabled" },
+        thinking: prepared.body.thinking,
         reasoning_level: prepared.effort,
         tool_choice: prepared.resolvedToolChoice?.type ?? "none",
         schema_policy: prepared.schemaPolicy,
@@ -773,11 +816,11 @@ export class AnthropicHaikuModel implements Model {
   }
 }
 
-export class AnthropicHaikuModelProvider implements ModelProvider {
-  private readonly model: AnthropicHaikuModel;
+export class AnthropicMessagesModelProvider implements ModelProvider {
+  private readonly model: AnthropicMessagesModel;
 
   constructor(client: AnthropicMessagesClient, private readonly modelId = CLAUDE_HAIKU_4_5_MODEL_ID) {
-    this.model = new AnthropicHaikuModel(client, modelId);
+    this.model = new AnthropicMessagesModel(client, modelId);
   }
 
   getModel(modelName?: string): Model {
@@ -788,19 +831,19 @@ export class AnthropicHaikuModelProvider implements ModelProvider {
   }
 }
 
-export function createAnthropicHaikuModelProvider(
+export function createAnthropicMessagesModelProvider(
   transport: ResolvedAlbertModelTransport,
 ): ModelProvider {
-  if (transport.provider !== "anthropic" || transport.model !== CLAUDE_HAIKU_4_5_MODEL_ID) {
-    throw new Error("Anthropic Haiku provider received the wrong Albert transport.");
+  if (transport.provider !== "anthropic" || !isAnthropicModel(transport.model)) {
+    throw new Error("Anthropic Messages provider received the wrong Albert transport.");
   }
   const client = new Anthropic({
     apiKey: transport.apiKey,
     baseURL: transport.baseUrl,
     maxRetries: 2,
   });
-  return new AnthropicHaikuModelProvider(client as AnthropicMessagesClient, transport.model);
+  return new AnthropicMessagesModelProvider(client as AnthropicMessagesClient, transport.model);
 }
 
 /** Exposed only for deterministic wire-contract tests. */
-export const anthropicHaikuRequestForTest = requestBody;
+export const anthropicMessagesRequestForTest = requestBody;

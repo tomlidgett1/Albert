@@ -13,7 +13,11 @@ import {
 } from "../../shared/src/index.js";
 import { buildLiveAgentModelSettings, buildOpenAIAgentRunConfig } from "../../agent/src/runtime.js";
 import { createAlbertModelProvider } from "../../agent/src/responses-provider.js";
-import { resolveAlbertModelTransport, isAlbertModelId } from "../../shared/src/agent-runtime.js";
+import {
+  anthropicMaxOutputTokens,
+  isAnthropicModel,
+  resolveAlbertModelTransport,
+} from "../../shared/src/agent-runtime.js";
 import { loadAgentConfig } from "../../albert-v3/src/agent-config/loader.js";
 import {
   cubeQueryDigest,
@@ -48,6 +52,8 @@ import { normalizeOmniCubeQuery } from "./query-normalize.js";
 import {
   ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
   ALBERT_OMNI_ANSWER_MAX_CHARS,
+  ALBERT_OMNI_DEFAULT_MODEL,
+  ALBERT_OMNI_MODEL_IDS,
   omniComposeDashboardInputSchema,
   type OmniComposeDashboardInput,
   type OmniSemanticTurnResult,
@@ -65,7 +71,10 @@ export type EmitOmniTrace = (event: OmniTraceEventInput) => unknown | Promise<un
 export type OmniSemanticTurnOptions = Readonly<{
   turn: OmniServiceTurn;
   cubeApiUrl: string;
-  openai: Readonly<{ apiKey: string; baseUrl: string }>;
+  /** Present when this environment can run OpenAI-provider Omni models. */
+  openai?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /** Present when this environment can run Anthropic-provider Omni models. */
+  anthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
   signal?: AbortSignal;
   emit: EmitOmniTrace;
   queryRecorder?: AnalyticalQueryRecorder;
@@ -1140,14 +1149,18 @@ export async function runOmniSemanticTurn(
 
     // ---- Agent ------------------------------------------------------------
     const preferences = normalizeAgentPreferences({
-      model: isAlbertModelId(turn.model) ? turn.model : "gpt-5.6-luna",
+      model: (ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(turn.model)
+        ? turn.model
+        : ALBERT_OMNI_DEFAULT_MODEL,
       reasoningEffort: turn.effort,
       fastMode: turn.fastMode,
     });
     const transport = resolveAlbertModelTransport({
       model: preferences.model,
-      openaiApiKey: options.openai.apiKey,
-      openaiBaseUrl: options.openai.baseUrl,
+      openaiApiKey: options.openai?.apiKey,
+      openaiBaseUrl: options.openai?.baseUrl,
+      anthropicApiKey: options.anthropic?.apiKey,
+      anthropicBaseUrl: options.anthropic?.baseUrl,
     });
     const runConfig = buildOpenAIAgentRunConfig(preferences);
     const instructionsInput = {
@@ -1168,10 +1181,18 @@ export async function runOmniSemanticTurn(
         ? renderOmniDashboardInstructions(instructionsInput)
         : renderOmniInstructions(instructionsInput),
       model: preferences.model,
-      modelSettings: buildLiveAgentModelSettings(runConfig, {
-        parallelToolCalls: true,
-        safetyIdentifier: createHash("sha256").update(`${turn.tenantId}:${turn.actorId}`).digest("hex"),
-      }),
+      modelSettings: {
+        ...buildLiveAgentModelSettings(runConfig, {
+          parallelToolCalls: true,
+          safetyIdentifier: createHash("sha256").update(`${turn.tenantId}:${turn.actorId}`).digest("hex"),
+        }),
+        // Anthropic Messages requires an explicit max_tokens; grant the
+        // model's provider ceiling so Omni's no-product-caps stance carries
+        // over (any thinking spend for the selected effort plus answer room).
+        ...(isAnthropicModel(preferences.model)
+          ? { maxTokens: anthropicMaxOutputTokens(preferences.model) }
+          : {}),
+      },
       tools: dashboardMode
         ? [
           manageTaskList,
@@ -1247,7 +1268,11 @@ export async function runOmniSemanticTurn(
     // One provider stall must not kill an otherwise healthy analysis: a run
     // that dies mid-stream restarts once. Query results are cached per turn,
     // so a retry replays cheaply and the trace simply continues.
-    const TRANSIENT_RUN_FAILURE = /did not produce a final response|fetch failed|ECONNRESET|ECONNREFUSED|socket|terminated|premature close|read timeout|429|5\d\d/iu;
+    // "Invalid request data" is Anthropic's generic wire rejection of one
+    // sampled sequence (observed intermittently at high thinking budgets); a
+    // fresh run re-samples, so it retries like a stall rather than failing
+    // the whole analysis.
+    const TRANSIENT_RUN_FAILURE = /did not produce a final response|fetch failed|ECONNRESET|ECONNREFUSED|socket|terminated|premature close|read timeout|Invalid request data|overloaded|429|5\d\d/iu;
     let rawFinal: string;
     try {
       rawFinal = await runAgentOnce();

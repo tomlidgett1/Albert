@@ -4,6 +4,7 @@ import {
   ALBERT_CODEX_LOCAL_SIGNING_SECRET,
   ALBERT_CODEX_PINNED_CLI_VERSION,
 } from "../../../packages/albert-codex/src/contracts.js";
+import { ANTHROPIC_API_BASE_URL } from "../../../packages/shared/src/agent-runtime.js";
 import type { CodexAppServerAuthentication } from "../../../packages/albert-codex/src/app-server.js";
 
 export type CodexRuntimeConfig = Readonly<{
@@ -19,6 +20,8 @@ export type CodexRuntimeConfig = Readonly<{
   deploymentId: string;
   /** Direct Responses credentials for the Omni agent runtime (no CLI child). */
   omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /** Native Anthropic Messages credentials for Omni turns on Claude models. */
+  omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
 }>;
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
@@ -93,6 +96,14 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     ? required(source, "OPENAI_API_KEY")
     : source.OPENAI_API_KEY?.trim();
   const omniBaseUrl = source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
+  // Claude models run Omni turns over the native Anthropic Messages API. In
+  // production the credentials are honoured only with the same explicit APP 8
+  // and ZDR approvals the web runtime requires for Anthropic processing.
+  const anthropicApproved = source.NODE_ENV !== "production"
+    || (source.ALBERT_ANTHROPIC_APP8_APPROVED === "true"
+      && source.ALBERT_ANTHROPIC_ZDR_APPROVED === "true");
+  const anthropicApiKey = anthropicApproved ? source.ANTHROPIC_API_KEY?.trim() : undefined;
+  const anthropicBaseUrl = source.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_API_BASE_URL;
   return Object.freeze({
     port,
     listenHost,
@@ -108,6 +119,12 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
       omniOpenAi: Object.freeze({
         apiKey: omniApiKey,
         baseUrl: serviceUrl(omniBaseUrl, "OPENAI_BASE_URL"),
+      }),
+    } : {}),
+    ...(anthropicApiKey ? {
+      omniAnthropic: Object.freeze({
+        apiKey: anthropicApiKey,
+        baseUrl: serviceUrl(anthropicBaseUrl, "ANTHROPIC_BASE_URL"),
       }),
     } : {}),
   });

@@ -12,6 +12,7 @@ export type AlbertModelProvider = (typeof ALBERT_MODEL_PROVIDERS)[number];
 export const XAI_API_BASE_URL = "https://api.x.ai/v1";
 export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 export const CLAUDE_HAIKU_4_5_MODEL_ID = "claude-haiku-4-5-20251001";
+export const CLAUDE_SONNET_5_MODEL_ID = "claude-sonnet-5";
 
 export const ALBERT_MODELS = [
   {
@@ -45,6 +46,14 @@ export const ALBERT_MODELS = [
     description: "xAI frontier reasoning",
     tier: "frontier",
     provider: "xai",
+  },
+  {
+    id: CLAUDE_SONNET_5_MODEL_ID,
+    label: "Claude Sonnet 5",
+    shortLabel: "Sonnet",
+    description: "Anthropic deep reasoning",
+    tier: "balanced",
+    provider: "anthropic",
   },
   {
     id: CLAUDE_HAIKU_4_5_MODEL_ID,
@@ -105,6 +114,37 @@ export const HAIKU_MAX_OUTPUT_TOKENS = Object.freeze({
   xhigh: 24_192,
   max: 40_192,
 } as const satisfies Readonly<Record<ReasoningEffort, number>>);
+
+/**
+ * Sonnet 5 is a 4.6+-family Anthropic model: thinking is adaptive and effort
+ * is the provider-native `output_config.effort` control. Manual
+ * `budget_tokens` thinking is rejected outright on that family, so the
+ * Messages adapter must branch on this rather than on the provider alone.
+ */
+export function anthropicUsesAdaptiveThinking(id: AlbertModelId): boolean {
+  return id === CLAUDE_SONNET_5_MODEL_ID;
+}
+
+/**
+ * Provider output ceilings per Anthropic model. The Messages adapter streams
+ * internally, so granting the full ceiling never risks the non-streaming
+ * long-request refusal.
+ */
+export const ANTHROPIC_MAX_OUTPUT_TOKENS = Object.freeze({
+  [CLAUDE_HAIKU_4_5_MODEL_ID]: 64_000,
+  [CLAUDE_SONNET_5_MODEL_ID]: 128_000,
+} as const);
+
+export function anthropicMaxOutputTokens(id: AlbertModelId): number {
+  return (ANTHROPIC_MAX_OUTPUT_TOKENS as Readonly<Record<string, number>>)[id] ?? 64_000;
+}
+
+/**
+ * Default per-request output allowance for adaptive-thinking models when the
+ * host configures none. Adaptive thinking spends from the same allowance as
+ * the visible answer, so the default leaves generous room for both.
+ */
+export const ANTHROPIC_ADAPTIVE_DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
 
 export type AgentRunPreferences = Readonly<{
   model: AlbertModelId;
@@ -210,7 +250,7 @@ export function resolveAlbertModelTransport(input: Readonly<{
   if (isAnthropicModel(input.model)) {
     const apiKey = input.anthropicApiKey?.trim() ?? "";
     if (!apiKey) {
-      throw new Error("Claude Haiku 4.5 is not configured on this Albert environment.");
+      throw new Error(`${albertModelById(input.model).label} is not configured on this Albert environment.`);
     }
     const baseUrl = (input.anthropicBaseUrl?.trim() || ANTHROPIC_API_BASE_URL).replace(/\/+$/u, "");
     return Object.freeze({

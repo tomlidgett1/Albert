@@ -20,9 +20,9 @@ import {
   serviceTierForPreferences,
 } from "../../packages/shared/src/index.ts";
 import {
-  AnthropicHaikuModel,
-  AnthropicHaikuModelProvider,
-  anthropicHaikuRequestForTest,
+  AnthropicMessagesModel,
+  AnthropicMessagesModelProvider,
+  anthropicMessagesRequestForTest,
 } from "../../packages/agent/src/anthropic-messages-provider.ts";
 import {
   finalAnswerSchema,
@@ -165,7 +165,7 @@ test("Haiku transport never reuses OpenAI or xAI credentials", () => {
 });
 
 test("Haiku wire maps Albert reasoning to budget_tokens and relaxes forced tools", () => {
-  const prepared = anthropicHaikuRequestForTest(
+  const prepared = anthropicMessagesRequestForTest(
     CLAUDE_HAIKU_4_5_MODEL_ID,
     request(),
   );
@@ -181,7 +181,7 @@ test("Haiku wire maps Albert reasoning to budget_tokens and relaxes forced tools
   assert.equal("effort" in prepared.body, false);
   assert.equal(prepared.body.output_config, undefined);
 
-  const disabled = anthropicHaikuRequestForTest(
+  const disabled = anthropicMessagesRequestForTest(
     CLAUDE_HAIKU_4_5_MODEL_ID,
     request({ modelSettings: { reasoning: { effort: "none" }, toolChoice: "required" } }),
   );
@@ -190,7 +190,7 @@ test("Haiku wire maps Albert reasoning to budget_tokens and relaxes forced tools
 });
 
 test("Haiku gets native JSON schema output and no OpenAI-only lane settings", () => {
-  const prepared = anthropicHaikuRequestForTest(
+  const prepared = anthropicMessagesRequestForTest(
     CLAUDE_HAIKU_4_5_MODEL_ID,
     request({
       outputType: {
@@ -240,7 +240,7 @@ test("Haiku gets native JSON schema output and no OpenAI-only lane settings", ()
     "high",
   );
   assert.deepEqual(noneSettings.reasoning, { effort: "none" });
-  const nonePrepared = anthropicHaikuRequestForTest(
+  const nonePrepared = anthropicMessagesRequestForTest(
     CLAUDE_HAIKU_4_5_MODEL_ID,
     request({ modelSettings: noneSettings }),
   );
@@ -287,7 +287,7 @@ test("tool continuation preserves omitted thinking signatures and accounts for c
     },
   } as unknown as Message;
   const fakeClient = fakeAnthropicClient(async () => firstMessage);
-  const model = new AnthropicHaikuModel(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
+  const model = new AnthropicMessagesModel(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
   const response = await model.getResponse(request());
   assert.equal(response.usage.inputTokens, 15);
   assert.equal(response.usage.outputTokens, 5);
@@ -298,7 +298,7 @@ test("tool continuation preserves omitted thinking signatures and accounts for c
   const call = response.output.find((item) => item.type === "function_call");
   assert.ok(call && call.type === "function_call");
 
-  const continuation = anthropicHaikuRequestForTest(
+  const continuation = anthropicMessagesRequestForTest(
     CLAUDE_HAIKU_4_5_MODEL_ID,
     request({
       input: [
@@ -366,7 +366,7 @@ test("Agents Runner completes a native Haiku thinking, tool, and structured-outp
     assert.ok(response, "unexpected extra Haiku request");
     return response;
   });
-  const provider = new AnthropicHaikuModelProvider(
+  const provider = new AnthropicMessagesModelProvider(
     fakeClient,
     CLAUDE_HAIKU_4_5_MODEL_ID,
   );
@@ -438,7 +438,7 @@ test("full V3 tool inventory stays within Anthropic's combined strict-schema lim
       usage: { input_tokens: 10, output_tokens: 10 },
     } as unknown as Message;
   });
-  const provider = new AnthropicHaikuModelProvider(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
+  const provider = new AnthropicMessagesModelProvider(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
   const agent = new Agent({
     name: "Albert V3 schema budget contract",
     instructions: "Return the strict final result without calling a tool.",
@@ -461,7 +461,7 @@ test("full V3 tool inventory stays within Anthropic's combined strict-schema lim
 
 test("query-plan output removes nullable grammar unions and restores required nulls", async () => {
   const bodies: MessageCreateParamsNonStreaming[] = [];
-  const provider = new AnthropicHaikuModelProvider(fakeAnthropicClient(async (body) => {
+  const provider = new AnthropicMessagesModelProvider(fakeAnthropicClient(async (body) => {
     bodies.push(structuredClone(body));
     return {
       id: "msg_query_plan_simplified",
@@ -521,7 +521,7 @@ test("host validation rejects non-strict Haiku tool input before execution", asy
     stop_sequence: null,
     usage: { input_tokens: 2, output_tokens: 2 },
   } as unknown as Message;
-  const provider = new AnthropicHaikuModelProvider(
+  const provider = new AnthropicMessagesModelProvider(
     fakeAnthropicClient(async () => invalidToolMessage),
     CLAUDE_HAIKU_4_5_MODEL_ID,
   );
@@ -570,14 +570,14 @@ test("redacted thinking and tool caller metadata replay without mutation", async
     stop_sequence: null,
     usage: { input_tokens: 2, output_tokens: 2 },
   } as unknown as Message;
-  const model = new AnthropicHaikuModel(
+  const model = new AnthropicMessagesModel(
     fakeAnthropicClient(async () => message),
     CLAUDE_HAIKU_4_5_MODEL_ID,
   );
   const response = await model.getResponse(request());
   const call = response.output.find((item) => item.type === "function_call");
   assert.ok(call && call.type === "function_call");
-  const replay = anthropicHaikuRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
+  const replay = anthropicMessagesRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
     input: [
       ...response.output,
       {
@@ -610,14 +610,14 @@ test("parallel Haiku tool calls replay one assistant turn and all tool results",
     stop_sequence: null,
     usage: { input_tokens: 2, output_tokens: 2 },
   } as unknown as Message;
-  const model = new AnthropicHaikuModel(
+  const model = new AnthropicMessagesModel(
     fakeAnthropicClient(async () => message),
     CLAUDE_HAIKU_4_5_MODEL_ID,
   );
   const response = await model.getResponse(request());
   const calls = response.output.filter((item) => item.type === "function_call");
   assert.equal(calls.length, 2);
-  const replay = anthropicHaikuRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
+  const replay = anthropicMessagesRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
     input: [
       ...response.output,
       ...calls.map((call) => ({
@@ -640,7 +640,7 @@ test("Haiku forwards the run abort signal to the native SDK", async () => {
   const controller = new AbortController();
   controller.abort(new DOMException("cancelled", "AbortError"));
   let receivedSignal: AbortSignal | undefined;
-  const model = new AnthropicHaikuModel(
+  const model = new AnthropicMessagesModel(
     fakeAnthropicClient(async (_body, options) => {
       receivedSignal = options?.signal;
       receivedSignal?.throwIfAborted();
@@ -667,7 +667,7 @@ test("Haiku Max uses the streaming accumulator and preserves its request id", as
     stop_sequence: null,
     usage: { input_tokens: 2, output_tokens: 2 },
   } as unknown as Message;
-  const model = new AnthropicHaikuModel(
+  const model = new AnthropicMessagesModel(
     fakeAnthropicClient(async (body) => {
       streamedBody = body;
       return message;
@@ -694,12 +694,85 @@ test("Haiku fails closed on truncated or refused provider responses", async () =
       stop_sequence: null,
       usage: { input_tokens: 1, output_tokens: 1 },
     } as unknown as Message));
-    const model = new AnthropicHaikuModel(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
+    const model = new AnthropicMessagesModel(fakeClient, CLAUDE_HAIKU_4_5_MODEL_ID);
     await assert.rejects(
       model.getResponse(request()),
       new RegExp(`stopped without a complete Albert response \\(${stopReason}\\)`, "u"),
     );
   }
+});
+
+test("wire hardening drops empty text blocks and repairs ill-formed Unicode", () => {
+  const loneSurrogate = "Revenue \ud83d";
+  const prepared = anthropicMessagesRequestForTest(
+    CLAUDE_HAIKU_4_5_MODEL_ID,
+    request({
+      input: [
+        user("   "),
+        user(`Look at ${loneSurrogate}`),
+        {
+          type: "function_call",
+          callId: "toolu_wire",
+          name: "lookup_metric",
+          arguments: JSON.stringify({ metric: loneSurrogate }),
+          status: "completed",
+        },
+        {
+          type: "function_call_result",
+          name: "lookup_metric",
+          callId: "toolu_wire",
+          status: "completed",
+          output: `value ${loneSurrogate}`,
+        },
+      ],
+    }),
+  );
+  const serialized = JSON.stringify(prepared.body);
+  assert.equal(serialized.includes("\\ud83d\\ud"), false, "no lone surrogate reaches the wire");
+  assert.equal(serialized.includes("�"), true, "ill-formed sequences become replacement characters");
+  const [first] = prepared.body.messages;
+  assert.ok(Array.isArray(first?.content));
+  assert.equal(
+    (first?.content as Array<{ type: string }>).every((block) => block.type !== "text"
+      || (block as { text: string }).text.trim().length > 0),
+    true,
+    "whitespace-only text blocks are dropped",
+  );
+});
+
+test("mid-stream Invalid request data retries the identical request once", async () => {
+  let calls = 0;
+  const success = {
+    id: "msg_retry_ok",
+    type: "message",
+    role: "assistant",
+    model: CLAUDE_HAIKU_4_5_MODEL_ID,
+    content: [{ type: "text", text: "Recovered." }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 5, output_tokens: 3 },
+  } as unknown as Message;
+  const flaky = fakeAnthropicClient(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw new Error('400 {"type":"error","error":{"details":null,"type":"invalid_request_error","message":"Invalid request data"}}');
+    }
+    return success;
+  });
+  const model = new AnthropicMessagesModel(flaky, CLAUDE_HAIKU_4_5_MODEL_ID);
+  const response = await model.getResponse(request());
+  assert.equal(calls, 2);
+  assert.equal(response.responseId, "msg_retry_ok");
+
+  // Any other provider rejection surfaces immediately.
+  let otherCalls = 0;
+  const failing = fakeAnthropicClient(async () => {
+    otherCalls += 1;
+    throw new Error("400 max_tokens is too large");
+  });
+  const failingModel = new AnthropicMessagesModel(failing, CLAUDE_HAIKU_4_5_MODEL_ID);
+  await assert.rejects(() => failingModel.getResponse(request()), /max_tokens is too large/u);
+  assert.equal(otherCalls, 1);
 });
 
 test("selector, V3 route and persistence remain wired to the pinned model", () => {
