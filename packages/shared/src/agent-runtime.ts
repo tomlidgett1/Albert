@@ -159,6 +159,13 @@ export const DEFAULT_AGENT_PREFERENCES: AgentRunPreferences = Object.freeze({
   fastMode: true,
 });
 
+/** Omni's empty-state and New Analysis profile: Haiku at Max, no Fast mode. */
+export const DEFAULT_OMNI_PREFERENCES: AgentRunPreferences = Object.freeze({
+  model: CLAUDE_HAIKU_4_5_MODEL_ID,
+  reasoningEffort: "max",
+  fastMode: false,
+});
+
 const modelIds = new Set<string>(ALBERT_MODEL_IDS);
 const reasoningEfforts = new Set<string>(REASONING_EFFORTS);
 const grokReasoningEfforts = new Set<string>(GROK_REASONING_EFFORTS);

@@ -15,9 +15,9 @@ export const ALBERT_OMNI_MODEL_IDS = [
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const;
-export const ALBERT_OMNI_DEFAULT_MODEL = "gpt-5.6-luna" as const;
+export const ALBERT_OMNI_DEFAULT_MODEL = CLAUDE_HAIKU_4_5_MODEL_ID;
 export const ALBERT_OMNI_DEFAULT_EFFORT = "max" as const;
-export const ALBERT_OMNI_DEFAULT_FAST_MODE = true as const;
+export const ALBERT_OMNI_DEFAULT_FAST_MODE = false as const;
 export const ALBERT_OMNI_ANALYSIS_TIMEOUT_MS = 720_000 as const;
 /**
  * The Omni harness deliberately carries no small caps: the owner's question

@@ -12,11 +12,12 @@
 
 .workHeader {
   border-bottom: 1px solid light-dark(#e5e7eb, #33363e);
-  padding-bottom: 10px;
-  font-size: calc(15px * var(--text-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: light-dark(#374151, #c8cbd2);
+  padding-bottom: 4px;
+  font-size: calc(15.5px * var(--text-scale, 1));
+  font-weight: 400;
+  line-height: 1.62;
+  letter-spacing: -0.011em;
+  color: light-dark(#1f2937, #e6e8ec);
   font-variant-numeric: tabular-nums;
 }
 

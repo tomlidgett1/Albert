@@ -42,6 +42,11 @@ async function openAlbertChat(page: Parameters<typeof installAppApiRoutes>[0]) {
   await expect(page.getByRole("textbox", { name: "Ask me anything" })).toBeVisible();
 }
 
+async function openCodexChat(page: Parameters<typeof installAppApiRoutes>[0]) {
+  await selectAnalysisRuntime(page, "Codex");
+  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toBeVisible();
+}
+
 async function openConnections(
   page: Parameters<typeof installAppApiRoutes>[0],
 ) {
@@ -274,9 +279,9 @@ test("the Agents workspace stays visible while saved Customer Agent conversation
   await page.getByRole("button", { name: "New Analysis", exact: true }).click();
   await expect(page.getByText("Customers · Albert Bike Store", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Ask about your business", level: 2 })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toHaveAttribute(
+  await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveAttribute(
     "placeholder",
-    "Ask Codex anything about your connected data…",
+    "Ask anything about your connected data…",
   );
 });
 
@@ -293,45 +298,41 @@ test("saved Customer Agent conversations restore their specialist context", asyn
   );
 });
 
-test("Codex is the default harness and Albert remains available", async ({ page }) => {
+test("Omni is the default harness and Albert remains available", async ({ page }) => {
   const capture = await openDashboard(page);
-  await expect(analysisRuntimeTrigger(page, "Codex")).toBeVisible();
+  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ask about your business", level: 2 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Suggested investigations" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: "Suggested investigations" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveAttribute(
     "placeholder",
-    "Ask Codex anything about your connected data…",
+    "Ask anything about your connected data…",
   );
-  const codexSettings = page.getByTestId("model-run-controls-trigger");
-  await expect(codexSettings).toHaveAttribute(
+  const omniSettings = page.getByTestId("model-run-controls-trigger");
+  await expect(omniSettings).toHaveAttribute(
     "aria-label",
-    "Run settings: GPT 5.6 Luna, Fast mode, max reasoning, Pro reasoning off, Sol planner on",
+    "Run settings: Claude Haiku 4.5, Standard speed, max reasoning",
   );
-  await codexSettings.click();
-  await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toHaveAttribute("aria-checked", "true");
+  await omniSettings.click();
+  await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "GPT 5.6 Terra" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "GPT 5.6 Sol" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Claude Sonnet 5" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "Grok 4.6" })).toHaveCount(0);
-  await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveCount(0);
+  await expect(page.locator('[data-reasoning-effort="max"]')).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
 
-  const prompt = "Find one high-confidence opportunity I could test this month";
-  await page.getByRole("button", { name: "Suggested investigations" }).click();
-  await page.getByRole("menuitem", { name: prompt, exact: true }).click();
-  await expect.poll(() => capture.codexConversationPayloads.length).toBe(1);
-  const codexPlan = page.getByLabel("Plan", { exact: true });
-  await expect(codexPlan).toBeVisible();
-  await expect(codexPlan.getByText("Find the governed sales view", { exact: true })).toBeVisible();
-  await expect(codexPlan.getByText("3/3", { exact: true })).toBeVisible();
-  await expect(page.getByText("Bikes led category net sales at $84,240.00.")).toBeVisible();
-  await expect(page.getByText("Net sales by category", { exact: true })).toBeVisible();
-  await expect(page.getByText(/\{"state"/u)).toHaveCount(0);
-  expect(capture.codexConversationPayloads[0]).toEqual({
+  const prompt = "Show me revenue by week for the last 12 complete weeks.";
+  await page.getByRole("textbox", { name: "Ask Omni about your business" }).fill(prompt);
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => capture.omniConversationPayloads.length).toBe(1);
+  await expect(page.getByText("Tasks (3 of 3)")).toBeVisible();
+  await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
+  expect(capture.omniConversationPayloads[0]).toEqual({
     message: prompt,
-    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: true },
-    proMode: false,
-    solPlanner: true,
+    preferences: { model: "claude-haiku-4-5-20251001", reasoningEffort: "max", fastMode: false },
   });
+  expect(capture.codexConversationPayloads).toHaveLength(0);
   expect(capture.conversationPayloads).toHaveLength(0);
 
   await selectAnalysisRuntime(page, "Albert");
@@ -347,6 +348,7 @@ test("Codex reasoning summaries stream in an accessible slide-out", async ({ pag
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   const capture = await openDashboard(page);
+  await openCodexChat(page);
 
   const prompt = "Which categories performed best last month?";
   await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
@@ -401,6 +403,7 @@ test("Codex reasoning summaries stream in an accessible slide-out", async ({ pag
 
 test("Swarm selection atomically routes an immediate Pro and Sol send", async ({ page }) => {
   const capture = await openDashboard(page);
+  await openCodexChat(page);
   const settings = page.getByTestId("model-run-controls-trigger");
   await settings.click();
   const proReasoning = page.getByRole("switch", { name: "Pro reasoning" });
@@ -432,6 +435,7 @@ test("Swarm selection atomically routes an immediate Pro and Sol send", async ({
 
 test("Super agent atomically sends the profitability test with its fixed deep profile", async ({ page }) => {
   const capture = await openDashboard(page);
+  await openCodexChat(page);
   const prompt = "How can we improve profitability?";
   await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
   await page.evaluate(() => {
@@ -458,6 +462,7 @@ test("Super agent atomically sends the profitability test with its fixed deep pr
 
 test("Codex model controls allow a reviewed OpenAI model change", async ({ page }) => {
   const capture = await openDashboard(page);
+  await openCodexChat(page);
   const settings = page.getByTestId("model-run-controls-trigger");
   await settings.click();
   await page.getByRole("radio", { name: "GPT 5.6 Terra" }).click();
@@ -574,6 +579,7 @@ test("Codex tab is accessible in compact dark mode with reduced motion", async (
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await openDashboard(page);
+  await openCodexChat(page);
   await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toBeVisible();
   const layout = await page.evaluate(() => ({
     innerWidth,
@@ -592,10 +598,10 @@ test("Compare launches Albert and Codex concurrently with the exact same prompt 
   const capture = await installAppApiRoutes(page, { v3DelayMs: 650, codexDelayMs: 650 });
   await page.goto("/dash");
   await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
-  await analysisRuntimeTrigger(page, "Codex").click();
-  const codexOption = page.getByRole("menuitemradio", { name: /Codex/u });
-  await expect(codexOption).toHaveAttribute("aria-checked", "true");
-  await expect(codexOption).toBeFocused();
+  await analysisRuntimeTrigger(page, "Omni").click();
+  const omniOption = page.getByRole("menuitemradio", { name: "Omni", exact: true });
+  await expect(omniOption).toHaveAttribute("aria-checked", "true");
+  await expect(omniOption).toBeFocused();
   await page.keyboard.press("ArrowDown");
   const compareOption = page.getByRole("menuitemradio", { name: "Compare", exact: true });
   await expect(compareOption).toBeFocused();
@@ -906,6 +912,7 @@ test("Claude Haiku 4.5 selector binds manual reasoning levels without Fast mode"
   const composer = page.getByRole("textbox", { name: "Ask me anything" });
   const settingsTrigger = page.getByTestId("model-run-controls-trigger");
   await settingsTrigger.click();
+  await page.getByRole("radio", { name: "GPT 5.6 Luna", exact: true }).click();
   await page.getByRole("radio", { name: "Claude Haiku 4.5", exact: true }).click();
   await expect(
     page.getByRole("radio", { name: "Claude Haiku 4.5", exact: true }),
@@ -963,6 +970,7 @@ test("keyboard focus follows dash shortcuts, popovers, drawers, lineage, and des
   await page.keyboard.press("Escape");
   await expect(accountTrigger).toBeFocused();
 
+  await openCodexChat(page);
   const composer = page.getByRole("textbox", { name: "Ask Codex about your business" });
   await composer.focus();
   await expect(
@@ -1204,7 +1212,8 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   expect(capture.omniConversationPayloads.length).toBe(1);
   const payload = capture.omniConversationPayloads[0] as Record<string, unknown>;
   expect(payload.message).toBe("Show me revenue by week for the last 12 complete weeks.");
-  expect((payload.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
+  expect((payload.preferences as Record<string, unknown>).model).toBe("claude-haiku-4-5-20251001");
+  expect((payload.preferences as Record<string, unknown>).reasoningEffort).toBe("max");
 
   // A full-turn visual artifact for review, kept outside version control.
   await page.getByText("The lift came from stronger weekend trade.").scrollIntoViewIfNeeded();

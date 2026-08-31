@@ -72,7 +72,8 @@ export async function updateSession(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const isAuthenticated = Boolean(data?.claims);
   const isLoginPage = request.nextUrl.pathname === "/login";
-  const isProtectedPage = request.nextUrl.pathname.startsWith("/dash");
+  const isProtectedPage = request.nextUrl.pathname.startsWith("/dash")
+    || request.nextUrl.pathname === "/view2";
 
   if (!isAuthenticated && isProtectedPage) {
     return redirectWithAuthCookies(request, supabaseResponse, "/login");

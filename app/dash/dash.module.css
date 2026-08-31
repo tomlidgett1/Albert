@@ -6533,6 +6533,11 @@
   padding: 0;
 }
 
+.chatMessageOmni {
+  /* Match the user question text: 1px shell border + 10px .chatMessage padding. */
+  padding-left: 11px;
+}
+
 .chatTrailDeferred {
   min-height: 0;
 }
@@ -18758,4 +18763,375 @@
 
 @media (prefers-reduced-motion: reduce) {
   .chatHeroDashboardCta { transition: none; }
+}
+
+.view2 {
+  flex-direction: column;
+  --dash-content-inset: 14px;
+  --dash-content-radius: 24px;
+  --dash-content-shadow:
+    light-dark(
+      0 1px 2px rgba(30, 30, 32, 0.04),
+      0 1px 2px rgba(0, 0, 0, 0.22)
+    ),
+    light-dark(
+      0 18px 48px rgba(30, 30, 32, 0.12),
+      0 22px 56px rgba(0, 0, 0, 0.4)
+    );
+}
+
+.view2Nav {
+  display: flex;
+  position: relative;
+  z-index: 40;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 14px;
+}
+
+.view2NavLeft,
+.view2NavRight {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.view2NavLeft {
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.view2NavSlash {
+  display: inline-flex;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--dash-text-faint);
+  font-size: 16px;
+  font-weight: 300;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+.view2NavRight {
+  justify-content: flex-end;
+}
+
+.view2Brand {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text);
+  cursor: pointer;
+  padding: 0 8px 0 2px;
+  text-align: left;
+}
+
+.view2Brand:hover {
+  background: var(--dash-surface-hover);
+}
+
+.view2Brand:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2BrandWrap,
+.view2ConversationWrap {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+}
+
+.view2BrandWrap {
+  flex: 0 0 auto;
+}
+
+.view2ConversationWrap {
+  flex: 1 1 auto;
+}
+
+.view2Conversation {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 8px;
+}
+
+.view2Conversation:hover,
+.view2Conversation[aria-expanded="true"] {
+  background: var(--dash-surface-hover);
+}
+
+.view2Conversation:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2ConversationTitle {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view2ConversationChevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--dash-text-muted);
+  transition: transform 200ms ease;
+}
+
+.view2Conversation[aria-expanded="true"] .view2ConversationChevron {
+  transform: rotate(180deg);
+}
+
+.view2History {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  display: flex;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(420px, 60vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-quiet);
+  border-radius: 16px;
+  background: light-dark(#ffffff, #1d1f23);
+  box-shadow:
+    0 18px 40px rgba(30, 30, 32, 0.13),
+    0 3px 8px rgba(30, 30, 32, 0.08);
+}
+
+.view2HistorySearch {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--dash-border-soft);
+  padding: 8px 10px;
+  color: var(--dash-text-muted);
+}
+
+.view2HistorySearch svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.view2HistorySearch input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--dash-text-heading);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+  outline: none;
+}
+
+.view2HistorySearch input::placeholder {
+  color: var(--dash-text-faint);
+}
+
+.view2HistoryList {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.view2HistoryEmpty,
+.view2HistoryItem {
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.view2HistoryEmpty {
+  margin: 0;
+  color: var(--dash-text-muted);
+  font-size: 13px;
+  letter-spacing: -0.02em;
+  padding: 12px 8px;
+}
+
+.view2HistoryItem {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  background: transparent;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.view2HistoryItem:hover,
+.view2HistoryItem[aria-current="true"] {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.view2HistoryItem:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2HistoryItemTitle {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view2 .accountLinks .view2PagesMenuChevron {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--dash-text-muted);
+  transition: transform 200ms ease;
+}
+
+.view2PagesMenuTrigger[aria-expanded="true"] .view2PagesMenuChevron {
+  transform: rotate(180deg);
+}
+
+.view2PagesSubmenu {
+  overflow: hidden;
+}
+
+.view2PagesSubmenu nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 10px;
+}
+
+.view2PagesSubmenu button[aria-current="page"] {
+  background: var(--dash-surface-active);
+  color: var(--dash-active-text);
+}
+
+.view2NewAnalysis {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--dash-contrast);
+  box-shadow: 0 1px 2px rgba(30, 30, 32, 0.08);
+  color: var(--dash-on-contrast);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 0 12px;
+  transition:
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.view2NewAnalysis:hover {
+  background: var(--dash-contrast-hover);
+  box-shadow: 0 8px 18px rgba(30, 30, 32, 0.12);
+  transform: translateY(-1px);
+}
+
+.view2NewAnalysis:active {
+  transform: scale(0.985);
+}
+
+.view2NewAnalysis:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2NewAnalysis svg {
+  width: 14px;
+  height: 14px;
+}
+
+.view2 .content {
+  position: relative;
+  z-index: 1;
+  height: auto;
+  min-height: 0;
+  margin: 0 var(--dash-content-inset) var(--dash-content-inset);
+}
+
+.view2 .accountPopover {
+  top: calc(100% + 10px);
+  right: auto;
+  bottom: auto;
+  left: 0;
+  transform: translateY(-10px) scale(0.96);
+  transform-origin: top left;
+}
+
+.view2 .accountPopoverOpen {
+  transform: translateY(0) scale(1);
+}
+
+.view2 .chatTopIdentity {
+  display: none;
+}
+
+.view2 .pageHeaderSimple {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .view2NewAnalysisLabel {
+    display: none;
+  }
+
+  .view2NewAnalysis {
+    width: 30px;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view2ConversationChevron,
+  .view2PagesMenuTrigger .view2PagesMenuChevron,
+  .view2NewAnalysis,
+  .view2 .accountPopover,
+  .view2 .accountPopoverOpen {
+    transition: none;
+  }
 }

@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
 import {
   DEFAULT_AGENT_PREFERENCES,
+  DEFAULT_OMNI_PREFERENCES,
   CLAUDE_HAIKU_4_5_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   describeChatFailure,
@@ -878,6 +879,8 @@ function saveConversationSidebarPrefs(email: string, prefs: ConversationSidebarP
 
 export default function DashPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isView2 = pathname === "/view2";
   const supabase = useMemo(() => createClient(), []);
   const [accountEmail, setAccountEmail] = useState("");
   const [accountOrganisation, setAccountOrganisation] = useState<{
@@ -911,13 +914,15 @@ export default function DashPage() {
   const [sidebarNavRevealed, setSidebarNavRevealed] = useState(true);
   const sidebarWasCollapsedRef = useRef(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [view2HistoryOpen, setView2HistoryOpen] = useState(false);
+  const [view2PagesOpen, setView2PagesOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
-  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("codex");
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("omni");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
-  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
+  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_OMNI_PREFERENCES);
   const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
   const [codexProModeEnabled, setCodexProModeEnabled] = useState(DEFAULT_CODEX_PRO_MODE);
   const [isChatResponding, setIsChatResponding] = useState(false);
@@ -1058,6 +1063,7 @@ export default function DashPage() {
   const accountAreaRef = useRef<HTMLDivElement>(null);
   const accountPopoverRef = useRef<HTMLDivElement>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const view2HistoryRef = useRef<HTMLDivElement>(null);
   const accountPreviousFocusRef = useRef<HTMLElement | null>(null);
   const agentsAreaRef = useRef<HTMLDivElement>(null);
   const agentsPopoverRef = useRef<HTMLDivElement>(null);
@@ -1088,7 +1094,7 @@ export default function DashPage() {
     turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
-  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("codex");
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("omni");
   const specialistAgentIdRef = useRef<SpecialistAgentId>("general");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
@@ -1457,6 +1463,23 @@ export default function DashPage() {
     if (firstUser?.text) return formatConversationTitle(firstUser.text);
     return "New Analysis";
   }, [activeConversationId, chatMessages, conversationSummaries]);
+  const pageHeading = activeItem === "SemanticMemory"
+    ? "Albert's memory"
+    : activeItem === "BusinessContext"
+      ? "About your business"
+      : activeItem === "DashboardMaster"
+        ? "Dashboard Master"
+        : activeItem;
+  const view2Pages = useMemo(() => ([
+    { id: "Chat" as const, label: "Chat", icon: "chat" as const, show: true },
+    { id: "Agents" as const, label: "Agents", icon: "agents" as const, show: true },
+    { id: "Proactive" as const, label: "Proactive", icon: "radar" as const, show: true },
+    { id: "DashboardMaster" as const, label: "Master", icon: "target" as const, show: true },
+    { id: "Dashboard" as const, label: "Dashboard", icon: "dashboard" as const, show: true },
+    { id: "My Data" as const, label: "My Data", icon: "database" as const, show: true },
+    { id: "New test" as const, label: "New test", icon: "chat" as const, show: true },
+    { id: "Logs" as const, label: "Logs", icon: "logs" as const, show: canViewQueryLogs },
+  ]), [canViewQueryLogs]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1512,6 +1535,12 @@ export default function DashPage() {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "k") return;
       event.preventDefault();
+      if (isView2) {
+        setAccountOpen(false);
+        setView2HistoryOpen(true);
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
       setSidebarSearchOpen(true);
       if (collapsed) {
         setCollapsed(false);
@@ -1523,7 +1552,7 @@ export default function DashPage() {
 
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
-  }, [collapsed]);
+  }, [collapsed, isView2]);
 
   useEffect(() => {
     if (swarmPanelOpen) return;
@@ -2632,6 +2661,34 @@ export default function DashPage() {
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [accountOpen]);
+
+  useEffect(() => {
+    if (accountOpen) return;
+    setView2PagesOpen(false);
+  }, [accountOpen]);
+
+  useEffect(() => {
+    if (!view2HistoryOpen) return;
+
+    const closeHistoryOnOutsidePress = (event: PointerEvent) => {
+      if (!view2HistoryRef.current?.contains(event.target as Node)) {
+        setView2HistoryOpen(false);
+      }
+    };
+
+    const handleHistoryKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setView2HistoryOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeHistoryOnOutsidePress);
+    document.addEventListener("keydown", handleHistoryKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", closeHistoryOnOutsidePress);
+      document.removeEventListener("keydown", handleHistoryKeyDown);
+    };
+  }, [view2HistoryOpen]);
 
   useEffect(() => {
     if (canUseCustomerAgent) return;
@@ -3971,20 +4028,21 @@ export default function DashPage() {
     setEditDraft("");
   };
 
-  // New Analysis leaves specialist mode and returns to Codex, while
+  // New Analysis leaves specialist mode and returns to Omni, while
   // preserving an explicitly selected connector test runtime.
   const startNewChat = () => {
+    setView2HistoryOpen(false);
     if (activeChatRuntimeRef.current === "xero_mcp") {
       resetChat("xero_mcp", "general");
       return;
     }
-    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
-    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
     setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
     codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
     setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
     codexProModeEnabledRef.current = DEFAULT_CODEX_PRO_MODE;
-    resetChat("codex", "general");
+    resetChat("omni", "general");
   };
   const startCustomerChat = () => {
     resetChat("v3", "customers");
@@ -4004,8 +4062,8 @@ export default function DashPage() {
     resetChat("compare", "general");
   };
   const startOmniChat = () => {
-    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
-    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
     resetChat("omni", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
@@ -4332,9 +4390,12 @@ export default function DashPage() {
           {turn.replies.map((message) => {
             const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
             const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
+            const isOmniTrail = message.runtime === "omni" && !message.events?.some((event) => (
+              event.type === "plan" && event.id.startsWith("swarm_")
+            ));
             return (
               <motion.article
-                className={`${styles.chatMessage} ${styles.chatMessageAssistant}`}
+                className={`${styles.chatMessage} ${styles.chatMessageAssistant}${isOmniTrail ? ` ${styles.chatMessageOmni}` : ""}`}
                 data-message-id={message.id}
                 key={messageKey}
                 initial={suppressEnter ? false : { opacity: 0 }}
@@ -4347,9 +4408,7 @@ export default function DashPage() {
                 {message.events?.length || message.isStreaming ? (
                   message.trailVisible === false ? (
                     <div className={styles.chatTrailDeferred} aria-hidden="true" />
-                  ) : message.runtime === "omni" && !message.events?.some((event) => (
-                    event.type === "plan" && event.id.startsWith("swarm_")
-                  )) ? (
+                  ) : isOmniTrail ? (
                     <OmniTrace
                       events={message.events ?? []}
                       streaming={message.isStreaming}
@@ -4397,11 +4456,270 @@ export default function DashPage() {
     });
   };
 
+  const selectView2Page = (item: ActiveItem) => {
+    setView2HistoryOpen(false);
+    setView2PagesOpen(false);
+    setAccountOpen(false);
+    setAgentsOpen(false);
+    setActiveItem(item);
+  };
+
   return (
     <main
-      className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
+      className={`${styles.dash} ${isView2 ? styles.view2 : collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
+      {isView2 ? (
+        <header className={styles.view2Nav}>
+          <div className={styles.view2NavLeft}>
+            <div className={styles.view2BrandWrap} ref={accountAreaRef}>
+              <button
+                ref={accountTriggerRef}
+                className={styles.view2Brand}
+                type="button"
+                aria-label={`${accountOrganisation.name} account menu`}
+                aria-expanded={accountOpen}
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setView2HistoryOpen(false);
+                  setAccountOpen((value) => !value);
+                }}
+              >
+                <Image
+                  className={styles.projectLogo}
+                  src="/logos/albert.png"
+                  alt=""
+                  width={20}
+                  height={20}
+                  unoptimized
+                />
+                <span className={styles.projectName}>
+                  <span className={styles.projectNameAlbert}>Albert</span>
+                  <span className={styles.projectNameProduct}>Analytics</span>
+                </span>
+              </button>
+              <div
+                className={`${styles.accountPopover} ${accountOpen ? styles.accountPopoverOpen : ""}`}
+                ref={accountPopoverRef}
+                role="dialog"
+                aria-label="Account menu"
+                aria-hidden={!accountOpen}
+                inert={!accountOpen}
+              >
+                <p className={styles.accountEmail}>{accountEmail || "Signed in"}</p>
+                {accountError ? <p className={styles.accountError} role="alert">{accountError}</p> : null}
+                <div className={styles.themeSwitcher} aria-label="Theme" role="group">
+                  {themeOptions.map((option) => (
+                    <button
+                      className={theme === option.value ? styles.themeActive : ""}
+                      key={option.value}
+                      type="button"
+                      aria-label={option.label}
+                      aria-pressed={theme === option.value}
+                      onClick={() => setThemePreference(option.value)}
+                    >
+                      <Icon name={option.icon} />
+                    </button>
+                  ))}
+                </div>
+
+                <div className={styles.accountDivider} />
+
+                <div className={styles.accountLinks}>
+                  <div className={styles.view2PagesMenu}>
+                    <button
+                      className={styles.view2PagesMenuTrigger}
+                      type="button"
+                      aria-expanded={view2PagesOpen}
+                      aria-controls="view2-pages-submenu"
+                      onClick={() => setView2PagesOpen((value) => !value)}
+                    >
+                      <Icon name="dashboard" />
+                      <span>Pages</span>
+                      <Icon className={styles.view2PagesMenuChevron} name="chevronDown" />
+                    </button>
+                    <AnimatePresence>
+                      {view2PagesOpen ? (
+                        <motion.div
+                          id="view2-pages-submenu"
+                          className={styles.view2PagesSubmenu}
+                          initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{
+                            duration: reduceMotion ? 0 : 0.4,
+                            ease: [0.04, 0.62, 0.23, 0.98],
+                          }}
+                        >
+                          <nav aria-label="Pages">
+                            {view2Pages.filter((page) => page.show).map((page) => (
+                              <button
+                                key={page.id}
+                                type="button"
+                                aria-current={activeItem === page.id ? "page" : undefined}
+                                onClick={() => selectView2Page(page.id)}
+                              >
+                                <Icon name={page.icon} />
+                                <span>{page.label}</span>
+                              </button>
+                            ))}
+                          </nav>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      router.push("/dash");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="panel" /><span>Classic view</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("Connections");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="connections" /><span>Connections</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("Organization");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="organization" /><span>Organization settings</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("BusinessContext");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="organization" /><span>About your business</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("SemanticMemory");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="settings" /><span>Albert&apos;s memory</span></button>
+                  {isInternalOperator ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveItem("Admin");
+                        setAccountOpen(false);
+                      }}
+                    ><Icon name="logs" /><span>Admin</span></button>
+                  ) : null}
+                </div>
+
+                <div className={styles.accountDivider} />
+
+                <button
+                  className={styles.logoutButton}
+                  type="button"
+                  onClick={handleSignOut}
+                  disabled={isSigningOut}
+                >
+                  <Icon name="logout" />
+                  <span>{isSigningOut ? "Logging out…" : "Log out"}</span>
+                </button>
+              </div>
+            </div>
+
+            <span className={styles.view2NavSlash} aria-hidden="true">/</span>
+
+            <div className={styles.view2ConversationWrap} ref={view2HistoryRef}>
+              {activeItem === "Chat" ? (
+                <h1 id="dash-title" className="sr-only">{chatTitle}</h1>
+              ) : null}
+              <button
+                className={styles.view2Conversation}
+                type="button"
+                aria-expanded={view2HistoryOpen}
+                aria-haspopup="listbox"
+                aria-controls="view2-history"
+                onClick={() => {
+                  setAccountOpen(false);
+                  setView2HistoryOpen((value) => !value);
+                }}
+              >
+                <span className={styles.view2ConversationTitle}>{chatTitle}</span>
+                <Icon className={styles.view2ConversationChevron} name="chevronDown" />
+              </button>
+              <AnimatePresence>
+                {view2HistoryOpen ? (
+                  <motion.div
+                    id="view2-history"
+                    className={styles.view2History}
+                    role="listbox"
+                    aria-label="Conversations"
+                    initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={reduceMotion ? undefined : { opacity: 0, y: 6, scale: 0.99 }}
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.3,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
+                    <label className={styles.view2HistorySearch}>
+                      <Icon name="search" />
+                      <input
+                        ref={searchInputRef}
+                        aria-label="Search conversations"
+                        aria-keyshortcuts="Meta+K Control+K"
+                        placeholder="Search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                      />
+                    </label>
+                    <div className={styles.view2HistoryList}>
+                      {filteredConversations.length === 0 ? (
+                        <p className={styles.view2HistoryEmpty}>
+                          {query.trim() ? "No matches" : "Your analyses will appear here after the first question."}
+                        </p>
+                      ) : filteredConversations.map((conversation) => {
+                        const isActive = conversation.conversationId === activeConversationId && activeItem === "Chat";
+                        return (
+                          <button
+                            className={styles.view2HistoryItem}
+                            key={conversation.conversationId}
+                            type="button"
+                            role="option"
+                            aria-current={isActive ? "true" : undefined}
+                            onClick={() => {
+                              setView2HistoryOpen(false);
+                              void openSavedConversation(conversation.conversationId);
+                            }}
+                          >
+                            <span className={styles.view2HistoryItemTitle}>
+                              {formatConversationTitle(conversation.title)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <div className={styles.view2NavRight}>
+            <button
+              className={styles.view2NewAnalysis}
+              type="button"
+              aria-label="New Analysis"
+              aria-keyshortcuts="Alt+N"
+              onClick={startNewChat}
+            >
+              <Icon name="plus" />
+              <span className={styles.view2NewAnalysisLabel}>New Analysis</span>
+            </button>
+          </div>
+        </header>
+      ) : (
       <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""} ${agentsOpen ? styles.sidebarAgentsMenuOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
@@ -4499,6 +4817,15 @@ export default function DashPage() {
           >
             <Icon name="plus" />
             <span className={styles.sidebarActionLabel}>New Analysis</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="View 2"
+            onClick={() => router.push("/view2")}
+          >
+            <Icon name="monitor" />
+            <span className={styles.sidebarActionLabel}>View 2</span>
           </button>
           <button
             className={styles.sidebarAction}
@@ -4946,6 +5273,13 @@ export default function DashPage() {
               <button
                 type="button"
                 onClick={() => {
+                  router.push("/view2");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="monitor" /><span>View 2</span></button>
+              <button
+                type="button"
+                onClick={() => {
                   setActiveItem("Connections");
                   setAccountOpen(false);
                 }}
@@ -5029,12 +5363,16 @@ export default function DashPage() {
           </div>
         </div>
       </aside>
+      )}
 
       <section className={styles.content} aria-labelledby="dash-title">
-        {activeItem !== "Chat" ? (
+        {isView2 && activeItem !== "Chat" ? (
+          <h1 id="dash-title" className="sr-only">{pageHeading}</h1>
+        ) : null}
+        {!isView2 && activeItem !== "Chat" ? (
           <header className={`${styles.pageHeader} ${styles.pageHeaderSimple}`}>
             <div className={styles.pageHeaderTop}>
-              <h1 id="dash-title">{activeItem === "SemanticMemory" ? "Albert's memory" : activeItem === "BusinessContext" ? "About your business" : activeItem === "DashboardMaster" ? "Dashboard Master" : activeItem}</h1>
+              <h1 id="dash-title">{pageHeading}</h1>
             </div>
           </header>
         ) : null}
@@ -5065,7 +5403,7 @@ export default function DashPage() {
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.h1
                     key={`${activeChatRuntime}:${specialistAgentId}:${chatTitle}`}
-                    id="dash-title"
+                    id={isView2 ? undefined : "dash-title"}
                     className={styles.chatTopTitle}
                     initial={reduceMotion ? false : { opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
