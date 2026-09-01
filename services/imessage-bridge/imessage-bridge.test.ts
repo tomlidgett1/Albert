@@ -5,6 +5,7 @@ import { ulid } from "ulid";
 import { omniServiceTurnSchema } from "../../packages/albert-omni/src/contracts.js";
 import { OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS } from "../../packages/albert-omni/src/runtime.js";
 import { loadImessageBridgeConfig } from "./src/config.js";
+import { mentionsAlbert } from "./src/contracts.js";
 import { decodeInboundMessage, verifyLinqWebhook } from "./src/linq.js";
 import { extractTextDecorations, formatAnswerForImessage } from "./src/format.js";
 import { ImessageBridgeHandler, imessageConversationTitle } from "./src/bridge.js";
@@ -225,6 +226,77 @@ test("webhook endpoint rejects bad tokens and signatures, acknowledges filtered 
   // Health endpoints answer without auth.
   assert.equal((await handler.handle(new Request("http://127.0.0.1:8797/livez"))).status, 200);
   assert.equal((await handler.handle(new Request("http://127.0.0.1:8797/readyz"))).status, 200);
+});
+
+test("group mention detection is word-bounded", () => {
+  assert.equal(mentionsAlbert("Albert how were sales today?"), true);
+  assert.equal(mentionsAlbert("hey ALBERT, wages this week"), true);
+  assert.equal(mentionsAlbert("ask albert."), true);
+  assert.equal(mentionsAlbert("we hired an albertson"), false);
+  assert.equal(mentionsAlbert("how were sales today"), false);
+  assert.equal(mentionsAlbert(""), false);
+});
+
+function primePolicy(
+  handler: ImessageBridgeHandler,
+  policy: Readonly<{ phones: readonly string[]; allowGroupChats: boolean }>,
+): void {
+  (handler as unknown as { senderPolicyCache: unknown }).senderPolicyCache = {
+    value: { phones: new Set(policy.phones), allowGroupChats: policy.allowGroupChats },
+    fetchedAt: Date.now(),
+  };
+}
+
+function acceptedForProcessing(handler: ImessageBridgeHandler, messageId: string): boolean {
+  return (handler as unknown as { seenMessages: Map<string, number> }).seenMessages.has(messageId);
+}
+
+test("enrolment policy gates senders and group chats", async () => {
+  const url = `http://127.0.0.1:8797/v1/imessage/webhook?token=${"u".repeat(32)}`;
+  const send = async (handler: ImessageBridgeHandler, overrides: Record<string, unknown>) => {
+    const event = inboundEvent(overrides);
+    const body = JSON.stringify(event);
+    const response = await handler.handle(new Request(url, {
+      method: "POST",
+      body,
+      headers: signedHeaders(body),
+    }));
+    assert.equal(response.status, 200);
+    return (event.data as { id: string }).id;
+  };
+  const groupChat = {
+    id: "9d7e6f5a-2222-3333-4444-555566667777",
+    is_group: true,
+    owner_handle: { handle: "+16502831814", is_me: true },
+  };
+
+  // With the control plane unreachable the policy fails closed: the env
+  // allowlist still answers, DB-only senders and every group do not.
+  const failClosed = new ImessageBridgeHandler(loadImessageBridgeConfig(bridgeEnv()));
+  primePolicy(failClosed, { phones: [], allowGroupChats: false });
+  const fromDbOnly = await send(failClosed, { sender_handle: { handle: "+61400000002", is_me: false } });
+  assert.equal(acceptedForProcessing(failClosed, fromDbOnly), false);
+  const groupFromOwner = await send(failClosed, { chat: groupChat });
+  assert.equal(acceptedForProcessing(failClosed, groupFromOwner), false);
+
+  // A DB-enrolled sender passes; group messages need the switch AND a mention.
+  const enrolled = new ImessageBridgeHandler(loadImessageBridgeConfig(bridgeEnv()));
+  primePolicy(enrolled, { phones: ["+61400000002"], allowGroupChats: true });
+  const direct = await send(enrolled, { sender_handle: { handle: "+61400000002", is_me: false } });
+  assert.equal(acceptedForProcessing(enrolled, direct), true);
+  const groupNoMention = await send(enrolled, { chat: groupChat });
+  assert.equal(acceptedForProcessing(enrolled, groupNoMention), false);
+  const groupMention = await send(enrolled, {
+    chat: groupChat,
+    parts: [{ type: "text", value: "Albert how were sales last week?" }],
+  });
+  assert.equal(acceptedForProcessing(enrolled, groupMention), true);
+  const groupStranger = await send(enrolled, {
+    chat: groupChat,
+    sender_handle: { handle: "+61499999999", is_me: false },
+    parts: [{ type: "text", value: "Albert how were sales last week?" }],
+  });
+  assert.equal(acceptedForProcessing(enrolled, groupStranger), false);
 });
 
 test("conversation titles are stable per chat and opaque", () => {

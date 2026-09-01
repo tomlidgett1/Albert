@@ -18,6 +18,7 @@ import {
 } from "../../../packages/albert-codex/src/social.js";
 import { isAlbertModelId, providerForModel } from "../../../packages/shared/src/agent-runtime.js";
 import type { ImessageBridgeConfig } from "./config.js";
+import { mentionsAlbert } from "./contracts.js";
 import { decodeInboundMessage, LinqClient, verifyLinqWebhook, type InboundLinqMessage } from "./linq.js";
 import { formatAnswerForImessage } from "./format.js";
 import { createPersistingEmitter, OwnerControlPlane } from "./owner-session.js";
@@ -25,6 +26,7 @@ import { createPersistingEmitter, OwnerControlPlane } from "./owner-session.js";
 const WEBHOOK_PATH = "/v1/imessage/webhook";
 const MAX_WEBHOOK_BODY_BYTES = 512 * 1024;
 const DEDUP_TTL_MS = 15 * 60_000;
+const SENDER_POLICY_TTL_MS = 30_000;
 const LEASE_RENEWAL_INTERVAL_MS = 120_000;
 const TURN_TIMEOUT_MS = ALBERT_OMNI_ANALYSIS_TIMEOUT_MS + 60_000;
 
@@ -55,11 +57,14 @@ export function imessageConversationTitle(chatId: string): string {
   return `iMessage · ${digest}`;
 }
 
+type SenderPolicy = Readonly<{ phones: ReadonlySet<string>; allowGroupChats: boolean }>;
+
 export class ImessageBridgeHandler {
   private readonly linq: LinqClient;
   private readonly store: OwnerControlPlane;
   private readonly seenMessages = new Map<string, number>();
   private readonly activeChats = new Set<string>();
+  private senderPolicyCache: Readonly<{ value: SenderPolicy; fetchedAt: number }> | null = null;
 
   constructor(private readonly config: ImessageBridgeConfig) {
     this.linq = new LinqClient(config.linqApiBaseUrl, config.linqApiToken);
@@ -116,12 +121,21 @@ export class ImessageBridgeHandler {
     const message = decodeInboundMessage(payload);
     if (!message) return acknowledged();
     if (message.botNumber !== this.config.botNumber) return acknowledged();
-    if (!this.config.allowedSenders.includes(message.from)) {
-      // The enrolment boundary: only the owner's handle reaches Albert.
+    const policy = await this.senderPolicy();
+    if (!this.config.allowedSenders.includes(message.from) && !policy.phones.has(message.from)) {
+      // The enrolment boundary: only enrolled handles reach Albert. The env
+      // allowlist stays a backstop so the owner can never be locked out.
       log("imessage_sender_rejected", { from: message.from, chatId: message.chatId });
       return acknowledged();
     }
-    if (message.isGroupChat) return acknowledged();
+    if (message.isGroupChat) {
+      if (!policy.allowGroupChats) {
+        log("imessage_group_rejected", { chatId: message.chatId, reason: "groups_disabled" });
+        return acknowledged();
+      }
+      // In a group Albert speaks only when spoken to.
+      if (!mentionsAlbert(message.text)) return acknowledged();
+    }
     this.pruneSeenMessages();
     if (this.seenMessages.has(message.messageId)) return acknowledged();
     this.seenMessages.set(message.messageId, Date.now());
@@ -141,6 +155,34 @@ export class ImessageBridgeHandler {
     const cutoff = Date.now() - DEDUP_TTL_MS;
     for (const [id, seenAt] of this.seenMessages) {
       if (seenAt < cutoff) this.seenMessages.delete(id);
+    }
+  }
+
+  /**
+   * The tenant's enrolled numbers and group switch, briefly cached. When the
+   * control plane is unreachable the env allowlist still answers (fail
+   * closed for everyone else, never for the owner).
+   */
+  private async senderPolicy(): Promise<SenderPolicy> {
+    const cached = this.senderPolicyCache;
+    if (cached && Date.now() - cached.fetchedAt < SENDER_POLICY_TTL_MS) return cached.value;
+    try {
+      const workspace = await this.store.imessageWorkspace();
+      const value: SenderPolicy = Object.freeze({
+        phones: new Set(
+          workspace.enrollments
+            .filter((enrollment) => enrollment.enabled)
+            .map((enrollment) => enrollment.phone),
+        ),
+        allowGroupChats: workspace.allowGroupChats,
+      });
+      this.senderPolicyCache = Object.freeze({ value, fetchedAt: Date.now() });
+      return value;
+    } catch (error) {
+      log("imessage_sender_policy_unavailable", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return Object.freeze({ phones: new Set<string>(), allowGroupChats: false });
     }
   }
 

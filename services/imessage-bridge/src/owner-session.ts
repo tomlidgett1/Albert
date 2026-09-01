@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ulid } from "ulid";
 import type { TraceEvent } from "../../../packages/shared/src/index.js";
+import type { ImessageWorkspace } from "./contracts.js";
 
 /**
  * Headless owner authentication and the control-plane operations the bridge
@@ -44,6 +45,19 @@ const modelContextTurnSchema = z.object({
 }).passthrough();
 
 const businessContextSchema = z.object({ rendered: z.string() }).passthrough();
+
+const imessageWorkspaceSchema = z.object({
+  allowGroupChats: z.boolean(),
+  enrollments: z.array(z.object({
+    enrollmentId: z.string(),
+    phone: z.string(),
+    displayName: z.string().nullish(),
+    email: z.string().nullish(),
+    isOwner: z.boolean(),
+    enabled: z.boolean(),
+    createdAt: z.string(),
+  }).passthrough()),
+}).passthrough();
 
 const connectionsWorkspaceSchema = z.object({
   connections: z.array(z.object({
@@ -264,6 +278,25 @@ export class OwnerControlPlane {
         }
       }
       return Object.freeze(messages.slice(-12));
+    });
+  }
+
+  /** Enrolled senders and the group-chat switch, managed on /imessage. */
+  async imessageWorkspace(): Promise<ImessageWorkspace> {
+    return this.rpc("albert_imessage_workspace", undefined, (data) => {
+      const parsed = imessageWorkspaceSchema.parse(singleton(data));
+      return Object.freeze({
+        allowGroupChats: parsed.allowGroupChats,
+        enrollments: Object.freeze(parsed.enrollments.map((enrollment) => Object.freeze({
+          enrollmentId: enrollment.enrollmentId,
+          phone: enrollment.phone,
+          displayName: enrollment.displayName ?? null,
+          email: enrollment.email ?? null,
+          isOwner: enrollment.isOwner,
+          enabled: enrollment.enabled,
+          createdAt: enrollment.createdAt,
+        }))),
+      });
     });
   }
 
