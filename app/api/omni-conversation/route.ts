@@ -71,11 +71,10 @@ import {
 } from "@/services/control-plane/src/request-security";
 
 export const maxDuration = 800;
-// Every service this route talks to (control-plane Supabase, the agent
-// runtime on Fly, Cube) lives in Sydney; the platform default region put the
-// function in US-east and made each of the ~6 serial control-plane calls
-// before a job starts, plus every job poll, a transpacific round trip.
-export const preferredRegion = "syd1";
+// This route's function region is pinned to Sydney in vercel.json (the
+// `preferredRegion` export is deprecated in Next 16 and ignored): every
+// service it talks to (control-plane Supabase, the agent runtime on Fly,
+// Cube) lives there, and the platform default put the function in US-east.
 
 const LEASE_RENEWAL_INTERVAL_MS = 120_000;
 const logger = createServiceLogger("albert-omni-web");
