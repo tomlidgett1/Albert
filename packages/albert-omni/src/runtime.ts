@@ -1196,6 +1196,10 @@ export async function runOmniSemanticTurn(
       ...(turn.businessContext ? { businessContext: turn.businessContext.slice(0, 20_000) } : {}),
     };
     const imessageChannel = !dashboardMode && turn.channel === "imessage";
+    const liveModelSettings = buildLiveAgentModelSettings(runConfig, {
+      parallelToolCalls: true,
+      safetyIdentifier: createHash("sha256").update(`${turn.tenantId}:${turn.actorId}`).digest("hex"),
+    });
     const agent = new Agent({
       name: dashboardMode ? "Albert dashboard architect" : "Albert Omni analyst",
       instructions: dashboardMode
@@ -1204,16 +1208,25 @@ export async function runOmniSemanticTurn(
           + (imessageChannel ? `\n\n${OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS}` : ""),
       model: preferences.model,
       modelSettings: {
-        ...buildLiveAgentModelSettings(runConfig, {
-          parallelToolCalls: true,
-          safetyIdentifier: createHash("sha256").update(`${turn.tenantId}:${turn.actorId}`).digest("hex"),
-        }),
-        // Anthropic Messages requires an explicit max_tokens; grant the
-        // model's provider ceiling so Omni's no-product-caps stance carries
-        // over (any thinking spend for the selected effort plus answer room).
+        ...liveModelSettings,
         ...(isAnthropicModel(preferences.model)
+          // Anthropic Messages requires an explicit max_tokens; grant the
+          // model's provider ceiling so Omni's no-product-caps stance carries
+          // over (any thinking spend for the selected effort plus answer room).
+          // Prompt-cache breakpoints are placed by the Messages adapter.
           ? { maxTokens: anthropicMaxOutputTokens(preferences.model) }
-          : {}),
+          // OpenAI routes prompt caching by prompt_cache_key; pinning it to
+          // the conversation keeps every step of a turn, and its follow-ups,
+          // on the cache shard that already holds the shared prefix.
+          : {
+            providerData: {
+              ...liveModelSettings.providerData,
+              prompt_cache_key: createHash("sha256")
+                .update(`omni:${turn.tenantId}:${turn.conversationId}`)
+                .digest("hex")
+                .slice(0, 32),
+            },
+          }),
       },
       tools: dashboardMode
         ? [
@@ -1259,6 +1272,47 @@ export async function runOmniSemanticTurn(
       narrated += 1;
       await emit({ type: "narrative", text: sanitizeTraceText(text, 500) });
     };
+    // Provider token usage across every model request of the turn, including
+    // attempts that died mid-stream: the turn's real cost and its cache hit
+    // rate are otherwise invisible. Detail keys follow the SDK's usage shape
+    // (OpenAI: cached_tokens/reasoning_tokens; the Messages adapter adds
+    // cache_write_tokens).
+    const usage = {
+      requests: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const detailTotal = (details: unknown, key: string): number => {
+      const entries = Array.isArray(details)
+        ? details
+        : details && typeof details === "object" ? [details] : [];
+      return entries.reduce((sum: number, entry: unknown) => {
+        const value = entry && typeof entry === "object" ? (entry as Record<string, unknown>)[key] : undefined;
+        return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+      }, 0);
+    };
+    const recordUsage = (responses: readonly Readonly<{
+      usage?: Readonly<{
+        requests?: number;
+        inputTokens?: number;
+        outputTokens?: number;
+        inputTokensDetails?: unknown;
+        outputTokensDetails?: unknown;
+      }>;
+    }>[]) => {
+      for (const { usage: entry } of responses) {
+        if (!entry) continue;
+        usage.requests += entry.requests ?? 1;
+        usage.inputTokens += entry.inputTokens ?? 0;
+        usage.outputTokens += entry.outputTokens ?? 0;
+        usage.cachedInputTokens += detailTotal(entry.inputTokensDetails, "cached_tokens");
+        usage.cacheWriteInputTokens += detailTotal(entry.inputTokensDetails, "cache_write_tokens");
+        usage.reasoningTokens += detailTotal(entry.outputTokensDetails, "reasoning_tokens");
+      }
+    };
     const runAgentOnce = async (): Promise<string> => {
       pendingMessage = null;
       const stream = await runner.run(agent, items, {
@@ -1266,19 +1320,23 @@ export async function runOmniSemanticTurn(
         maxTurns: MAX_AGENT_TURNS,
         signal,
       });
-      for await (const event of stream) {
-        if (event.type !== "run_item_stream_event") continue;
-        if (event.name === "message_output_created") {
-          await flushPendingNarrative();
-          pendingMessage = extractMessageText(event.item);
-          continue;
+      try {
+        for await (const event of stream) {
+          if (event.type !== "run_item_stream_event") continue;
+          if (event.name === "message_output_created") {
+            await flushPendingNarrative();
+            pendingMessage = extractMessageText(event.item);
+            continue;
+          }
+          if (event.name === "tool_called") {
+            modelRequests += 1;
+            await flushPendingNarrative();
+          }
         }
-        if (event.name === "tool_called") {
-          modelRequests += 1;
-          await flushPendingNarrative();
-        }
+        await stream.completed;
+      } finally {
+        recordUsage(stream.rawResponses);
       }
-      await stream.completed;
       modelRequests += 1;
       const rawFinal = typeof stream.finalOutput === "string" && stream.finalOutput.trim()
         ? stream.finalOutput
@@ -1383,6 +1441,7 @@ export async function runOmniSemanticTurn(
       queriesExecuted,
       modelRequests,
       durationMs: Date.now() - startedAt,
+      usage: Object.freeze({ ...usage }),
     });
   } finally {
     clearTimeout(timeout);

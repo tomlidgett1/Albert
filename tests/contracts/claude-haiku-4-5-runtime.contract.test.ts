@@ -321,9 +321,16 @@ test("tool continuation preserves omitted thinking signatures and accounts for c
       { type: "tool_use", id: "toolu_1", name: "lookup_metric", input: { metric: "sales" } },
     ],
   });
+  // The trailing block of the last message carries the moving prompt-cache
+  // breakpoint, so each tool step reads the previous step's prefix from cache.
   assert.deepEqual(continuation.body.messages[1], {
     role: "user",
-    content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "42" }],
+    content: [{
+      type: "tool_result",
+      tool_use_id: "toolu_1",
+      content: "42",
+      cache_control: { type: "ephemeral" },
+    }],
   });
 });
 

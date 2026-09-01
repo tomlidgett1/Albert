@@ -506,6 +506,19 @@ export class CodexRuntimeHttpHandler {
       queryRecorder,
     }).then((result) => {
       job.result = result;
+      // One line per answered turn with its token usage: the only place the
+      // provider cost and prompt-cache hit rate of a turn become observable.
+      process.stdout.write(`${JSON.stringify({
+        event: "omni_job_completed",
+        jobId: job.id,
+        model: turn.model,
+        effort: turn.effort,
+        answerState: result.answerState,
+        queriesExecuted: result.queriesExecuted,
+        modelRequests: result.modelRequests,
+        durationMs: result.durationMs,
+        ...(result.usage ? { usage: result.usage } : {}),
+      })}\n`);
     }).catch((error) => {
       const failure = omniPublicFailure(error);
       job.failure = failure;

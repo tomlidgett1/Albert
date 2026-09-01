@@ -510,6 +510,30 @@ function toAnthropicConversation(request: ModelRequest): Readonly<{
   };
 }
 
+/**
+ * Prompt caching. Anthropic caches only up to explicit `cache_control`
+ * breakpoints, and Albert's agent loops re-send the whole conversation on
+ * every tool step, so without breakpoints each step pays full price and full
+ * prefill time for a prefix the previous step already processed. Marking the
+ * final content block of the last message lets each request read the prior
+ * step's prefix from cache and write only the new tail (the API looks back
+ * from a breakpoint for the longest cached prefix). Together with the system
+ * breakpoint this uses two of the four allowed; callers' explicit breakpoints
+ * are left untouched.
+ */
+function withTrailingCacheBreakpoint(messages: readonly MessageParam[]): MessageParam[] {
+  const last = messages.at(-1);
+  if (!last || !Array.isArray(last.content) || last.content.length === 0) return [...messages];
+  const blocks = [...last.content];
+  const tail = blocks[blocks.length - 1]!;
+  // Thinking and tool_use blocks cannot carry a breakpoint; in the agent loop
+  // the last message is always the user turn (question or tool results).
+  if (tail.type !== "text" && tail.type !== "tool_result") return [...messages];
+  if (tail.cache_control) return [...messages];
+  blocks[blocks.length - 1] = { ...tail, cache_control: { type: "ephemeral" } };
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
 function toAnthropicTools(request: ModelRequest): Tool[] {
   const tools: Tool[] = [];
   for (const tool of request.tools) {
@@ -630,8 +654,13 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
   const body: MessageCreateParamsNonStreaming = {
     model,
     max_tokens: maxTokens,
-    messages: conversation.messages,
-    ...(conversation.system ? { system: conversation.system } : {}),
+    messages: withTrailingCacheBreakpoint(conversation.messages),
+    // The system prompt is the stable prefix of every request in a turn (and
+    // of every turn in a conversation); its breakpoint also covers the tool
+    // definitions, which the API renders ahead of it.
+    ...(conversation.system
+      ? { system: [{ type: "text" as const, text: conversation.system, cache_control: { type: "ephemeral" as const } }] }
+      : {}),
     ...(tools.length > 0 ? { tools } : {}),
     ...(resolvedToolChoice ? { tool_choice: resolvedToolChoice } : {}),
     ...(outputConfig ? { output_config: outputConfig } : {}),

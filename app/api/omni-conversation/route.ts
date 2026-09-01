@@ -71,6 +71,11 @@ import {
 } from "@/services/control-plane/src/request-security";
 
 export const maxDuration = 800;
+// Every service this route talks to (control-plane Supabase, the agent
+// runtime on Fly, Cube) lives in Sydney; the platform default region put the
+// function in US-east and made each of the ~6 serial control-plane calls
+// before a job starts, plus every job poll, a transpacific round trip.
+export const preferredRegion = "syd1";
 
 const LEASE_RENEWAL_INTERVAL_MS = 120_000;
 const logger = createServiceLogger("albert-omni-web");
@@ -562,6 +567,7 @@ export async function POST(request: Request): Promise<Response> {
           queriesExecuted: result.queriesExecuted,
           modelRequests: result.modelRequests,
           durationMs: result.durationMs,
+          ...(result.usage ? { usage: result.usage } : {}),
         }, correlationId);
       } catch (error) {
         const disconnected = streamSignal.aborted;

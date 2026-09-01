@@ -215,11 +215,29 @@ export const omniComposeDashboardInputSchema = z.object({
 
 export type OmniComposeDashboardInput = z.infer<typeof omniComposeDashboardInputSchema>;
 
+/**
+ * Provider token usage summed over every model request of the turn (retried
+ * attempts included). cached/cacheWrite are subsets of inputTokens; the
+ * cache hit rate is cachedInputTokens / inputTokens. Optional so a web tier
+ * deployed ahead of the runtime keeps accepting results without it.
+ */
+export const omniTurnUsageSchema = z.object({
+  requests: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+  cachedInputTokens: z.number().int().min(0),
+  cacheWriteInputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  reasoningTokens: z.number().int().min(0),
+}).strict();
+
+export type OmniTurnUsage = z.infer<typeof omniTurnUsageSchema>;
+
 export const omniSemanticTurnResultSchema = z.object({
   answerState: z.enum(["Verified", "Qualified", "Exploratory", "Clarification", "No data", "Unavailable"]),
   queriesExecuted: z.number().int().min(0),
   modelRequests: z.number().int().min(0),
   durationMs: z.number().int().min(0).nullable(),
+  usage: omniTurnUsageSchema.optional(),
 }).strict();
 
 export type OmniSemanticTurnResult = z.infer<typeof omniSemanticTurnResultSchema>;
