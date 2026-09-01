@@ -19,7 +19,16 @@ views:
         dimension). "Aged inventory" / "old stock" = group units_on_hand and
         stock_value by stock_age_band (or days_since_last_receipt) with the
         in_stock segment; one query gives the whole report. Age is days since
-        the item's last stock-in movement at the store. Stock history =
+        the item's last stock-in movement at the store. "Dead stock", "slow
+        movers", "items in stock with no sales in N days" = a DIFFERENT
+        question: sales recency, not receipt age. Answer it in one query from
+        this view: segments in_stock plus unsold_90_days / unsold_180_days /
+        unsold_365_days (or filter days_since_last_sale gte N OR last_sold_at
+        notSet — never-sold items have a null last_sold_at), dimensions
+        items_name and categories_name (plus last_sold_at or
+        sales_recency_band), measures units_on_hand and stock_value ordered by
+        stock_value desc; drop the item dimensions for the category totals.
+        Never present stock_age_band as "no sales". Stock history =
         inventory_logs_* members with
         inventory_logs_occurred_at as the time dimension. Combine any grain
         with items_*, categories_*, manufacturers_*, shops_* or employees_*
@@ -81,6 +90,12 @@ views:
           - last_received_at
           - days_since_last_receipt
           - stock_age_band
+          - last_sold_at
+          - days_since_last_sale
+          - sales_recency_band
+          - unsold_90_days
+          - unsold_180_days
+          - unsold_365_days
           - snapshot_updated_at
           - units_on_hand
           - sellable_units

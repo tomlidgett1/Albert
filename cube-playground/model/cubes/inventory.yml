@@ -23,6 +23,11 @@ cubes:
         units_on_hand / stock_value by stock_age_band (or use
         days_since_last_receipt / last_received_at), with the in_stock
         segment. Age is days since the item's last stock-in movement.
+        "Dead stock" / "no sales in N days" / "slow movers" = sales recency,
+        a different anchor: last_sold_at, days_since_last_sale,
+        sales_recency_band and the unsold_90_days / unsold_180_days /
+        unsold_365_days segments (null last_sold_at = never sold, which the
+        segments include).
     # effective_unit_cost: Lightspeed often leaves avg_cost empty on the
     # store-position row, so valuation falls back to the item catalogue's
     # average cost, then its configured default cost.
@@ -30,6 +35,10 @@ cubes:
     # adjustment up...) for the item at the store, from the inventory audit
     # log. This is the ageing anchor: Lightspeed does not link on-hand units
     # to their receipt, so "age of stock" is days since stock last came in.
+    # last_sold_at: latest completed, non-voided, positive-quantity sale line
+    # for the item at the store — the same definition of a sale that the
+    # product-sales cubes use. It is the sales-recency anchor ("no sales in
+    # N days"), which is a different question from receipt age.
     sql: >
       WITH last_in AS MATERIALIZED (
         SELECT l.tenant_id, l.item_id, l.shop_id,
@@ -37,11 +46,25 @@ cubes:
         FROM source_lightspeed_official.ls_inventory_logs l
         WHERE NOT l.tombstone AND COALESCE(l.qoh_change, 0) > 0
         GROUP BY 1, 2, 3
+      ),
+      last_sale AS MATERIALIZED (
+        SELECT sl.tenant_id, sl.item_id, sl.shop_id,
+               MAX(COALESCE(sl.complete_time, s.complete_time)) AS last_sold_at
+        FROM source_lightspeed_official.ls_sale_lines sl
+        LEFT JOIN source_lightspeed_official.ls_sales s
+          ON s.tenant_id = sl.tenant_id AND s.sale_id = sl.sale_id
+          AND NOT s.tombstone
+        WHERE NOT sl.tombstone
+          AND COALESCE(sl.completed, s.completed) = true
+          AND COALESCE(sl.voided, s.voided, false) = false
+          AND COALESCE(sl.unit_quantity, 0) > 0
+        GROUP BY 1, 2, 3
       )
       SELECT t.*,
         COALESCE(NULLIF(t.avg_cost, 0), NULLIF(i.avg_cost, 0), i.default_cost, 0)
           AS effective_unit_cost,
-        li.last_stock_in_at
+        li.last_stock_in_at,
+        ls.last_sold_at
       FROM source_lightspeed_official.ls_item_shops t
       LEFT JOIN source_lightspeed_official.ls_items i
         ON i.tenant_id = t.tenant_id AND i.item_id = t.item_id
@@ -49,6 +72,9 @@ cubes:
       LEFT JOIN last_in li
         ON li.tenant_id = t.tenant_id AND li.item_id = t.item_id
         AND li.shop_id = t.shop_id
+      LEFT JOIN last_sale ls
+        ON ls.tenant_id = t.tenant_id AND ls.item_id = t.item_id
+        AND ls.shop_id = t.shop_id
       WHERE NOT t.tombstone
 
     joins:
@@ -138,6 +164,41 @@ cubes:
         description: >
           Whole days since stock of this item last came in at this store.
           Null when no stock-in movement is on record.
+      - name: last_sold_at
+        sql: last_sold_at
+        type: time
+        title: Last sold at
+        description: >
+          When this item last sold at this store (latest completed, non-voided
+          sale line with a positive quantity). Null when it has never sold here.
+      - name: days_since_last_sale
+        type: number
+        title: Days since last sale
+        sql: >
+          FLOOR(EXTRACT(EPOCH FROM (NOW() - {CUBE}.last_sold_at)) / 86400.0)
+        description: >
+          Whole days since this item last sold at this store. Null when it has
+          never sold here, so "no sales in N days" must also include the null
+          rows: use the unsold_*_days segments, or filter days_since_last_sale
+          gte N together with last_sold_at notSet.
+      - name: sales_recency_band
+        type: string
+        title: Sales recency band
+        sql: >
+          CASE
+            WHEN {CUBE}.last_sold_at IS NULL THEN 'Never sold'
+            WHEN {CUBE}.last_sold_at >= NOW() - INTERVAL '30 days' THEN '0-30 days'
+            WHEN {CUBE}.last_sold_at >= NOW() - INTERVAL '60 days' THEN '31-60 days'
+            WHEN {CUBE}.last_sold_at >= NOW() - INTERVAL '90 days' THEN '61-90 days'
+            WHEN {CUBE}.last_sold_at >= NOW() - INTERVAL '180 days' THEN '91-180 days'
+            WHEN {CUBE}.last_sold_at >= NOW() - INTERVAL '365 days' THEN '181-365 days'
+            ELSE 'Over 365 days'
+          END
+        description: >
+          How long ago this item last sold at this store, banded, with "Never
+          sold" for items with no completed sale on record. This is sales
+          recency; stock_age_band is receipt age (days since stock came in) and
+          answers a different question.
       - name: stock_age_band
         type: string
         title: Stock age band
@@ -258,6 +319,15 @@ cubes:
           AND COALESCE({CUBE}.reorder_point, 0) > 0
           AND COALESCE({CUBE}.qoh, 0) <= {CUBE}.reorder_point
         description: Positions at or below their reorder point.
+      - name: unsold_90_days
+        sql: "({CUBE}.last_sold_at IS NULL OR {CUBE}.last_sold_at < NOW() - INTERVAL '90 days')"
+        description: Positions whose item has not sold at this store in the last 90 days, including items that never sold.
+      - name: unsold_180_days
+        sql: "({CUBE}.last_sold_at IS NULL OR {CUBE}.last_sold_at < NOW() - INTERVAL '180 days')"
+        description: Positions whose item has not sold at this store in the last 180 days, including items that never sold. Combine with in_stock for dead stock.
+      - name: unsold_365_days
+        sql: "({CUBE}.last_sold_at IS NULL OR {CUBE}.last_sold_at < NOW() - INTERVAL '365 days')"
+        description: Positions whose item has not sold at this store in the last year, including items that never sold.
 
   - name: inventory_logs
     title: Inventory movements (audit log)
