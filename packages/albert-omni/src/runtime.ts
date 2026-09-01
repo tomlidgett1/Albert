@@ -248,7 +248,7 @@ ${input.topicIndex}
 - Time-bucketed results come from timeDimensions with a granularity; only use a raw time field as a plain dimension when listing records.
 - To get the set of entities with activity in a window (items sold, customers who bought, staff who worked), group by the entity dimension with a dateRange and NO granularity, so each entity is one row. A granularity turns it into entity-by-period rows, and the row cap then hides most of the entities.
 - Comparing two result sets is not something you can do by hand: "in stock but not sold", "bought X but never Y" and similar exclusions must come from a single query whose topic carries the recency or membership field (for example inventory_analytics.days_since_last_sale and the unsold_*_days segments for dead stock). If no topic offers one, say so plainly and show each side separately; never subtract or match two lists yourself.
-- limit defaults to 500 and result rows shown back to you may be truncated; the row count you receive is authoritative.
+- limit defaults to 500 and result rows shown back to you may be truncated. The row count you receive is authoritative only when the result did not hit its row limit; a result flagged rowLimitReached is a top-N slice, its count is unknown, and any headline count or total for it comes from a separate aggregate query (measures only, same filters and segments), never from adding up the rows.
 
 # Communication Style
 
@@ -893,6 +893,12 @@ export async function runOmniSemanticTurn(
         rowCount: loaded.result.rows.length,
       } as CodexEvidenceResult);
       const truncatedForModel = rows.length > MAX_MODEL_RESULT_ROWS;
+      // A result that fills its row limit is a top-N slice, not the whole
+      // population: the count and any total over it are unknown until an
+      // aggregate query (same filters, no entity dimensions) runs. Said
+      // explicitly, or the model reports the cap as the count.
+      const rowLimit = validated.query.limit ?? 500;
+      const rowLimitReached = loaded.result.rows.length >= rowLimit;
       return JSON.stringify({
         ok: true,
         resultId,
@@ -902,6 +908,10 @@ export async function runOmniSemanticTurn(
         executionMs: loaded.result.executionMs,
         columns: columns.map((column) => ({ key: column.key, label: column.label, type: column.type })),
         rows: rows.slice(0, MAX_MODEL_RESULT_ROWS),
+        ...(rowLimitReached ? {
+          rowLimitReached: true,
+          rowLimitNote: `This result hit its row limit of ${rowLimit}: more rows exist and the true count is unknown, so never report ${rowLimit} as the count or sum these rows as a total. For the count or total, run the same query without the entity dimensions (measures only, same filters and segments).`,
+        } : {}),
         ...(truncatedForModel ? {
           truncated: true,
           truncationNote: `Showing the first ${MAX_MODEL_RESULT_ROWS} of ${rows.length} rows. Use SummarizeFullResults for the full set, or refine the query.`,
