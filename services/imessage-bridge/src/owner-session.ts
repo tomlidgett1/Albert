@@ -2,7 +2,26 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ulid } from "ulid";
 import type { TraceEvent } from "../../../packages/shared/src/index.js";
+import {
+  normalizeQueryFailureCode,
+  sanitizeQueryFailureMessage,
+  type AnalyticalQueryAttemptOutcome,
+  type AnalyticalQueryAttemptStart,
+} from "../../../packages/shared/src/query-audit.js";
+import {
+  scheduledRunSchema,
+  scheduledTaskSchema,
+  toScheduledRun,
+  toScheduledTask,
+  type ScheduledRun,
+} from "../../scheduled/src/contracts.js";
 import type { ImessageWorkspace } from "./contracts.js";
+import type {
+  ScheduledRunClaim,
+  ScheduledRunOutcome,
+  ScheduledWork,
+  SchedulerTask,
+} from "./scheduler.js";
 
 /**
  * Headless owner authentication and the control-plane operations the bridge
@@ -76,6 +95,30 @@ const freshnessSchema = z.array(z.object({
   dataFrom: z.string().nullish(),
   dataThrough: z.string().nullable(),
 }).passthrough());
+
+const scheduledWorkSchema = z.object({
+  due: z.array(scheduledTaskSchema),
+  queued: z.array(scheduledRunSchema.extend({ task: scheduledTaskSchema })),
+}).passthrough();
+
+function toSchedulerTask(raw: z.infer<typeof scheduledTaskSchema>): SchedulerTask {
+  const task = toScheduledTask(raw);
+  return Object.freeze({
+    taskId: task.taskId,
+    title: task.title,
+    requestText: task.requestText,
+    prompt: task.prompt,
+    timeOfDay: task.timeOfDay,
+    days: task.days,
+    timezone: task.timezone,
+    phone: task.phone,
+    enabled: task.enabled,
+    nextRunAt: task.nextRunAt,
+    lastRunAt: task.lastRunAt,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  });
+}
 
 export type ConnectorFreshnessEntry = Readonly<{
   connector: string;
@@ -242,6 +285,48 @@ export class OwnerControlPlane {
     });
   }
 
+  /**
+   * The analytical query ledger, written through the same RPCs the web route
+   * uses (services/control-plane/src/query-log-repository.ts). Without it an
+   * iMessage turn leaves no record of which governed queries ran or failed.
+   */
+  async recordQueryAttempt(input: Readonly<{
+    conversationId: string;
+    turnId: string;
+    correlationId: string;
+    attempt: AnalyticalQueryAttemptStart;
+  }>): Promise<void> {
+    return this.rpc("albert_record_analytical_query_attempt", {
+      p_query_attempt_id: input.attempt.queryAttemptId,
+      p_conversation_id: input.conversationId,
+      p_turn_id: input.turnId,
+      p_runtime: input.attempt.runtime,
+      p_source: input.attempt.source,
+      p_operation: input.attempt.operation,
+      p_query_document: input.attempt.queryDocument,
+      p_topic: input.attempt.topic ?? null,
+      p_branch_label: input.attempt.branchLabel ?? null,
+      p_correlation_id: input.correlationId,
+    }, () => undefined);
+  }
+
+  async recordQueryOutcome(outcome: AnalyticalQueryAttemptOutcome): Promise<void> {
+    const succeeded = outcome.status === "succeeded";
+    return this.rpc("albert_record_analytical_query_outcome", {
+      p_query_attempt_id: outcome.queryAttemptId,
+      p_status: outcome.status,
+      p_execution_ms: outcome.executionMs ?? null,
+      p_row_count: outcome.rowCount ?? null,
+      p_failure_code: succeeded
+        ? null
+        : normalizeQueryFailureCode(outcome.failureCode ?? `${outcome.status}_query`, "query_failed"),
+      p_failure_message: succeeded
+        ? null
+        : sanitizeQueryFailureMessage(outcome.failureMessage, "The governed query did not complete."),
+      p_result_metadata: outcome.resultMetadata ?? {},
+    }, () => undefined);
+  }
+
   async assignConversationTitle(conversationId: string, title: string): Promise<void> {
     const client = await this.client();
     await client.rpc("albert_assign_conversation_title", {
@@ -298,6 +383,48 @@ export class OwnerControlPlane {
         }))),
       });
     });
+  }
+
+  /** Due schedules and queued manual runs (migration 0183), for the scheduler. */
+  async scheduledWork(): Promise<ScheduledWork> {
+    return this.rpc("albert_scheduled_work", undefined, (data) => {
+      const parsed = scheduledWorkSchema.parse(singleton(data));
+      return Object.freeze({
+        due: Object.freeze(parsed.due.map(toSchedulerTask)),
+        queued: Object.freeze(parsed.queued.map((run) => Object.freeze({
+          ...toScheduledRun(run),
+          task: toSchedulerTask(run.task),
+        }))),
+      });
+    });
+  }
+
+  /** Atomically claims one run; null when the slot was edited or taken. */
+  async claimScheduledRun(claim: ScheduledRunClaim): Promise<ScheduledRun | null> {
+    return this.rpc("albert_scheduled_run_claim", {
+      p_task_id: claim.taskId,
+      p_run_id: claim.runId,
+      p_trigger: claim.trigger,
+      p_expected_next_run_at: claim.expectedNextRunAt,
+      p_next_run_at: claim.nextRunAt,
+    }, (data) => {
+      const value = singleton(data);
+      if (value == null) return null;
+      return toScheduledRun(scheduledRunSchema.parse(value));
+    });
+  }
+
+  async finishScheduledRun(outcome: ScheduledRunOutcome): Promise<void> {
+    return this.rpc("albert_scheduled_run_finish", {
+      p_run_id: outcome.runId,
+      p_status: outcome.status,
+      p_conversation_id: outcome.conversationId ?? null,
+      p_turn_id: outcome.turnId ?? null,
+      p_answer_state: outcome.answerState ?? null,
+      p_summary: outcome.summary ?? null,
+      p_error: outcome.error ?? null,
+      p_bubbles: outcome.bubbles ?? null,
+    }, () => undefined);
   }
 
   async businessContext(): Promise<string | undefined> {

@@ -261,6 +261,7 @@ ${input.topicIndex}
 - Be frank. If something looks bad, say so and say how bad; if the data can't answer part of the question, say exactly what's missing rather than padding. An honest "here's what I can and can't tell" beats hedged vagueness.
 - Never pass off a proxy as the thing that was asked. If the field you used measures something different from the question (receipt age instead of sales recency, list price instead of cost), name what it actually measures, keep its real definition in the heading and table labels, and say what you could not measure. Retitling a proxy to match the question is a wrong answer, not a helpful one.
 - A question that asks "which items", "which customers" or "who" is answered with the named entities. If you cannot produce that list, say so in the first sentence rather than answering a different question.
+- The period you answer is the period asked. If the asked window returns no rows or its query fails, say exactly that and stop there or ask; never quietly answer an earlier week, the previous financial year, or "the last period with data" and present it as the answer. When a source's data ends before the asked window, lead with the last date it covers. The same holds for the source: if you had to use a different topic than the one that literally measures the thing (a roster estimate for wages, invoice GST for a BAS position), name the basis in the headline sentence.
 
 # Answer Quality & Formatting
 
@@ -572,6 +573,10 @@ export async function runOmniSemanticTurn(
     let modelSearches = 0;
     let valueLookups = 0;
     let modelRequests = 0;
+    // Topics whose field definitions the model has actually loaded this turn.
+    // A query against any other topic is refused: every hallucinated member
+    // name in production came from querying a topic from memory.
+    const inspectedTopics = new Set<string>();
     const chartState: CodexChartState = { emitted: 0, maxCharts: 2, signatures: new Set() };
     const seenQueryDigests = new Set<string>();
 
@@ -602,8 +607,20 @@ export async function runOmniSemanticTurn(
     // wasted step must show in the trail (and in the ledger of what went
     // wrong) instead of surfacing only as the model's "let me fix that".
     const reportInvalidToolCall = (toolLabel: string) => async (_context: unknown, error: unknown): Promise<string> => {
-      const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
-      const detail = [error instanceof Error ? error.message : String(error), cause]
+      // The SDK wraps the schema failure; the zod issues live on originalError
+      // (or cause). Without them the model only learns "invalid input" and
+      // guesses again, and the trail cannot show which field was wrong.
+      const original = error && typeof error === "object"
+        ? (error as { originalError?: unknown; cause?: unknown }).originalError
+          ?? (error as { cause?: unknown }).cause
+        : undefined;
+      const issues = original && typeof original === "object" && Array.isArray((original as { issues?: unknown }).issues)
+        ? ((original as { issues: unknown[] }).issues as Array<{ path?: unknown; message?: unknown }>)
+          .slice(0, 6)
+          .map((issue) => `${Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "input"}: ${typeof issue.message === "string" ? issue.message : "invalid"}`)
+          .join("; ")
+        : original instanceof Error ? original.message : "";
+      const detail = [error instanceof Error ? error.message : String(error), issues]
         .filter(Boolean)
         .join(": ")
         .slice(0, 600);
@@ -660,6 +677,7 @@ export async function runOmniSemanticTurn(
         const result = input.searchPattern
           ? searchModelFields(catalogue, input.searchPattern, input.topicName ?? undefined)
           : lookupTopicModel(catalogue, input.topicName!);
+        for (const viewName of result.viewNames) inspectedTopics.add(viewName);
         await emit({
           type: "research",
           status: "complete",
@@ -765,9 +783,23 @@ export async function runOmniSemanticTurn(
       if (queryAttempts >= MAX_QUERY_ATTEMPTS_PER_TURN) {
         return JSON.stringify({ ok: false, error: "The query allowance for this turn is spent. Answer with the evidence already gathered." });
       }
-      queryAttempts += 1;
       const topicView = resolveTopic(catalogue, input.topic);
       const queryName = sanitizeTraceText(input.name, 160) || "Query";
+      if (topicView && !inspectedTopics.has(topicView.name)) {
+        const topicLabel = topicView.title || topicView.name;
+        await emit({
+          type: "progress",
+          status: "warning",
+          stage: "query",
+          label: sanitizeTraceText(`Query refused: ${queryName}`, 200),
+          detail: sanitizeTraceText(`${topicLabel} was queried before its field definitions were looked up this turn.`, 300),
+        });
+        return JSON.stringify({
+          ok: false,
+          error: `${topicLabel} has not been looked up this turn, so its field names are not known to you. Call SearchSemanticModel with topicName "${topicView.name}" first, then query with the exact fully qualified names it returns.`,
+        });
+      }
+      queryAttempts += 1;
       await emit({
         type: "progress",
         status: "running",
