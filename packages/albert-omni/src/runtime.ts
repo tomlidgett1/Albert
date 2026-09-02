@@ -499,6 +499,33 @@ function extractMessageText(item: unknown): string {
     .join("");
 }
 
+/** Whether a tool output item reports success: JSON with ok !== false, or a plain document. */
+function toolOutputSucceeded(item: unknown): boolean {
+  const record = item && typeof item === "object" ? item as { output?: unknown; rawItem?: { output?: unknown } } : {};
+  const raw = record.rawItem?.output ?? record.output;
+  const text = typeof raw === "string"
+    ? raw
+    : Array.isArray(raw)
+      ? raw.map((part) => (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "")).join("")
+      : raw && typeof raw === "object" && typeof (raw as { text?: unknown }).text === "string"
+        ? (raw as { text: string }).text
+        : "";
+  if (/^An error occurred while running the tool/u.test(text)) return false;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && (parsed as { ok?: unknown }).ok === false) return false;
+  } catch {
+    // Non-JSON tool output (a model document, a CSV) is a successful result.
+  }
+  return true;
+}
+
+/** Short lead-ins the model writes before a tool call ("Let me fix that:"). */
+function isTransitionMessage(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length < 160 && (/[:…]$/u.test(trimmed) || /^(?:let me|now (?:let me|i)|i'll|i will|next,?)\b/iu.test(trimmed));
+}
+
 export async function runOmniSemanticTurn(
   options: OmniSemanticTurnOptions,
 ): Promise<OmniSemanticTurnResult> {
@@ -1635,6 +1662,11 @@ export async function runOmniSemanticTurn(
     };
     const runAgentOnce = async (): Promise<string> => {
       pendingMessage = null;
+      // The answer is everything the model said after its last successful
+      // tool result, not only its last message: a model that writes the
+      // answer, then loses a tool call, then adds "as shown above" would
+      // otherwise hand the owner only the postscript.
+      let answerParts: string[] = [];
       const stream = await runner.run(agent, items, {
         stream: true,
         maxTurns: MAX_AGENT_TURNS,
@@ -1646,11 +1678,16 @@ export async function runOmniSemanticTurn(
           if (event.name === "message_output_created") {
             await flushPendingNarrative();
             pendingMessage = extractMessageText(event.item);
+            if (pendingMessage.trim()) answerParts.push(pendingMessage.trim());
             continue;
           }
           if (event.name === "tool_called") {
             modelRequests += 1;
             await flushPendingNarrative();
+            continue;
+          }
+          if (event.name === "tool_output" && toolOutputSucceeded(event.item)) {
+            answerParts = [];
           }
         }
         await stream.completed;
@@ -1658,11 +1695,15 @@ export async function runOmniSemanticTurn(
         recordUsage(stream.rawResponses);
       }
       modelRequests += 1;
-      const rawFinal = typeof stream.finalOutput === "string" && stream.finalOutput.trim()
-        ? stream.finalOutput
-        : pendingMessage ?? "";
+      const finalText = typeof stream.finalOutput === "string" && stream.finalOutput.trim()
+        ? stream.finalOutput.trim()
+        : pendingMessage?.trim() ?? "";
+      const assembled = answerParts
+        .filter((part, index, parts) => parts.indexOf(part) === index)
+        .filter((part, index, parts) => index === parts.length - 1 || !isTransitionMessage(part))
+        .join("\n\n");
       pendingMessage = null;
-      return rawFinal;
+      return assembled.length > finalText.length ? assembled : finalText;
     };
 
     // Provider stalls must not kill an otherwise healthy analysis: a run
