@@ -334,9 +334,13 @@ accessible_views:
       Workforce (Deputy) grain. Authoritative hours worked and wage cost from
       timesheets, rostered / scheduled shifts and planned cost, open and
       published shifts, leave requests by type and status, staff headcount
-      and positions. For cross-tool questions (e.g. hours vs sales), query
-      this and the sales views separately, matching the person by name in
-      each tool, then combine narratively.
+      and positions. Labour against sales by day or week (labour cost as a
+      share of sales, sales per labour hour) is one query here through the
+      labour_sales_* members; rostered-versus-actual, late and no-show
+      questions are one query through the shift_* members. Only per-person
+      cross-tool comparisons (a staff member's sales against their hours)
+      still need this view and the sales views queried separately and
+      matched by name.
   - name: xero_profit_and_loss_analytics
     connector: xero
     routing_terms:

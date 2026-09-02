@@ -21,7 +21,12 @@ views:
         depreciation of 0 is a real answer when assets have no depreciation
         method set up (asset_depreciation_method 'NoDepreciation'): report
         the 0 and explain why, do not call the data unpopulated when the
-        asset list itself has rows. Transactional money questions (invoices,
+        asset list itself has rows. The balance sheet's total_fixed_assets is
+        null when Xero prints no Fixed Assets section, so this register
+        (asset_book_value / total_book_value with registered_assets) is the
+        fixed-asset answer. BUDGETS: only the budget list (budget_name,
+        budget_type) is landed; budget line values and budget-vs-actual are
+        NOT available - say so. Transactional money questions (invoices,
         payments, spending) belong in xero_finance_analytics; pay questions
         in xero_payroll_analytics.
 

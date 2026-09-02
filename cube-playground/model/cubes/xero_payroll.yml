@@ -173,8 +173,13 @@ cubes:
       ai_context: >
         Aggregate payroll cost by pay cycle. "Payroll cost", "wages paid",
         "PAYG withheld", "super paid" = wages / tax / super measures here with
-        paid_on as the business date. status POSTED means finalised. For
-        per-employee amounts use xero_payslips.
+        paid_on as the business date. status POSTED means finalised.
+        Per-employee amounts live in xero_payslips only when the connection
+        lands payslips; when that cube is empty say per-employee pay is
+        unavailable. The accounting wage cost is the P&L
+        (xero_profit_and_loss_periods wage_expenses + employer_super_expenses);
+        total_payroll_cost here is what payroll paid per cycle (gross wages +
+        super, no on-costs) - name the basis, never mix them.
     sql: SELECT * FROM source_xero_official.xo_pay_runs
 
     joins:
@@ -297,7 +302,9 @@ cubes:
         Per-employee payroll. "How much did X earn", "wages by employee",
         "highest paid staff" = wages / net_pay grouped by employee_name, with
         paid_on as the business date. Filter pay_run_status = 'POSTED' for
-        finalised pay only.
+        finalised pay only. If this cube returns no rows the connection has
+        not landed payslips: report per-employee pay as unavailable, never as
+        $0, and offer pay-run totals (xero_pay_runs) instead.
     sql: SELECT * FROM source_xero_official.xo_payslip_summaries
 
     joins:
@@ -668,6 +675,10 @@ cubes:
     description: >
       One row per payroll leave type (Annual Leave, Personal/Carer's Leave,
       Long Service Leave...), with entitlement and whether it is paid.
+    meta:
+      ai_context: >
+        Catalogue only: per-employee leave balances, accrued leave and leave
+        liability are NOT available from this connection - say so.
     sql: SELECT * FROM source_xero_official.xo_leave_types
 
     joins:

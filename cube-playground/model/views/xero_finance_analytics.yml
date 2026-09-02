@@ -6,7 +6,8 @@ views:
       and ageing, per-line account/item detail, payments received and made,
       direct bank spending and income with category coding, credit notes,
       manual journal (GL) activity, bank transfers, recurring invoice
-      templates and the customer/supplier list with live AR/AP balances. Its
+      templates and the customer/supplier list (its AR/AP balance snapshots
+      are hidden as stale). Its
       legacy pnl_* members are an incomplete document-activity compatibility
       surface, not a financial statement. Unprefixed members are invoice grain;
       line_*, payment_*, bank_*, credit_note_*, journal_*, transfer_*,
@@ -15,54 +16,91 @@ views:
       ai_context: >
         Use for invoices/bills, AR/AP, payments, bank activity, GST on source
         documents, credit notes, manual-journal inspection and recurring
-        templates. HEADLINE BALANCES (what Xero's dashboard shows): "what do we
-        owe suppliers" / "bills to pay" = payable_outstanding with
-        payable_overdue and payable_open_count / payable_overdue_count
-        (approved bills awaiting payment; mention draft_bills_total /
-        draft_bill_count separately if non-zero, they are not yet payable);
-        "what is owed to us" / "invoices owed" = receivable_outstanding with
-        receivable_overdue and the counts. These come from the invoice
-        documents and need no filters. Do NOT total the contact_* balance
-        snapshots for headline AR/AP: they only refresh when the contact
-        record changes and go stale after payments. CASH IN AND OUT: "how
-        much came in / went out of the bank", "cash in vs cash out", "money in
-        and out", "bank activity for a period" = cash_in, cash_out,
-        net_cash_movement over cash_date (group by cash_bank_account or
-        cash_source when asked). This reproduces Xero's dashboard "Cash in and
-        out" exactly (bank transactions plus invoice and bill payments;
-        transfers between own accounts excluded). money_in/money_out cover
-        only direct bank transactions and payments_received/payments_made only
-        invoice payments - never add them together, use cash_*. NEVER use pnl_* for Profit and Loss, Net/Gross Profit,
-        income, total expense or margins: those backward-compatible members
-        omit Xero system payroll and depreciation journals. Use
-        xero_profit_and_loss_analytics for headline Xero statement figures and
+        templates. Every answer here is ONE governed query on ONE grain.
+        WHO OWES ME (debtors, "invoices owed"): invoice grain with segments
+        sales_invoices + outstanding, dimension invoice_contact, measures
+        total_amount_due and overdue_amount (add days_overdue / ageing_band or
+        due_on for ageing); the headline total with no dimension is
+        receivable_outstanding / receivable_overdue with receivable_open_count
+        / receivable_overdue_count and needs no filters. WHO DO I OWE
+        (creditors, "bills to pay"): segments bills + outstanding by
+        invoice_contact with total_amount_due and overdue_amount; headline =
+        payable_outstanding / payable_overdue / payable_open_count /
+        payable_overdue_count. Draft bills are NOT payable yet: report
+        draft_bills_total / draft_bill_count separately when non-zero. Overdue
+        is a subset of outstanding and can never exceed it. The contact_*
+        balance snapshots and total_*_outstanding members are hidden: they are
+        stale snapshots from each contact's last edit, never a live balance.
+        Sales invoices = document_kind 'Sales invoice'; bills = 'Bill'; use
+        the financially_real segment (AUTHORISED/PAID) for financial totals.
+        issued_on is the invoice business date; payment_paid_on for payments;
+        bank_occurred_on for bank activity.
+        CASH IN AND OUT: "how much came in / went out of the bank", "cash in
+        vs cash out", "money in and out", "bank activity for a period" =
+        cash_in, cash_out, net_cash_movement over cash_date (group by
+        cash_bank_account, cash_source or cash_contact when asked). This
+        reproduces Xero's dashboard "Cash in and out" exactly (bank
+        transactions plus invoice and bill payments; transfers between own
+        accounts excluded). "Cash in/out and how many are unreconciled" is the
+        same query plus cash_unreconciled_count. money_in/money_out cover only
+        direct bank transactions and payments_received/payments_made only
+        invoice payments - never add them together, use cash_*.
+        SUPPLIER SPEND: accrual spend by supplier = segments bills +
+        financially_real, dimension invoice_contact, measure total_invoiced
+        (or total_excl_tax) over issued_on; cash actually paid to a supplier =
+        cash_out by cash_contact over cash_date; spend by category = line_*
+        with bill_lines grouped by line_account_name, or bank_line_* grouped
+        by bank_line_account_name for spend money. Use recent COMPLETE months
+        for running-cost questions; the current month is usually uncoded.
+        RECURRING COSTS: recurring_* covers only Xero repeating-invoice
+        templates (this organisation has a single active sales template);
+        rent, subscriptions, loan repayments and other regular outgoings are
+        ordinary bills or spend money, so find them with line_* / bank_line_*
+        grouped by account and month, never from recurring_*.
+        BUDGETS: only the budget list (name, type) is landed; budget line
+        values and budget-vs-actual are NOT available - say so.
+        GST / BAS: never present document-line GST as the BAS or GST position.
+        This organisation reports GST on a CASH basis and its register sales
+        post as BASEXCLUDED manual journals, so invoice-line GST collected is
+        a tiny fraction of real sales GST (gst_collected and gst_net are
+        hidden for that reason). GST position = the balance sheet GST control:
+        xero_balance_sheet_analytics gst_balance with the latest_position
+        segment (or one as_at); GST accrued between two dates = gst_balance at
+        each as_at with the difference stated in the answer. gst_paid here is
+        document-dated input tax on bills and spend money (indicative only);
+        GST charged on sales invoices themselves = total_gst with
+        sales_invoices + financially_real over issued_on.
+        NEVER use pnl_* for Profit and Loss, Net/Gross Profit, income, total
+        expense or margins: those backward-compatible members omit Xero system
+        payroll and depreciation journals. Use xero_profit_and_loss_analytics
+        for headline Xero statement figures and
         xero_profit_and_loss_account_analytics for account breakdowns; Net
-        Profit there already deducts wages and super exactly once. Sales invoices =
-        document_kind 'Sales invoice'; bills =
-        'Bill'. Use the financially_real segment (AUTHORISED/PAID) for
-        financial totals. issued_on is the invoice business date;
-        payment_paid_on for payments; bank_occurred_on for bank activity.
-        GST QUESTIONS: use gst_collected, gst_paid and
-        gst_net over gst_date (group by gst_tax_type or gst_account), and
-        always disclose that gst_collected only covers directly invoiced
-        sales because register sales are posted via tax-blind journals; the
-        authoritative BAS is Xero's GST return. OVERPAYMENTS: for "does anyone
-        have credit" query overpayment_* WITHOUT filtering overpayment_kind,
-        then interpret: RECEIVE-OVERPAYMENT = a customer holds credit with us,
-        SPEND-OVERPAYMENT = we hold credit with a supplier. avg_days_to_pay
-        gives debtor or creditor days (filter invoice_type ACCREC for debtors,
-        ACCPAY for creditors). credit_line_*, batch_*, recurring_line_* and
-        contact_email / contact terms are available. Bank balances in Xero
-        live in xero_bank_balances_analytics (latest month closing balance)
-        or the live balance sheet tool. NOT AVAILABLE from this
-        connection, say so honestly: budget line
-        values; and this business has no quotes, purchase
-        orders, projects or expense claims in Xero. Till/POS revenue lives
-        in sales_analytics (Lightspeed): Xero invoices are the accounting
-        ledger, not the register. Wages by employee live in
-        xero_payroll_analytics. Never mix members of different prefixes in
-        one query unless a join exists (invoice members join contact
-        members; line_* joins invoice members and line_account_*).
+        Profit there already deducts wages and super exactly once.
+        OVERPAYMENTS: for "does anyone have credit" query overpayment_* WITHOUT
+        filtering overpayment_kind, then interpret: RECEIVE-OVERPAYMENT = a
+        customer holds credit with us, SPEND-OVERPAYMENT = we hold credit with
+        a supplier. avg_days_to_pay gives debtor or creditor days (filter
+        invoice_type ACCREC for debtors, ACCPAY for creditors). credit_line_*,
+        batch_*, recurring_line_* and contact_email / contact terms are
+        available. Bank balances in Xero live in xero_bank_balances_analytics
+        (latest_month segment); there is no live balance sheet tool. NOT
+        AVAILABLE from this connection, say so honestly: budget line values,
+        per-employee pay (see xero_payroll_analytics), and this business has
+        no quotes, purchase orders, projects or expense claims in Xero.
+        Till/POS revenue lives in sales_analytics (Lightspeed): Xero invoices
+        are the accounting ledger, not the register.
+        JOIN MATRIX (prefixes that can share one query): unprefixed invoice
+        members + contact_* / contact_name / contact_email; line_* +
+        line_account_* + invoice members (+ contact via the invoice);
+        payment_* + invoice members + contact members; bank_* + contact
+        members; bank_line_* + bank_line_account_* + bank_*; cash_* joins ONLY
+        cash_contact / cash_bank_account (plus contact_* details), never
+        invoice, payment or bank members; credit_note_* + credit_line_*;
+        overpayment_* + contact members; journal_* + journal_account_*;
+        recurring_* + recurring_line_*; transfer_*, batch_* and gst_* stand
+        alone. Never mix two event grains (invoices with payments, bank with
+        cash, payments with cash) in one query - run two queries and combine
+        them in the answer.
 
     cubes:
       # xero_organisation owns the view's tenant_id: it is exactly one row per
@@ -129,14 +167,21 @@ views:
             alias: contact_sales_terms_day
           - name: bills_payment_terms_day
             alias: contact_bills_terms_day
+          # Per-contact balance snapshots are taken at the contact's last
+          # edit (years stale here, 10 of 465 contacts populated): hidden so
+          # the model answers AR/AP from the invoice grain instead.
           - name: receivable_outstanding_value
             alias: contact_receivable_outstanding
+            meta: { ai_hidden: true }
           - name: receivable_overdue_value
             alias: contact_receivable_overdue
+            meta: { ai_hidden: true }
           - name: payable_outstanding_value
             alias: contact_payable_outstanding
+            meta: { ai_hidden: true }
           - name: payable_overdue_value
             alias: contact_payable_overdue
+            meta: { ai_hidden: true }
           - contact_count
           - customer_count
           - supplier_count
@@ -330,6 +375,8 @@ views:
             alias: cash_reconciled
           - name: movement_count
             alias: cash_movement_count
+          - name: unreconciled_count
+            alias: cash_unreconciled_count
           - cash_in
           - cash_out
           - net_cash_movement
@@ -444,12 +491,23 @@ views:
             alias: gst_contact
           - name: total_taxable_amount
             alias: gst_taxable_amount
+          # Invoice-line GST: this organisation posts register sales as
+          # BASEXCLUDED journals and reports GST on a cash basis, so document
+          # GST collected / net are hidden; the BAS position is the balance
+          # sheet GST control (xero_balance_sheet_analytics gst_balance).
           - name: total_gst_collected
             alias: gst_collected
+            meta: { ai_hidden: true }
           - name: total_gst_paid
             alias: gst_paid
+            meta:
+              ai_context: >
+                Document-dated GST on bills and spend-money lines (input tax);
+                indicative only. The GST position is the balance-sheet GST
+                control in xero_balance_sheet_analytics, never this.
           - name: total_net_gst
             alias: gst_net
+            meta: { ai_hidden: true }
           - gst_line_count
 
       # GL journal activity (line grain, includes payroll posting journals).
@@ -545,6 +603,7 @@ views:
           - cash_out
           - net_cash_movement
           - cash_movement_count
+          - cash_unreconciled_count
           - cash_date
           - cash_direction
           - cash_source

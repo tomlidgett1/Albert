@@ -22,14 +22,25 @@ cubes:
         sales revenue = REVENUE + SALES; other income = OTHERINCOME; cost of
         sales = DIRECTCOSTS; operating expenses = EXPENSE + OVERHEADS +
         DEPRECIATN; total expenses = all four expense types; Net Profit = total
-        income - total expenses. Use period_start for date ranges. Monthly rows
-        can be summed for quarter, year and financial-year totals. Data is
-        monthly and currently retains the latest 24 months; disclose that the
-        current period is partial and use report_updated_at as freshness.
+        income - total expenses. MONTHLY GRAIN: one row per calendar month, so
+        query period_start with month granularity over calendar-month ranges
+        (first to last day of the months wanted) and never rolling "last 30
+        days" / "last N weeks" windows, which match 0-2 rows. Monthly rows can
+        be summed for quarter, year and financial-year totals; "this month vs
+        the same month last year" is compareDateRange with two explicit whole
+        months. About 25 months are retained; the current month is
+        month-to-date (disclose it) and report_updated_at is the freshness.
+        BASIS: only Xero's ACCRUAL rendering is exposed (the source also lands
+        a CASH-basis rendering that is deliberately not modelled), so say the
+        figures are accrual when asked about cash-basis profit. Only true
+        calendar-month report columns are kept: Xero also renders columns
+        anchored on the day-of-month of the report date (e.g. 1-30 Aug) and
+        those duplicates are filtered out here.
     sql: >
       SELECT *
       FROM source_xero_official.xo_profit_and_loss_periods
       WHERE basis = 'ACCRUAL'
+        AND period_end = (period_start + INTERVAL '1 month' - INTERVAL '1 day')::date
 
     joins:
       - name: xero_organisation
@@ -222,7 +233,7 @@ cubes:
         format: percent
         title: Net profit margin %
         description: Net Profit divided by sales revenue, not total income.
-      - name: net_profit_reconciliation_variance
+      - name: net_profit_variance
         type: sum
         sql: net_profit_reconciliation_variance
         format: currency
@@ -230,7 +241,7 @@ cubes:
         description: >
           Xero's reported Net Profit minus account-type total income less total
           expenses. Expected to be zero within one cent.
-      - name: gross_profit_reconciliation_variance
+      - name: gross_profit_variance
         type: sum
         sql: gross_profit_reconciliation_variance
         format: currency
@@ -267,10 +278,31 @@ cubes:
         matching account names. Use xero_profit_and_loss_analytics for headline
         Net Profit/Gross Profit/margins. Do not calculate Net Profit by summing
         this view, and do not use the old xero_finance_analytics pnl_* members.
+        MONTHLY GRAIN: one row per account per calendar month; query
+        period_start with month granularity over calendar-month ranges, never
+        rolling day/week windows. "Which expenses went up" is one query: filter
+        period_start to one month, group by account_name and order by
+        change_vs_prior_month (statement_amount minus prior_month_amount, the
+        same account's previous calendar month). Only true calendar-month
+        report columns are kept (Xero's day-of-month anchored duplicate
+        columns are filtered out); accrual basis only.
     sql: >
-      SELECT *
-      FROM source_xero_official.xo_profit_and_loss_lines
-      WHERE basis = 'ACCRUAL' AND is_account_line
+      SELECT
+        line.*,
+        CASE
+          WHEN line.period_start > MIN(line.period_start) OVER (PARTITION BY line.tenant_id)
+          THEN COALESCE(
+            CASE
+              WHEN LAG(line.period_start) OVER account_months = (line.period_start - INTERVAL '1 month')::date
+              THEN LAG(line.amount) OVER account_months
+            END,
+            0)
+        END AS prior_month_amount
+      FROM source_xero_official.xo_profit_and_loss_lines AS line
+      WHERE line.basis = 'ACCRUAL'
+        AND line.is_account_line
+        AND line.period_end = (line.period_start + INTERVAL '1 month' - INTERVAL '1 day')::date
+      WINDOW account_months AS (PARTITION BY line.tenant_id, line.account_id ORDER BY line.period_start)
 
     joins:
       - name: xero_organisation
@@ -373,7 +405,7 @@ cubes:
         sql: is_direct_wage_expense
         type: boolean
         title: Direct-cost wage expense
-      - name: is_employer_super_expense
+      - name: is_super_expense
         sql: is_employer_super_expense
         type: boolean
         title: Mapped employer super expense
@@ -445,13 +477,31 @@ cubes:
         description: Account-row amount carrying an official employer-super expense code.
         filters:
           - sql: "{CUBE}.is_employer_super_expense"
+      - name: prior_month_amount
+        type: sum
+        sql: prior_month_amount
+        format: currency
+        title: Prior month amount
+        description: >
+          The same account's amount in the previous calendar month: 0 when the
+          account had no row that month, null for the earliest month landed.
+          Read with a single period_start month for a month-on-month view.
+      - name: change_vs_prior_month
+        type: number
+        sql: "{statement_amount} - {prior_month_amount}"
+        format: currency
+        title: Change vs prior month
+        description: >
+          statement_amount minus prior_month_amount: positive means the account
+          went up versus the previous calendar month. Filter one period_start
+          month and group by account_name; the current month is partial.
 
   # ---------------------------------------------------------------------------
   # Xero's standard-layout Balance Sheet, Bank Summary and Trial Balance,
   # landed by Albert's Fivetran Connector SDK (analytical 0175). These are
-  # Xero's own statements at month-end grain; the live xero_balance_sheet /
-  # xero_trial_balance tools give today's figures when the owner asks "as at
-  # today" and Xero's API allowance permits.
+  # Xero's own statements at month-end grain, refreshed by the connector. There
+  # is no live report tool: "as at today" means the newest snapshot (is_latest
+  # / latest_* segments) with its report_updated_at disclosed.
   # ---------------------------------------------------------------------------
 
   - name: xero_balance_sheet_positions
@@ -468,14 +518,24 @@ cubes:
         AUTHORITATIVE landed source for balance sheet headlines at a month end:
         total assets, total liabilities, net assets / equity, bank total,
         accounts receivable and payable balances, GST control balance,
-        inventory value and current-year earnings. Use as_at for the date;
-        the newest row is the most recent month end (or the current month end
-        rendered month-to-date). For "as at today" the live xero_balance_sheet
-        tool is more current; fall back to the newest as_at row here when the
-        live call is unavailable and say which date it is. Report amounts keep
-        Xero's display signs (a negative liability is a debit balance, e.g. a
-        GST refund due). Use xero_balance_sheet_lines for individual accounts.
-    sql: SELECT * FROM source_xero_official.xo_balance_sheet_positions
+        inventory value and current-year earnings. Rows are SNAPSHOTS: as_at is
+        the snapshot date - use one. "Now" / "current" = the latest_position
+        segment (is_latest = true); a dateRange without granularity sums
+        several snapshots and is wrong. The newest row is the current month
+        rendered month-to-date as of report_updated_at; there is no live
+        report tool, so say the snapshot date. Report amounts keep Xero's
+        display signs (a negative liability is a debit balance, e.g. a GST
+        refund due). total_bank is the asset Bank section only; credit cards
+        sit in current liabilities, so the net bank position is
+        xero_balance_sheet_lines bank_account_balance. inventory is 0 when
+        stock is not tracked in Xero; total_fixed_assets is null when Xero
+        prints no Fixed Assets section (use the xero_assets register). Use
+        xero_balance_sheet_lines for individual accounts.
+    sql: >
+      SELECT
+        bs.*,
+        bs.as_at = MAX(bs.as_at) OVER (PARTITION BY bs.tenant_id) AS is_latest
+      FROM source_xero_official.xo_balance_sheet_positions AS bs
 
     joins:
       - name: xero_organisation
@@ -496,7 +556,7 @@ cubes:
         sql: as_at
         type: time
         title: Balance sheet date
-        description: The as-at date of this Balance Sheet column (a month end).
+        description: Snapshot date (a month end) - use one. The newest as_at is the current month rendered month-to-date.
       - name: report_updated_at
         sql: report_updated_at
         type: time
@@ -514,6 +574,11 @@ cubes:
         type: boolean
         title: Reconciles to Xero
         sql: "ABS(COALESCE({CUBE}.net_assets_reconciliation_variance, 0)) <= 0.01"
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for the newest as_at date landed - the current position as of the last refresh.
 
     measures:
       - name: statement_dates
@@ -547,7 +612,11 @@ cubes:
         sql: total_bank
         format: currency
         title: Total bank
-        description: Xero's Total Bank line - all bank and credit-card accounts netted, as Xero shows it.
+        description: >
+          Xero's Total Bank line: the asset Bank section only (cash and bank
+          accounts). Credit-card accounts sit in current liabilities and are
+          not netted here; the net position is xero_balance_sheet_lines
+          bank_account_balance.
       - name: total_current_assets
         type: sum
         sql: total_current_assets
@@ -558,6 +627,7 @@ cubes:
         sql: total_fixed_assets
         format: currency
         title: Total fixed assets
+        description: Xero's Total Fixed Assets line; null when the report prints no Fixed Assets section (use the xero_assets register).
       - name: total_non_current_assets
         type: sum
         sql: total_non_current_assets
@@ -605,13 +675,19 @@ cubes:
         sql: inventory
         format: currency
         title: Inventory
-        description: Sum of INVENTORY-type accounts (stock on hand at cost) at the as_at date.
+        description: Sum of INVENTORY-type accounts (stock on hand at cost) at the as_at date; 0 when the organisation does not track stock in Xero.
       - name: net_assets_reconciliation_variance
         type: sum
         sql: net_assets_reconciliation_variance
         format: currency
         title: Net assets reconciliation variance
         public: false
+
+    segments:
+      - name: latest_position
+        sql: "{CUBE}.is_latest"
+        title: Latest balance sheet snapshot
+        description: Only the newest as_at row - use for "current" / "now" balance questions instead of a date range.
 
   - name: xero_balance_sheet_lines
     title: Balance sheet lines (Xero)
@@ -629,9 +705,16 @@ cubes:
         accounts, fixed assets, retained earnings. Filter is_account_line =
         true and group statement_amount by account_name (or balance_category /
         statement_side) for one as_at date; never sum account rows together
-        with Xero's total rows, and never sum across as_at dates. Headline
-        totals live in xero_balance_sheet_positions.
-    sql: SELECT * FROM source_xero_official.xo_balance_sheet_lines
+        with Xero's total rows, and never sum across as_at dates. Rows are
+        snapshots: use the latest_lines segment (is_latest) for current
+        balances instead of a date range. bank_account_balance is sign-aware
+        (credit-card liabilities subtracted) and equals Xero's closing bank
+        balance. Headline totals live in xero_balance_sheet_positions.
+    sql: >
+      SELECT
+        line.*,
+        line.as_at = MAX(line.as_at) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_balance_sheet_lines AS line
 
     joins:
       - name: xero_organisation
@@ -655,6 +738,7 @@ cubes:
         sql: as_at
         type: time
         title: Balance sheet date
+        description: Snapshot date (a month end) - use one.
       - name: report_updated_at
         sql: report_updated_at
         type: time
@@ -754,6 +838,11 @@ cubes:
         sql: ordinal
         type: number
         public: false
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for lines of the newest as_at date landed.
 
     measures:
       - name: line_count
@@ -778,12 +867,23 @@ cubes:
           - sql: "{CUBE}.is_account_line"
       - name: bank_account_balance
         type: sum
-        sql: amount
+        sql: "CASE WHEN {CUBE}.statement_side = 'LIABILITY' THEN -{CUBE}.amount ELSE {CUBE}.amount END"
         format: currency
-        title: Bank account balance in Xero
-        description: Balance of bank / credit-card account rows (balance_category BANK) at the as_at date - the "Balance in Xero" figure, not the bank feed statement balance.
+        title: Net bank balance in Xero
+        description: >
+          Bank and credit-card account rows (balance_category BANK) at the
+          as_at date, sign-aware: cash accounts (asset side) add and credit
+          cards (liability side) subtract, so the total equals Xero's closing
+          bank balance (the Bank Summary Total row). It is the "Balance in
+          Xero" figure, not the bank feed statement balance.
         filters:
           - sql: "{CUBE}.is_account_line AND {CUBE}.balance_category = 'BANK'"
+
+    segments:
+      - name: latest_lines
+        sql: "{CUBE}.is_latest"
+        title: Latest statement lines
+        description: Only the newest as_at snapshot's lines - use for current account balances instead of a date range.
 
   - name: xero_bank_summary_lines
     title: Bank summary (Xero)
@@ -800,11 +900,18 @@ cubes:
         last sync), opening balances, and per-account cash received / spent by
         month. Filter is_account_line = true and choose one period (period_start)
         when reading balances; closing balances must never be summed across
-        months. For whole-business cash in and out over a period prefer
-        xero_finance_analytics cash_in / cash_out (transaction grain, exact to
-        Xero's dashboard). The live xero_balance_sheet tool gives today's
-        balances when available.
-    sql: SELECT * FROM source_xero_official.xo_bank_summary_lines
+        months. Rows are monthly snapshots: the latest_month segment
+        (is_latest) gives the current balance in Xero per account
+        (is_account_line = true, credit cards negative) or Xero's Total row
+        (is_account_line = false) without a date range. For whole-business
+        cash in and out over a period prefer xero_finance_analytics cash_in /
+        cash_out (transaction grain, exact to Xero's dashboard). There is no
+        live balance tool: balances are as of report_updated_at.
+    sql: >
+      SELECT
+        line.*,
+        line.period_start = MAX(line.period_start) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_bank_summary_lines AS line
 
     joins:
       - name: xero_organisation
@@ -825,6 +932,7 @@ cubes:
         sql: period_start
         type: time
         title: Month start
+        description: Snapshot month - use one; the newest is the current month through the last refresh.
       - name: period_end
         sql: period_end
         type: time
@@ -841,6 +949,11 @@ cubes:
         type: boolean
         title: Current month
         sql: "{CUBE}.period_start <= CURRENT_DATE AND {CUBE}.period_end >= CURRENT_DATE"
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest month
+        description: True only for rows of the newest month landed - the current balance in Xero.
       - name: row_title
         sql: row_title
         type: string
@@ -923,6 +1036,12 @@ cubes:
         filters:
           - sql: "{CUBE}.is_account_line"
 
+    segments:
+      - name: latest_month
+        sql: "{CUBE}.is_latest"
+        title: Latest bank summary month
+        description: Only the newest month's rows - the current balance in Xero per account (is_account_line true) or Xero's Total row (false).
+
   - name: xero_trial_balance_lines
     title: Trial balance (Xero)
     public: false
@@ -935,10 +1054,16 @@ cubes:
         Use for "the balance of account X in Xero" at a month end, or a
         ledger-wide debit/credit listing. net_balance = debit - credit (assets
         and expenses positive; liabilities, equity and income negative).
-        Choose one as_at date; filter is_account_line = true for accounts.
-        For balance sheet headlines use xero_balance_sheet_positions; for
-        P&L use xero_profit_and_loss_analytics.
-    sql: SELECT * FROM source_xero_official.xo_trial_balance_lines
+        Choose one as_at date (rows are snapshots; the latest_trial_balance
+        segment / is_latest gives the newest without a date range); filter
+        is_account_line = true for accounts. For balance sheet headlines use
+        xero_balance_sheet_positions; for P&L use
+        xero_profit_and_loss_analytics.
+    sql: >
+      SELECT
+        line.*,
+        line.as_at = MAX(line.as_at) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_trial_balance_lines AS line
 
     joins:
       - name: xero_organisation
@@ -959,6 +1084,7 @@ cubes:
         sql: as_at
         type: time
         title: Trial balance date
+        description: Snapshot date - use one.
       - name: report_updated_at
         sql: report_updated_at
         type: time
@@ -1007,6 +1133,11 @@ cubes:
         sql: is_total_line
         type: boolean
         public: false
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for lines of the newest as_at date landed.
 
     measures:
       - name: line_count
@@ -1042,3 +1173,9 @@ cubes:
         sql: ytd_net_balance
         format: currency
         title: YTD net balance (debit - credit)
+
+    segments:
+      - name: latest_trial_balance
+        sql: "{CUBE}.is_latest"
+        title: Latest trial balance date
+        description: Only the newest as_at snapshot - use for current ledger balances instead of a date range.

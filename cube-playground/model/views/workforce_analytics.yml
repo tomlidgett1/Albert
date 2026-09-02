@@ -2,46 +2,114 @@ views:
   - name: workforce_analytics
     title: Workforce analytics (Deputy)
     description: >
-      The workforce surface, powered by Deputy: actual hours worked and wage
-      cost from timesheets, the schedule from rosters (including open and
-      published shifts), leave requests with types and approval status, and
-      the staff list with positions and employment dates. Staff grain is the
-      hub; timesheets, rosters and leave all relate to a staff member and a
-      work area.
+      The workforce surface, powered by Deputy: hours actually worked and
+      wage cost from timesheets, the schedule from rosters (including open
+      and published shifts), a per-shift reconciliation of roster against
+      timesheet (attendance, lateness, no-shows, unfilled shifts), leave
+      requests and leave days with types and approval status, the staff list
+      with positions and employment dates, and a daily labour-to-sales
+      bridge with Lightspeed. The grains are separate: unprefixed / worked_*
+      members are timesheets, rostered_* / roster_* the schedule, shift_*
+      the roster-vs-timesheet reconciliation, leave_* / leave_day_* leave,
+      staff_* the staff list and labour_sales_* the daily bridge. Only the
+      shift_* reconciliation grain combines rosters and timesheets.
     meta:
       ai_context: >
-        Use this view for anything about staff time and labour: hours worked,
-        wage / labour cost, who worked or is on shift now, who is rostered on
-        and when, scheduled vs planned cost, leave taken or upcoming, staff
-        headcount and positions. shift_date is the business date for worked
-        hours, rostered_date for the schedule. LEAVE: "who is on leave / away
-        this week / this month / on <date>", "days of sick leave this year" =
-        the leave_day_* grain (leave_day as the date, leave_day_staff,
-        leave_day_type, leave_day_status; approved_leave_day_count /
-        approved_leave_days_taken) - it is one row per person per day so a
-        request spanning two months is found in both; use leave_starts /
-        leave_* only for request-level lists. "Who is on shift right now" =
-        today's roster (rostered_date = today) with roster_shift_timing, or
-        rostered_on_now_count; in_progress / on_shift_now_count is who has
-        actually clocked on. "Open / unfilled shifts" = open_shift_count or
-        roster_open_shift = true. Weekday breakdowns use shift_weekday /
-        rostered_weekday (order by the _number members). GRAINS NEVER MIX:
-        worked (timesheet, unprefixed/worked_*), rostered_*, leave_* and
-        leave_day_* members cannot be combined in one query - ask each
-        separately and compare narratively.
-        Sales per staff member are NOT here: they live in sales_analytics
-        (Lightspeed). For questions linking hours to sales, query both views
-        separately and combine narratively; match people by name per view
-        (spellings can differ between the two systems: use explore_entities
-        on each).
+        Use this view for anything about staff time and labour: hours
+        worked, wage / labour cost, who worked or is on shift now, who is
+        rostered on and when, rostered vs actual attendance, leave taken or
+        upcoming, staff headcount and positions, and labour as a share of
+        sales. shift_date is the business date for worked hours,
+        rostered_date for the schedule, shift_business_date for the
+        reconciliation, labour_sales_date for the daily bridge.
+        GRAINS NEVER MIX: worked (unprefixed / worked_*), rostered_* /
+        roster_*, shift_*, leave_*, leave_day_* and labour_sales_* members
+        cannot be combined in one query; staff_* attributes (name,
+        position, active) may be added to any per-person grain but not to
+        labour_sales_*. Note shift_date, shift_hours, shift_weekday and
+        shift_weekday_number are worked (timesheet) members, not
+        reconciliation members.
+        ROSTER VS ACTUAL: rostered vs actual, late, no-show, unfilled =
+        shift_* members in one query (shift_rostered_hours,
+        shift_worked_hours, shift_hours_variance, shift_rostered_cost,
+        shift_actual_cost, shift_no_show_count, shift_late_count,
+        shift_unfilled_count, shift_unrostered_count, grouped by
+        shift_staff / shift_attendance_status / shift_business_date);
+        never combine rostered_* with worked_* members from the other
+        grains. "Who was late / didn't show" = shift_attendance_status =
+        'late' / 'no-show' with shift_staff, shift_business_date and
+        shift_late_minutes; 'matched to another day' means Deputy linked
+        the timesheet to a roster on a different date (a mismatch, not
+        lateness). Timesheets arrive through a daily sync, so a no-show in
+        the last 1-2 days may simply not have landed yet - say so. Roster
+        and timesheet links are reliable from 2024; before that, no-show /
+        unrostered counts are data gaps, not attendance evidence.
+        WAGE COST BASIS: Deputy wage cost (wage_cost, rostered_cost,
+        shift_actual_cost, labour_sales_wage_cost) is the operational
+        roster/timesheet estimate: costed shifts only at contract pay rates,
+        no superannuation or on-costs (loaded_wage_cost equals wage_cost
+        when Deputy has no on-cost rules, as here). Staff without a pay rate
+        in Deputy work uncosted shifts: hours_worked counts them, wage_cost
+        does not, so quote costed_hours / uncosted_hours with any wage total
+        and use avg_hourly_wage_cost for an hourly rate. The paid wage bill
+        lives in Xero (xero_profit_and_loss_analytics wage_expenses +
+        employer_super_expenses); never present one as the other.
+        PAY RULES: no overtime rule exists in this Deputy; never infer
+        overtime from shift length. Pay rates are day-type loadings
+        (Weekday / Saturday / Sunday / Public Holiday), so weekend-loading
+        questions group by shift_weekday; the pay rule itself is not a
+        dimension.
+        LABOUR TO SALES: labour cost as % of sales by week = labour_sales_*
+        members (labour_sales_labour_cost_pct with labour_sales_date at
+        week granularity; also labour_sales_sales_per_labour_hour,
+        labour_sales_net_sales_ex_tax, labour_sales_gross_takings,
+        labour_sales_hours_worked, labour_sales_wage_cost). Ratios are
+        period totals, never averages of daily percentages;
+        labour_sales_labour_cost_pct is against ex-GST net sales and
+        labour_sales_labour_cost_pct_of_takings against tax-inclusive
+        takings - say which. Sales per staff member are NOT here: they live
+        in sales_analytics (Lightspeed); query both views separately and
+        match people by name per view (spellings can differ between the two
+        systems: use explore_entities on each).
+        TIME OF DAY: rostered hours by hour of day = group rostered_hours by
+        rostered_start_hour; worked hours by hour of day = hours_worked by
+        worked_start_hour (each shift counts at its start hour; hour-by-hour
+        coverage across a shift is not modelled). Weekday breakdowns use
+        shift_weekday / rostered_weekday / shift_day_of_week (order by the
+        _number members).
+        LEAVE: "who is on leave / away this week / this month / on <date>",
+        "days of sick leave this year" = the leave_day_* grain (leave_day as
+        the date, leave_day_staff, leave_day_type, leave_day_status;
+        approved_leave_day_count / approved_leave_days_taken) - it is one
+        row per person per day so a request spanning two months is found in
+        both; use leave_starts / leave_* only for request-level lists. Leave
+        BALANCES are NOT available (Deputy exposes only leave taken,
+        requested and approved; Xero payroll does not expose them either) -
+        say so rather than estimating.
+        LIVE: "who is on shift right now" = today's roster (rostered_date =
+        today) with roster_shift_timing, or rostered_on_now_count;
+        in_progress / on_shift_now_count is who has actually clocked on.
+        "Open / unfilled upcoming shifts" = open_shift_count or
+        roster_open_shift = true; past shifts nobody worked =
+        shift_unfilled_count (unassigned) and shift_no_show_count
+        (assigned).
+        STAFF: "how many staff started / left in <period>" =
+        started_staff_count with staff_started_on (terminated_staff_count
+        with staff_terminated_on) as the time dimension.
 
     cubes:
-      # deputy_employees owns the view's tenant_id and is the hub: every
-      # workforce fact (timesheets, rosters, leave) reaches it many_to_one,
-      # so headcount stays answerable even with no facts in range.
-      - join_path: deputy_employees
+      # deputy_business is the one-row-per-tenant hub that owns the view's
+      # tenant_id: every grain joins to it on tenant_id alone, so the tenant
+      # pin resolves even for rows with no staff member (unfilled open
+      # shifts, the daily labour-to-sales bridge). Facts never join to each
+      # other; only deputy_shift_reconciliation holds rosters and timesheets.
+      - join_path: deputy_business
         includes:
           - tenant_id
+
+      # Staff list (attributes any per-person grain can add).
+      - join_path: deputy_employees
+        includes:
           - name: display_name
             alias: staff_name
           - name: position
@@ -52,8 +120,10 @@ views:
             alias: staff_started_on
           - name: terminated_on
             alias: staff_terminated_on
-          - name: staff_count
-          - name: active_staff_count
+          - staff_count
+          - active_staff_count
+          - started_staff_count
+          - terminated_staff_count
       - join_path: deputy_employees.deputy_employee_roles
         includes:
           - name: role_name
@@ -78,11 +148,18 @@ views:
             alias: workplace
           - shift_weekday
           - shift_weekday_number
+          - name: start_hour_of_day
+            alias: worked_start_hour
           - hours_worked
           - paid_hours_total
           - leave_hours_paid
           - wage_cost
+          - worked_wage_cost
           - loaded_wage_cost
+          - costed_hours
+          - uncosted_hours
+          - uncosted_shift_count
+          - avg_hourly_wage_cost
           - worked_shift_count
           - avg_shift_hours
           - unapproved_shift_count
@@ -101,16 +178,20 @@ views:
             alias: roster_starts_at
           - name: ends_at
             alias: roster_ends_at
-          - name: scheduled_shift_hours
-            alias: rostered_shift_hours
+          - name: scheduled_shift_length
+            alias: rostered_shift_length
           - name: published
             alias: roster_published
           - name: open_shift
             alias: roster_open_shift
           - name: unit_name
             alias: rostered_area
+          - name: company_name
+            alias: rostered_workplace
           - rostered_weekday
           - rostered_weekday_number
+          - name: start_hour_of_day
+            alias: rostered_start_hour
           - name: shift_timing
             alias: roster_shift_timing
           - rostered_shift_count
@@ -122,6 +203,96 @@ views:
           - open_shifts
           - name: on_now
             alias: rostered_on_now
+
+      # Roster vs timesheet reconciliation: the only grain holding both.
+      - join_path: deputy_shift_reconciliation
+        includes:
+          - name: shift_date
+            alias: shift_business_date
+          - name: employee_name
+            alias: shift_staff
+          - name: attendance_status
+            alias: shift_attendance_status
+          - name: late_minutes
+            alias: shift_late_minutes
+          - name: rostered_starts_at
+            alias: shift_rostered_start
+          - name: rostered_ends_at
+            alias: shift_rostered_end
+          - name: worked_started_at
+            alias: shift_actual_start
+          - name: worked_ended_at
+            alias: shift_actual_end
+          - name: unit_name
+            alias: shift_area
+          - name: company_name
+            alias: shift_workplace
+          - name: open_shift
+            alias: shift_was_open
+          - name: weekday
+            alias: shift_day_of_week
+          - name: weekday_number
+            alias: shift_day_of_week_number
+          - shift_count
+          - name: rostered_shift_count
+            alias: shift_rostered_count
+          - name: worked_shift_count
+            alias: shift_worked_count
+          - name: rostered_hours
+            alias: shift_rostered_hours
+          - name: worked_hours
+            alias: shift_worked_hours
+          - name: hours_variance
+            alias: shift_hours_variance
+          - name: rostered_cost
+            alias: shift_rostered_cost
+          - name: actual_cost
+            alias: shift_actual_cost
+          - name: cost_variance
+            alias: shift_cost_variance
+          - name: as_rostered_count
+            alias: shift_as_rostered_count
+          - name: late_count
+            alias: shift_late_count
+          - name: no_show_count
+            alias: shift_no_show_count
+          - name: unfilled_count
+            alias: shift_unfilled_count
+          - name: unrostered_count
+            alias: shift_unrostered_count
+          - name: avg_late_minutes
+            alias: shift_avg_late_minutes
+
+      # Daily labour-to-sales bridge (Deputy x Lightspeed): day grain only,
+      # no staff member, reached through the tenant hub.
+      - join_path: deputy_lightspeed_daily_labour_sales
+        includes:
+          - name: business_date
+            alias: labour_sales_date
+          - name: weekday
+            alias: labour_sales_weekday
+          - name: weekday_number
+            alias: labour_sales_weekday_number
+          - name: transaction_count
+            alias: labour_sales_transactions
+          - name: gross_takings
+            alias: labour_sales_gross_takings
+          - name: net_sales_ex_tax
+            alias: labour_sales_net_sales_ex_tax
+          - name: hours_worked
+            alias: labour_sales_hours_worked
+          - name: costed_hours
+            alias: labour_sales_costed_hours
+          - name: wage_cost
+            alias: labour_sales_wage_cost
+          - name: labour_cost_pct
+            alias: labour_sales_labour_cost_pct
+          - name: labour_cost_pct_of_takings
+            alias: labour_sales_labour_cost_pct_of_takings
+          - name: sales_per_labour_hour
+            alias: labour_sales_sales_per_labour_hour
+          - name: transactions_per_labour_hour
+            alias: labour_sales_transactions_per_labour_hour
 
       # Leave requests.
       - join_path: deputy_leave
@@ -166,10 +337,12 @@ views:
           - approved_leave_days_taken
           - approved_leave_hours_taken
           - pending_leave_day_count
+          # Segment aliases carry the leave_day_ prefix: the old alias
+          # approved_leave_days collided with the deputy_leave measure.
           - name: approved
-            alias: approved_leave_days
+            alias: leave_day_approved
           - name: pending
-            alias: pending_leave_days
+            alias: leave_day_pending
       - join_path: deputy_leave_days.deputy_leave_rules
         includes:
           - name: rule_name
@@ -180,7 +353,12 @@ views:
         includes:
           - hours_worked
           - wage_cost
+          - worked_wage_cost
           - loaded_wage_cost
+          - costed_hours
+          - uncosted_hours
+          - uncosted_shift_count
+          - avg_hourly_wage_cost
           - worked_shift_count
           - avg_shift_hours
           - paid_hours_total
@@ -190,8 +368,10 @@ views:
           - shift_hours
           - worked_by
           - worked_area
+          - workplace
           - shift_weekday
           - shift_weekday_number
+          - worked_start_hour
       - name: Live and approvals
         includes:
           - on_shift_now_count
@@ -208,14 +388,62 @@ views:
           - rostered_date
           - roster_starts_at
           - roster_ends_at
+          - rostered_shift_length
           - rostered_staff
           - rostered_area
+          - rostered_workplace
           - roster_published
           - roster_open_shift
           - roster_shift_timing
           - rostered_on_now_count
           - rostered_weekday
           - rostered_weekday_number
+          - rostered_start_hour
+      - name: Roster vs actual (shift reconciliation)
+        includes:
+          - shift_business_date
+          - shift_staff
+          - shift_attendance_status
+          - shift_late_minutes
+          - shift_rostered_start
+          - shift_rostered_end
+          - shift_actual_start
+          - shift_actual_end
+          - shift_area
+          - shift_workplace
+          - shift_was_open
+          - shift_day_of_week
+          - shift_day_of_week_number
+          - shift_count
+          - shift_rostered_count
+          - shift_worked_count
+          - shift_rostered_hours
+          - shift_worked_hours
+          - shift_hours_variance
+          - shift_rostered_cost
+          - shift_actual_cost
+          - shift_cost_variance
+          - shift_as_rostered_count
+          - shift_late_count
+          - shift_no_show_count
+          - shift_unfilled_count
+          - shift_unrostered_count
+          - shift_avg_late_minutes
+      - name: Labour to sales (Lightspeed, daily)
+        includes:
+          - labour_sales_date
+          - labour_sales_weekday
+          - labour_sales_weekday_number
+          - labour_sales_transactions
+          - labour_sales_gross_takings
+          - labour_sales_net_sales_ex_tax
+          - labour_sales_hours_worked
+          - labour_sales_costed_hours
+          - labour_sales_wage_cost
+          - labour_sales_labour_cost_pct
+          - labour_sales_labour_cost_pct_of_takings
+          - labour_sales_sales_per_labour_hour
+          - labour_sales_transactions_per_labour_hour
       - name: Leave by day (who is away when)
         includes:
           - leave_day
@@ -253,4 +481,6 @@ views:
           - staff_terminated_on
           - staff_count
           - active_staff_count
+          - started_staff_count
+          - terminated_staff_count
           - staff_access_role

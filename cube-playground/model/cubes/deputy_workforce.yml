@@ -7,7 +7,68 @@ cubes:
   # semantics follow the Deputy Resource API (developer.deputy.com):
   # a Timesheet is actual worked (or leave) time, a Roster is a scheduled
   # shift, Leave is a request spanning one or more days.
+  #
+  # TIMESTAMP TRAP (Fivetran re-types columns without warning). These dp_*
+  # columns are VARCHAR today and MUST be cast with ::timestamptz wherever
+  # they are compared, filtered, bucketed or coalesced - uncast, every time
+  # filter fails with "operator does not exist: character varying >=
+  # timestamp with time zone" (15 production failures on 2026-09-01):
+  #   source_deputy.dp_rosters : shift_date, starts_at, ends_at,
+  #                              created_at, modified_at         (varchar)
+  #   (raw source_deputy_fivetran.roster: date, start_time_localized,
+  #    end_time_localized, created, modified, meal_break are varchar; the
+  #    "<name>-deprecated-<uuid>" timestamptz columns beside them are dead.
+  #    Values arrive in two renderings, '2026-08-10T00:00:00+10:00' and
+  #    '2026-08-02 14:00:00+00' - both are instants, so ::timestamptz is the
+  #    right cast; never trust the string's own offset or compare as text.)
+  # Every other dp_* time column is a real timestamptz / date today:
+  #   dp_timesheets : shift_date, started_at, ended_at, created_at, modified_at
+  #   dp_employees  : started_on, terminated_on, created_at, modified_at
+  #   dp_leave      : starts_on, ends_on, created_at, modified_at
+  #   dp_leave_days : leave_day, starts_on_local, ends_on_local
+  # When the next re-type lands, information_schema.columns for
+  # table_schema = 'source_deputy' shows the new varchar: add the cast here and
+  # in deputy_efficiency.yml, and extend
+  # tests/contracts/deputy-roster-instants.contract.test.ts.
+  #
+  # TIME ZONE: weekday and hour-of-day members render instants in the
+  # Postgres session time zone, which cube.js pins to the business zone
+  # (storeTimezone = ALBERT_CUBE_SESSION_TIMEZONE, ADR 0107). Cube converts
+  # only `time` dimensions itself, so string/number members make the session
+  # rendering explicit with AT TIME ZONE current_setting('TimeZone') rather
+  # than hard-coding a zone.
+  #
+  # TENANT HUB: deputy_business is one row per tenant. Every Deputy fact and
+  # reference cube joins to it on tenant_id alone so the view-level tenant pin
+  # (queryRewrite adds `<view>.tenant_id = ...`) resolves for grains with no
+  # staff member - the daily labour-to-sales bridge and unfilled open shifts.
+  # Facts never join to each other; the shift reconciliation cube in
+  # deputy_efficiency.yml is the only grain that holds rosters and timesheets.
   # ---------------------------------------------------------------------------
+
+  - name: deputy_business
+    title: Deputy business (tenant hub)
+    public: false
+    description: >
+      One row per connected Deputy business (tenant). Internal join hub that
+      owns workforce_analytics.tenant_id; it carries no business attributes.
+    sql: >
+      SELECT hub.tenant_id, hub.tenant_id AS row_key
+      FROM (
+        SELECT tenant_id FROM source_deputy.dp_companies
+        UNION
+        SELECT tenant_id FROM source_deputy.dp_employees
+      ) hub
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
 
   - name: deputy_employees
     title: Staff (Deputy)
@@ -21,12 +82,18 @@ cubes:
       ai_context: >
         The staff list for workforce questions. "Team", "staff", "employees"
         by name resolve here via display_name. active = true means currently
-        employed. Names may differ slightly from the Lightspeed POS staff list
-        (e.g. "Thomas" vs "Tom"); match colloquially per tool, never join
-        across tools by exact string.
+        employed. "How many staff started / left in <period>" =
+        started_staff_count with started_on (terminated_staff_count with
+        terminated_on) as the time dimension. Names may differ slightly from
+        the Lightspeed POS staff list (e.g. "Thomas" vs "Tom"); match
+        colloquially per tool, never join across tools by exact string.
     sql: SELECT * FROM source_deputy.dp_employees
 
     joins:
+      - name: deputy_business
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_business}.tenant_id
       - name: deputy_employee_roles
         relationship: many_to_one
         sql: >
@@ -64,7 +131,7 @@ cubes:
       - name: started_on
         sql: started_on
         type: time
-        description: Employment start date.
+        description: Employment start date, when recorded in Deputy.
       - name: terminated_on
         sql: terminated_on
         type: time
@@ -81,6 +148,27 @@ cubes:
         description: People currently employed (active in Deputy).
         filters:
           - sql: "{CUBE}.active"
+      - name: started_staff_count
+        type: count
+        title: Staff started
+        description: People with a recorded Deputy start date; date-range it on started_on to count starters in a period.
+        meta:
+          ai_context: >
+            "How many staff started in <period>" = this measure with
+            started_on as the time dimension / date range. Only people
+            with a recorded start date count.
+        filters:
+          - sql: "{CUBE}.started_on IS NOT NULL"
+      - name: terminated_staff_count
+        type: count
+        title: Staff terminated
+        description: People with a Deputy termination date; date-range it on terminated_on to count leavers in a period.
+        meta:
+          ai_context: >
+            "How many staff left / were terminated in <period>" = this
+            measure with terminated_on as the time dimension / date range.
+        filters:
+          - sql: "{CUBE}.terminated_on IS NOT NULL"
 
   - name: deputy_employee_roles
     title: Staff roles (Deputy)
@@ -148,22 +236,51 @@ cubes:
     public: false
     description: >
       One row per Deputy timesheet: actual time a staff member worked (or took
-      as leave when is_leave is true). paid_hours is the total time to be paid
-      for the shift; wage_cost is the cost of the shift from the employee's
-      pay rates; loaded_cost additionally includes on-costs. Voided
+      as leave when is_leave is true). paid_hours is Deputy's TotalTime: the
+      hours paid for the shift, i.e. clock-on to clock-off net of unpaid meal
+      breaks. wage_cost is Deputy's Cost field: the shift priced at the
+      employee's contract pay rate, 0 when the employee has no pay rate in
+      Deputy (an uncosted shift); loaded_cost is Deputy's OnCost field and
+      equals wage_cost when no on-cost rules are configured. Voided
       (discarded) timesheets are excluded at source. time_approved and
       pay_approved track the two-step supervisor approval.
     meta:
       ai_context: >
         The authoritative record of hours actually worked. "Hours worked",
-        "how many hours did X do", "wage cost", "labour cost" = hours_worked /
-        wage_cost here, grouped by employee_name or unit_name, with shift_date
-        as the business date. Leave-generated timesheets are excluded from
-        hours_worked (use leave measures or is_leave). For scheduled /
-        upcoming shifts use deputy_rosters; for leave requests deputy_leave.
+        "how many hours did X do" = hours_worked; "wage cost", "labour cost"
+        = wage_cost, grouped by employee_name or unit_name, with shift_date
+        as the business date. WAGE COST BASIS: Deputy wage cost is the
+        operational roster/timesheet estimate - costed shifts only, at the
+        pay rate on the employee's Deputy contract, no superannuation or
+        on-costs (loaded_wage_cost equals wage_cost when Deputy has no
+        on-cost rules, as for this tenant). Staff with no Deputy pay rate
+        work uncosted shifts: hours_worked counts them, wage_cost does not,
+        so quote costed_hours / uncosted_hours with any wage total and use
+        avg_hourly_wage_cost (worked wage cost / costed hours) for an hourly
+        rate. The paid wage bill lives in Xero
+        (xero_profit_and_loss_analytics wage_expenses +
+        employer_super_expenses); never present one as the other.
+        PAY RULES: no overtime rule exists in this Deputy - never infer
+        overtime from shift length. Pay rates are day-type loadings
+        (Weekday / Saturday / Sunday / Public Holiday rates), so weekend
+        loading questions group by shift_weekday; the pay rule itself is not
+        exposed as a dimension. Worked hours by hour of day = hours_worked
+        grouped by start_hour_of_day (each shift counts at its clock-on
+        hour; hour-by-hour coverage across a shift is not modelled).
+        Leave-generated timesheets are excluded from hours_worked and
+        worked_wage_cost (paid_hours_total / leave_hours_paid / wage_cost
+        include them). For scheduled shifts use deputy_rosters; for
+        roster-vs-actual per shift use deputy_shift_reconciliation; for
+        leave requests deputy_leave. FRESHNESS: timesheets land through a
+        daily sync, so the newest one or two days can be missing - say so
+        when a recent day looks empty.
     sql: SELECT * FROM source_deputy.dp_timesheets
 
     joins:
+      - name: deputy_business
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_business}.tenant_id
       - name: deputy_employees
         relationship: many_to_one
         sql: >
@@ -220,7 +337,7 @@ cubes:
         sql: paid_hours
         type: number
         title: Shift length (paid hours)
-        description: Total paid hours on this single timesheet.
+        description: Paid hours on this single timesheet (clock-on to clock-off net of unpaid meal breaks). A per-shift attribute; use hours_worked for totals.
       - name: is_leave
         sql: is_leave
         type: boolean
@@ -249,16 +366,28 @@ cubes:
         type: string
         title: Workplace
         description: The workplace (location) of the shift.
+      # Weekday / hour members render the timestamptz instant in the pinned
+      # session (business) time zone; see the TIME ZONE note at the top.
       - name: shift_weekday
-        sql: "to_char({CUBE}.shift_date, 'FMDay')"
+        sql: "to_char(({CUBE}.shift_date AT TIME ZONE current_setting('TimeZone')), 'FMDay')"
         type: string
         title: Day of week
-        description: Weekday name of the shift date (Monday ... Sunday). Group by this for "which day do we work the most hours".
+        description: Weekday name of the shift date (Monday ... Sunday) in the business time zone. Group by this for "which day do we work the most hours".
       - name: shift_weekday_number
-        sql: "EXTRACT(ISODOW FROM {CUBE}.shift_date)"
+        sql: "EXTRACT(ISODOW FROM ({CUBE}.shift_date AT TIME ZONE current_setting('TimeZone')))"
         type: number
         title: Day of week (1 = Monday)
         description: ISO weekday number, for ordering weekday breakdowns Monday to Sunday.
+      - name: start_hour_of_day
+        sql: "EXTRACT(HOUR FROM ({CUBE}.started_at AT TIME ZONE current_setting('TimeZone')))"
+        type: number
+        title: Clock-on hour (0-23)
+        description: Hour of the day (store local time, 0-23) the shift was clocked on.
+        meta:
+          ai_context: >
+            Worked hours by hour of day = group hours_worked by
+            start_hour_of_day; each shift counts at its clock-on hour,
+            hour-by-hour coverage across a shift is not modelled.
 
     measures:
       - name: hours_worked
@@ -266,8 +395,8 @@ cubes:
         sql: paid_hours
         title: Hours worked
         description: >
-          Total paid hours actually worked (leave-generated timesheets
-          excluded).
+          Total paid hours actually worked (net of unpaid meal breaks;
+          leave-generated timesheets excluded). Includes uncosted shifts.
         filters:
           - sql: "NOT COALESCE({CUBE}.is_leave, false)"
       - name: paid_hours_total
@@ -288,15 +417,52 @@ cubes:
         format: currency
         title: Wage cost
         description: >
-          Cost of shifts from each employee's pay rates (Deputy Cost field).
-          Not populated on every timesheet; treat totals as the cost of
-          costed shifts.
+          Deputy's cost of the timesheets at each employee's contract pay
+          rate (Deputy Cost field), paid-leave timesheets included. Costed
+          shifts only: shifts for staff with no pay rate in Deputy add 0, so
+          this covers costed_hours, not hours_worked. No super or on-costs.
+      # Filters below name the raw column (wage_cost) rather than
+      # {CUBE}.wage_cost: that reference would resolve to the measure.
+      - name: worked_wage_cost
+        type: sum
+        sql: wage_cost
+        format: currency
+        title: Wage cost of worked shifts
+        description: wage_cost restricted to worked timesheets (leave-generated timesheets excluded).
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false)"
       - name: loaded_wage_cost
         type: sum
         sql: loaded_cost
         format: currency
         title: Wage cost incl. on-costs
-        description: Shift cost including employer on-costs, where recorded.
+        description: Deputy OnCost field. Equals wage cost when Deputy has no on-cost rules (this tenant); it never adds superannuation from payroll.
+      - name: costed_hours
+        type: sum
+        sql: paid_hours
+        title: Costed hours
+        description: Worked hours on timesheets that carry a wage cost - the hours wage_cost actually covers.
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false) AND COALESCE(wage_cost, 0) > 0"
+      - name: uncosted_hours
+        type: sum
+        sql: paid_hours
+        title: Uncosted hours
+        description: Worked hours on timesheets with no wage cost (the employee has no pay rate in Deputy); counted in hours_worked, absent from wage_cost.
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false) AND COALESCE(wage_cost, 0) <= 0"
+      - name: uncosted_shift_count
+        type: count
+        title: Uncosted shifts
+        description: Worked timesheets with no wage cost.
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_leave, false) AND COALESCE(wage_cost, 0) <= 0"
+      - name: avg_hourly_wage_cost
+        type: number
+        sql: "{worked_wage_cost} / NULLIF({costed_hours}, 0)"
+        format: currency
+        title: Average hourly wage cost
+        description: Wage cost of worked shifts divided by costed hours (uncosted hours are excluded from the denominator).
       - name: worked_shift_count
         type: count
         title: Shifts worked
@@ -344,12 +510,23 @@ cubes:
       ai_context: >
         The schedule / roster. "Who is rostered on", "who works tomorrow",
         "scheduled hours", "planned labour cost" = rostered measures here,
-        grouped by employee_name or unit_name, with shift_date as the business
-        date. For actual worked hours use deputy_timesheets; comparing
-        rostered vs worked hours is a two-query comparison.
+        grouped by employee_name or unit_name, with shift_date as the
+        business date. rostered_cost is Deputy's planned cost at contract
+        pay rates: costed shifts only, no superannuation or on-costs (0 when
+        the person has no pay rate in Deputy). Rostered hours by hour of day
+        = group rostered_hours by start_hour_of_day (each shift counts at
+        its start hour; hour-by-hour coverage across a shift is not
+        modelled). For actual worked hours use deputy_timesheets; rostered
+        vs actual per shift (late, no-show, unfilled) is
+        deputy_shift_reconciliation in one query, not a two-query
+        comparison.
     sql: SELECT * FROM source_deputy.dp_rosters
 
     joins:
+      - name: deputy_business
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_business}.tenant_id
       - name: deputy_employees
         relationship: many_to_one
         sql: >
@@ -385,22 +562,24 @@ cubes:
         title: Staff member
         description: Who the shift is scheduled for. Null on unassigned open shifts.
       - name: shift_date
-        sql: shift_date
+        # dp_rosters stores its instants as text; cast so time comparisons work.
+        sql: "({CUBE}.shift_date)::timestamptz"
         type: time
         title: Rostered date
         description: The date of the scheduled shift.
       - name: starts_at
-        sql: starts_at
+        sql: "({CUBE}.starts_at)::timestamptz"
         type: time
         description: Scheduled start (local time).
       - name: ends_at
-        sql: ends_at
+        sql: "({CUBE}.ends_at)::timestamptz"
         type: time
         description: Scheduled end (local time).
-      - name: scheduled_shift_hours
+      - name: scheduled_shift_length
         sql: scheduled_hours
         type: number
         title: Scheduled shift length (hours)
+        description: Scheduled hours on this single rostered shift. A per-shift attribute; use the rostered_hours measure for totals.
       - name: published
         sql: published
         type: boolean
@@ -418,21 +597,34 @@ cubes:
         sql: company_name
         type: string
         title: Workplace
+        description: The workplace (location) the shift is rostered at.
+      # Weekday / hour members cast the varchar instant, then render it in the
+      # pinned session (business) time zone; see the notes at the top.
       - name: rostered_weekday
-        sql: "to_char({CUBE}.shift_date, 'FMDay')"
+        sql: "to_char((({CUBE}.shift_date)::timestamptz AT TIME ZONE current_setting('TimeZone')), 'FMDay')"
         type: string
         title: Day of week
-        description: Weekday name of the rostered date (Monday ... Sunday). Group by this for "which day do we roster the most hours".
+        description: Weekday name of the rostered date (Monday ... Sunday) in the business time zone. Group by this for "which day do we roster the most hours".
       - name: rostered_weekday_number
-        sql: "EXTRACT(ISODOW FROM {CUBE}.shift_date)"
+        sql: "EXTRACT(ISODOW FROM (({CUBE}.shift_date)::timestamptz AT TIME ZONE current_setting('TimeZone')))"
         type: number
         title: Day of week (1 = Monday)
         description: ISO weekday number, for ordering weekday breakdowns Monday to Sunday.
+      - name: start_hour_of_day
+        sql: "EXTRACT(HOUR FROM (({CUBE}.starts_at)::timestamptz AT TIME ZONE current_setting('TimeZone')))"
+        type: number
+        title: Rostered start hour (0-23)
+        description: Hour of the day (store local time, 0-23) the rostered shift starts.
+        meta:
+          ai_context: >
+            Rostered hours by hour of day = group rostered_hours by
+            start_hour_of_day; each shift counts at its start hour,
+            hour-by-hour coverage across a shift is not modelled.
       - name: shift_timing
         sql: >
           CASE
-            WHEN {CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW() THEN 'On now'
-            WHEN COALESCE({CUBE}.ends_at, {CUBE}.starts_at) < NOW() THEN 'Finished'
+            WHEN ({CUBE}.starts_at)::timestamptz <= NOW() AND COALESCE(({CUBE}.ends_at)::timestamptz, ({CUBE}.starts_at)::timestamptz + interval '12 hours') >= NOW() THEN 'On now'
+            WHEN COALESCE(({CUBE}.ends_at)::timestamptz, ({CUBE}.starts_at)::timestamptz) < NOW() THEN 'Finished'
             ELSE 'Upcoming'
           END
         type: string
@@ -457,7 +649,11 @@ cubes:
         sql: scheduled_cost
         format: currency
         title: Rostered wage cost
-        description: Planned labour cost of scheduled shifts, from pay rates.
+        description: >
+          Deputy's planned cost of scheduled shifts at contract pay rates.
+          Costed shifts only (0 for staff with no pay rate in Deputy), no
+          superannuation or on-costs; equals the loaded cost when Deputy has
+          no on-cost rules (this tenant).
       - name: open_shift_count
         type: count
         title: Open shifts
@@ -469,14 +665,14 @@ cubes:
         title: Rostered on right now
         description: Rostered shifts whose scheduled span covers the current moment.
         filters:
-          - sql: "{CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW()"
+          - sql: "({CUBE}.starts_at)::timestamptz <= NOW() AND COALESCE(({CUBE}.ends_at)::timestamptz, ({CUBE}.starts_at)::timestamptz + interval '12 hours') >= NOW()"
 
     segments:
       - name: open_shifts
         sql: "COALESCE({CUBE}.open_shift, false)"
         description: Unassigned shifts offered for pickup.
       - name: on_now
-        sql: "{CUBE}.starts_at <= NOW() AND COALESCE({CUBE}.ends_at, {CUBE}.starts_at + interval '12 hours') >= NOW()"
+        sql: "({CUBE}.starts_at)::timestamptz <= NOW() AND COALESCE(({CUBE}.ends_at)::timestamptz, ({CUBE}.starts_at)::timestamptz + interval '12 hours') >= NOW()"
         description: Rostered shifts covering the current moment.
 
   - name: deputy_leave
@@ -492,10 +688,16 @@ cubes:
         leave taken" = leave measures here. status = 'Approved' is the normal
         filter for actual leave; starts_on is the business date. The leave
         type name (Annual Leave, Sick Leave...) comes from the joined leave
-        rule.
+        rule. Leave BALANCES (accrued / remaining entitlement) are NOT
+        available anywhere in Albert - Deputy exposes only leave requested,
+        approved and taken - so say so rather than estimating one.
     sql: SELECT * FROM source_deputy.dp_leave
 
     joins:
+      - name: deputy_business
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_business}.tenant_id
       - name: deputy_employees
         relationship: many_to_one
         sql: >
@@ -592,10 +794,16 @@ cubes:
         leave, days of leave by type (sick, annual) in a period: filter
         leave_day to the period and status = 'Approved' (approved_* measures
         do that for you). leave_day is the business date. For request-level
-        detail (days requested, comments) use deputy_leave.
+        detail (days requested, comments) use deputy_leave. Leave BALANCES
+        (accrued / remaining entitlement) are NOT available - only leave
+        taken, requested and approved - so say so rather than estimating.
     sql: SELECT * FROM source_deputy.dp_leave_days
 
     joins:
+      - name: deputy_business
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {deputy_business}.tenant_id
       - name: deputy_employees
         relationship: many_to_one
         sql: >

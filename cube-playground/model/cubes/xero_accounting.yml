@@ -1432,8 +1432,9 @@ cubes:
         xero_profit_and_loss_analytics for income and expenses. Direction is
         fixed per row ('Cash in' / 'Cash out'); source_kind says whether the
         movement was a direct bank transaction or an invoice/bill payment.
-        Never add bank_* and payment_* members on top of these - they are
-        already combined here.
+        "Cash in/out and how many are unreconciled" is one query: add
+        unreconciled_count alongside cash_in / cash_out. Never add bank_* and
+        payment_* members on top of these - they are already combined here.
     sql: >
       SELECT bt.tenant_id,
              'bank:' || bt.row_key AS row_key,
@@ -1605,6 +1606,15 @@ cubes:
         format: currency
         title: Total movement value
         description: Unsigned total of the selected movements; use cash_in/cash_out for direction.
+      - name: unreconciled_count
+        type: count
+        title: Unreconciled cash movements
+        description: >
+          Bank transactions and payments in the selection not yet reconciled
+          against a bank statement line; ask it alongside cash_in / cash_out
+          for "how many are unreconciled".
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_reconciled, false)"
 
     segments:
       - name: cash_in_movements
@@ -2223,14 +2233,18 @@ cubes:
     title: Contacts (Xero customers and suppliers)
     public: false
     description: >
-      One row per Xero contact: customers and suppliers with their live AR/AP
-      balances (outstanding and overdue), payment terms and status.
+      One row per Xero contact: customers and suppliers with payment terms,
+      status and the AR/AP balance snapshot Xero stored when the contact
+      record was last edited (outstanding and overdue).
     meta:
       ai_context: >
-        The customer/supplier list. "Who owes me money", "top debtors" =
-        receivable_outstanding / receivable_overdue (is_customer = true).
-        "Who do I owe" = payable_outstanding / payable_overdue (is_supplier =
-        true). Balances are Xero's live totals at scrape time. Contact names
+        The customer/supplier list (names, email, terms, customer/supplier
+        flags). The *_outstanding / *_overdue values are snapshots taken at
+        the contact's last edit, not live balances: most contacts carry none
+        and the rest can be years stale, so never answer "who owes me" / "who
+        do I owe" from them. Those are one query on xero_invoices: segments
+        sales_invoices + outstanding (or bills + outstanding) grouped by
+        contact_name with total_amount_due and overdue_amount. Contact names
         here may differ from names in other tools (Deputy, Lightspeed); never
         join across tools by exact string.
     sql: SELECT * FROM source_xero_official.xo_contacts
@@ -2297,23 +2311,23 @@ cubes:
       - name: receivable_outstanding_value
         sql: receivable_outstanding
         type: number
-        title: Receivable outstanding
-        description: Current amount this contact owes, in default_currency.
+        title: Receivable outstanding (snapshot)
+        description: Snapshot at the contact's last edit of what this contact owed, in default_currency; not a live balance.
       - name: receivable_overdue_value
         sql: receivable_overdue
         type: number
-        title: Receivable overdue
-        description: Current overdue amount this contact owes, in default_currency.
+        title: Receivable overdue (snapshot)
+        description: Snapshot at the contact's last edit of the overdue amount this contact owed, in default_currency; not a live balance.
       - name: payable_outstanding_value
         sql: payable_outstanding
         type: number
-        title: Payable outstanding
-        description: Current amount owed to this contact, in default_currency.
+        title: Payable outstanding (snapshot)
+        description: Snapshot at the contact's last edit of what was owed to this contact, in default_currency; not a live balance.
       - name: payable_overdue_value
         sql: payable_overdue
         type: number
-        title: Payable overdue
-        description: Current overdue amount owed to this contact, in default_currency.
+        title: Payable overdue (snapshot)
+        description: Snapshot at the contact's last edit of the overdue amount owed to this contact, in default_currency; not a live balance.
       - name: sales_payment_terms_day
         sql: sales_payment_terms_day
         type: number
@@ -2355,30 +2369,32 @@ cubes:
         type: sum
         sql: receivable_outstanding
         format: currency
-        title: Total owed by customers
+        title: Total owed by customers (stale snapshot)
         description: >
-          Sum of Xero's current receivable snapshot. Valid only within one
-          contact default currency; Xero does not base-convert these balances.
+          Sum of the per-contact receivable snapshots taken at each contact's
+          last edit; not a live balance and not headline AR. Valid only within
+          one contact default currency.
       - name: total_receivable_overdue
         type: sum
         sql: receivable_overdue
         format: currency
-        title: Overdue owed by customers
-        description: Sum of overdue receivable snapshot amounts within one contact currency.
+        title: Overdue owed by customers (stale snapshot)
+        description: Sum of overdue receivable snapshots taken at each contact's last edit; not a live balance.
       - name: total_payable_outstanding
         type: sum
         sql: payable_outstanding
         format: currency
-        title: Total owed to suppliers
+        title: Total owed to suppliers (stale snapshot)
         description: >
-          Sum of Xero's current payable snapshot. Valid only within one contact
-          default currency; supplier credits may reduce this below bill totals.
+          Sum of the per-contact payable snapshots taken at each contact's last
+          edit; not a live balance and not headline AP. Valid only within one
+          contact default currency.
       - name: total_payable_overdue
         type: sum
         sql: payable_overdue
         format: currency
-        title: Overdue owed to suppliers
-        description: Sum of overdue payable snapshot amounts within one contact currency.
+        title: Overdue owed to suppliers (stale snapshot)
+        description: Sum of overdue payable snapshots taken at each contact's last edit; not a live balance.
     segments:
       - name: customers
         sql: "COALESCE({CUBE}.is_customer, false)"
@@ -2616,15 +2632,18 @@ cubes:
       Credit notes reverse their document direction.
     meta:
       ai_context: >
-        Source for GST collected vs GST paid and net GST over a period
-        (occurred_on), by tax_type, account or contact. IMPORTANT CAVEATS:
-        this is derived from document lines, not the BAS. GST paid on
-        purchases is reliable. GST collected is UNDERSTATED for this business
-        because register sales are posted via system journals that carry no
-        GST breakdown, so always disclose that GST collected here only covers
-        directly invoiced sales and the true BAS position comes from their
-        bookkeeper or Xero's GST return. The organisation's GST basis (cash
-        vs accruals) is on xero_organisation.
+        Document-line GST only: GST on invoice, bill, bank-transaction and
+        credit-note lines over occurred_on, by tax_type, account or contact.
+        It is NOT the BAS or GST position and must never be presented as one:
+        this organisation reports GST on a CASH basis and its register sales
+        are posted as BASEXCLUDED manual journals, so gst_collected here
+        covers only directly invoiced sales (tens of dollars a month against
+        ~$40k of sales). GST position = the balance sheet GST control
+        account (xero_balance_sheet_positions gst_balance at one as_at, the
+        latest for "now"); the change between two as_at dates is the GST
+        accrued over that span. gst_paid is document-dated input tax on bills
+        and spend money (indicative on a cash basis). The organisation's GST
+        basis is on xero_organisation.
     sql: SELECT * FROM source_xero_official.xo_gst_lines
     joins:
       - name: xero_organisation
@@ -2690,8 +2709,8 @@ cubes:
         sql: gst_collected
         type: sum
         format: currency
-        title: GST collected
-        description: GST charged on sales invoices and money received (understated when sales post via journals; disclose).
+        title: GST collected (invoice lines only)
+        description: GST on sales-invoice and receive-money lines only; excludes register sales posted as BASEXCLUDED journals, so it is not the GST collected for the BAS.
       - name: total_gst_paid
         sql: gst_paid
         type: sum
@@ -2702,5 +2721,5 @@ cubes:
         sql: net_gst
         type: sum
         format: currency
-        title: Net GST
-        description: GST collected minus GST paid across the selected lines.
+        title: Net GST (document lines only)
+        description: Document-line GST collected minus GST paid; not the BAS position (use the balance sheet GST control balance).

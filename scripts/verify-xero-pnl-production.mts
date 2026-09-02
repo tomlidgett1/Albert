@@ -106,8 +106,8 @@ export async function verifyXeroProfitAndLossProduction() {
       "xero_profit_and_loss_analytics.employer_super_expenses",
       "xero_profit_and_loss_analytics.gross_profit",
       "xero_profit_and_loss_analytics.net_profit",
-      "xero_profit_and_loss_analytics.net_profit_reconciliation_variance",
-      "xero_profit_and_loss_analytics.gross_profit_reconciliation_variance",
+      "xero_profit_and_loss_analytics.net_profit_variance",
+      "xero_profit_and_loss_analytics.gross_profit_variance",
     ],
     dimensions: ["xero_profit_and_loss_analytics.currency"],
     timeDimensions: [{
@@ -126,8 +126,8 @@ export async function verifyXeroProfitAndLossProduction() {
   const wages = numberAt(headline, "xero_profit_and_loss_analytics.wage_expenses");
   const superannuation = numberAt(headline, "xero_profit_and_loss_analytics.employer_super_expenses");
   const netProfit = numberAt(headline, "xero_profit_and_loss_analytics.net_profit");
-  const netVariance = numberAt(headline, "xero_profit_and_loss_analytics.net_profit_reconciliation_variance");
-  const grossVariance = numberAt(headline, "xero_profit_and_loss_analytics.gross_profit_reconciliation_variance");
+  const netVariance = numberAt(headline, "xero_profit_and_loss_analytics.net_profit_variance");
+  const grossVariance = numberAt(headline, "xero_profit_and_loss_analytics.gross_profit_variance");
   assert.ok(periods > 0, "current FY has no Xero report periods");
   assert.ok(wages > 0, "current FY mapped wages are absent or zero");
   assert.ok(withinCent(netProfit, income - expenses), "Net Profit does not equal total income minus total expenses");

@@ -2,28 +2,41 @@ views:
   - name: xero_payroll_analytics
     title: Payroll analytics (Xero)
     description: >
-      The AU payroll surface, powered by Xero: per-employee payslips (wages,
-      PAYG tax, super, deductions, net pay), pay run totals per cycle,
-      payroll timesheets with daily hours by earnings rate, standard pay
-      templates (salaries and rates), super fund memberships and the payroll
-      employee list. Unprefixed members are payslip grain (one employee per
-      pay run); pay_run_*, timesheet_*, daily_* and template_* members are
-      their own grains.
+      The AU payroll surface, powered by Xero: pay run totals per cycle
+      (wages, PAYG tax, super, deductions, net pay), per-employee payslips
+      where the connection lands them, payroll timesheets with daily hours by
+      earnings rate, standard pay templates (salaries and rates), super fund
+      memberships and the payroll employee list. Unprefixed members are
+      payslip grain (one employee per pay run); pay_run_*, timesheet_*,
+      daily_* and template_* members are their own grains.
     meta:
       ai_context: >
-        Use this view for payroll detail: "how much did X earn", wages by
-        employee, PAYG withheld, super accrued in the pay run, net pay, the
-        wages-plus-super approximation per pay cycle, salaries and hourly rates, payroll hours by day
-        or earnings rate, and super funds. paid_on is the business date for
-        payslips; filter pay_run_status = 'POSTED' for finalised pay.
-        pay_run_payroll_cost is ONLY gross wages + employer super. It excludes
-        payroll tax, workers compensation, benefits and other on-costs; PAYG
-        withheld is an employee liability, not extra employer cost.
-        Operational rostered/worked hours and shift-level wage
-        cost live in workforce_analytics (Deputy); this view is what payroll
-        actually paid. Tax File Numbers and bank details are never available.
-        The same people may appear in Deputy or Lightspeed under slightly
-        different names: match per tool, never join across tools by string.
+        Use this view for payroll totals per pay cycle, payroll hours,
+        standard pay setup (salaries and rates), super funds and the payroll
+        employee list. AVAILABILITY ON THIS CONNECTION: per-employee pay is
+        NOT available - the payslip grain (unprefixed total_wages, total_tax,
+        total_super, total_net_pay, avg_net_pay, paid_employee) has no rows,
+        so "how much did X earn", "wages by employee" and "highest paid staff"
+        must be answered as unavailable, never as $0 (a connector fix is
+        pending). Pay-run totals ARE available: pay_run_wages, pay_run_tax
+        (PAYG withheld), pay_run_super, pay_run_net_pay and
+        pay_run_payroll_cost (gross wages + employer super per cycle) over
+        pay_run_paid_on with the posted_pay_runs segment (485 posted runs
+        since May 2018 on this connection). Leave balances, accrued leave and
+        leave liability are NOT available (only the leave-type catalogue is).
+        Salaries and hourly rates (annual_salary, template_rate_per_unit) and
+        payroll timesheet hours are available. "WHAT DID I SPEND ON WAGES":
+        the accounting answer is xero_profit_and_loss_analytics wage_expenses
+        + employer_super_expenses (the posted P&L cost); pay_run_payroll_cost
+        here is what payroll paid per cycle (gross wages + super only - no
+        payroll tax, workers compensation or other on-costs); Deputy
+        workforce_analytics wage_cost is the operational roster estimate
+        (costed shifts only, no on-costs). Always name which basis you used
+        and never add or mix them. PAYG withheld is an employee liability, not
+        extra employer cost. Tax File Numbers and bank details are never
+        available. The same people may appear in Deputy or Lightspeed under
+        slightly different names: match per tool, never join across tools by
+        string.
 
     cubes:
       # xero_organisation owns the view's tenant_id: one row per tenant, and

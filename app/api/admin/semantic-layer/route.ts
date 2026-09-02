@@ -6,6 +6,7 @@ import { ControlPlaneError } from "@/services/control-plane/src/web-repository";
 import cashManagementCubes from "@/cube-playground/model/cubes/cash_management.yml?raw";
 import customersCubes from "@/cube-playground/model/cubes/customers.yml?raw";
 import deputyWorkforceCubes from "@/cube-playground/model/cubes/deputy_workforce.yml?raw";
+import deputyEfficiencyCubes from "@/cube-playground/model/cubes/deputy_efficiency.yml?raw";
 import inventoryCubes from "@/cube-playground/model/cubes/inventory.yml?raw";
 import lightspeedXCommerceCubes from "@/cube-playground/model/cubes/lightspeed_x_commerce.yml?raw";
 import lightspeedXCustomersCubes from "@/cube-playground/model/cubes/lightspeed_x_customers.yml?raw";
@@ -127,6 +128,7 @@ const MODEL_SOURCES = Object.freeze([
   { kind: "cube", path: "cube-playground/model/cubes/cash_management.yml", raw: cashManagementCubes },
   { kind: "cube", path: "cube-playground/model/cubes/customers.yml", raw: customersCubes },
   { kind: "cube", path: "cube-playground/model/cubes/deputy_workforce.yml", raw: deputyWorkforceCubes },
+  { kind: "cube", path: "cube-playground/model/cubes/deputy_efficiency.yml", raw: deputyEfficiencyCubes },
   { kind: "cube", path: "cube-playground/model/cubes/inventory.yml", raw: inventoryCubes },
   { kind: "cube", path: "cube-playground/model/cubes/lightspeed_x_commerce.yml", raw: lightspeedXCommerceCubes },
   { kind: "cube", path: "cube-playground/model/cubes/lightspeed_x_customers.yml", raw: lightspeedXCustomersCubes },
