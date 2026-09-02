@@ -14,6 +14,20 @@ cubes:
   # time zone, which cube.js pins to the business zone (storeTimezone =
   # ALBERT_CUBE_SESSION_TIMEZONE, ADR 0107). The SQL makes that explicit with
   # AT TIME ZONE current_setting('TimeZone') rather than hard-coding a zone.
+  #
+  # TENANT SCOPING: source_deputy.dp_* and source_lightspeed_official.ls_*
+  # are views whose own WHERE clause pins the tenant through
+  # ingestion.current_tenant_id() (resolved as the view owner). Cube's role
+  # (semantic_ro) has no USAGE on the ingestion schema and its session carries
+  # only the capability token (albert.tenant_id is never set there), so cube
+  # SQL must NOT call ingestion.* or read that GUC itself: read the pinned
+  # views and let the view-level tenant filter (deputy_business) do the rest.
+  #
+  # DATA HORIZON: Deputy timesheets land through a daily sync, one to two
+  # days behind rosters. Both cubes compute the tenant's latest worked
+  # timesheet day once (timesheet_data_horizon); rosters after it are
+  # 'not yet synced', never 'no-show', and the daily bridge carries NULL
+  # labour (labour_data_complete = false) for those days.
   # ---------------------------------------------------------------------------
 
   - name: deputy_shift_reconciliation
@@ -21,18 +35,24 @@ cubes:
     public: false
     description: >
       One row per rostered shift or unrostered worked timesheet: Deputy
-      rosters FULL OUTER JOINed to worked timesheets on the timesheet's
-      roster_id (leave-generated timesheets excluded; several timesheets on
-      one roster are summed into that roster's row). Each row carries the
-      scheduled and actual hours and cost, the lateness in minutes and an
-      attendance_status: 'as rostered', 'late' (clocked on more than 5
-      minutes after the rostered start), 'no-show' (an assigned past shift
-      with no timesheet), 'unfilled' (a past shift nobody was assigned to and
-      nobody worked), 'unrostered' (a worked timesheet with no roster),
-      'no clock-on yet' (the rostered span covers now and no timesheet has
-      landed), 'upcoming' (rostered start still ahead) or 'matched to
-      another day' (Deputy linked the timesheet to a roster more than 12
-      hours away - a matching quirk, not lateness).
+      rosters FULL OUTER JOINed to worked timesheets (leave-generated
+      timesheets excluded). A timesheet links to the roster it names
+      (roster_id) or, when it names none, to the roster whose Deputy
+      matched_timesheet_id names it; several timesheets on one roster are
+      summed into that roster's row, and a linked timesheet counts for its
+      roster even when it was worked on another date. Each row carries the
+      scheduled and actual hours and cost, the lateness in minutes, the
+      tenant's timesheet data horizon (latest day with any worked timesheet)
+      and an attendance_status: 'as rostered', 'late' (clocked on more than
+      5 minutes after the rostered start), 'no-show' (an assigned past shift
+      on or before the horizon with no timesheet), 'not yet synced' (an
+      assigned past shift after the horizon - the timesheet has not landed),
+      'unfilled' (a past shift nobody was assigned to and nobody worked),
+      'unrostered' (a worked timesheet with no roster), 'no clock-on yet'
+      (the rostered span covers now and no timesheet has landed), 'upcoming'
+      (rostered start still ahead) or 'matched to another day' (Deputy
+      linked the timesheet to a roster more than 12 hours away - a matching
+      quirk, not lateness).
     meta:
       ai_context: >
         The only grain that holds rosters AND timesheets: rostered vs actual
@@ -42,7 +62,9 @@ cubes:
         measures instead. Grain is per shift, so rostered_hours and
         worked_hours here reconcile to the roster and timesheet cubes for
         the same dates. shift_date is the business date (the rostered date,
-        or the worked date for unrostered timesheets); group by
+        or the worked date for unrostered timesheets) and is the time
+        dimension to filter on; a linked timesheet's hours sit on its
+        roster's date even when worked on another day. Group by
         employee_name, unit_name, attendance_status or shift_date. "Who was
         late / didn't show last week" = attendance_status = 'late' /
         'no-show' with employee_name, shift_date and late_minutes. 'matched
@@ -50,34 +72,60 @@ cubes:
         different date) still carry both hours but are neither late nor
         as rostered - mention them as a roster/timesheet mismatch. Costs are
         Deputy's pay-rate estimates (costed shifts only, no super or
-        on-costs). FRESHNESS: timesheets land through a daily sync, so a
-        shift in the last 1-2 days can read as 'no-show' until its timesheet
-        arrives - say so for recent no-shows. LINK QUALITY: rosters and
-        timesheets are linked reliably from 2024 (90%+ of rosters carry a
-        timesheet link each quarter); earlier years hold many unlinked
+        on-costs). DATA HORIZON: timesheets land through a daily sync, one
+        to two days behind rosters. timesheet_data_horizon is the latest day
+        with a worked timesheet; rostered shifts after it read 'not yet
+        synced' (not_yet_synced_count), never 'no-show'. Whenever you report
+        no-shows, unworked rostered hours or a worked-vs-rostered shortfall,
+        select timesheet_data_horizon in the same query and state it ("no
+        timesheet data after <date> yet"), because rostered hours after the
+        horizon have no actual hours to compare with. LINK QUALITY: rosters
+        and timesheets are linked reliably from 2024 (90%+ of rosters carry
+        a timesheet link each quarter); earlier years hold many unlinked
         timesheets, so no-show and unrostered figures before 2024 are data
         gaps, not attendance evidence.
     sql: >
       WITH rostered AS (
         SELECT r.tenant_id, r.roster_id, NULLIF(r.employee_id, 0) AS employee_id, r.employee_name,
+               NULLIF(r.matched_timesheet_id, 0) AS matched_timesheet_id,
                (r.shift_date)::timestamptz AS shift_date,
                (r.starts_at)::timestamptz AS starts_at,
                (r.ends_at)::timestamptz AS ends_at,
                r.scheduled_hours, r.scheduled_cost, r.published, r.open_shift,
                r.operational_unit_id, r.unit_name, r.company_name
         FROM source_deputy.dp_rosters r
-      ), worked AS (
-        SELECT t.tenant_id, NULLIF(t.roster_id, 0) AS roster_id,
-               MIN(t.timesheet_id) AS timesheet_id, COUNT(*) AS timesheet_count,
-               MIN(t.employee_id) AS employee_id, MIN(t.employee_name) AS employee_name,
-               MIN(t.shift_date) AS shift_date, MIN(t.started_at) AS started_at, MAX(t.ended_at) AS ended_at,
-               SUM(t.paid_hours) AS paid_hours, SUM(t.wage_cost) AS wage_cost,
-               BOOL_OR(COALESCE(t.in_progress, false)) AS in_progress,
-               BOOL_AND(COALESCE(t.time_approved, false)) AS time_approved,
-               MIN(t.operational_unit_id) AS operational_unit_id, MIN(t.unit_name) AS unit_name, MIN(t.company_name) AS company_name
+      ), timesheets AS (
+        SELECT t.tenant_id, t.timesheet_id, NULLIF(t.roster_id, 0) AS roster_id,
+               t.employee_id, t.employee_name, t.shift_date, t.started_at, t.ended_at,
+               t.paid_hours, t.wage_cost, t.in_progress, t.time_approved,
+               t.operational_unit_id, t.unit_name, t.company_name
         FROM source_deputy.dp_timesheets t
         WHERE NOT COALESCE(t.is_leave, false)
-        GROUP BY t.tenant_id, NULLIF(t.roster_id, 0), CASE WHEN NULLIF(t.roster_id, 0) IS NULL THEN t.timesheet_id END
+      ), horizon AS (
+        SELECT tenant_id, MAX(shift_date) AS latest_timesheet_date
+        FROM timesheets
+        GROUP BY tenant_id
+      ), linked AS (
+        SELECT ts.tenant_id, ts.timesheet_id,
+               COALESCE(own.roster_id, MIN(back.roster_id)) AS roster_id
+        FROM timesheets ts
+        LEFT JOIN rostered own
+          ON own.tenant_id = ts.tenant_id AND own.roster_id = ts.roster_id
+        LEFT JOIN rostered back
+          ON back.tenant_id = ts.tenant_id AND back.matched_timesheet_id = ts.timesheet_id AND own.roster_id IS NULL
+        GROUP BY ts.tenant_id, ts.timesheet_id, own.roster_id
+      ), worked AS (
+        SELECT ts.tenant_id, l.roster_id,
+               MIN(ts.timesheet_id) AS timesheet_id, COUNT(*) AS timesheet_count,
+               MIN(ts.employee_id) AS employee_id, MIN(ts.employee_name) AS employee_name,
+               MIN(ts.shift_date) AS shift_date, MIN(ts.started_at) AS started_at, MAX(ts.ended_at) AS ended_at,
+               SUM(ts.paid_hours) AS paid_hours, SUM(ts.wage_cost) AS wage_cost,
+               BOOL_OR(COALESCE(ts.in_progress, false)) AS in_progress,
+               BOOL_AND(COALESCE(ts.time_approved, false)) AS time_approved,
+               MIN(ts.operational_unit_id) AS operational_unit_id, MIN(ts.unit_name) AS unit_name, MIN(ts.company_name) AS company_name
+        FROM timesheets ts
+        JOIN linked l ON l.tenant_id = ts.tenant_id AND l.timesheet_id = ts.timesheet_id
+        GROUP BY ts.tenant_id, l.roster_id, CASE WHEN l.roster_id IS NULL THEN ts.timesheet_id END
       )
       SELECT COALESCE(r.tenant_id, w.tenant_id) || ':' || COALESCE('roster:' || r.roster_id::text, 'timesheet:' || w.timesheet_id::text) AS row_key,
              COALESCE(r.tenant_id, w.tenant_id) AS tenant_id,
@@ -101,6 +149,7 @@ cubes:
              COALESCE(r.published, false) AS published,
              COALESCE(r.open_shift, false) AS open_shift,
              COALESCE(w.in_progress, false) AS in_progress,
+             h.latest_timesheet_date AS timesheet_data_horizon,
              CASE WHEN r.roster_id IS NOT NULL AND w.timesheet_id IS NOT NULL
                   THEN ROUND((EXTRACT(EPOCH FROM (w.started_at - r.starts_at)) / 60.0)::numeric, 1) END AS late_minutes,
              CASE
@@ -114,11 +163,15 @@ cubes:
                WHEN r.starts_at > NOW() THEN 'upcoming'
                WHEN COALESCE(r.ends_at, r.starts_at + interval '12 hours') >= NOW() THEN 'no clock-on yet'
                WHEN r.employee_id IS NULL OR COALESCE(r.open_shift, false) THEN 'unfilled'
+               WHEN h.latest_timesheet_date IS NULL
+                 OR (r.shift_date AT TIME ZONE current_setting('TimeZone'))::date > (h.latest_timesheet_date AT TIME ZONE current_setting('TimeZone'))::date THEN 'not yet synced'
                ELSE 'no-show'
              END AS attendance_status
       FROM rostered r
       FULL OUTER JOIN worked w
         ON w.tenant_id = r.tenant_id AND w.roster_id = r.roster_id
+      LEFT JOIN horizon h
+        ON h.tenant_id = COALESCE(r.tenant_id, w.tenant_id)
 
     joins:
       - name: deputy_business
@@ -162,7 +215,17 @@ cubes:
         sql: shift_date
         type: time
         title: Shift date
-        description: Business date of the shift - the rostered date, or the worked date for unrostered timesheets.
+        description: Business date of the shift - the rostered date (also for a linked timesheet worked on another day), or the worked date for unrostered timesheets.
+      - name: timesheet_data_horizon
+        sql: timesheet_data_horizon
+        type: time
+        title: Timesheet data horizon
+        description: The latest day with a worked Deputy timesheet for this business (same value on every row). Rostered shifts after it are 'not yet synced'.
+        meta:
+          ai_context: >
+            Select this alongside any no-show or unworked-hours figure and
+            state it: rostered shifts after this day have no timesheet data
+            yet, so they are not no-shows and their hours are not shortfalls.
       - name: rostered_starts_at
         sql: rostered_starts_at
         type: time
@@ -188,18 +251,20 @@ cubes:
         type: string
         title: Attendance status
         description: >
-          'as rostered', 'late', 'no-show', 'unfilled', 'unrostered',
-          'no clock-on yet', 'upcoming' or 'matched to another day' (see the
-          cube description for the exact rules; late means clocking on more
-          than 5 minutes after the rostered start).
+          'as rostered', 'late', 'no-show', 'not yet synced', 'unfilled',
+          'unrostered', 'no clock-on yet', 'upcoming' or 'matched to another
+          day' (see the cube description for the exact rules; late means
+          clocking on more than 5 minutes after the rostered start).
         meta:
           ai_context: >
             Filter with equals on these lower-case values. 'no-show' is an
-            assigned person's past shift with no timesheet; 'unfilled' is a
-            past shift nobody was assigned to; 'no clock-on yet' is a shift
-            underway right now with no timesheet landed; 'matched to
-            another day' is a timesheet Deputy linked to a roster on a
-            different date (report as a mismatch, not lateness).
+            assigned person's past shift, on or before the timesheet data
+            horizon, with no timesheet; 'not yet synced' is the same after
+            the horizon (timesheet not landed yet - not a no-show);
+            'unfilled' is a past shift nobody was assigned to; 'no clock-on
+            yet' is a shift underway right now with no timesheet landed;
+            'matched to another day' is a timesheet Deputy linked to a
+            roster on a different date (report as a mismatch, not lateness).
       - name: late_minutes
         sql: late_minutes
         type: number
@@ -250,24 +315,24 @@ cubes:
       - name: worked_shift_count
         type: count
         title: Worked shifts
-        description: Rows that have a worked timesheet ('as rostered', 'late' or 'unrostered').
+        description: Rows that have a worked timesheet ('as rostered', 'late', 'matched to another day' or 'unrostered').
         filters:
           - sql: "{CUBE}.timesheet_id IS NOT NULL"
       - name: rostered_hours
         type: sum
         sql: rostered_hours
         title: Rostered hours
-        description: Scheduled hours on the rostered shifts in the selection (0 for unrostered timesheets).
+        description: Scheduled hours on the rostered shifts in the selection (0 for unrostered timesheets). Includes shifts after the timesheet data horizon.
       - name: worked_hours
         type: sum
         sql: worked_hours
         title: Worked hours
-        description: Paid hours actually worked on the same shifts (0 for no-shows, unfilled and upcoming shifts).
+        description: Paid hours actually worked on the same shifts (0 for no-show, not-yet-synced, unfilled and upcoming shifts).
       - name: hours_variance
         type: number
         sql: "{worked_hours} - {rostered_hours}"
         title: Hours variance (worked minus rostered)
-        description: Worked hours minus rostered hours; negative means less was worked than scheduled.
+        description: Worked hours minus rostered hours; negative means less was worked than scheduled (or the timesheets have not landed - check timesheet_data_horizon).
       - name: rostered_cost
         type: sum
         sql: rostered_cost
@@ -301,9 +366,15 @@ cubes:
       - name: no_show_count
         type: count
         title: No-shows
-        description: Assigned rostered shifts in the past with no timesheet at all.
+        description: Assigned rostered shifts on or before the timesheet data horizon with no timesheet at all.
         filters:
           - sql: "{CUBE}.attendance_status = 'no-show'"
+      - name: not_yet_synced_count
+        type: count
+        title: Shifts awaiting timesheet sync
+        description: Assigned past rostered shifts after the timesheet data horizon - their timesheets have not landed yet, so they are neither worked nor no-shows.
+        filters:
+          - sql: "{CUBE}.attendance_status = 'not yet synced'"
       - name: unfilled_count
         type: count
         title: Unfilled shifts
@@ -334,7 +405,10 @@ cubes:
       aggregated independently to the day and FULL OUTER JOINed, so
       labour-to-sales ratios are safe in one query. Both sides bucket by the
       business time zone; the tenant has one workplace and one shop, so no
-      location split is modelled.
+      location split is modelled. Days after the timesheet data horizon
+      (the latest day with a worked timesheet) carry NULL labour and
+      labour_data_complete = false, because their timesheets have not
+      landed yet.
     meta:
       ai_context: >
         Use for labour cost as a percentage of sales, sales per labour hour
@@ -347,8 +421,13 @@ cubes:
         Wage cost is Deputy's pay-rate estimate for worked, costed shifts
         (no super or on-costs; uncosted shifts add hours but $0), so the
         percentage understates the true wage bill, which lives in Xero.
-        Sales here are whole-business per day; sales per staff member are
-        not here (sales_analytics).
+        DATA HORIZON: timesheets land one to two days behind sales. Days
+        after timesheet_data_horizon have sales but NULL labour
+        (labour_data_complete = false): a ratio for a period that runs past
+        the horizon covers only the days with timesheets - select
+        timesheet_data_horizon and say so, or filter labour_data_complete =
+        true. Sales here are whole-business per day; sales per staff member
+        are not here (sales_analytics).
     sql: >
       WITH sales_rows AS (
         SELECT s.tenant_id,
@@ -356,8 +435,7 @@ cubes:
                s.calc_total,
                s.calc_total - COALESCE(s.calc_tax1, 0) - COALESCE(s.calc_tax2, 0) AS net_ex_tax
         FROM source_lightspeed_official.ls_sales s
-        WHERE s.tenant_id = (SELECT ingestion.current_tenant_id())
-          AND NOT COALESCE(s.tombstone, false)
+        WHERE NOT COALESCE(s.tombstone, false)
           AND s.completed = true
           AND COALESCE(s.voided, false) = false
           AND s.complete_time IS NOT NULL
@@ -382,20 +460,34 @@ cubes:
                SUM(wage_cost) AS wage_cost
         FROM labour_rows
         GROUP BY tenant_id, business_date
+      ), horizon AS (
+        SELECT tenant_id, MAX(business_date) AS horizon_date
+        FROM labour_rows
+        GROUP BY tenant_id
+      ), days AS (
+        SELECT COALESCE(s.tenant_id, l.tenant_id) AS tenant_id,
+               COALESCE(s.business_date, l.business_date) AS business_date,
+               s.transaction_count, s.gross_takings, s.net_sales_ex_tax,
+               l.worked_shift_count, l.hours_worked, l.costed_hours, l.wage_cost
+        FROM sales_by_day s
+        FULL OUTER JOIN labour_by_day l
+          ON l.tenant_id = s.tenant_id AND l.business_date = s.business_date
       )
-      SELECT COALESCE(s.tenant_id, l.tenant_id) || ':' || COALESCE(s.business_date, l.business_date)::text AS row_key,
-             COALESCE(s.tenant_id, l.tenant_id) AS tenant_id,
-             COALESCE(s.business_date, l.business_date) AS business_date,
-             COALESCE(s.transaction_count, 0) AS transaction_count,
-             COALESCE(s.gross_takings, 0) AS gross_takings,
-             COALESCE(s.net_sales_ex_tax, 0) AS net_sales_ex_tax,
-             COALESCE(l.worked_shift_count, 0) AS worked_shift_count,
-             COALESCE(l.hours_worked, 0) AS hours_worked,
-             COALESCE(l.costed_hours, 0) AS costed_hours,
-             COALESCE(l.wage_cost, 0) AS wage_cost
-      FROM sales_by_day s
-      FULL OUTER JOIN labour_by_day l
-        ON l.tenant_id = s.tenant_id AND l.business_date = s.business_date
+      SELECT d.tenant_id || ':' || d.business_date::text AS row_key,
+             d.tenant_id,
+             d.business_date,
+             COALESCE(d.transaction_count, 0) AS transaction_count,
+             COALESCE(d.gross_takings, 0) AS gross_takings,
+             COALESCE(d.net_sales_ex_tax, 0) AS net_sales_ex_tax,
+             h.horizon_date AS timesheet_data_horizon,
+             (h.horizon_date IS NOT NULL AND d.business_date <= h.horizon_date) AS labour_data_complete,
+             CASE WHEN h.horizon_date IS NOT NULL AND d.business_date <= h.horizon_date THEN COALESCE(d.worked_shift_count, 0) END AS worked_shift_count,
+             CASE WHEN h.horizon_date IS NOT NULL AND d.business_date <= h.horizon_date THEN COALESCE(d.hours_worked, 0) END AS hours_worked,
+             CASE WHEN h.horizon_date IS NOT NULL AND d.business_date <= h.horizon_date THEN COALESCE(d.costed_hours, 0) END AS costed_hours,
+             CASE WHEN h.horizon_date IS NOT NULL AND d.business_date <= h.horizon_date THEN COALESCE(d.wage_cost, 0) END AS wage_cost
+      FROM days d
+      LEFT JOIN horizon h
+        ON h.tenant_id = d.tenant_id
 
     joins:
       - name: deputy_business
@@ -418,6 +510,21 @@ cubes:
         type: time
         title: Business date
         description: Local calendar day the sales were completed and the shifts were worked.
+      - name: timesheet_data_horizon
+        sql: timesheet_data_horizon
+        type: time
+        title: Timesheet data horizon
+        description: The latest day with a worked Deputy timesheet (same value on every row). Days after it have sales but no labour data yet.
+        meta:
+          ai_context: >
+            Select and state this whenever the requested period extends
+            past it: labour figures and ratios only cover days up to the
+            horizon.
+      - name: labour_data_complete
+        sql: labour_data_complete
+        type: boolean
+        title: Labour data complete
+        description: True for days on or before the timesheet data horizon; false for days whose timesheets have not landed yet (labour columns are NULL there).
       - name: weekday
         sql: "to_char({CUBE}.business_date, 'FMDay')"
         type: string
@@ -451,24 +558,24 @@ cubes:
         type: sum
         sql: hours_worked
         title: Hours worked
-        description: Paid hours on worked Deputy timesheets that day (leave excluded).
+        description: Paid hours on worked Deputy timesheets that day (leave excluded). NULL after the timesheet data horizon.
       - name: costed_hours
         type: sum
         sql: costed_hours
         title: Costed hours
-        description: Worked hours on timesheets that carry a wage cost.
+        description: Worked hours on timesheets that carry a wage cost. NULL after the timesheet data horizon.
       - name: wage_cost
         type: sum
         sql: wage_cost
         format: currency
         title: Wage cost
-        description: Deputy wage cost of the worked timesheets that day (costed shifts only, no super or on-costs).
+        description: Deputy wage cost of the worked timesheets that day (costed shifts only, no super or on-costs). NULL after the timesheet data horizon.
       - name: labour_cost_pct
         type: number
         sql: "100.0 * {wage_cost} / NULLIF({net_sales_ex_tax}, 0)"
         format: percent
         title: Labour cost % of net sales (ex tax)
-        description: Wage cost as a percentage of ex-tax net sales over the selected period.
+        description: Wage cost as a percentage of ex-tax net sales over the selected period (days after the timesheet data horizon contribute sales but no labour).
       - name: labour_cost_pct_of_takings
         type: number
         sql: "100.0 * {wage_cost} / NULLIF({gross_takings}, 0)"

@@ -40,10 +40,17 @@ views:
         'late' / 'no-show' with shift_staff, shift_business_date and
         shift_late_minutes; 'matched to another day' means Deputy linked
         the timesheet to a roster on a different date (a mismatch, not
-        lateness). Timesheets arrive through a daily sync, so a no-show in
-        the last 1-2 days may simply not have landed yet - say so. Roster
-        and timesheet links are reliable from 2024; before that, no-show /
-        unrostered counts are data gaps, not attendance evidence.
+        lateness). DATA HORIZON: timesheets land one to two days behind
+        rosters. shift_timesheet_horizon is the latest day with a worked
+        timesheet; rostered shifts after it are 'not yet synced'
+        (shift_not_yet_synced_count), never no-shows. Whenever you report
+        no-shows, unworked rostered hours or a worked-vs-rostered shortfall,
+        select shift_timesheet_horizon in the same query and state it ("no
+        timesheet data after <date> yet") - rostered hours after that day
+        have nothing to compare with. A linked timesheet's hours sit on its
+        roster's shift_business_date even when worked on another day.
+        Roster and timesheet links are reliable from 2024; before that,
+        no-show / unrostered counts are data gaps, not attendance evidence.
         WAGE COST BASIS: Deputy wage cost (wage_cost, rostered_cost,
         shift_actual_cost, labour_sales_wage_cost) is the operational
         roster/timesheet estimate: costed shifts only at contract pay rates,
@@ -67,7 +74,11 @@ views:
         period totals, never averages of daily percentages;
         labour_sales_labour_cost_pct is against ex-GST net sales and
         labour_sales_labour_cost_pct_of_takings against tax-inclusive
-        takings - say which. Sales per staff member are NOT here: they live
+        takings - say which. Days after labour_sales_timesheet_horizon have
+        sales but no labour yet (labour_sales_labour_data_complete = false):
+        when the period runs past the horizon, state it or filter
+        labour_sales_labour_data_complete = true. Sales per staff member are
+        NOT here: they live
         in sales_analytics (Lightspeed); query both views separately and
         match people by name per view (spellings can differ between the two
         systems: use explore_entities on each).
@@ -209,6 +220,8 @@ views:
         includes:
           - name: shift_date
             alias: shift_business_date
+          - name: timesheet_data_horizon
+            alias: shift_timesheet_horizon
           - name: employee_name
             alias: shift_staff
           - name: attendance_status
@@ -256,6 +269,8 @@ views:
             alias: shift_late_count
           - name: no_show_count
             alias: shift_no_show_count
+          - name: not_yet_synced_count
+            alias: shift_not_yet_synced_count
           - name: unfilled_count
             alias: shift_unfilled_count
           - name: unrostered_count
@@ -269,6 +284,10 @@ views:
         includes:
           - name: business_date
             alias: labour_sales_date
+          - name: timesheet_data_horizon
+            alias: labour_sales_timesheet_horizon
+          - name: labour_data_complete
+            alias: labour_sales_labour_data_complete
           - name: weekday
             alias: labour_sales_weekday
           - name: weekday_number
@@ -402,6 +421,7 @@ views:
       - name: Roster vs actual (shift reconciliation)
         includes:
           - shift_business_date
+          - shift_timesheet_horizon
           - shift_staff
           - shift_attendance_status
           - shift_late_minutes
@@ -426,12 +446,15 @@ views:
           - shift_as_rostered_count
           - shift_late_count
           - shift_no_show_count
+          - shift_not_yet_synced_count
           - shift_unfilled_count
           - shift_unrostered_count
           - shift_avg_late_minutes
       - name: Labour to sales (Lightspeed, daily)
         includes:
           - labour_sales_date
+          - labour_sales_timesheet_horizon
+          - labour_sales_labour_data_complete
           - labour_sales_weekday
           - labour_sales_weekday_number
           - labour_sales_transactions

@@ -534,7 +534,7 @@ cubes:
         meta:
           ai_context: >
             Not a layaway or deposit count and not money owed: for layaways in
-            progress use open_layaways and layaway_balance.
+            progress use open_layaways and layaway_balance. Open layaways older than a year are almost certainly abandoned tickets that were never closed: when listing open layaways, include created_at, say how old they are, and treat anything older than 365 days as stale unless the owner says otherwise.
         filters:
           - sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false"
       - name: outstanding_balance

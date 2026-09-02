@@ -578,7 +578,7 @@ cubes:
         sql: is_latest
         type: boolean
         title: Latest snapshot
-        description: True only for the newest as_at date landed - the current position as of the last refresh.
+        description: True only for the newest as_at date landed - the current position as of the last refresh. The newest snapshot can be the current month's partial position (an as_at at month end that has only month-to-date postings); say which as_at date you are reporting.
 
     measures:
       - name: statement_dates
@@ -842,7 +842,7 @@ cubes:
         sql: is_latest
         type: boolean
         title: Latest snapshot
-        description: True only for lines of the newest as_at date landed.
+        description: True only for lines of the newest as_at date landed, which may be the current month's partial position; say which as_at date you are reporting.
 
     measures:
       - name: line_count
@@ -953,7 +953,7 @@ cubes:
         sql: is_latest
         type: boolean
         title: Latest month
-        description: True only for rows of the newest month landed - the current balance in Xero.
+        description: True only for rows of the newest month landed - the current balance in Xero, which for the current month is month-to-date; say which month you are reporting.
       - name: row_title
         sql: row_title
         type: string
@@ -1137,7 +1137,7 @@ cubes:
         sql: is_latest
         type: boolean
         title: Latest snapshot
-        description: True only for lines of the newest as_at date landed.
+        description: True only for lines of the newest as_at date landed, which may be the current month's partial position; say which as_at date you are reporting.
 
     measures:
       - name: line_count
