@@ -106,6 +106,7 @@ def _update(configuration: dict, state: dict):
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "groups": summary.get("groups"),
         "fan_outs": summary.get("fan_outs"),
+        "chains": summary.get("chains"),
         "rows": summary.get("rows"),
         "calls": summary.get("calls"),
         "skipped_in_cooldown": summary.get("skipped_in_cooldown"),

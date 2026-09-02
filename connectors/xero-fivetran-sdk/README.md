@@ -36,7 +36,7 @@ Disconnect deletes the Fivetran connection and disconnects the native grant
 | `connector.py` | SDK entry point: `schema()` + `update()` |
 | `xero_spec.py` | **Generated** from `connectors/xero/tables.json` (scan groups, fan-outs, per-API transport profiles, columns). Regenerate: `npx tsx scripts/generate-fivetran-xero-sdk-spec.ts` |
 | `xero_projection.py` | Port of `connectors/xero/spec-sync.ts` projection (column citations → fields, row identity, tombstones) |
-| `xero_sync.py` | Walks: pagination, `order=` + immutable `where <scan start>`, `If-Modified-Since` watermarks in Fivetran `state`, fan-outs (payslip/employee detail, budgets, projects…), typed emit |
+| `xero_sync.py` | Walks: pagination, `order=` + immutable `where <scan start>`, `If-Modified-Since` watermarks in Fivetran `state`, fan-outs (employee detail, budgets, projects…), parent-detail chains (`PARENT_DETAIL_CHAINS`: pay run detail → PayslipSummary rows → payslip detail), typed emit |
 | `xero_reports.py` | Reports API → line tables |
 | `xero_client.py` | HTTP client: token broker, 60/min pacing, 429/5xx retries, daily-limit stop |
 | `tests/` | `test_projection.py` (parity with the TypeScript engine on the sanitized recording), `test_sync_e2e.py` (mock Xero end-to-end), `mock_xero_server.py` for `fivetran debug` |
@@ -71,3 +71,20 @@ checkpoints and ends cleanly (Fivetran resumes next schedule). Incremental syncs
 are `If-Modified-Since` for every modified-field walk; reference tables without
 one (currencies, branding themes, assets…) refresh fully each run — they are
 tiny. Reports cost ~25 calls every `reports_interval_hours`.
+
+Payroll AU payslips are a **parent-detail chain** (`PARENT_DETAIL_CHAINS` in
+`xero_sync.py`): Xero's `GET /PayRuns` never carries the `Payslips` array, so
+for every pay run the If-Modified-Since walk returns the connector spends one
+`GET /PayRuns/{PayRunID}` (lands the PayslipSummary rows into
+`xero_payroll_au_payslips` and the pay run row with its `payslips` array) plus
+one `GET /Payslip/{PayslipID}` per payslip (full row + earnings / super / leave
+/ deduction line tables). Steady state that is `1 + employees` calls per pay
+run only when Xero reports the run new or modified (a draft being posted); a
+posted run whose payslips have landed costs nothing. The first pass after a
+deploy backfills every pay run once (~`runs × (1 + employees)` calls), runs
+last in the sync so every other table lands first, stops at the daily reserve
+and resumes from `state.fanouts.xero_payroll_au_payslips.landed` on the next
+schedule. `state.last_run.chains` records what each pass spent. To force a
+full re-walk of the chain (e.g. after a scope was granted), pause the
+connection, delete `state.fanouts.xero_payroll_au_payslips` via
+`PATCH /v1/connections/{id}/state`, unpause — or bump `CHAIN_VERSION`.

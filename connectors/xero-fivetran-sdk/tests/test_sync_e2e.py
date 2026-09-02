@@ -26,7 +26,7 @@ import xero_client  # noqa: E402
 from xero_client import TokenSupply, XeroClient  # noqa: E402
 from xero_reports import XeroReports  # noqa: E402
 from xero_spec import SPEC  # noqa: E402
-from xero_sync import XeroSync, row_to_record, spec_schema  # noqa: E402
+from xero_sync import CHAIN_VERSION, XeroSync, row_to_record, spec_schema  # noqa: E402
 
 xero_client.MIN_INTERVAL_SECONDS = 0.0  # the mock has no rate limit
 
@@ -56,6 +56,26 @@ for fan_out in SPEC["fanOuts"]:
         PATTERNS.append((pattern, fan_out["id"], body))
     else:
         EXACT.setdefault(fan_out["path"], body)
+
+# Xero's GET /PayRuns never carries Payslips; only GET /PayRuns/{PayRunID}
+# does. Serve that detail for the recorded pay run with two PayslipSummary
+# stubs so the payslip chain (pay run detail → summaries → payslip detail)
+# runs end to end. The recorded Payslip fixture answers for any PayslipID.
+PAY_RUN_ID = "00000000-0000-4000-8000-000000000240"
+PAY_RUN_DETAIL = {"PayRuns": [{
+    **RECORDING["xero_payroll_au_pay_runs"]["PayRuns"][0],
+    "Payslips": [
+        {"EmployeeID": "00000000-0000-4000-8000-000000000271", "PayslipID": "00000000-0000-4000-8000-000000000269",
+         "FirstName": "sanitized-first_name", "LastName": "sanitized-last_name", "EmployeeGroup": "Workshop",
+         "LastEdited": "/Date(1785542400000+0000)/", "Wages": 1500.0, "Deductions": 0.0, "NetPay": 1200.0,
+         "Tax": 300.0, "Super": 172.5, "Reimbursements": 0.0},
+        {"EmployeeID": "00000000-0000-4000-8000-000000000272", "PayslipID": "00000000-0000-4000-8000-000000000273",
+         "FirstName": "sanitized-first_name", "LastName": "sanitized-last_name", "EmployeeGroup": "Front of house",
+         "LastEdited": "/Date(1785542400000+0000)/", "Wages": 900.0, "Deductions": 0.0, "NetPay": 760.0,
+         "Tax": 140.0, "Super": 103.5, "Reimbursements": 0.0},
+    ],
+}]}
+PATTERNS.append((re.compile(r"^/payroll\.xro/1\.0/PayRuns/[^/]+$"), "xero_payroll_au_pay_runs", PAY_RUN_DETAIL))
 
 ORGANISATION = {"Organisations": [{"Name": "Mock Org", "Version": "AU", "FinancialYearEndDay": 30, "FinancialYearEndMonth": 6}]}
 
@@ -227,10 +247,28 @@ class SyncEndToEnd(unittest.TestCase):
         # AU payroll enabled from Organisation.Version, UK/NZ not walked.
         self.assertIn("xero_payroll_au_pay_runs", emitted)
         self.assertNotIn("xero_payroll_uk_pay_runs", emitted)
-        # Fan-out: payslip detail keyed to the pay run's payslip stubs.
-        self.assertIn("xero_payroll_au_payslips", emitted)
-        payslip_calls = [c for c in MockXero.calls if "/payroll.xro/1.0/Payslip/" in c[0]]
-        self.assertGreater(len(payslip_calls), 0)
+        # Payslip chain: the pay run's detail (the list never carries Payslips)
+        # lands the PayslipSummary rows, then Payslip/{PayslipID} is chained
+        # from the ids that detail returned — never from the PayRunID.
+        detail_calls = [c for c in MockXero.calls if c[0] == f"/payroll.xro/1.0/PayRuns/{PAY_RUN_ID}"]
+        self.assertEqual(len(detail_calls), 1)
+        payslip_calls = [c[0].rsplit("/", 1)[1] for c in MockXero.calls if "/payroll.xro/1.0/Payslip/" in c[0]]
+        self.assertEqual(payslip_calls, [s["PayslipID"] for s in PAY_RUN_DETAIL["PayRuns"][0]["Payslips"]])
+        payslips = emitted["xero_payroll_au_payslips"]
+        summary_row = next(r for r in payslips if r["source_record_id"] == "00000000-0000-4000-8000-000000000273")
+        self.assertEqual(summary_row["pay_run_id"], PAY_RUN_ID)
+        self.assertEqual(summary_row["employee_id"], "00000000-0000-4000-8000-000000000272")
+        self.assertEqual(summary_row["wages"], "900.00000000")
+        self.assertEqual(summary_row["net_pay"], "760.00000000")
+        self.assertEqual(summary_row["payslips_employee_group"], "Front of house")
+        self.assertEqual(summary_row["updated_date_utc"], datetime.fromtimestamp(1785542400, tz=timezone.utc))
+        # The chained detail completes the same key with its line arrays.
+        self.assertTrue(any(r["source_record_id"] == "00000000-0000-4000-8000-000000000269"
+                            and r["earnings_lines"] is not None for r in payslips))
+        # The pay run row is re-landed with the Payslips array the list omitted.
+        self.assertEqual([p["PayslipID"] for p in emitted["xero_payroll_au_pay_runs"][-1]["payslips"]],
+                         [s["PayslipID"] for s in PAY_RUN_DETAIL["PayRuns"][0]["Payslips"]])
+        self.assertEqual(sync.state["fanouts"]["xero_payroll_au_payslips"]["chain"], CHAIN_VERSION)
         # Walk parameters: ordered pages with an immutable upper bound.
         invoice_calls = [c for c in MockXero.calls if c[0].endswith("/Invoices")]
         self.assertEqual(invoice_calls[0][1]["order"], ["UpdatedDateUTC ASC,InvoiceID ASC"])
@@ -251,6 +289,7 @@ class SyncEndToEnd(unittest.TestCase):
         # modified watermark (branding themes, currencies, assets…) re-upsert.
         self.assertNotIn("xero_invoices", emitted2)
         self.assertNotIn("xero_payroll_au_payslips", emitted2)
+        self.assertFalse(any("/payroll.xro/1.0/PayRuns/" in c[0] for c in MockXero.calls))  # chain: 304 → nothing
         self.assertNotIn("xero_contacts", emitted2)
         self.assertLess(summary2["rows"], summary["rows"] / 2)
         ims_calls = [c for c in MockXero.calls if c[2].get("if-modified-since")]

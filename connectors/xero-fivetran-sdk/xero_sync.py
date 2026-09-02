@@ -11,6 +11,11 @@ make sense inside Albert's own worker (leases, budgets, raw-object storage):
   * fan-outs (one sub-request per parent id — payslip detail, employee detail,
     budget lines, project tasks…) driven by a fresh walk of the parent group
     filtered to parents modified since the fan-out's watermark;
+  * parent-detail chains for fan-outs whose child ids only exist on the
+    parent's detail endpoint (Payroll AU payslips: GET /PayRuns/{PayRunID}
+    carries the Payslips array GET /PayRuns omits): per new or updated parent,
+    the detail is fetched, the parent row and the stub rows it carries are
+    landed, and the per-child detail is chained from the stub ids;
   * per-group / per-fan-out watermarks in Fivetran `state`, checkpointed as
     each finishes, so a run cut short by Xero's daily limit resumes exactly
     where it stopped.
@@ -28,10 +33,13 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable
 
+from urllib.parse import quote
+
 from xero_client import DailyLimitReached, NotAvailable, TokenBrokerError, XeroClient, XeroError, _log
 from xero_projection import (
     _leader_id_field,
     _read_identifier,
+    normalize_xero_value,
     parse_datetime,
     project_stream_rows,
     unwrap_envelope,
@@ -53,6 +61,33 @@ SUB_REQUESTS_PER_CHECKPOINT = 25
 UNAVAILABLE_RECHECK_HOURS = 24
 ERROR_BACKOFF_HOURS = 6
 ERROR_BACKOFF_MAX_HOURS = 24
+# Parent-detail chains: fan-outs whose child ids the parent's LIST response
+# never carries. Payroll AU's GET /PayRuns omits the Payslips array; only
+# GET /PayRuns/{PayRunID} returns it (verified 2026-09-01: 485 posted pay
+# runs landed, zero payslips, every sub-request keyed on the PayRunID and
+# 404ing). For such a fan-out the walk fetches each new or updated parent's
+# detail, re-lands the parent row with what the list omitted, lands one
+# walk-table row per stub in the detail's `stubs` array (the PayslipSummary
+# shape xo_payslip_summaries reads), then chains the fan-out's own detail
+# request per stub id for the walk table's full row and its line tables.
+PARENT_DETAIL_CHAINS = {
+    "xero_payroll_au_payslips": {
+        "detailPath": "/payroll.xro/1.0/PayRuns/{PayRunID}",
+        "stubs": "Payslips",
+        "stubIdField": "PayslipID",
+        # PayslipSummary stamps its last change as LastEdited where the
+        # Payslip object (and the walk table's modified column) use UpdatedDateUTC.
+        "stubModifiedField": "LastEdited",
+    },
+}
+# Bump when a chain's landing rules change: every parent is re-walked once.
+CHAIN_VERSION = 1
+# Consecutive 401/403/404 answers, before any success in a pass, after which
+# the chain stops asking: for parent detail the whole chain backs off like an
+# unavailable group; for stub detail the pass keeps landing the summaries the
+# parent detail carries and stops spending the daily allowance on lines the
+# grant cannot read.
+CHAIN_UNAVAILABLE_PROBES = 3
 CONTROL_COLUMNS = {
     "source_record_id": "STRING",
     "source_updated_at": "UTC_DATETIME",
@@ -237,7 +272,9 @@ def _backoff_entry(entry: dict, kind: str, message: str, now: datetime) -> dict:
         hours = UNAVAILABLE_RECHECK_HOURS
     else:
         hours = min(ERROR_BACKOFF_MAX_HOURS, ERROR_BACKOFF_HOURS * (2 ** (failures - 1)))
-    kept = {k: v for k, v in entry.items() if k in ("watermark",)}
+    # A parent-detail chain's in-pass progress (`landed`) and its completion
+    # marker survive a cooldown, so the pass resumes instead of re-spending.
+    kept = {k: v for k, v in entry.items() if k in ("watermark", "chain", "landed")}
     return {
         **kept,
         kind: message[:160],
@@ -250,6 +287,15 @@ def _backoff_entry(entry: dict, kind: str, message: str, now: datetime) -> dict:
 def _in_cooldown(entry: dict, now: datetime) -> bool:
     retry_after = parse_datetime(entry.get("retry_after")) if entry.get("retry_after") else None
     return bool(retry_after and retry_after > now)
+
+
+def _parent_stamp(record: dict, modified_field: str | None) -> str:
+    """What must differ for a parent already landed in a chain pass to be
+    fetched again: its modified stamp and its status (Xero re-stamps a pay run
+    whose payslips changed; posting changes the status)."""
+    modified = normalize_xero_value(record.get(modified_field)) if modified_field else None
+    status = record.get("PayRunStatus") or record.get("Status")
+    return f"{modified or ''}|{status or ''}"
 
 
 def http_date(moment: datetime) -> str:
@@ -275,6 +321,7 @@ class XeroSync:
         self.tables_touched: set[str] = set()
         self._clauseless_groups: set[str] = set()
         self._parent_cache: dict[str, list] = {}
+        self.chain_stats: dict[str, dict] = {}
 
     # -- org / region ------------------------------------------------------
 
@@ -487,6 +534,10 @@ class XeroSync:
         if _in_cooldown(entry, self.now):
             self.skipped += 1
             return
+        chain = PARENT_DETAIL_CHAINS.get(fan_out["id"])
+        if chain:
+            self._sync_parent_detail_chain(fan_out, chain, parent_table, parent_group, entry)
+            return
         since = parse_datetime(entry.get("watermark")) if entry.get("watermark") else None
         scan_start = self.now
         synced_at = datetime.now(timezone.utc)
@@ -516,21 +567,175 @@ class XeroSync:
                 if issued["count"] % SUB_REQUESTS_PER_CHECKPOINT == 0:
                     self.checkpoint(self.state)
 
+        if not self._walk_fan_out(fan_out, entry, parent_group, since, scan_start, on_page):
+            return
+        self.state["fanouts"][fan_out["id"]] = {"watermark": scan_start.isoformat()}
+        self.checkpoint(self.state)
+
+    def _walk_fan_out(self, fan_out: dict, entry: dict, parent_group: dict, since: datetime | None,
+                      scan_start: datetime, on_page) -> bool:
+        """Walk a fan-out's parent group under the shared failure discipline.
+        True when the walk completed; False when it was recorded as unavailable
+        or erroring (cooldown written and checkpointed)."""
         try:
             self._walk_pages(parent_group, since, scan_start, on_page)
         except NotAvailable as error:
             self.state["fanouts"][fan_out["id"]] = _backoff_entry(entry, "unavailable", str(error), scan_start)
             self.checkpoint(self.state)
-            return
+            return False
         except (DailyLimitReached, TokenBrokerError):
             raise
         except (XeroError, ValueError, TypeError, KeyError, AttributeError) as error:
             _log(f"fan-out {fan_out['id']} failed: {type(error).__name__}: {error}", "WARNING")
             self.state["fanouts"][fan_out["id"]] = _backoff_entry(entry, "error", str(error), scan_start)
             self.checkpoint(self.state)
+            return False
+        return True
+
+    def _sync_parent_detail_chain(self, fan_out: dict, chain: dict, parent_table: dict, parent_group: dict,
+                                  entry: dict) -> None:
+        """Fan-out whose child ids only exist on the parent's detail endpoint
+        (PARENT_DETAIL_CHAINS). Incremental like every fan-out: the parent walk
+        is If-Modified-Since from the chain's watermark, so a POSTED pay run
+        whose payslips have landed costs nothing until Xero reports it modified.
+        Parents landed in the pass are remembered in state (`landed`) and the
+        watermark only moves once the pass lands every parent the walk returned,
+        so a pass the daily reserve cuts short resumes where it stopped."""
+        fan_out_id = fan_out["id"]
+        scan_start = self.now
+        synced_at = datetime.now(timezone.utc)
+        walk_table = self.tables[fan_out_id]
+        member_tables = [self.tables[member["table"]] for member in fan_out["members"]]
+        parent_id_field = parent_table.get("recordIdField") or ""
+        parent_modified = parent_group.get("modifiedField")
+        stubs_key = chain["stubs"]
+        stub_id_field = chain["stubIdField"]
+        stub_modified = chain.get("stubModifiedField")
+        walk_modified = walk_table["source"].get("modifiedField") or ""
+        # A watermark written before this chain existed belongs to a walk that
+        # "completed" without landing a payslip; ignoring it makes the first
+        # pass after the fix backfill every parent exactly once.
+        chain_complete = entry.get("chain") == CHAIN_VERSION
+        since = parse_datetime(entry["watermark"]) if chain_complete and entry.get("watermark") else None
+        landed = entry.get("landed") if isinstance(entry.get("landed"), dict) else {}
+        entry = dict(entry)
+        entry["landed"] = landed
+        self.state["fanouts"][fan_out_id] = entry  # in-pass progress must reach every checkpoint
+        stats = self.chain_stats.setdefault(fan_out_id, {
+            "parents": 0, "already_landed": 0, "parent_calls": 0, "stub_calls": 0, "rows": 0,
+            "stubs_unavailable": False,
+        })
+        probes = {"parent_ok": 0, "parent_denied": 0, "stub_ok": 0, "stub_denied": 0}
+        issued = {"count": 0}
+
+        def emit_rows(table: dict, rows: list) -> None:
+            for row in rows:
+                self.emit(table["id"], row_to_record(table, row, synced_at))
+                self.rows_emitted += 1
+                stats["rows"] += 1
+            self.tables_touched.add(table["id"])
+
+        def tick() -> None:
+            issued["count"] += 1
+            if issued["count"] % SUB_REQUESTS_PER_CHECKPOINT == 0:
+                self.checkpoint(self.state)
+
+        def fetch_parent_detail(parent_id: str):
+            path = chain["detailPath"].replace(f"{{{parent_id_field}}}", quote(parent_id, safe=""))
+            stats["parent_calls"] += 1
+            try:
+                status, body = self.client.get_json(path)
+            except NotAvailable:
+                probes["parent_denied"] += 1
+                if probes["parent_ok"] == 0 and probes["parent_denied"] >= CHAIN_UNAVAILABLE_PROBES:
+                    raise  # the detail endpoint itself is out of reach: back off like a group
+                return None
+            probes["parent_ok"] += 1
+            if status == 304 or body is None:
+                return None
+            records = [record for record in unwrap_envelope(body, parent_table) if isinstance(record, dict)]
+            return next((record for record in records if _read_identifier(record, parent_id_field) == parent_id),
+                        records[0] if records else None)
+
+        def fetch_stub_detail(stub_id: str):
+            if stats["stubs_unavailable"]:
+                return None
+            path = fan_out["path"].replace(f"{{{fan_out['fanOutParam']}}}", quote(stub_id, safe=""))
+            stats["stub_calls"] += 1
+            try:
+                status, body = self.client.get_json(path)
+            except NotAvailable as error:
+                probes["stub_denied"] += 1
+                if probes["stub_ok"] == 0 and probes["stub_denied"] >= CHAIN_UNAVAILABLE_PROBES:
+                    # The summaries are landed already; the lines are not
+                    # readable with this grant, so stop paying to find out.
+                    stats["stubs_unavailable"] = True
+                    _log(f"chain {fan_out_id}: {fan_out['path']} unavailable ({error}); landing summaries only",
+                         "WARNING")
+                return None
+            probes["stub_ok"] += 1
+            if status == 304 or body is None:
+                return None
+            return unwrap_envelope(body, walk_table)
+
+        def on_page(parent_records: list):
+            for parent in parent_records:
+                if not isinstance(parent, dict):
+                    continue
+                parent_id = _read_identifier(parent, parent_id_field)
+                if not parent_id:
+                    continue
+                stats["parents"] += 1
+                stamp = _parent_stamp(parent, parent_modified)
+                if landed.get(parent_id) == stamp:
+                    stats["already_landed"] += 1
+                    continue
+                detail = fetch_parent_detail(parent_id)
+                if detail is None:
+                    # Not readable right now. Never remembered as landed: the
+                    # next walk re-probes it, so a scope granted later still
+                    # backfills every run.
+                    tick()
+                    continue
+                # The parent row again, now with what the list omitted (PayRun.Payslips).
+                emit_rows(parent_table, project_stream_rows(parent_table, parent_table, [detail], parent_id_field))
+                pending = []
+                seen = set()
+                for stub in detail.get(stubs_key) or []:
+                    if not isinstance(stub, dict):
+                        continue
+                    stub_id = _read_identifier(stub, stub_id_field)
+                    if not stub_id or stub_id in seen:
+                        continue
+                    seen.add(stub_id)
+                    element = dict(stub)
+                    if stub_modified and walk_modified and walk_modified not in element and stub_modified in element:
+                        element[walk_modified] = element[stub_modified]
+                    # The parent as this stub sees it, so `PayRun.Payslips.X`
+                    # citations resolve against the stub itself.
+                    fan_out_parent = {"record": {**detail, stubs_key: element}, "table": parent_table}
+                    emit_rows(walk_table, project_stream_rows(
+                        walk_table, walk_table, [element], walk_table.get("recordIdField") or "",
+                        fan_out_parent=fan_out_parent,
+                    ))
+                    pending.append((stub_id, fan_out_parent))
+                for stub_id, fan_out_parent in pending:
+                    sub_records = fetch_stub_detail(stub_id)
+                    if sub_records:
+                        for table in [walk_table] + member_tables:
+                            emit_rows(table, project_stream_rows(
+                                table, walk_table, sub_records, table.get("recordIdField") or "",
+                                fan_out_parent=fan_out_parent,
+                            ))
+                    tick()
+                landed[parent_id] = stamp
+                tick()
+
+        if not self._walk_fan_out(fan_out, entry, parent_group, since, scan_start, on_page):
             return
-        self.state["fanouts"][fan_out["id"]] = {"watermark": scan_start.isoformat()}
+        self.state["fanouts"][fan_out_id] = {"watermark": scan_start.isoformat(), "chain": CHAIN_VERSION}
         self.checkpoint(self.state)
+        _log(f"chain {fan_out_id}: {json.dumps(stats)}")
 
     # -- orchestration -----------------------------------------------------
 
@@ -546,15 +751,26 @@ class XeroSync:
                     continue
                 self.sync_group(group)
                 summary["groups"] += 1
+            deferred = []
             for fan_out in SPEC["fanOuts"]:
                 if fan_out["api"] not in apis:
                     continue
+                if fan_out["id"] in PARENT_DETAIL_CHAINS:
+                    # The costliest walks (one detail per parent plus one per
+                    # stub) go last, so every other table lands first when the
+                    # daily reserve cuts a sync short.
+                    deferred.append(fan_out)
+                    continue
+                self.sync_fan_out(fan_out)
+                summary["fan_outs"] += 1
+            for fan_out in deferred:
                 self.sync_fan_out(fan_out)
                 summary["fan_outs"] += 1
         except DailyLimitReached as error:
             summary["stopped_early"] = str(error)
             self.checkpoint(self.state)
         summary["rows"] = self.rows_emitted
+        summary["chains"] = self.chain_stats
         summary["calls"] = self.client.calls
         summary["skipped_in_cooldown"] = self.skipped
         summary["day_remaining"] = self.client.day_remaining
