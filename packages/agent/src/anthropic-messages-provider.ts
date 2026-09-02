@@ -440,6 +440,17 @@ function toAnthropicConversation(request: ModelRequest): Readonly<{
     // The API rejects text blocks without visible content; they also carry
     // nothing, so they are dropped rather than failing the whole request.
     const content = blocks.filter((block) => block.type !== "text" || block.text.trim().length > 0);
+    // An assistant message may not end with a thinking block ("The final
+    // block in an assistant message cannot be `thinking`", a 400 that killed
+    // a production turn whose reply was thinking plus an empty text block).
+    // Trailing thinking precedes nothing, so it carries nothing to replay.
+    if (role === "assistant") {
+      while (content.length > 0) {
+        const tail = content[content.length - 1]!;
+        if (tail.type !== "thinking" && tail.type !== "redacted_thinking") break;
+        content.pop();
+      }
+    }
     if (content.length === 0) return;
     const previous = messages.at(-1);
     if (previous?.role === role && Array.isArray(previous.content)) {

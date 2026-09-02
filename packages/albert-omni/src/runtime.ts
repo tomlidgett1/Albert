@@ -636,7 +636,9 @@ export async function runOmniSemanticTurn(
       return JSON.stringify({
         ok: false,
         error: `Invalid arguments: ${detail}`,
-        guidance: "Match the tool's parameter schema exactly (every field present, unused fields null) and call it again.",
+        guidance: issues
+          ? "Match the tool's parameter schema exactly (every field present, unused fields null) and call it again."
+          : "The arguments were not valid JSON for this tool's schema. The most common cause is passing an object-typed parameter (such as `query`) as a JSON string: pass it as a nested object, include every field (null when unused), and call the tool again.",
       });
     };
 
@@ -946,7 +948,7 @@ export async function runOmniSemanticTurn(
         rows: rows.slice(0, MAX_MODEL_RESULT_ROWS),
         ...(rowLimitReached ? {
           rowLimitReached: true,
-          rowLimitNote: `This result hit its row limit of ${rowLimit}: more rows exist and the true count is unknown, so never report ${rowLimit} as the count or sum these rows as a total. For the count or total, run the same query without the entity dimensions (measures only, same filters and segments).`,
+          rowLimitNote: `This result hit its row limit of ${rowLimit}: more rows exist and the true count is unknown, so never report ${rowLimit} as the count, never describe these rows as "all" or "the full list", and never sum them as a total. For the count or total, run the same query without the entity dimensions (measures only, same filters and segments); to check a condition across the whole population, filter for it in the query rather than scanning these rows.`,
         } : {}),
         ...(truncatedForModel ? {
           truncated: true,
@@ -1701,6 +1703,26 @@ export async function runOmniSemanticTurn(
     }
     if (!rawFinal.trim()) {
       throw new Error("The analysis completed without a final answer.");
+    }
+
+    // A model that loses the tool protocol writes its tool calls as markup in
+    // prose (seen on Haiku after repeated argument rejections). That text is
+    // not an answer: one pointed nudge, then the turn fails honestly rather
+    // than showing the owner XML.
+    const TOOL_MARKUP = /<invoke\b|<\/invoke>|<parameter\b|\b(?:GenerateSemanticQuery|SearchSemanticModel|DeriveResult|ComposePivotTable|FetchFieldValues)\b/u;
+    if (TOOL_MARKUP.test(rawFinal) && !signal.aborted) {
+      await emit({
+        type: "progress",
+        status: "warning",
+        stage: "planning",
+        label: "The reply contained tool markup instead of an answer; asking for the answer",
+      });
+      items.push(assistant(rawFinal));
+      items.push(user("Your last message was tool markup, not an answer. Tools are called through the tool interface with their parameters as JSON objects (the `query` parameter is an object, never a string). Run the queries you need, then reply with the answer for the owner in plain prose without mentioning tools."));
+      rawFinal = await runAgentOnce();
+      if (!rawFinal.trim() || TOOL_MARKUP.test(rawFinal)) {
+        throw new Error("The analysis completed without a final answer.");
+      }
     }
 
     // A dashboard build without a composed plan is not done. The evidence from

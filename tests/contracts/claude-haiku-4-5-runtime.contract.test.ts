@@ -826,3 +826,40 @@ test("production web admits Haiku credentials only with explicit APP 8 and ZDR a
   assert.equal(approved.invalid.includes("ALBERT_ANTHROPIC_APP8_APPROVED"), false);
   assert.equal(approved.invalid.includes("ALBERT_ANTHROPIC_ZDR_APPROVED"), false);
 });
+
+test("an assistant turn that ended in thinking replays without its trailing thinking block", async () => {
+  // Anthropic rejects a replayed assistant message whose final block is
+  // thinking; a reply of thinking plus an empty text block produced exactly
+  // that shape in production and 400'd the next request of the turn.
+  const message = {
+    id: "msg_thinking_only",
+    type: "message",
+    role: "assistant",
+    model: CLAUDE_HAIKU_4_5_MODEL_ID,
+    content: [
+      { type: "thinking", thinking: "", signature: "trailing-signature" },
+      { type: "text", text: "   " },
+    ],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 2, output_tokens: 2 },
+  } as unknown as Message;
+  const model = new AnthropicMessagesModel(
+    fakeAnthropicClient(async () => message),
+    CLAUDE_HAIKU_4_5_MODEL_ID,
+  );
+  const response = await model.getResponse(request());
+  const replay = anthropicMessagesRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
+    input: [
+      user("Use the governed tool, then answer."),
+      ...response.output,
+      user("Try again."),
+    ],
+  }));
+  for (const entry of replay.body.messages) {
+    if (entry.role !== "assistant" || !Array.isArray(entry.content)) continue;
+    const tail = entry.content[entry.content.length - 1];
+    assert.ok(tail && tail.type !== "thinking" && tail.type !== "redacted_thinking", "assistant message ends in thinking");
+  }
+  assert.equal(replay.body.messages.every((entry) => entry.role === "user"), true);
+});
