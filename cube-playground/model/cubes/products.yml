@@ -12,9 +12,36 @@ cubes:
         "Product", "item" and "SKU" all mean this cube. default_cost is the
         configured replenishment cost and avg_cost is the rolling average cost;
         both are per-unit and ex tax. For margin on actual sales, use the sale_lines
-        cost measures (line totals), not these catalogue costs.
+        cost measures (line totals), not these catalogue costs. default_price,
+        msrp and online_price are the current list prices from the item's price
+        list (Default / MSRP / Online price types) as entered in Lightspeed, and
+        are populated for nearly every item. vendors (the item's default
+        supplier) joins from here, so "by supplier" breakdowns of stock or
+        product sales group by vendors_name.
+    # The connector leaves ls_items.amount_where_use_type_* empty; the prices
+    # live in ls_item_prices, whose item_id column is also empty. The row key
+    # there is "<item_id>:<n>", so the item is recovered from the key (with the
+    # item_id column preferred whenever the connector starts filling it).
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_items t
+      WITH list_prices AS MATERIALIZED (
+        SELECT p.tenant_id,
+               COALESCE(p.item_id,
+                        CASE WHEN split_part(p.source_record_id, ':', 1) ~ '^[0-9]+$'
+                             THEN split_part(p.source_record_id, ':', 1)::numeric END) AS item_id,
+               MAX(p.amount) FILTER (WHERE p.use_type = 'Default') AS list_price_default,
+               MAX(p.amount) FILTER (WHERE p.use_type = 'MSRP') AS list_price_msrp,
+               MAX(p.amount) FILTER (WHERE p.use_type = 'Online') AS list_price_online
+        FROM source_lightspeed_official.ls_item_prices p
+        WHERE NOT p.tombstone
+        GROUP BY 1, 2
+      )
+      SELECT t.*,
+             lp.list_price_default,
+             lp.list_price_msrp,
+             lp.list_price_online
+      FROM source_lightspeed_official.ls_items t
+      LEFT JOIN list_prices lp
+        ON lp.tenant_id = t.tenant_id AND lp.item_id = t.item_id
       WHERE NOT t.tombstone
 
     joins:
@@ -38,6 +65,14 @@ cubes:
         sql: >
           {CUBE}.tenant_id = {tax_classes}.tenant_id
           AND {CUBE}.tax_class_id = {tax_classes}.tax_class_id
+      # Default supplier: 14,798 of 17,251 items carry a default_vendor_id and
+      # every one resolves to a vendor row, so "stock value by supplier" and
+      # "sales by supplier" group by vendors.name through this join.
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.default_vendor_id = {vendors}.vendor_id
 
     dimensions:
       - name: row_key
@@ -138,17 +173,26 @@ cubes:
         format: currency
         description: Rolling average per-unit cost (ex tax).
       - name: default_price
-        sql: amount_where_use_type_default
+        sql: list_price_default
         type: number
         format: currency
-        title: Default retail price
-        description: The item's default selling price from its price list.
+        title: Default retail price (list)
+        description: >
+          The item's current Default selling price from its price list, as
+          entered in Lightspeed (tax inclusive where the shop prices inclusive).
+          Null only when the item has no Default price row.
       - name: msrp
-        sql: amount_where_use_type_msrp
+        sql: list_price_msrp
         type: number
         format: currency
-        title: MSRP
-        description: Manufacturer's suggested retail price from the price list.
+        title: MSRP (list)
+        description: Manufacturer's suggested retail price from the item's price list; 0 or null when none is recorded.
+      - name: online_price
+        sql: list_price_online
+        type: number
+        format: currency
+        title: Online price (list)
+        description: The item's Online (web store) price from its price list; 0 or null when none is recorded.
       - name: model_year
         sql: model_year
         type: number

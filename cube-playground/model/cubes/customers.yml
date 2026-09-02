@@ -58,7 +58,7 @@ cubes:
                COALESCE(SUM(sale.calc_total) FILTER (WHERE COALESCE(sale.calc_total, 0) > 0), 0) AS lifetime_purchase_value,
                COALESCE(SUM(ABS(sale.calc_total)) FILTER (WHERE COALESCE(sale.calc_total, 0) < 0), 0) AS lifetime_refund_value,
                COALESCE(SUM(
-                 COALESCE(sale.calc_subtotal, 0) -
+                 (COALESCE(sale.calc_total, 0) - COALESCE(sale.calc_tax1, 0) - COALESCE(sale.calc_tax2, 0)) -
                  CASE
                    WHEN COALESCE(sale.calc_fifo_cost, 0) = 0 AND COALESCE(sale.calc_subtotal, 0) <> 0
                      THEN COALESCE(sale.calc_avg_cost, 0)
@@ -113,6 +113,10 @@ cubes:
         sql: >
           {CUBE}.tenant_id = {tax_categories}.tenant_id
           AND {CUBE}.tax_category_id = {tax_categories}.tax_category_id
+      # Tenant anchor for multi-grain views (see lightspeed_r_tenant).
+      - name: lightspeed_r_tenant
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {lightspeed_r_tenant}.tenant_id"
 
     dimensions:
       - name: row_key
@@ -272,7 +276,7 @@ cubes:
         type: number
         format: currency
         title: Lifetime gross profit
-        description: Signed ex-tax gross profit across completed, non-voided attributed activity, including refund effects.
+        description: Signed ex-tax gross profit (net sales after discounts minus cost of goods) across completed, non-voided attributed activity, including refund effects.
       - name: is_repeat_customer
         type: boolean
         sql: "(COALESCE({CUBE}.purchase_count, 0) > 1)"
@@ -474,8 +478,11 @@ cubes:
     meta:
       ai_context: >
         Geography questions (customers by city, state, postcode, country) group by
-        these address dimensions. no_email/no_mail/no_phone are opt-out flags to
-        respect in any marketing-list answer.
+        these address dimensions, but for this tenant geography is not captured:
+        address, city, state, postcode and country are blank on all 9,702
+        contacts, so say the data does not record where customers live rather
+        than reporting "unknown" as a location. no_email/no_mail/no_phone are
+        opt-out flags to respect in any marketing-list answer.
     sql: >
       WITH email_flags AS MATERIALIZED (
         SELECT email.tenant_id,
@@ -753,16 +760,31 @@ cubes:
     public: false
     description: >
       One row per credit account: customer store-credit/on-account facilities and
-      gift cards (gift_card = true). balance is the current position at last sync.
+      gift cards (gift_card = true). balance is the current position at last sync,
+      signed the Lightspeed way: NEGATIVE when the shop owes the customer (store
+      credit or gift card value still to be redeemed), positive when the customer
+      owes the shop.
     meta:
       ai_context: >
-        On-account exposure questions sum balance over non-gift-card accounts;
-        outstanding gift card liability sums balance over gift_card accounts.
-        Balance sign follows Lightspeed: a positive balance is money owed on the
-        account.
+        "Gift card liability" / "outstanding gift cards" = gift_card_liability
+        (already sign-flipped to a positive amount) with outstanding_gift_cards.
+        "Store credit customers hold" = store_credit_owed_to_customers. "Money
+        owed to us on account" = on_account_receivable. total_balance,
+        gift_card_balance and on_account_balance are the raw signed sums
+        (negative = owed to customers), so never present them as amounts owed
+        to the shop. Gift cards sold to walk-ins have no customer profile,
+        which is why the liability measures are queried on their own rather
+        than through a customer breakdown.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_credit_accounts t
       WHERE NOT t.tombstone
+
+    joins:
+      # Tenant anchor for multi-grain views: every credit account, including
+      # gift cards with no customer, reaches the tenant row.
+      - name: lightspeed_r_tenant
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {lightspeed_r_tenant}.tenant_id"
 
     dimensions:
       - name: row_key
@@ -804,7 +826,7 @@ cubes:
         sql: balance
         type: number
         format: currency
-        description: Current account balance at last sync.
+        description: Signed balance at last sync. Negative = the shop owes the customer (store credit / gift card value remaining); positive = the customer owes the shop.
       - name: customer_id
         sql: customer_id
         type: number
@@ -828,24 +850,54 @@ cubes:
         type: sum
         sql: balance
         format: currency
-        title: Total balance
-        description: Summed balance across the selected accounts.
+        title: Total balance (signed)
+        description: Raw signed sum of balances across the selected accounts (negative = owed to customers).
       - name: on_account_balance
         type: sum
         sql: balance
         format: currency
-        title: On-account balance (non gift card)
-        description: Outstanding balance across customer credit accounts, excluding gift cards.
+        title: On-account balance (signed, non gift card)
+        description: Raw signed sum across customer credit accounts, excluding gift cards; negative = store credit owed to customers. store_credit_owed_to_customers and on_account_receivable split it into its two sides.
         filters:
           - sql: "COALESCE({CUBE}.gift_card, false) = false"
       - name: gift_card_balance
         type: sum
         sql: balance
         format: currency
-        title: Gift card balance outstanding
-        description: Outstanding value loaded on gift cards.
+        title: Gift card balance (signed)
+        description: Raw signed sum across gift cards; negative = value still loaded. gift_card_liability is the same figure as a positive amount.
         filters:
           - sql: "COALESCE({CUBE}.gift_card, false) = true"
+      - name: gift_card_liability
+        type: sum
+        sql: "-COALESCE({CUBE}.balance, 0)"
+        format: currency
+        title: Gift card liability
+        description: Value still loaded on gift cards and owed to their holders - the sign-flipped sum of gift-card balances, so a positive number is the liability.
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = true"
+      - name: outstanding_gift_cards
+        type: count
+        title: Gift cards with value remaining
+        description: Gift cards whose balance is still negative (value not yet redeemed).
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = true AND COALESCE({CUBE}.balance, 0) < 0"
+      - name: store_credit_owed_to_customers
+        type: sum
+        sql: "-COALESCE({CUBE}.balance, 0)"
+        format: currency
+        title: Store credit owed to customers
+        description: Store credit held by customers on non-gift-card credit accounts (accounts in credit, sign flipped so the figure is positive).
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = false AND COALESCE({CUBE}.balance, 0) < 0"
+      - name: on_account_receivable
+        type: sum
+        sql: balance
+        format: currency
+        title: On-account receivable
+        description: Money customers still owe the shop on non-gift-card credit accounts (accounts with a positive balance).
+        filters:
+          - sql: "COALESCE({CUBE}.gift_card, false) = false AND COALESCE({CUBE}.balance, 0) > 0"
 
     segments:
       - name: gift_cards
@@ -1181,3 +1233,34 @@ cubes:
         type: max
         sql: time_stamp
         description: Most recent note time across the selected customers.
+
+  # One row per connected Lightspeed R-Series account (tenant), derived from
+  # the account record with the customer and credit-account tables as
+  # fallbacks so it exists as soon as any of them has synced. It carries no
+  # business members: it exists so a multi-grain view can own its tenant pin
+  # on a cube that EVERY grain reaches through a tenant-only many_to_one join.
+  # customer_analytics pins here rather than on customers because gift cards
+  # sold to walk-ins have no customer row and would otherwise be dropped from
+  # liability totals by the injected tenant filter.
+  - name: lightspeed_r_tenant
+    title: Lightspeed account (tenant scope)
+    public: false
+    description: >
+      One row per connected Lightspeed R-Series account. Used only as the
+      tenant anchor for multi-grain views; it has no business measures.
+    sql: >
+      SELECT u.tenant_id
+      FROM (
+        SELECT a.tenant_id FROM source_lightspeed_official.ls_account a WHERE NOT a.tombstone
+        UNION
+        SELECT c.tenant_id FROM source_lightspeed_official.ls_customers c WHERE NOT c.tombstone
+        UNION
+        SELECT k.tenant_id FROM source_lightspeed_official.ls_credit_accounts k WHERE NOT k.tombstone
+      ) u
+
+    dimensions:
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        primary_key: true
+        public: false

@@ -243,7 +243,7 @@ const RENAMES = {
 const CONSUMED_BY = {
   sales: {
     calc_total: 'gross_takings',
-    calc_subtotal: 'net_sales_ex_tax',
+    calc_subtotal: 'net_sales_before_discounts',
     calc_taxable: 'taxable_amount',
     calc_non_taxable: 'non_taxable_amount',
     calc_discount: 'discounts_given',
@@ -256,7 +256,7 @@ const CONSUMED_BY = {
   },
   sale_lines: {
     calc_total: 'line_revenue',
-    calc_subtotal: 'line_net_revenue',
+    calc_subtotal: 'line_net_revenue_before_discounts',
     calc_tax1: 'line_tax',
     calc_tax2: 'line_tax',
     calc_line_discount: 'line_discounts',

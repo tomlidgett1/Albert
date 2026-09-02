@@ -152,14 +152,30 @@ cubes:
     title: Quotes
     public: false
     description: >
-      One row per quote issued to a customer. A non-null sale_id means the quote
-      converted into a sale. Use for quote pipeline and conversion questions.
+      One row per quote issued to a customer, with the state of the sale it is
+      linked to. Lightspeed creates the linked sale (ticket) together with the
+      quote, so every quote carries a sale_id; a quote has converted only when
+      that sale was completed and not voided. Use for quote pipeline and
+      conversion questions.
     meta:
       ai_context: >
-        Quote conversion rate = converted_quotes / quote_count. Join to sales via
-        sale_id for the value of converted quotes; join to employees for who issued.
+        Quote conversion rate = conversion_rate_pct (converted_quotes /
+        quote_count), where converted means the linked sale completed and was
+        not voided. A non-null sale_id does NOT mean converted (for this tenant
+        106 of 187 quotes converted, 73 are still open tickets). converted_value
+        is the takings of the converted sales; join to employees for who issued.
+    # The linked sale's state is projected onto the quote so conversion can be
+    # judged without a join.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_quotes t
+      SELECT t.*,
+             s.completed AS sale_completed,
+             s.voided AS sale_voided,
+             s.complete_time AS sale_complete_time,
+             s.calc_total AS sale_total
+      FROM source_lightspeed_official.ls_quotes t
+      LEFT JOIN source_lightspeed_official.ls_sales s
+        ON s.tenant_id = t.tenant_id AND s.sale_id = t.sale_id
+        AND NOT s.tombstone
       WHERE NOT t.tombstone
 
     joins:
@@ -211,9 +227,27 @@ cubes:
         public: false
       - name: is_converted
         type: boolean
-        sql: "({CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0)"
+        sql: "(COALESCE({CUBE}.sale_completed, false) = true AND COALESCE({CUBE}.sale_voided, false) = false)"
         title: Converted to sale
-        description: True when the quote became a sale.
+        description: True when the sale linked to the quote was completed and not voided. A linked but still-open ticket is not a conversion.
+      - name: quote_status
+        type: string
+        title: Quote status
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.sale_completed, false) = true
+                 AND COALESCE({CUBE}.sale_voided, false) = false THEN 'Converted'
+            WHEN COALESCE({CUBE}.sale_voided, false) = true THEN 'Sale voided'
+            WHEN {CUBE}.sale_completed IS NOT NULL THEN 'Open ticket'
+            WHEN {CUBE}.sale_id IS NOT NULL AND {CUBE}.sale_id <> 0 THEN 'Sale not on record'
+            ELSE 'No sale linked'
+          END
+        description: Converted (linked sale completed), Sale voided, Open ticket (linked sale never completed), Sale not on record, or No sale linked.
+      - name: converted_at
+        sql: sale_complete_time
+        type: time
+        title: Converted at
+        description: When the linked sale was completed; null for unconverted quotes.
 
     measures:
       - name: quote_count
@@ -223,9 +257,23 @@ cubes:
       - name: converted_quotes
         type: count
         title: Converted quotes
-        description: Quotes that became sales (non-null, non-zero sale linkage).
+        description: Quotes whose linked sale was completed and not voided.
         filters:
-          - sql: "COALESCE({CUBE}.sale_id, 0) <> 0"
+          - sql: "COALESCE({CUBE}.sale_completed, false) = true AND COALESCE({CUBE}.sale_voided, false) = false"
+      - name: open_ticket_quotes
+        type: count
+        title: Quotes still open
+        description: Quotes whose linked sale exists but has not been completed or voided (still an open ticket).
+        filters:
+          - sql: "{CUBE}.sale_completed IS NOT NULL AND COALESCE({CUBE}.sale_completed, false) = false AND COALESCE({CUBE}.sale_voided, false) = false"
+      - name: converted_value
+        type: sum
+        sql: sale_total
+        format: currency
+        title: Converted quote value (inc tax)
+        description: Tax-inclusive takings of the completed, non-voided sales that quotes converted into.
+        filters:
+          - sql: "COALESCE({CUBE}.sale_completed, false) = true AND COALESCE({CUBE}.sale_voided, false) = false"
       - name: conversion_rate_pct
         type: number
         sql: "100.0 * {converted_quotes} / NULLIF({quote_count}, 0)"
@@ -306,12 +354,16 @@ cubes:
     description: >
       One row per card charge attempt processed for a sale: authorisation
       outcome, amount, entry method and cardholder details. Includes declined
-      and voided charges.
+      and voided charges. Only populated when cards are processed through
+      Lightspeed Payments; for this tenant the table is empty (0 rows).
     meta:
       ai_context: >
         Use for card acceptance questions: decline rates, entry methods, refunded
-        card amounts. The processing cost of card acceptance lives in
-        processing_fees, not here.
+        card amounts. For this tenant there are no rows (cards are not taken
+        through Lightspeed Payments), so decline rates and entry methods cannot
+        be answered; card tender totals still exist in sale_payments by payment
+        type. The processing cost of card acceptance would live in
+        processing_fees, also empty here.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_cc_charges t
       WHERE NOT t.tombstone
@@ -440,12 +492,16 @@ cubes:
     description: >
       One row per processing-fee record for a card payment: what the payments
       processor charged the merchant, broken into fixed and variable components
-      plus interchange and scheme fee detail.
+      plus interchange and scheme fee detail. Only populated for merchants on
+      Lightspeed Payments; for this tenant the table is empty (0 rows).
     meta:
       ai_context: >
         The true cost of a card payment is fixed_fee + variable_fee (surfaced as
         total_fees). The amount column is the payment amount the fee applies to,
-        NOT the fee itself; never sum amount to answer a fee question.
+        NOT the fee itself; never sum amount to answer a fee question. For this
+        tenant there are no fee records at all (no Lightspeed Payments), so say
+        card processing fees are not available in this data rather than
+        reporting zero fees.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_processing_fees t
       WHERE NOT t.tombstone

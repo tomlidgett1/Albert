@@ -84,8 +84,10 @@ cubes:
         "Purchase orders", "POs", "what did we order from suppliers" = this
         grain. Use ordered_at as the business date for buying activity and
         received_at for goods-in. Open POs = po not complete and not archived.
-        Merchandise spend by item lives in purchase_order_lines (ordered_value);
-        header ship/other costs are freight and fees, not merchandise.
+        Merchandise spend cannot come from purchase_order_lines (the connector
+        delivers them as empty shells): use stock_receipts
+        (received_cost_estimate by vendor) instead. Header ship/other costs are
+        freight and fees, not merchandise.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_purchase_orders t
       WHERE NOT t.tombstone
@@ -277,16 +279,17 @@ cubes:
     title: Purchase order lines
     public: false
     description: >
-      One row per item line on a purchase order: units ordered, unit price paid
-      to the vendor (shop currency), units received and checked in, line total
-      and per-line shipping / discounts. Tombstoned rows are excluded at
-      source.
+      One row per item line on a purchase order. For this tenant the connector
+      delivers these rows as empty shells: all 4,235 lines have null item,
+      quantity, price, total and PO reference (only vendor_id is set), so every
+      measure here is zero or null. Tombstoned rows are excluded at source.
     meta:
       ai_context: >
-        Merchandise spend ("how much did we buy from X", "purchases of brand
-        Y") = ordered_value here, grouped by vendor or item. units_outstanding
-        flags stock ordered but not yet received. price is the per-unit cost
-        to the business (ex tax), not the retail price.
+        Do not answer merchandise spend, units ordered or outstanding stock from
+        this grain: its quantities, prices and item links are all null for this
+        tenant. Say the PO line detail is not available and use stock_receipts
+        (received_cost_estimate / received_units by vendor, brand or category)
+        for what was bought from suppliers.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_purchase_order_lines t
       WHERE NOT t.tombstone
@@ -883,3 +886,152 @@ cubes:
       - name: catalogue_item_count
         type: count
         description: Number of products in supplier B2B catalogues.
+
+  - name: stock_receipts
+    title: Stock receipts (PO check-ins from the inventory log)
+    public: false
+    description: >
+      One row per purchase-order check-in movement in the inventory log
+      (reason checkinPurchaseOrderInventory): the item, the units received,
+      the purchase order and therefore the vendor, and an estimated cost at
+      the item's current unit cost. This is the interim source for supplier
+      spend because the connector delivers purchase_order_lines as empty
+      shells (every quantity, price and item reference is null) and the
+      goods-receipt tables are not populated for this tenant. Tombstoned rows
+      are excluded at source.
+    meta:
+      ai_context: >
+        "How much did we buy from supplier X", "spend by vendor", "what did we
+        receive from suppliers" = received_cost_estimate (and received_units)
+        grouped by vendors_name, with received_at as the business date. The
+        cost is units times the item's current average cost (default cost
+        fallback): an estimate at today's cost, not the invoiced price. For
+        brand or category, group by the received item's brand / category.
+    sql: >
+      SELECT l.*,
+             po.vendor_id,
+             po.shop_id AS po_shop_id,
+             po.ordered_date AS po_ordered_date,
+             COALESCE(NULLIF(i.avg_cost, 0), i.default_cost, 0) AS item_unit_cost
+      FROM source_lightspeed_official.ls_inventory_logs l
+      JOIN source_lightspeed_official.ls_purchase_orders po
+        ON po.tenant_id = l.tenant_id AND po.order_id = l.order_id
+        AND NOT po.tombstone
+      LEFT JOIN source_lightspeed_official.ls_items i
+        ON i.tenant_id = l.tenant_id AND i.item_id = l.item_id
+        AND NOT i.tombstone
+      WHERE NOT l.tombstone
+        AND l.reason = 'checkinPurchaseOrderInventory'
+
+    joins:
+      - name: vendors
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {vendors}.tenant_id
+          AND {CUBE}.vendor_id = {vendors}.vendor_id
+      - name: purchase_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {purchase_orders}.tenant_id
+          AND {CUBE}.order_id = {purchase_orders}.order_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: received_at
+        sql: create_time
+        type: time
+        title: Received at
+        description: When the units were checked in against the purchase order. Business date for supplier spend.
+      - name: ordered_at
+        sql: po_ordered_date
+        type: time
+        title: PO ordered at
+        description: When the purchase order the receipt belongs to was placed.
+      - name: quantity_received
+        sql: qoh_change
+        type: number
+        description: Units checked in by this movement.
+      - name: unit_cost_estimate
+        sql: item_unit_cost
+        type: number
+        format: currency
+        description: The item's current unit cost (average cost, falling back to default cost), ex tax, used to value the receipt.
+      - name: line_cost_estimate
+        type: number
+        format: currency
+        sql: "COALESCE({CUBE}.qoh_change, 0) * COALESCE({CUBE}.item_unit_cost, 0)"
+        description: Units received times the item's current unit cost (ex tax), an estimate of what this check-in was worth.
+      - name: order_id
+        sql: order_id
+        type: number
+        title: Purchase order ID
+        description: The purchase order the units were received against.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: vendor_id
+        sql: vendor_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: receipt_count
+        type: count
+        title: Receipt movements
+        description: Number of purchase-order check-in movements.
+      - name: received_units
+        type: sum
+        sql: qoh_change
+        title: Units received
+        description: Units checked in from suppliers.
+      - name: received_cost_estimate
+        type: sum
+        sql: "COALESCE({CUBE}.qoh_change, 0) * COALESCE({CUBE}.item_unit_cost, 0)"
+        format: currency
+        title: Received cost (estimate at current cost)
+        description: >
+          Units received times the item's current unit cost (average cost,
+          falling back to default cost), ex tax. The interim supplier-spend
+          figure; an estimate at today's cost rather than the invoiced price.
+      - name: purchase_orders_received
+        type: count_distinct
+        sql: order_id
+        title: Purchase orders received against
+        description: Distinct purchase orders with at least one check-in in the selection.
+      - name: items_received
+        type: count_distinct
+        sql: item_id
+        title: Distinct items received
+        description: Distinct items checked in.

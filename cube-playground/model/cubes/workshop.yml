@@ -15,8 +15,11 @@ cubes:
         checked_in_at as the business date for workshop intake volume and
         promised_at for due dates. The money actually charged for workshop work
         lives on the linked sale, not here: for workshop revenue use
-        product_sales_analytics filtered to is_workorder = true. Labour effort
-        and parts attached to jobs are in workorder_lines / workorder_items.
+        product_sales_analytics filtered to is_workorder = true (labour revenue
+        = the lines with items_item_type = non_inventory; parts = item type
+        default). Labour effort and parts attached to jobs are in
+        workorder_lines / workorder_items, but labour HOURS are not recorded for
+        this kind of setup (see workorder_lines).
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_workorders t
       WHERE NOT t.tombstone
@@ -226,16 +229,24 @@ cubes:
     public: false
     description: >
       One row per labour / service line on a workorder: the work performed,
-      hours and minutes of labour, per-unit cost and any price override. done
-      marks the work as finished, approved marks customer approval. Tombstoned
-      rows are excluded at source.
+      the technician (employee_id, exposed as technicians_full_name), hours and
+      minutes of labour, per-unit cost and any price override. done marks the
+      work as finished, approved marks customer approval. For this tenant
+      labour hours are entered on 10 of 24,721 lines: the workshop books labour
+      as priced service items, not as time. Tombstoned rows are excluded at
+      source.
     meta:
       ai_context: >
-        Labour effort ("workshop hours", "labour booked") = labour_hours.
-        unit_price_override is only set when staff override the standard labour
-        price, so it is not a complete revenue figure; charged labour revenue
-        lives on the linked sale lines (product_sales_analytics with
-        is_workorder = true).
+        Labour hours are NOT recorded for this kind of setup (labour_hours is
+        near zero; labour_lines_with_hours shows the coverage): answer
+        "workshop hours" questions by saying so, and measure workshop labour by
+        revenue instead - product_sales_analytics with is_workorder = true and
+        items_item_type = non_inventory (parts are item type default). Labour
+        line counts (labour_line_count, lines_done) are usable. The technician
+        on the line (technicians_full_name) differs from the job owner
+        (employees_full_name) on about half of lines, so say which one a
+        breakdown uses. unit_price_override is only set when staff override the
+        standard labour price, so it is not a revenue figure.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_workorder_lines t
       WHERE NOT t.tombstone
@@ -353,7 +364,13 @@ cubes:
         type: sum
         sql: "COALESCE({CUBE}.hours, 0) + COALESCE({CUBE}.minutes, 0) / 60.0"
         title: Labour hours booked
-        description: Total labour hours recorded on workorder lines (hours plus minutes).
+        description: Total labour hours recorded on workorder lines (hours plus minutes). Recorded on only 10 of 24,721 lines for this tenant, so it is not a measure of workshop effort here.
+      - name: labour_lines_with_hours
+        type: count
+        title: Labour lines with hours recorded
+        description: Labour lines carrying any hours or minutes (10 of 24,721 for this tenant) - the coverage behind labour_hours.
+        filters:
+          - sql: "COALESCE({CUBE}.hours, 0) + COALESCE({CUBE}.minutes, 0) > 0"
       - name: lines_done
         type: count
         title: Lines completed

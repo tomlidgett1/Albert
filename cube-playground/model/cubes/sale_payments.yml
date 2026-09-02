@@ -12,7 +12,13 @@ cubes:
         Use this cube for payment-mix, tender and tips questions. Payment amounts
         are tax inclusive tender, not merchandise revenue; total tender can differ
         from takings because of change, tips and rounding. Business date is
-        completed_at (projected from the parent sale).
+        completed_at (projected from the parent sale). The eCom tender is how the
+        web-store integration settles online orders: "online sales" by tender =
+        payment_types.name equals eCom (the same sales are sales_channel = Online
+        in the sales cube). Card processing fees and card charge outcomes
+        (processing_fees, cc_charges) are empty for this tenant, which does not
+        use Lightspeed Payments: say fees are not available rather than
+        reporting zero.
     sql: >
       WITH parent_sales AS (
         SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time, s.shop_id
@@ -210,8 +216,12 @@ cubes:
     meta:
       ai_context: >
         Group sale_payments by payment_types.name for payment-mix questions.
-        The type column distinguishes system tender categories; internal_reserved
-        types are Lightspeed-internal mechanisms, not customer-facing tenders.
+        The type column is Lightspeed's system category (cash, credit card, gift
+        card, credit account, ecom, adjustment, user defined). Do NOT drop
+        tenders on internal_reserved: Lightspeed flags Cash, Gift Card, Credit
+        Account and eCom as reserved even though they are real customer tenders.
+        The only non-customer tender is Adjustment (type = adjustment), an
+        internal balancing entry: exclude it with is_customer_tender.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_payment_types t
       WHERE NOT t.tombstone
@@ -246,7 +256,15 @@ cubes:
       - name: internal_reserved
         sql: internal_reserved
         type: boolean
-        description: True for Lightspeed-internal tender mechanisms that are not customer-facing choices.
+        description: >
+          True for tender types Lightspeed manages itself (here Cash, Gift Card,
+          Credit Account, eCom and Adjustment). Not a customer-facing versus
+          internal split: see is_customer_tender for that.
+      - name: is_customer_tender
+        type: boolean
+        sql: "(LOWER(COALESCE({CUBE}.type, '')) <> 'adjustment')"
+        title: Customer tender
+        description: True for every tender customers actually pay with; false only for Lightspeed's internal Adjustment tender.
       - name: requires_customer
         sql: require_customer
         type: boolean

@@ -2,15 +2,16 @@ views:
   - name: inventory_analytics
     title: Inventory analytics
     description: >
-      The stock surface: current stock on hand and value per item and store,
-      reorder alerts, stock movement history, serialised units, inter-store
-      transfers, customer special orders and stocktake variances, plus
-      catalogue enrichment (price lists per price type and assembly
-      components). Unprefixed members are the current stock position
-      (item-store grain); inventory_logs_* are movement events;
-      transfer_items_* / transfers_* are transfer lines and their documents;
-      special_orders_*, serialized_units_* and stocktake_* are their own
-      grains.
+      The stock surface: current stock on hand and value (at cost and at
+      retail list price) per item, store and supplier, sales velocity and
+      weeks of cover per position, reorder alerts, stock movement history,
+      serial numbers registered to customers, inter-store transfers, customer
+      special orders and stocktake variances, plus catalogue enrichment (price
+      lists per price type and assembly components). Unprefixed members are
+      the current stock position (item-store grain); inventory_logs_* are
+      movement events; transfer_items_* / transfers_* are transfer lines and
+      their documents; special_orders_*, serialized_units_* and stocktake_*
+      are their own grains.
     meta:
       ai_context: >
         Use this view for "stock", "inventory", "on hand", "out of stock",
@@ -28,22 +29,35 @@ views:
         items_name and categories_name (plus last_sold_at or
         sales_recency_band), measures units_on_hand and stock_value ordered by
         stock_value desc; drop the item dimensions for the category totals.
-        Never present stock_age_band as "no sales". Stock history =
-        inventory_logs_* members with
-        inventory_logs_occurred_at as the time dimension. Combine any grain
-        with items_*, categories_*, manufacturers_*, shops_* or employees_*
+        Never present stock_age_band as "no sales". "What should we reorder",
+        "what will we run out of", "how long will stock last": reorder points
+        are set on only 4 of 17,251 positions for this tenant, so
+        positions_below_reorder / needs_reorder answer "4" and are NOT a
+        reorder list; instead rank in_stock positions by weeks_of_cover
+        ascending with units_sold_90d, quantity_on_hand and
+        sell_through_90d_pct (weekly_sales_rate is the trailing-90-day rate).
+        Stock history = inventory_logs_* members with
+        inventory_logs_occurred_at as the time dimension; movement dollars =
+        inventory_logs_value_change_estimate (cost_change is never recorded),
+        and shrinkage dollars = stocktake_value_adjusted (populated) rather
+        than inventory_logs_net_value_change. Combine any grain with items_*,
+        categories_*, manufacturers_*, vendors_*, shops_* or employees_*
         reference dimensions, but do not mix two different event grains (for
         example inventory_logs_* with transfer_items_*) in one query. Stock
-        value is at cost, ex tax; it is not retail value. Price-list questions
-        ("what price types does X have") use item_prices_* with items_* ONLY —
-        item_prices_* cannot join item_shops_* stock members in one query (no
-        join path); query prices and stock separately and align the two
-        results with albert.derive_result on the item name.
-        Bundle contents use item_components_*. Blank catalogue-price members
-        do not prove an item is unpriced: for a selling-price fallback, query
-        completed sale-line `normal_unit_price`, `unit_price`, and
-        `average_selling_price` in product_sales_analytics and label them as
-        observed/historical rather than current catalogue truth.
+        value: stock_value is at cost (ex tax); stock_retail_value is at the
+        Default list price; markup_pct / stock_markup_pct compare the two.
+        "Stock value by supplier" = stock_value grouped by vendors_name.
+        items_default_price / items_msrp / items_online_price are the current
+        list prices and sit on every stock row (no second query needed);
+        item_prices_* is the raw price-list grain for "what price types does X
+        have" and cannot be combined with stock members. Bundle contents use
+        item_components_*. serialized_units_* are serial numbers registered to
+        customers (their own bikes), not serialised stock: in_stock_serials is
+        about 1 for this tenant. special_orders_created_at is the special-order
+        time dimension. For a selling-price fallback on items that are unpriced,
+        completed sale-line normal_unit_price / unit_price /
+        average_selling_price in product_sales_analytics are observed prices,
+        not catalogue truth.
 
     cubes:
       # items owns the view's tenant_id: every grain in this view reaches
@@ -76,6 +90,8 @@ views:
             alias: items_default_price
           - name: msrp
             alias: items_msrp
+          - name: online_price
+            alias: items_online_price
           - name: model_year
             alias: items_model_year
       - join_path: item_shops
@@ -86,12 +102,17 @@ views:
           - reorder_point
           - reorder_level
           - average_unit_cost
+          - retail_unit_price
+          - markup_pct
           - stock_status
           - last_received_at
           - days_since_last_receipt
           - stock_age_band
           - last_sold_at
           - days_since_last_sale
+          - weekly_sales_rate
+          - weeks_of_cover
+          - sell_through_90d_pct
           - sales_recency_band
           - unsold_90_days
           - unsold_180_days
@@ -101,6 +122,10 @@ views:
           - sellable_units
           - backordered_units
           - stock_value
+          - stock_retail_value
+          - stock_markup_pct
+          - units_sold_90d
+          - units_sold_365d
           - stocked_positions
           - out_of_stock_positions
           - negative_stock_positions
@@ -116,6 +141,10 @@ views:
           - full_path_name
           - node_depth
       - join_path: items.manufacturers
+        prefix: true
+        includes:
+          - name
+      - join_path: items.vendors
         prefix: true
         includes:
           - name
@@ -142,6 +171,7 @@ views:
           - units_removed
           - net_units_change
           - net_value_change
+          - value_change_estimate
           - manual_adjustments
           - negative_stock_events
           - stock_in
@@ -193,6 +223,7 @@ views:
       - join_path: special_orders
         prefix: true
         includes:
+          - created_at
           - unit_quantity
           - customer_contacted
           - is_completed
@@ -268,12 +299,26 @@ views:
           - sellable_units
           - backordered_units
           - stock_value
+          - stock_retail_value
+          - stock_markup_pct
           - distinct_items_in_stock
           - stocked_positions
           - quantity_on_hand
           - average_unit_cost
+          - retail_unit_price
+          - markup_pct
           - stock_status
           - snapshot_updated_at
+      - name: Sales velocity and cover
+        includes:
+          - units_sold_90d
+          - units_sold_365d
+          - weekly_sales_rate
+          - weeks_of_cover
+          - sell_through_90d_pct
+          - last_sold_at
+          - days_since_last_sale
+          - sales_recency_band
       - name: Stock ageing
         includes:
           - stock_age_band
@@ -293,6 +338,7 @@ views:
           - inventory_logs_units_removed
           - inventory_logs_net_units_change
           - inventory_logs_net_value_change
+          - inventory_logs_value_change_estimate
           - inventory_logs_manual_adjustments
           - inventory_logs_negative_stock_events
           - inventory_logs_occurred_at
@@ -324,6 +370,7 @@ views:
           - transfer_items_value_received
       - name: Special orders
         includes:
+          - special_orders_created_at
           - special_orders_special_order_count
           - special_orders_outstanding_special_orders
           - special_orders_completed_special_orders
@@ -350,10 +397,13 @@ views:
           - items_system_sku
           - items_item_type
           - items_default_price
+          - items_msrp
+          - items_online_price
           - items_default_cost
           - items_average_cost
           - categories_name
           - categories_full_path_name
           - manufacturers_name
+          - vendors_name
           - shops_name
           - employees_full_name

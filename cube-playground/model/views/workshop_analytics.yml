@@ -10,12 +10,20 @@ views:
       and sales_analytics, not here.
     meta:
       ai_context: >
-        Use this view for "workshop", "service", "repairs", "jobs", "labour
-        hours" and "parts used on jobs". Default time dimension: checked_in_at.
-        Job status = workorder_statuses_name. Combine labour_* or parts_* members with
-        job, store and staff dimensions freely, but not labour_* with parts_*
-        in one query (different grains). For workshop revenue use
-        product_sales_analytics with is_workorder = true.
+        Use this view for "workshop", "service", "repairs", "jobs" and "parts
+        used on jobs". Default time dimension: checked_in_at. Job status =
+        workorder_statuses_name. Labour HOURS are not recorded for this kind of
+        setup: workorder_lines_labour_hours is entered on 10 of 24,721 lines
+        (workorder_lines_labour_lines_with_hours shows the coverage), so say so
+        and measure labour by revenue instead - product_sales_analytics with
+        is_workorder = true and items_item_type = non_inventory (parts = item
+        type default). Two staff attributions: employees_full_name is the job
+        owner on the workorder, technicians_full_name is the employee on each
+        labour line; they differ on about half of lines, so state which one is
+        used. Combine workorder_lines_* or workorder_items_* members with job,
+        store and staff dimensions freely, but not workorder_lines_* with
+        workorder_items_* in one query (different grains). For workshop revenue
+        use product_sales_analytics with is_workorder = true.
 
     cubes:
       - join_path: workorders
@@ -59,6 +67,11 @@ views:
         prefix: true
         includes:
           - name
+      # Technician on each labour line, distinct from the job owner.
+      - join_path: workorder_lines.employees
+        includes:
+          - name: full_name
+            alias: technicians_full_name
       - join_path: workorder_lines
         prefix: true
         includes:
@@ -74,6 +87,7 @@ views:
           - updated_at
           - labour_line_count
           - labour_hours
+          - labour_lines_with_hours
           - lines_done
           - lines_pending
           - lines_approved
@@ -131,6 +145,8 @@ views:
         includes:
           - workorder_lines_labour_line_count
           - workorder_lines_labour_hours
+          - workorder_lines_labour_lines_with_hours
+          - technicians_full_name
           - workorder_lines_lines_done
           - workorder_lines_lines_pending
           - workorder_lines_lines_approved
@@ -156,4 +172,5 @@ views:
           - customers_full_name
           - customers_company
           - employees_full_name
+          - technicians_full_name
           - shops_name

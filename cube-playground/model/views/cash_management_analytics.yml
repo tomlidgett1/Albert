@@ -11,12 +11,17 @@ views:
     meta:
       ai_context: >
         Use this view for "till", "cash up", "register balance", "over/short",
-        "cash variance", "banking drops" and "petty cash". Till variance =
-        amounts_variance_total (negative = short). Default time dimension:
-        counted_at for reconciliations, withdrawals_occurred_at for
-        withdrawals. The drawer_* members are a live snapshot with no time
-        dimension. Sales revenue and payment mix belong in sales_analytics /
-        payments_analytics, not here.
+        "cash variance", "banking drops" and "petty cash". Cash over/short =
+        amounts_cash_variance_total (the Cash tender only; negative = short)
+        with amounts_cash_short_counts / amounts_cash_over_counts.
+        amounts_variance_total sums EVERY tender row including Lightspeed's
+        internal Adjustment tender, which dominates it for this tenant (-$6,100
+        of -$6,733 over 90 days), so never present it as cash over/short; group
+        by payment_types_name or amounts_tender_type when a per-tender split is
+        wanted. Default time dimension: counted_at for reconciliations,
+        withdrawals_occurred_at for withdrawals. The drawer_* members are a live
+        snapshot with no time dimension. Sales revenue and payment mix belong in
+        sales_analytics / payments_analytics, not here.
 
     cubes:
       # registers owns the view's tenant_id: every grain here (counts,
@@ -56,6 +61,8 @@ views:
             alias: amounts_counted_amount
           - name: variance_amount
             alias: amounts_variance_amount
+          - name: tender_type
+            alias: amounts_tender_type
           - name: amount_line_count
             alias: amounts_line_count
           - name: expected_total
@@ -64,6 +71,12 @@ views:
             alias: amounts_counted_total
           - name: variance_total
             alias: amounts_variance_total
+          - name: cash_variance_total
+            alias: amounts_cash_variance_total
+          - name: cash_short_counts
+            alias: amounts_cash_short_counts
+          - name: cash_over_counts
+            alias: amounts_cash_over_counts
           - name: short_counts
             alias: amounts_short_counts
           - name: over_counts
@@ -107,12 +120,16 @@ views:
           - count_sessions
           - counted_at
           - opened_at
+          - amounts_cash_variance_total
+          - amounts_cash_short_counts
+          - amounts_cash_over_counts
           - amounts_expected_total
           - amounts_counted_total
           - amounts_variance_total
           - amounts_short_counts
           - amounts_over_counts
           - amounts_variance_amount
+          - amounts_tender_type
       - name: Withdrawals and drops
         includes:
           - withdrawals_count

@@ -19,8 +19,40 @@ cubes:
         Profitability means gross profit (revenue minus cost of goods); Lightspeed
         has no operating expenses, so answers must say "gross profit/margin".
         Never mix tax-inclusive calc_total with ex-tax calc_subtotal in one ratio.
+        net_sales_ex_tax is AFTER discounts (what customers actually paid, ex
+        GST); Lightspeed's calc_subtotal is the pre-discount list value and is
+        surfaced as net_sales_before_discounts, so net_sales_ex_tax =
+        net_sales_before_discounts - discounts_given and gross_profit /
+        gross_margin_pct are post-discount. Never hand-subtract discounts again.
+        "Busiest day", "best day of the week", "peak hours": group transactions
+        or gross_takings by completed_weekday (order by completed_weekday_number)
+        or completed_hour_of_day in ONE query; never add up daily rows by hand.
+        "Online sales", "web orders" = sales_channel equals Online (the sale was
+        settled with the eCom tender); everything else is In store. open_tickets
+        are parked or abandoned register tickets, not layaways: layaways in
+        progress are open_layaways / layaway_balance, and a negative balance is
+        a deposit held ahead of the goods.
+    # has_ecom_tender: the web-store integration settles its orders with
+    # Lightspeed's eCom payment type. This tenant runs one register for both
+    # channels, so the tender (not the register) is what identifies online
+    # orders; the flag is precomputed once per sale here.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_sales t
+      WITH ecom_tenders AS MATERIALIZED (
+        SELECT sp.tenant_id, sp.sale_id
+        FROM source_lightspeed_official.ls_sale_payments sp
+        JOIN source_lightspeed_official.ls_payment_types pt
+          ON pt.tenant_id = sp.tenant_id
+          AND pt.payment_type_id = sp.payment_type_id
+          AND NOT pt.tombstone
+        WHERE NOT sp.tombstone
+          AND (LOWER(pt.type) = 'ecom' OR LOWER(pt.name) = 'ecom')
+        GROUP BY 1, 2
+      )
+      SELECT t.*,
+             (e.sale_id IS NOT NULL) AS has_ecom_tender
+      FROM source_lightspeed_official.ls_sales t
+      LEFT JOIN ecom_tenders e
+        ON e.tenant_id = t.tenant_id AND e.sale_id = t.sale_id
       WHERE NOT t.tombstone
 
     joins:
@@ -87,21 +119,50 @@ cubes:
         type: string
         sql: >
           CASE
-            WHEN {CUBE}.voided THEN 'Voided'
-            WHEN NOT {CUBE}.completed THEN 'Open ticket'
+            WHEN COALESCE({CUBE}.voided, false) THEN 'Voided'
+            WHEN COALESCE({CUBE}.completed, false) = false
+                 AND COALESCE({CUBE}.calc_payments, 0) > 0 THEN 'Open layaway'
+            WHEN COALESCE({CUBE}.completed, false) = false THEN 'Open ticket'
             WHEN {CUBE}.calc_total < 0 THEN 'Refund'
             ELSE 'Sale'
           END
         description: >
           Classifies each transaction: Sale (completed, positive), Refund (completed,
-          negative total), Open ticket (not yet completed) or Voided.
+          negative total), Open layaway (not completed but a payment has been
+          taken), Open ticket (not completed, nothing paid: a parked or abandoned
+          register ticket) or Voided.
         meta:
-          ai_context: Use this to separate refunds from regular sales in breakdowns.
+          ai_context: Use this to separate refunds, layaways and abandoned tickets from regular sales in breakdowns.
       - name: completed_at
         sql: complete_time
         type: time
         title: Completed at (business date)
         description: When the sale was finalised. This is the business date for all revenue reporting.
+      - name: completed_weekday
+        sql: "to_char({CUBE}.complete_time, 'FMDay')"
+        type: string
+        title: Day of week (completed)
+        description: Weekday name of the completion time (Monday ... Sunday) in the store's time zone.
+        meta:
+          ai_context: >
+            For "busiest day" / "which day of the week sells most" group
+            transactions or gross_takings by this in one query and order by
+            completed_weekday_number; never sum daily rows by hand.
+      - name: completed_weekday_number
+        sql: "EXTRACT(ISODOW FROM {CUBE}.complete_time)"
+        type: number
+        title: Day of week number (1 = Monday)
+        description: ISO weekday number of the completion time (1 = Monday ... 7 = Sunday), for ordering weekday breakdowns.
+      - name: completed_hour_of_day
+        sql: "EXTRACT(HOUR FROM {CUBE}.complete_time)"
+        type: number
+        title: Hour of day (completed)
+        description: Hour of the day (0-23) the sale was completed, in the store's time zone.
+        meta:
+          ai_context: >
+            For "busiest hour" / "peak trading times" group transactions or
+            gross_takings by this (optionally with completed_weekday) in one
+            query; never sum hourly rows by hand.
       - name: created_at
         sql: create_time
         type: time
@@ -208,6 +269,26 @@ cubes:
         sql: "({CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0)"
         title: Has attached customer
         description: True when the sale was rung up against a customer profile rather than anonymously.
+      - name: sales_channel
+        type: string
+        title: Sales channel
+        sql: "CASE WHEN COALESCE({CUBE}.has_ecom_tender, false) THEN 'Online' ELSE 'In store' END"
+        description: >
+          Online when the sale was settled with Lightspeed's eCom tender (the
+          web-store integration's payment type), otherwise In store. This tenant
+          runs a single register ("Counter") for both channels, so the tender,
+          not the register, identifies online orders.
+        meta:
+          ai_context: >
+            "Online sales", "web orders", "ecommerce revenue": filter or group by
+            sales_channel (Online / In store) with gross_takings and
+            transactions. The same population is the eCom tender in
+            payments_analytics.
+      - name: is_online_sale
+        type: boolean
+        sql: "COALESCE({CUBE}.has_ecom_tender, false)"
+        title: Online sale
+        description: True when the sale carries an eCom tender (see sales_channel).
 
     measures:
       - name: transactions
@@ -287,12 +368,32 @@ cubes:
         description: Signed anonymous gross takings as a share of all signed gross takings for the same selection.
       - name: net_sales_ex_tax
         type: sum
+        sql: "COALESCE({CUBE}.calc_total, 0) - COALESCE({CUBE}.calc_tax1, 0) - COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Net sales (ex tax, after discounts)
+        description: >
+          Ex-tax revenue actually paid on completed, non-voided sales: the
+          tax-inclusive total less tax, so discounts are already deducted
+          (it equals calc_taxable + calc_non_taxable). Refunds subtract. Use
+          this side of any margin calculation because cost fields are also ex
+          tax.
+        meta:
+          ai_context: >
+            "Net sales", "sales ex GST", "revenue ex tax" = this measure. It is
+            post-discount; net_sales_before_discounts is the pre-discount list
+            value (Lightspeed's calc_subtotal) and the difference is
+            discounts_given.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
+      - name: net_sales_before_discounts
+        type: sum
         sql: calc_subtotal
         format: currency
-        title: Net sales (ex tax)
+        title: Net sales before discounts (ex tax)
         description: >
-          Ex-tax revenue across completed, non-voided sales. Use this side of any
-          margin calculation because cost fields are also ex tax.
+          Ex-tax value of completed, non-voided sales at list price, before any
+          discount (Lightspeed's calc_subtotal). net_sales_ex_tax is this less
+          discounts_given.
         filters:
           - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
       - name: tax_collected
@@ -335,8 +436,8 @@ cubes:
         type: sum
         sql: calc_discount
         format: currency
-        title: Discounts given
-        description: Total discount value given away on completed, non-voided sales.
+        title: Discounts given (ex tax)
+        description: Total ex-tax discount value given away on completed, non-voided sales; net_sales_before_discounts less this equals net_sales_ex_tax.
         filters:
           - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false"
       - name: tips_collected
@@ -386,15 +487,16 @@ cubes:
         format: currency
         title: Gross profit
         description: >
-          Net sales (ex tax) minus cost of goods sold. This is gross profit;
-          Lightspeed carries no operating expenses, so "profit" questions can only
-          be answered at gross margin level and answers should say so.
+          Net sales (ex tax, after discounts) minus cost of goods sold. This is
+          gross profit; Lightspeed carries no operating expenses, so "profit"
+          questions can only be answered at gross margin level and answers
+          should say so.
       - name: gross_margin_pct
         type: number
         sql: "100.0 * ({net_sales_ex_tax} - {cost_of_goods}) / NULLIF({net_sales_ex_tax}, 0)"
         format: percent
         title: Gross margin %
-        description: Gross profit as a percentage of net sales (ex tax).
+        description: Gross profit as a percentage of net sales (ex tax, after discounts).
       - name: average_sale_value
         type: number
         sql: "{gross_takings} / NULLIF({transactions}, 0)"
@@ -424,16 +526,71 @@ cubes:
           - sql: "COALESCE({CUBE}.voided, false) = true"
       - name: open_tickets
         type: count
-        description: Tickets that are neither completed nor voided (still open at the register).
+        title: Open register tickets
+        description: >
+          Tickets that are neither completed nor voided. For this tenant these
+          are parked or abandoned register tickets going back to 2018 (12.9k as
+          at September 2026, almost all with nothing paid), not layaways.
+        meta:
+          ai_context: >
+            Not a layaway or deposit count and not money owed: for layaways in
+            progress use open_layaways and layaway_balance.
         filters:
           - sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false"
       - name: outstanding_balance
         type: sum
         sql: balance
         format: currency
-        description: Total unpaid balance across non-voided sales (layaways, on-account sales).
+        title: Outstanding balance (tickets with a payment)
+        description: >
+          Net balance across non-voided tickets on which a payment has been
+          taken (layaways and deposits). Negative means customers have paid more
+          than the ticket currently totals (deposits held); positive means money
+          is still owed. Abandoned tickets with nothing paid are excluded.
         filters:
-          - sql: "COALESCE({CUBE}.voided, false) = false"
+          - sql: "COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.calc_payments, 0) > 0"
+      - name: open_layaways
+        type: count
+        title: Open layaways
+        description: >
+          Open tickets (not completed, not voided, not archived) on which a
+          payment has been taken: layaways and deposits still in progress.
+        meta:
+          ai_context: >
+            "Layaways", "deposits held", "lay-bys in progress" = this count with
+            layaway_balance; filter created_at to a recent window when the
+            question is about current layaways (the all-time population
+            includes stale tickets back to 2018).
+        filters:
+          - sql: >
+              COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false
+              AND COALESCE({CUBE}.archived, false) = false AND COALESCE({CUBE}.calc_payments, 0) > 0
+      - name: layaway_balance
+        type: sum
+        sql: balance
+        format: currency
+        title: Layaway balance
+        description: >
+          Net balance across open layaways (see open_layaways). Negative =
+          deposits held ahead of the goods; positive = still owed by customers.
+        filters:
+          - sql: >
+              COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false
+              AND COALESCE({CUBE}.archived, false) = false AND COALESCE({CUBE}.calc_payments, 0) > 0
+      - name: online_transactions
+        type: count
+        title: Online transactions
+        description: Completed, non-voided sales settled with the eCom tender (sales_channel = Online); refund transactions included.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.has_ecom_tender, false) = true"
+      - name: online_gross_takings
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Online takings (inc tax)
+        description: Tax-inclusive takings on completed, non-voided online sales (sales_channel = Online); refunds subtract.
+        filters:
+          - sql: "{CUBE}.completed = true AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.has_ecom_tender, false) = true"
       - name: purchasing_customers
         type: count_distinct
         sql: customer_id
@@ -468,7 +625,13 @@ cubes:
         description: Voided/cancelled transactions.
       - name: open_sales
         sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false"
-        description: Open tickets not yet completed.
+        description: Open tickets not yet completed (mostly parked or abandoned register tickets; use layaway_sales for the ones with money down).
+      - name: layaway_sales
+        sql: "COALESCE({CUBE}.completed, false) = false AND COALESCE({CUBE}.voided, false) = false AND COALESCE({CUBE}.archived, false) = false AND COALESCE({CUBE}.calc_payments, 0) > 0"
+        description: Open layaways and deposit tickets (not completed, not voided, with a payment taken).
+      - name: online_sales
+        sql: "COALESCE({CUBE}.has_ecom_tender, false) = true"
+        description: Sales settled with the eCom tender (online orders).
       - name: customer_attached_sales
         sql: "{CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0"
         description: Sales rung up against a customer profile (excludes anonymous walk-ins).

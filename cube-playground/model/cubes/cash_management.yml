@@ -12,7 +12,7 @@ cubes:
       ai_context: >
         "Till counts", "register close", "end of day count" = this grain. The
         employee joined here is the one who closed / performed the count. Cash
-        over/short lives in register_count_amounts (variance members).
+        over/short lives in register_count_amounts (cash_variance_total).
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_register_counts t
       WHERE NOT t.tombstone
@@ -88,11 +88,23 @@ cubes:
     meta:
       ai_context: >
         "Cash over/short", "till variance", "did the till balance" =
-        variance_total here (actual minus expected; negative = short, positive
-        = over). Group by payment_types_name for per-tender reconciliation and
-        by register_counts members for the session and date.
+        cash_variance_total (the Cash tender only; counted minus expected,
+        negative = short, positive = over) with cash_short_counts.
+        variance_total sums EVERY tender row, including Lightspeed's internal
+        Adjustment tender that dominates it (for this tenant -$6,100 of -$6,733
+        over the last 90 days), so never present variance_total as cash
+        over/short. Group by payment_types_name or tender_type for per-tender
+        reconciliation and by register_counts members for the session and date.
+    # tender_type / tender_name: the tender's system category and name
+    # projected onto each row so cash-only measures need no join.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_register_count_amounts t
+      SELECT t.*,
+             LOWER(pt.type) AS tender_type,
+             pt.name AS tender_name
+      FROM source_lightspeed_official.ls_register_count_amounts t
+      LEFT JOIN source_lightspeed_official.ls_payment_types pt
+        ON pt.tenant_id = t.tenant_id AND pt.payment_type_id = t.payment_type_id
+        AND NOT pt.tombstone
       WHERE NOT t.tombstone
 
     joins:
@@ -137,6 +149,11 @@ cubes:
         sql: "COALESCE({CUBE}.actual, 0) - COALESCE({CUBE}.calculated, 0)"
         title: Over / short
         description: Counted minus expected. Negative = short, positive = over.
+      - name: tender_type
+        sql: tender_type
+        type: string
+        title: Tender type
+        description: Lightspeed's system category of the tender row (cash, credit card, gift card, credit account, ecom, adjustment, user defined).
       - name: register_count_id
         sql: register_count_id
         type: number
@@ -166,8 +183,31 @@ cubes:
         type: sum
         sql: "COALESCE({CUBE}.actual, 0) - COALESCE({CUBE}.calculated, 0)"
         format: currency
-        title: Over / short total
-        description: Net over/short across counted tenders (negative = short).
+        title: Over / short total (all tenders)
+        description: >
+          Net over/short across every counted tender row, including card
+          tenders and Lightspeed's internal Adjustment tender (negative =
+          short). Not the cash over/short figure: see cash_variance_total.
+      - name: cash_variance_total
+        type: sum
+        sql: "COALESCE({CUBE}.actual, 0) - COALESCE({CUBE}.calculated, 0)"
+        format: currency
+        title: Cash over / short
+        description: Net over/short on the Cash tender only (counted minus expected; negative = short, positive = over).
+        filters:
+          - sql: "{CUBE}.tender_type = 'cash'"
+      - name: cash_short_counts
+        type: count
+        title: Cash short counts
+        description: Cash tender rows counted short of the expected amount.
+        filters:
+          - sql: "{CUBE}.tender_type = 'cash' AND COALESCE({CUBE}.actual, 0) < COALESCE({CUBE}.calculated, 0)"
+      - name: cash_over_counts
+        type: count
+        title: Cash over counts
+        description: Cash tender rows counted over the expected amount.
+        filters:
+          - sql: "{CUBE}.tender_type = 'cash' AND COALESCE({CUBE}.actual, 0) > COALESCE({CUBE}.calculated, 0)"
       - name: short_counts
         type: count
         title: Short counts

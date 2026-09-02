@@ -16,9 +16,28 @@ cubes:
         are LINE TOTALS already multiplied by quantity; never multiply them by
         unit_quantity again. calc_total is tax inclusive, calc_subtotal is ex tax.
         Line business date is completed_at (projected from the parent sale).
+        line_net_revenue is AFTER discounts (tax-inclusive line total less tax);
+        Lightspeed's calc_subtotal is the pre-discount value and is surfaced as
+        line_net_revenue_before_discounts, so line_net_revenue =
+        line_net_revenue_before_discounts - line_discounts and every margin
+        measure here is post-discount: never subtract discounts again.
+        line_gross_margin_pct is a blended figure: for this tenant stocked goods
+        run at roughly 45% while labour / service lines (item type
+        non_inventory) carry almost no cost and show about 98%, so "product
+        margin" or "retail margin" questions should use goods_gross_margin_pct.
+        Two staff attributions exist: employees_full_name is the staff member on
+        the LINE (who added it), sale_employees_full_name is the seller of record
+        on the sale HEADER; they differ on roughly a third of lines, so say which
+        one a breakdown uses. "Busiest day / hour" for products: group by
+        completed_weekday or completed_hour_of_day in one query.
+    # sale_employee_id: the header employee (seller of record) projected onto
+    # each line so line-level and header-level staff attribution can both be
+    # answered from this grain. line_item_type: the catalogue item type
+    # projected here so goods-only margin needs no join.
     sql: >
       WITH parent_sales AS (
-        SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time
+        SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time,
+               s.employee_id
         FROM source_lightspeed_official.ls_sales s
         WHERE NOT s.tombstone
       ),
@@ -29,10 +48,15 @@ cubes:
       SELECT c.*,
              COALESCE(c.completed, p.completed) AS effective_completed,
              COALESCE(c.voided, p.voided) AS effective_voided,
-             COALESCE(c.complete_time, p.complete_time) AS effective_complete_time
+             COALESCE(c.complete_time, p.complete_time) AS effective_complete_time,
+             p.employee_id AS sale_employee_id,
+             i.item_type AS line_item_type
       FROM lines c
       LEFT JOIN parent_sales p
         ON p.tenant_id = c.tenant_id AND p.sale_id = c.sale_id
+      LEFT JOIN source_lightspeed_official.ls_items i
+        ON i.tenant_id = c.tenant_id AND i.item_id = c.item_id
+        AND NOT i.tombstone
 
     joins:
       - name: sales
@@ -117,6 +141,28 @@ cubes:
         type: time
         title: Completed at (business date)
         description: Parent sale completion time projected onto the line. Business date for product-level revenue.
+      - name: completed_weekday
+        sql: "to_char({CUBE}.effective_complete_time, 'FMDay')"
+        type: string
+        title: Day of week (completed)
+        description: Weekday name of the parent sale's completion time (Monday ... Sunday) in the store's time zone.
+        meta:
+          ai_context: >
+            For "busiest day for product X / category Y" group units_sold or
+            line_revenue by this in one query and order by
+            completed_weekday_number; never sum daily rows by hand.
+      - name: completed_weekday_number
+        sql: "EXTRACT(ISODOW FROM {CUBE}.effective_complete_time)"
+        type: number
+        title: Day of week number (1 = Monday)
+        description: ISO weekday number of the completion time (1 = Monday ... 7 = Sunday), for ordering weekday breakdowns.
+      - name: completed_hour_of_day
+        sql: "EXTRACT(HOUR FROM {CUBE}.effective_complete_time)"
+        type: number
+        title: Hour of day (completed)
+        description: Hour of the day (0-23) the parent sale was completed, in the store's time zone.
+        meta:
+          ai_context: For "busiest hour" / "peak times" by product, group units_sold or line_revenue by this in one query.
       - name: created_at
         sql: create_time
         type: time
@@ -231,6 +277,16 @@ cubes:
         sql: "(COALESCE({CUBE}.unit_quantity, 0) < 0 OR COALESCE({CUBE}.calc_total, 0) < 0)"
         title: Is return line
         description: True for lines that take units/revenue back (returns and refunds).
+      - name: sale_employee_id
+        sql: sale_employee_id
+        type: number
+        public: false
+        description: Employee on the sale header (seller of record), projected from the parent sale.
+      - name: line_item_type
+        sql: line_item_type
+        type: string
+        public: false
+        description: Catalogue item type of the line's item (default, serialized, non_inventory, labor, assembly, box), projected from items.
 
     measures:
       - name: line_count
@@ -263,10 +319,27 @@ cubes:
           - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
       - name: line_net_revenue
         type: sum
+        sql: "COALESCE({CUBE}.calc_total, 0) - COALESCE({CUBE}.calc_tax1, 0) - COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Line net revenue (ex tax, after discounts)
+        description: >
+          Ex-tax revenue actually paid for these lines on completed, non-voided
+          sales: the tax-inclusive line total less tax, so line and transaction
+          discounts are already deducted. The correct base for margin maths.
+        meta:
+          ai_context: >
+            Post-discount. Lightspeed's calc_subtotal is BEFORE discounts and is
+            surfaced as line_net_revenue_before_discounts; line_net_revenue =
+            line_net_revenue_before_discounts - line_discounts. Never subtract
+            discounts again.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_net_revenue_before_discounts
+        type: sum
         sql: calc_subtotal
         format: currency
-        title: Line net revenue (ex tax)
-        description: Ex-tax revenue for these lines; the correct base for margin maths.
+        title: Line net revenue before discounts (ex tax)
+        description: Ex-tax value of these lines at the price before line and transaction discounts (Lightspeed's calc_subtotal), on completed, non-voided sales.
         filters:
           - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
       - name: line_tax
@@ -328,14 +401,52 @@ cubes:
         type: number
         sql: "100.0 * ({line_net_revenue} - {line_cost_of_goods}) / NULLIF({line_net_revenue}, 0)"
         format: percent
-        title: Line gross margin %
-        description: Line gross profit as a percentage of ex-tax line revenue.
+        title: Line gross margin % (blended)
+        description: >
+          Line gross profit as a percentage of ex-tax line revenue across every
+          line type. Blends stocked goods with labour / service and other
+          non-inventory lines that carry little or no cost.
+        meta:
+          ai_context: >
+            For this tenant goods run at roughly 45% and labour lines at about
+            98% (post-discount), so use goods_gross_margin_pct for "product" or
+            "retail" margin and this blended figure only for whole-business
+            margin.
+      - name: goods_net_revenue
+        type: sum
+        sql: "COALESCE({CUBE}.calc_total, 0) - COALESCE({CUBE}.calc_tax1, 0) - COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Goods net revenue (ex tax, after discounts)
+        description: Ex-tax revenue after discounts on lines for stocked goods (item types default and serialized) on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.line_item_type IN ('default', 'serialized')"
+      - name: goods_cost_of_goods
+        type: sum
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.fifo_cost, 0) = 0 AND COALESCE({CUBE}.calc_subtotal, 0) <> 0
+              THEN COALESCE({CUBE}.avg_cost, 0)
+            ELSE COALESCE({CUBE}.fifo_cost, 0)
+          END
+        format: currency
+        title: Goods cost (ex tax)
+        description: Ex-tax cost on stocked-goods lines (item types default and serialized), FIFO with average-cost fallback, on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.line_item_type IN ('default', 'serialized')"
+      - name: goods_gross_margin_pct
+        type: number
+        sql: "100.0 * ({goods_net_revenue} - {goods_cost_of_goods}) / NULLIF({goods_net_revenue}, 0)"
+        format: percent
+        title: Goods gross margin %
+        description: Gross margin on stocked goods only (item types default and serialized), excluding labour / service and other non-inventory lines.
+        meta:
+          ai_context: The measure for "product margin", "retail margin" or "margin on parts"; line_gross_margin_pct blends in near-cost-free labour.
       - name: average_selling_price
         type: number
         sql: "{line_net_revenue} / NULLIF({units_sold}, 0)"
         format: currency
-        title: Average selling price (ex tax)
-        description: Net revenue per unit sold.
+        title: Average selling price (ex tax, after discounts)
+        description: Post-discount net revenue per unit sold.
       - name: distinct_items_sold
         type: count_distinct
         sql: item_id
@@ -343,6 +454,18 @@ cubes:
         description: Number of different items appearing on completed, non-voided sale lines.
         filters:
           - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.item_id IS NOT NULL"
+      - name: sales_count
+        type: count_distinct
+        sql: sale_id
+        title: Sales (distinct transactions)
+        description: Distinct completed, non-voided sales the selected lines belong to.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: units_per_sale
+        type: number
+        sql: "{units_sold} / NULLIF({sales_count}, 0)"
+        title: Units per sale
+        description: Net units sold divided by distinct sales (basket size in units) for the selected lines.
 
     segments:
       - name: completed_lines

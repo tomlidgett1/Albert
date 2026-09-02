@@ -2,29 +2,37 @@ views:
   - name: purchasing_analytics
     title: Purchasing analytics
     description: >
-      The buying surface: purchase orders and their lifecycle, merchandise
-      spend by vendor / item / brand, goods receipts and lead times, stock
-      returned to suppliers, and supplier reference data (part numbers,
-      negotiated costs, B2B catalogues). Unprefixed members are PO-header
-      grain; purchase_order_lines_* are item lines; order_shipments_* /
-      order_shipment_items_* are goods receipts; vendor_returns_* are returns
-      to suppliers.
+      The buying surface: purchase orders and their lifecycle, supplier spend
+      from stock receipts, lead times, stock returned to suppliers, and
+      supplier reference data (part numbers, negotiated costs, B2B
+      catalogues). Unprefixed members are PO-header grain; stock_receipts_*
+      are PO check-in movements from the inventory log (the interim source of
+      merchandise spend); purchase_order_lines_* are item lines that the
+      connector delivers as EMPTY SHELLS for this tenant (all 4,235 rows have
+      null item, quantity, price and total); order_shipments_* /
+      order_shipment_items_* are goods receipts (not populated for this
+      tenant); vendor_returns_* are returns to suppliers.
     meta:
       ai_context: >
         Use this view for "purchase orders", "buying", "supplier spend",
-        "deliveries", "lead times" and "returns to vendors". Default time
-        dimension: ordered_at (PO placement); goods-in questions use
-        order_shipments_received_at. Merchandise spend =
-        purchase_order_lines_ordered_value; freight and fees are the header
-        freight_cost_total / other_cost_total. All costs are ex tax in the
-        shop currency. Combine any grain with vendors_*, shops_* or
-        employees_* reference dimensions. items_*, categories_* and
-        manufacturers_* dimensions ride the PO line grain: pair them with
-        purchase_order_lines_* members or PO headers, not with
-        order_shipment_*, vendor_returns_* or item_vendor_numbers_* members.
-        Do not mix two event grains (for example purchase_order_lines_* with
-        vendor_returns_*) in one query. Customer refunds are NOT here; they
-        are refunds in sales_analytics.
+        "deliveries", "lead times" and "returns to vendors". Merchandise /
+        supplier spend = stock_receipts_received_cost_estimate (units checked
+        in against POs times the item's current unit cost, an estimate at
+        today's cost) with stock_receipts_received_units, grouped by
+        vendors_name, received_brand or received_category, time dimension
+        stock_receipts_received_at. Do NOT use purchase_order_lines_* for
+        spend: the connector delivers PO lines as empty shells for this tenant
+        (quantities, prices, totals and item links are all null), so say the
+        line detail is unavailable if asked for it. Default time dimension for
+        PO headers: ordered_at (PO placement); PO counts, status and lead times
+        are real. Freight and fees are the header freight_cost_total /
+        other_cost_total. All costs are ex tax in the shop currency. Combine
+        any grain with vendors_*, shops_* or employees_* reference dimensions.
+        items_*, categories_* and manufacturers_* dimensions ride the (empty)
+        PO line grain; the received_item_* / received_brand / received_category
+        dimensions ride stock_receipts_*. Do not mix two event grains (for
+        example stock_receipts_* with vendor_returns_*) in one query. Customer
+        refunds are NOT here; they are refunds in sales_analytics.
 
     cubes:
       # vendors owns the view's tenant_id: POs, PO lines, goods receipts,
@@ -106,6 +114,38 @@ views:
         prefix: true
         includes:
           - full_name
+      # Supplier spend from PO check-ins in the inventory log; reaches the
+      # vendors-rooted tenant pin directly through the projected vendor_id.
+      - join_path: stock_receipts
+        prefix: true
+        includes:
+          - received_at
+          - ordered_at
+          - quantity_received
+          - unit_cost_estimate
+          - line_cost_estimate
+          - order_id
+          - receipt_count
+          - received_units
+          - received_cost_estimate
+          - purchase_orders_received
+          - items_received
+      - join_path: stock_receipts.items
+        includes:
+          - name: name
+            alias: received_item_name
+          - name: system_sku
+            alias: received_item_sku
+          - name: item_type
+            alias: received_item_type
+      - join_path: stock_receipts.items.manufacturers
+        includes:
+          - name: name
+            alias: received_brand
+      - join_path: stock_receipts.items.categories
+        includes:
+          - name: full_path_name
+            alias: received_category
       - join_path: purchase_order_lines
         prefix: true
         includes:
@@ -186,7 +226,21 @@ views:
           - ordered_at
           - received_at
           - expected_arrival_at
-      - name: Merchandise spend
+      - name: Supplier spend (stock receipts)
+        includes:
+          - stock_receipts_received_cost_estimate
+          - stock_receipts_received_units
+          - stock_receipts_receipt_count
+          - stock_receipts_purchase_orders_received
+          - stock_receipts_items_received
+          - stock_receipts_received_at
+          - stock_receipts_ordered_at
+          - received_item_name
+          - received_item_sku
+          - received_item_type
+          - received_brand
+          - received_category
+      - name: PO lines (empty for this tenant)
         includes:
           - purchase_order_lines_ordered_value
           - purchase_order_lines_received_value

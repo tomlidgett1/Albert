@@ -5,14 +5,25 @@ views:
       Tender-level surface: how customers pay (payment mix), tips, refund
       tenders, card charge outcomes and card processing fees. Fact grain is one
       row per payment event on completed, non-voided sales; card charge and
-      processing-fee members ride on their own event grains.
+      processing-fee members ride on their own event grains, which are empty
+      for merchants that do not use Lightspeed Payments (this tenant: 0 rows).
     meta:
       ai_context: >
         Use for payment mix, tips, card acceptance and fee-cost questions.
-        Default time dimension: completed_at (or charges_charged_at /
-        fees_processed_at for card events). Tender is tax-inclusive money
-        movement, not merchandise revenue. Card acceptance cost = fees_total_fees
-        (fixed + variable), never fees_processed_payment_amount.
+        Default time dimension: completed_at (or cc_charges_charged_at /
+        processing_fees_processed_at for card events). Tender is tax-inclusive
+        money movement, not merchandise revenue. Online sales by tender =
+        payment_types_name equals eCom (the web-store integration's settlement;
+        the same sales are sales_channel = Online in sales_analytics). Never
+        exclude tenders on payment_types_internal_reserved: Lightspeed flags
+        Cash, Gift Card, Credit Account and eCom as reserved although they are
+        real customer tenders; the only non-customer tender is Adjustment, and
+        payment_types_is_customer_tender = false isolates it. Card processing
+        fees and card charge outcomes (processing_fees_*, cc_charges_*) are
+        empty for this tenant (no Lightspeed Payments): say fees are not
+        available in this data rather than reporting zero. When they exist,
+        card acceptance cost = processing_fees_total_fees (fixed + variable),
+        never processing_fees_processed_payment_amount.
 
     cubes:
       - join_path: sale_payments
@@ -42,6 +53,7 @@ views:
           - type
           - archived
           - internal_reserved
+          - is_customer_tender
           - requires_customer
       - join_path: sale_payments.shops
         prefix: true
@@ -109,6 +121,7 @@ views:
           - average_payment_amount
           - payment_types_name
           - payment_types_type
+          - payment_types_is_customer_tender
       - name: Tips and refunds
         includes:
           - tips_total

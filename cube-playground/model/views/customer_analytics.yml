@@ -19,12 +19,28 @@ views:
         has elapsed. For revenue in a specific period grouped by customer,
         prefer sales_analytics so the period filter applies to sales.
         Contactability does not prove marketing consent. Custom-field and note
-        text are not available here.
+        text are not available here. Geography is NOT captured for this tenant:
+        contacts_city / state / postcode / country are blank on every contact,
+        so say the data does not record where customers live rather than
+        reporting "unknown" as a location. Store credit and gift cards:
+        gift_card_liability (value still loaded on gift cards, a positive
+        amount), store_credit_owed_to_customers and on_account_receivable are
+        credit-account totals - query them on their own, without customer
+        dimensions, because gift cards sold to walk-ins have no customer
+        profile. credit_accounts_balance on a customer row is signed the
+        Lightspeed way: negative = the shop owes the customer.
 
     cubes:
-      - join_path: customers
+      # lightspeed_r_tenant owns the view's tenant_id: customers, credit
+      # accounts (including gift cards sold to walk-ins, which have no customer
+      # profile), custom-field values and notes all reach it through tenant-only
+      # many_to_one joins, so the injected tenant pin never drops rows from a
+      # grain that has no customer link.
+      - join_path: lightspeed_r_tenant
         includes:
           - tenant_id
+      - join_path: customers
+        includes:
           - first_name
           - last_name
           - full_name
@@ -93,6 +109,16 @@ views:
           - is_gift_card
           - balance
           - archived
+      # Store-credit and gift-card liability at credit-account grain, queried
+      # on its own (not through a customer) so unlinked gift cards count.
+      - join_path: credit_accounts
+        includes:
+          - gift_card_liability
+          - outstanding_gift_cards
+          - store_credit_owed_to_customers
+          - on_account_receivable
+          - name: account_count
+            alias: credit_account_count
       - join_path: customer_custom_field_values
         prefix: true
         includes:
@@ -163,6 +189,11 @@ views:
           - contacts_no_phone
       - name: Credit and gift cards
         includes:
+          - gift_card_liability
+          - outstanding_gift_cards
+          - store_credit_owed_to_customers
+          - on_account_receivable
+          - credit_account_count
           - credit_accounts_name
           - credit_accounts_is_gift_card
           - credit_accounts_balance

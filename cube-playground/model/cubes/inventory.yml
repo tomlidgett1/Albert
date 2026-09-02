@@ -16,8 +16,18 @@ cubes:
         units_on_hand here, grouped by items or shops. Stock value =
         stock_value (qoh times unit cost, ex tax); unit cost falls back from
         the store-level average cost to the item's average then default cost
-        when the store figure is missing. Reorder questions use
-        positions_below_reorder / stock_status. This is the current position
+        when the store figure is missing. Reorder points are configured on
+        only 4 of 17,251 positions for this tenant, so positions_below_reorder,
+        needs_reorder and stock_status = "At or below reorder point" answer
+        "4" and are NOT a reorder list: for "what should we reorder" rank
+        in-stock positions by weeks_of_cover ascending (with units_sold_90d and
+        sell_through_90d_pct), or list out-of-stock positions with recent
+        sales. Sales velocity per position = units_sold_90d / units_sold_365d,
+        weekly_sales_rate, weeks_of_cover and sell_through_90d_pct, all from
+        completed sale lines. Stock at retail = stock_retail_value (qoh times
+        the Default list price); markup_pct / stock_markup_pct compare list
+        price with cost. Stock value by supplier = stock_value grouped by
+        vendors_name (the item's default vendor). This is the current position
         only; "how did stock change" belongs to inventory_logs members.
         "Aged inventory", "old stock", "how long have we held this" = group
         units_on_hand / stock_value by stock_age_band (or use
@@ -39,6 +49,11 @@ cubes:
     # for the item at the store — the same definition of a sale that the
     # product-sales cubes use. It is the sales-recency anchor ("no sales in
     # N days"), which is a different question from receipt age.
+    # sold_units_90d / sold_units_365d: positive completed, non-voided line
+    # units in the trailing windows, from the same last_sale scan, feeding
+    # sales velocity, weeks of cover and sell-through per position.
+    # retail_unit_price: the item's Default list price. ls_item_prices carries
+    # no item_id, so the item is recovered from its "<item_id>:<n>" row key.
     sql: >
       WITH last_in AS MATERIALIZED (
         SELECT l.tenant_id, l.item_id, l.shop_id,
@@ -49,7 +64,13 @@ cubes:
       ),
       last_sale AS MATERIALIZED (
         SELECT sl.tenant_id, sl.item_id, sl.shop_id,
-               MAX(COALESCE(sl.complete_time, s.complete_time)) AS last_sold_at
+               MAX(COALESCE(sl.complete_time, s.complete_time)) AS last_sold_at,
+               COALESCE(SUM(sl.unit_quantity) FILTER (
+                 WHERE COALESCE(sl.complete_time, s.complete_time) >= NOW() - INTERVAL '90 days'
+               ), 0) AS sold_units_90d,
+               COALESCE(SUM(sl.unit_quantity) FILTER (
+                 WHERE COALESCE(sl.complete_time, s.complete_time) >= NOW() - INTERVAL '365 days'
+               ), 0) AS sold_units_365d
         FROM source_lightspeed_official.ls_sale_lines sl
         LEFT JOIN source_lightspeed_official.ls_sales s
           ON s.tenant_id = sl.tenant_id AND s.sale_id = sl.sale_id
@@ -59,16 +80,31 @@ cubes:
           AND COALESCE(sl.voided, s.voided, false) = false
           AND COALESCE(sl.unit_quantity, 0) > 0
         GROUP BY 1, 2, 3
+      ),
+      list_prices AS MATERIALIZED (
+        SELECT p.tenant_id,
+               COALESCE(p.item_id,
+                        CASE WHEN split_part(p.source_record_id, ':', 1) ~ '^[0-9]+$'
+                             THEN split_part(p.source_record_id, ':', 1)::numeric END) AS item_id,
+               MAX(p.amount) FILTER (WHERE p.use_type = 'Default') AS list_price_default
+        FROM source_lightspeed_official.ls_item_prices p
+        WHERE NOT p.tombstone
+        GROUP BY 1, 2
       )
       SELECT t.*,
         COALESCE(NULLIF(t.avg_cost, 0), NULLIF(i.avg_cost, 0), i.default_cost, 0)
           AS effective_unit_cost,
+        lp.list_price_default AS retail_unit_price,
         li.last_stock_in_at,
-        ls.last_sold_at
+        ls.last_sold_at,
+        COALESCE(ls.sold_units_90d, 0) AS sold_units_90d,
+        COALESCE(ls.sold_units_365d, 0) AS sold_units_365d
       FROM source_lightspeed_official.ls_item_shops t
       LEFT JOIN source_lightspeed_official.ls_items i
         ON i.tenant_id = t.tenant_id AND i.item_id = t.item_id
         AND NOT i.tombstone
+      LEFT JOIN list_prices lp
+        ON lp.tenant_id = t.tenant_id AND lp.item_id = t.item_id
       LEFT JOIN last_in li
         ON li.tenant_id = t.tenant_id AND li.item_id = t.item_id
         AND li.shop_id = t.shop_id
@@ -137,6 +173,25 @@ cubes:
           Per-unit cost of this item at this store (ex tax). Uses the store's
           rolling average cost, falling back to the item's average then default
           cost when the store figure is missing.
+      - name: retail_unit_price
+        sql: retail_unit_price
+        type: number
+        format: currency
+        title: Retail unit price (list)
+        description: The item's current Default list price from the price list, as entered in Lightspeed.
+      - name: markup_pct
+        type: number
+        format: percent
+        title: Markup % (list price over cost)
+        sql: >
+          100.0 * (COALESCE({CUBE}.retail_unit_price, 0) - {CUBE}.effective_unit_cost)
+          / NULLIF({CUBE}.effective_unit_cost, 0)
+        description: >
+          Default list price over unit cost, as a percentage of cost, for this
+          position. Null when the position has no cost. List prices are as
+          entered in Lightspeed (tax inclusive where the shop prices inclusive)
+          while cost is ex tax, so this is a pricing-policy indicator; realised
+          margin on sales is gross margin in product_sales_analytics.
       - name: stock_status
         type: string
         title: Stock status
@@ -181,6 +236,36 @@ cubes:
           never sold here, so "no sales in N days" must also include the null
           rows: use the unsold_*_days segments, or filter days_since_last_sale
           gte N together with last_sold_at notSet.
+      - name: weekly_sales_rate
+        type: number
+        title: Weekly sales rate (last 90 days)
+        sql: "COALESCE({CUBE}.sold_units_90d, 0) / 12.857"
+        description: Average units sold per week at this store over the trailing 90 days (units sold in 90 days divided by 12.857 weeks); 0 when nothing sold.
+      - name: weeks_of_cover
+        type: number
+        title: Weeks of cover
+        sql: >
+          CASE WHEN COALESCE({CUBE}.sold_units_90d, 0) > 0
+               THEN COALESCE({CUBE}.qoh, 0) * 12.857 / {CUBE}.sold_units_90d
+          END
+        description: >
+          Weeks the current on-hand quantity would last at the trailing-90-day
+          weekly sales rate. Null when nothing sold in 90 days (no rate to
+          divide by); negative when the position is oversold.
+        meta:
+          ai_context: >
+            "How long will stock last", "what will we run out of", "what should
+            we reorder": rank in_stock positions by this ascending (add
+            units_sold_90d and quantity_on_hand). Positions with no sales in 90
+            days are null here, not zero.
+      - name: sell_through_90d_pct
+        type: number
+        format: percent
+        title: Sell-through % (last 90 days)
+        sql: >
+          100.0 * COALESCE({CUBE}.sold_units_90d, 0)
+          / NULLIF(COALESCE({CUBE}.sold_units_90d, 0) + GREATEST(COALESCE({CUBE}.qoh, 0), 0), 0)
+        description: Units sold in the trailing 90 days as a share of units sold plus units still on hand. Null when the position neither sold nor holds stock.
       - name: sales_recency_band
         type: string
         title: Sales recency band
@@ -272,6 +357,23 @@ cubes:
           average then default cost when the store figure is missing.
         filters:
           - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: stock_retail_value
+        type: sum
+        sql: "COALESCE({CUBE}.qoh, 0) * COALESCE({CUBE}.retail_unit_price, 0)"
+        format: currency
+        title: Stock value (at retail list price)
+        description: >
+          On-hand units times the item's Default list price, across store-level
+          positions. Compare with stock_value (at cost) for the markup held in
+          stock; list prices are as entered in Lightspeed.
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: stock_markup_pct
+        type: number
+        sql: "100.0 * ({stock_retail_value} - {stock_value}) / NULLIF({stock_value}, 0)"
+        format: percent
+        title: Stock markup % (retail over cost)
+        description: Aggregate markup of the selected positions - retail list value over cost value, as a percentage of cost.
       - name: stocked_positions
         type: count
         title: Stocked positions
@@ -292,7 +394,7 @@ cubes:
       - name: positions_below_reorder
         type: count
         title: Positions at or below reorder point
-        description: Item-store positions at or below their configured reorder point (reorder point set).
+        description: Item-store positions at or below their configured reorder point. Only positions with a reorder point count, and this tenant has set one on 4 of 17,251 positions, so this is not a reorder list.
         filters:
           - sql: >
               {CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0
@@ -305,6 +407,20 @@ cubes:
         description: Distinct items with units on hand at any store.
         filters:
           - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0 AND COALESCE({CUBE}.qoh, 0) > 0"
+      - name: units_sold_90d
+        type: sum
+        sql: sold_units_90d
+        title: Units sold (last 90 days)
+        description: Units sold in the trailing 90 days across store-level positions (completed, non-voided, positive-quantity sale lines, the same definition as last_sold_at).
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
+      - name: units_sold_365d
+        type: sum
+        sql: sold_units_365d
+        title: Units sold (last 365 days)
+        description: Units sold in the trailing 365 days across store-level positions (completed, non-voided, positive-quantity sale lines).
+        filters:
+          - sql: "{CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0"
 
     segments:
       - name: store_positions
@@ -318,7 +434,7 @@ cubes:
           {CUBE}.shop_id IS NOT NULL AND {CUBE}.shop_id <> 0
           AND COALESCE({CUBE}.reorder_point, 0) > 0
           AND COALESCE({CUBE}.qoh, 0) <= {CUBE}.reorder_point
-        description: Positions at or below their reorder point.
+        description: Positions at or below their reorder point (only the 4 positions with a reorder point configured for this tenant; use weeks_of_cover for a real reorder list).
       - name: unsold_90_days
         sql: "({CUBE}.last_sold_at IS NULL OR {CUBE}.last_sold_at < NOW() - INTERVAL '90 days')"
         description: Positions whose item has not sold at this store in the last 90 days, including items that never sold.
@@ -345,9 +461,21 @@ cubes:
         movement audits. occurred_at is the business date. units_added /
         units_removed split the signed movement; net_units_change is the sum.
         Manual adjustments are automated = false. For current stock levels use
-        item_shops members instead.
+        item_shops members instead. Dollar values: Lightspeed leaves
+        cost_change empty on almost every movement (net_value_change is
+        effectively always zero), so use value_change_estimate (units times the
+        item's current unit cost) to value movements, and for shrinkage dollars
+        prefer stocktake_value_adjusted (the value Lightspeed wrote off when
+        stocktakes were reconciled, which is populated).
+    # item_unit_cost: the item's current average cost (default cost fallback)
+    # so movements can be valued even though cost_change is never populated.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_inventory_logs t
+      SELECT t.*,
+             COALESCE(NULLIF(i.avg_cost, 0), i.default_cost, 0) AS item_unit_cost
+      FROM source_lightspeed_official.ls_inventory_logs t
+      LEFT JOIN source_lightspeed_official.ls_items i
+        ON i.tenant_id = t.tenant_id AND i.item_id = t.item_id
+        AND NOT i.tombstone
       WHERE NOT t.tombstone
 
     joins:
@@ -394,7 +522,7 @@ cubes:
         sql: cost_change
         type: number
         format: currency
-        description: Signed inventory value change at cost (ex tax).
+        description: Signed inventory value change at cost (ex tax) as recorded by Lightspeed; empty on almost every movement for this tenant (see the value_change_estimate measure).
       - name: reason
         sql: reason
         type: string
@@ -494,12 +622,27 @@ cubes:
         type: sum
         sql: cost_change
         format: currency
-        title: Net stock value change
+        title: Net stock value change (as recorded)
         description: >
-          Net signed inventory value change at cost (ex tax). Lightspeed
-          frequently leaves the cost off movement rows, so this can be zero
-          even when units moved; cross-check against units before citing it
-          as a valuation.
+          Net signed inventory value change at cost (ex tax) as recorded by
+          Lightspeed. cost_change is populated on almost no movement rows (23
+          of 127,570 for this tenant), so this is effectively always zero; use
+          value_change_estimate instead.
+      - name: value_change_estimate
+        type: sum
+        sql: "COALESCE({CUBE}.qoh_change, 0) * COALESCE({CUBE}.item_unit_cost, 0)"
+        format: currency
+        title: Estimated stock value change (at current cost)
+        description: >
+          Signed unit change times the item's current unit cost (average cost,
+          falling back to default cost), ex tax. An estimate at today's cost
+          rather than the cost at the time of the movement.
+        meta:
+          ai_context: >
+            The dollar value of stock movements ("what did the write-offs
+            cost", "value received from suppliers", "value of adjustments").
+            For officially written-off shrinkage dollars use
+            stocktake_value_adjusted.
       - name: manual_adjustments
         type: count
         title: Manual adjustments
@@ -527,13 +670,20 @@ cubes:
     title: Serialised units
     public: false
     description: >
-      One row per serial-numbered unit (for example a bike frame or ebike
-      battery): its serial, colour / size, the item it belongs to, and the sale
-      line and customer once sold. Tombstoned rows are excluded at source.
+      One row per serial-numbered unit: its serial, colour / size, the item it
+      belongs to and the customer it is registered to. For this tenant the
+      table is the register of customers' own bikes: 16,148 of 16,151 serials
+      are registered to a customer with no catalogue item (item_id = 0) and
+      the sale_line_id link is never filled, so it is not a stock list.
+      Tombstoned rows are excluded at source.
     meta:
       ai_context: >
-        "Serial numbers", "serialised stock" = this grain. A unit is sold once
-        sale_line_id is set (is_sold); otherwise it is still in stock.
+        "Serial numbers" = this grain, meaning serials registered to customers
+        (their own bikes and parts), not serialised stock. A unit is
+        customer-owned when customer_id is set (is_sold / sold_serials); an
+        in-stock serial is one that belongs to a catalogue item and has no
+        customer (in_stock_serials, about 1 for this tenant). Do not answer
+        "serialised stock on hand" from serial_count.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_serialized t
       WHERE NOT t.tombstone
@@ -583,9 +733,9 @@ cubes:
         description: Size of the unit, when recorded.
       - name: is_sold
         type: boolean
-        sql: "({CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0)"
-        title: Sold
-        description: True once the unit has been sold on a sale line.
+        sql: "(({CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0) OR ({CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0))"
+        title: Customer-owned (sold)
+        description: True when the unit is registered to a customer or attached to a sale line. Lightspeed never fills sale_line_id for this tenant, so the customer link is what marks a unit as sold / owned.
       - name: updated_at
         sql: time_stamp
         type: time
@@ -607,24 +757,24 @@ cubes:
       - name: serial_count
         type: count
         title: Serialised units
-        description: Number of serialised units on file.
+        description: Number of serialised units on file, customer-registered serials included.
       - name: sold_serials
         type: count
-        title: Sold units
-        description: Serialised units already sold.
+        title: Customer-owned units
+        description: Serialised units registered to a customer or attached to a sale line (sold / customer-owned).
         filters:
-          - sql: "{CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0"
+          - sql: "({CUBE}.customer_id IS NOT NULL AND {CUBE}.customer_id <> 0) OR ({CUBE}.sale_line_id IS NOT NULL AND {CUBE}.sale_line_id <> 0)"
       - name: in_stock_serials
         type: count
         title: Units in stock
-        description: Serialised units not yet attached to a sale line.
+        description: Serialised units that belong to a catalogue item (item_id set) and are not registered to any customer.
         filters:
-          - sql: "{CUBE}.sale_line_id IS NULL OR {CUBE}.sale_line_id = 0"
+          - sql: "{CUBE}.item_id IS NOT NULL AND {CUBE}.item_id <> 0 AND ({CUBE}.customer_id IS NULL OR {CUBE}.customer_id = 0)"
 
     segments:
       - name: unsold_serials
-        sql: "{CUBE}.sale_line_id IS NULL OR {CUBE}.sale_line_id = 0"
-        description: Serialised units still in stock.
+        sql: "{CUBE}.item_id IS NOT NULL AND {CUBE}.item_id <> 0 AND ({CUBE}.customer_id IS NULL OR {CUBE}.customer_id = 0)"
+        description: Serialised units still in stock (catalogue item set, no customer registered).
 
   - name: transfers
     title: Stock transfers (between stores)
@@ -875,9 +1025,17 @@ cubes:
         "Special orders" and "customer orders waiting" = this grain.
         outstanding_special_orders are not yet completed;
         awaiting_contact means the stock flow finished but nobody has told the
-        customer yet.
+        customer yet. created_at (the time the driving sale line was raised) is
+        the time dimension.
+    # created_at is projected from the driving sale line (special orders carry
+    # no timestamp of their own) so the grain has a time dimension.
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_special_orders t
+      SELECT t.*,
+             sl.create_time AS sale_line_created_at
+      FROM source_lightspeed_official.ls_special_orders t
+      LEFT JOIN source_lightspeed_official.ls_sale_lines sl
+        ON sl.tenant_id = t.tenant_id AND sl.sale_line_id = t.sale_line_id
+        AND NOT sl.tombstone
       WHERE NOT t.tombstone
 
     joins:
@@ -918,6 +1076,11 @@ cubes:
         sql: unit_quantity
         type: number
         description: Units the customer ordered.
+      - name: created_at
+        sql: sale_line_created_at
+        type: time
+        title: Ordered at
+        description: When the driving sale line was raised (the special order's creation time). Null when that line is no longer on record (32 of 77 for this tenant).
       - name: customer_contacted
         sql: contacted
         type: boolean
@@ -1142,7 +1305,9 @@ cubes:
     meta:
       ai_context: >
         The stock corrections actually applied after a stocktake. Negative
-        units_adjusted is written-off stock (shrinkage made official).
+        units_adjusted is written-off stock (shrinkage made official), and
+        value_adjusted (stocktake_value_adjusted in the view) is the dollar
+        value of it - unlike the movement log, this cost field is populated.
     sql: >
       SELECT t.* FROM source_lightspeed_official.ls_inventory_count_reconciles t
       WHERE NOT t.tombstone

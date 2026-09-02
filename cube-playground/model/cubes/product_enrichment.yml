@@ -11,8 +11,15 @@ cubes:
         The full price list per item. The common Default and MSRP amounts are
         also flattened onto items (default_price / msrp); use this grain when
         the question is about other price types or comparing price types.
+    # ls_item_prices lands item_id as NULL on every row; the item is encoded in
+    # the "<item_id>:<n>" row key, so the join resolves it from there (the same
+    # rule the items and item_shops cubes use for their list-price columns).
     sql: >
-      SELECT t.* FROM source_lightspeed_official.ls_item_prices t
+      SELECT t.*,
+        COALESCE(t.item_id,
+                 CASE WHEN split_part(t.source_record_id, ':', 1) ~ '^[0-9]+$'
+                      THEN split_part(t.source_record_id, ':', 1)::numeric END) AS resolved_item_id
+      FROM source_lightspeed_official.ls_item_prices t
       WHERE NOT t.tombstone
 
     joins:
@@ -20,7 +27,7 @@ cubes:
         relationship: many_to_one
         sql: >
           {CUBE}.tenant_id = {items}.tenant_id
-          AND {CUBE}.item_id = {items}.item_id
+          AND {CUBE}.resolved_item_id = {items}.item_id
 
     dimensions:
       - name: row_key
@@ -55,7 +62,7 @@ cubes:
         type: number
         public: false
       - name: item_id
-        sql: item_id
+        sql: resolved_item_id
         type: number
         public: false
 
