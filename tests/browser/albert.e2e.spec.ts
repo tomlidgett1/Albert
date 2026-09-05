@@ -1229,9 +1229,12 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
 
   // Statement-style rows: a bolded total line carries the accountant's rule,
   // and parenthesised negatives still count as figure cells.
-  const grossProfitCell = page.getByRole("cell", { name: "Gross profit" });
+  const statementTable = page.getByRole("table").filter({
+    has: page.getByRole("columnheader", { name: "P&L line", exact: true }),
+  });
+  const grossProfitCell = statementTable.getByRole("cell", { name: "Gross profit" });
   await expect(grossProfitCell).toBeVisible();
-  const ruledRow = page.locator("tr", { has: grossProfitCell });
+  const ruledRow = statementTable.getByRole("row", { name: /^Gross profit\b/u });
   await expect(ruledRow).toHaveAttribute("data-statement-row", "true");
   await expect(ruledRow.locator("td").first()).toHaveCSS("border-top-width", "2px");
   await expect(page.locator("tr", { has: page.getByRole("cell", { name: "Sales revenue" }) })).toHaveAttribute("data-statement-row", "false");

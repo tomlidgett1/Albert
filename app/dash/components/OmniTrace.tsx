@@ -326,7 +326,7 @@ function ResearchStepCard({ event }: { event: TraceResearchEvent }) {
         {event.summary ? <span className={styles.stepSummary}>{event.summary}</span> : null}
       </button>
       {hasBody ? (
-        <div className={styles.stepBody} data-open={open}>
+        <div className={styles.stepBody} data-open={open} aria-hidden={!open} inert={!open}>
           <div className={styles.stepBodyInner}>
             {event.query ? (
               <div className={styles.stepQueryLine}>{`Search: "${event.query}"`}</div>
@@ -458,7 +458,7 @@ function PivotCard({ block, onAddToDashboard }: {
         </button>
         <PinButton table={table} onAddToDashboard={onAddToDashboard} />
       </div>
-      <div className={styles.stepBody} data-open={open}>
+      <div className={styles.stepBody} data-open={open} aria-hidden={!open} inert={!open}>
         <div className={styles.stepBodyInner}>
           {table ? (
             <div className={styles.pivotBody}>
@@ -529,7 +529,7 @@ function QueryCard({ block }: {
           </span>
         ) : null}
       </button>
-      <div className={styles.stepBody} data-open={open}>
+      <div className={styles.stepBody} data-open={open} aria-hidden={!open} inert={!open}>
         <div className={styles.stepBodyInner}>
           {chips.length > 0 ? (
             <div className={styles.queryChips}>

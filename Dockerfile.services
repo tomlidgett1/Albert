@@ -21,18 +21,18 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
+# Public root used by the dedicated Omni database URL with sslmode=verify-full.
+COPY deploy/certificates/supabase-prod-ca-2021.crt ./certificates/supabase-prod-ca-2021.crt
 # Official Xero MCP server, vendored into the image so the sync worker never
 # has to `npx` download it at first use (a cold machine took >45s and the
 # web timed out with "The official Xero MCP server could not be reached").
 # packages/xero-mcp/src/session.ts launches .albert-vendor/package/dist/index.js.
+COPY deploy/xero-mcp/package.json deploy/xero-mcp/package-lock.json .albert-vendor/
 RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked \
-  mkdir -p .albert-vendor \
-  && cd .albert-vendor \
-  && npm pack @xeroapi/xero-mcp-server@0.0.17 --pack-destination . >/dev/null \
-  && tar -xzf xeroapi-xero-mcp-server-0.0.17.tgz \
-  && rm xeroapi-xero-mcp-server-0.0.17.tgz \
-  && cd package \
-  && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+  cd .albert-vendor \
+  && npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+  && ln -s node_modules/@xeroapi/xero-mcp-server package \
+  && node --check package/dist/index.js \
   && npm cache clean --force \
   && chown -R node:node /app/.albert-vendor
 COPY --from=build --chown=node:node /workspace/.albert-build/services ./services

@@ -3,8 +3,9 @@
 The implementation is complete in the working tree. The new production job
 store is **not activated**: administrator upgrade 0015 and migration 0189
 remain blocked on the protected control-plane administrator configuration.
-Trace idempotency migration 0188 is applied. No Fly or Vercel deployment was
-performed by this task.
+Trace idempotency migration 0188 is applied. Production activation remains
+pending; the release-preparation record below distinguishes staged builds
+from the live deployment.
 
 ## Changes delivered
 
@@ -145,6 +146,21 @@ Before this release, the live web health endpoint returned HTTP 503 with
 `syncWorker: false` and `operatorDiagnostic: false`. Cube and the previous
 private runtime were healthy. The new Omni readiness endpoint was not yet
 present on the deployed runtime.
+
+The first Vercel production candidate built successfully at
+`albert-fquhtuntv-tom-lidgettnets-projects.vercel.app`; the primary
+`albert-chi.vercel.app` alias still points to the previous release. GitHub's
+control-plane and analytical database gates passed, including the new schema
+and runtime login on disposable CI databases. The full browser run exposed
+collapsed evidence in the accessibility tree; closed research/query/pivot
+bodies now use `aria-hidden` and `inert`. The statement-formatting assertion
+is scoped to the statement table rather than an identically named pivot cell.
+
+The first remote services image build failed in the inherited unpinned Xero
+MCP installation. Its dependencies now have a dedicated lockfile and use
+`npm ci`, preserving the official 0.0.17 server and existing executable path.
+The image also includes Supabase's public root CA for a `verify-full`
+job-store connection. No certificate verification is disabled.
 
 ## Re-run
 
