@@ -911,6 +911,11 @@ function assertNoForbiddenTraceKeys(value: unknown, path: string): void {
 /** Control characters that must never reach a rendered surface. */
 const controlCharacterPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
+/** Composition references belong to an internal answer draft, never progress copy. */
+export function containsAnswerTemplate(value: string): boolean {
+  return value.includes("{{") || value.includes("}}");
+}
+
 /** Removes control characters and bounds user-visible trace copy. */
 export function sanitizeTraceText(value: string, maxLength = 500): string {
   return value

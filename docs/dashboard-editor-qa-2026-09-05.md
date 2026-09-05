@@ -99,3 +99,33 @@ The production branch requires one independent approval of the latest push
 and all four GitHub checks. The updated web and services builds are being
 prepared while those release requirements remain enforced. The pivot renderer
 currently operates on bounded dashboard snapshots (up to 50 source rows).
+
+## Production repair and live verification
+
+The owner reported a failed chat request after the staged release. The live
+web was still a1aa00c, the Omni runtime was db22616, and the old web contract
+rejected the newly saved pivot configuration. A fresh production chat failed
+before its first data query.
+
+The owner-requested operator rollout deployed the tested 2eb0aba artifacts to
+the existing Vercel production alias, Omni runtime, Cube, sync worker and
+operator diagnostic service. The branch remains pending independent review;
+this records the operator rollout rather than a merge or release-authority
+workflow run. The production /api/health endpoint changed from HTTP 503 to
+HTTP 200 with every dependency check true and the expected release identity.
+Omni reports durableJobs=true, and two real completed jobs were verified in
+the production PostgreSQL checkpoint table, each with at least 19 revisions.
+
+Live Chrome verification on albert-chi.vercel.app passed analytical chat,
+follow-up arithmetic using prior evidence, official Xero P&L and Deputy
+timesheet queries. The saved five-element dashboard loads again. Native pivot
+dragging, chart orientation/stacking/series, line-axis changes, metric number
+and comparison formatting, full-query table sorting and value filtering were
+exercised through the production controls.
+
+The multi-source chat exposed a separate display leak: the runtime narrated
+an unfinished ComposeAnswer template before its accepted answer. Composition
+references are now filtered before narrative persistence and when rendering
+older Omni traces. Normal progress and the resolved answer remain visible.
+Light- and dark-mode browser regressions cover complete and truncated draft
+references and passed together with authentication setup.

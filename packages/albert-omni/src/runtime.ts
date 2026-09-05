@@ -8,6 +8,7 @@ import { z } from "zod";
 import { Agent, Runner, tool, user, assistant, type AgentInputItem } from "@openai/agents";
 import {
   normalizeAgentPreferences,
+  containsAnswerTemplate,
   sanitizeAnswerText,
   sanitizeTraceText,
   type AnalyticalQueryRecorder,
@@ -1379,7 +1380,7 @@ export async function runOmniSemanticTurn(
     const flushPendingNarrative = async () => {
       const text = pendingMessage?.trim();
       pendingMessage = null;
-      if (!text || narrated >= 12) return;
+      if (!text || narrated >= 12 || containsAnswerTemplate(text)) return;
       narrated += 1;
       await emit({ type: "narrative", text: sanitizeTraceText(text, 500) });
     };

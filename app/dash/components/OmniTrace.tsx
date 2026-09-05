@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
+import { containsAnswerTemplate } from "../../../packages/shared/src/agent-runtime";
 import type {
   TraceChartEvent,
   TraceEvent,
@@ -125,7 +126,9 @@ function buildOmniModel(events: readonly TraceEvent[], dashboardMode = false): O
       }
       case "narrative": {
         const text = event.text.trim();
-        if (!text) break;
+        // Old traces may contain a composition draft emitted as commentary.
+        // Apply the same guard on replay as the runtime applies before saving.
+        if (!text || containsAnswerTemplate(text)) break;
         const last = blocks.at(-1);
         if (last && last.kind === "research" && event.purpose === undefined) {
           last.entries.push({ kind: "prose", id: event.id, text });
