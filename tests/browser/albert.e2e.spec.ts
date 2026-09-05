@@ -1438,16 +1438,16 @@ test("Dashboard mode builds a live dashboard from the chat", async ({ page }) =>
   await expect(pivot).toBeVisible();
   const pivotTable = pivot.locator("table[data-pivot='true']");
   await expect(pivotTable).toBeVisible();
-  await expect(pivotTable.locator("thead th").first()).toHaveText("Metric");
-  await expect(pivotTable.locator("tbody tr").first().locator("td").first()).toHaveText("Sales");
-  await expect(pivotTable.locator("tbody tr").nth(2).locator("td").nth(3)).toHaveText("246");
-  const pivotMetrics = await pivotTable.locator("tbody tr").first().locator("td").first().evaluate((cell) => {
+  await expect(pivotTable.locator("thead")).toContainText("Period");
+  await expect(pivotTable.locator("tbody tr").first().locator("th").first()).toHaveText("Sales");
+  await expect(pivotTable.locator("tbody tr").nth(2).locator("td").nth(2)).toHaveText("246");
+  const pivotMetrics = await pivotTable.locator("tbody tr").first().locator("th").first().evaluate((cell) => {
     const style = getComputedStyle(cell);
     return { position: style.position, weight: Number(style.fontWeight) };
   });
   expect(pivotMetrics.position).toBe("sticky");
-  expect(pivotMetrics.weight).toBeGreaterThanOrEqual(600);
-  const valueCellAlign = await pivotTable.locator("tbody tr").first().locator("td").nth(1)
+  expect(pivotMetrics.weight).toBeGreaterThanOrEqual(400);
+  const valueCellAlign = await pivotTable.locator("tbody tr").first().locator("td").first()
     .evaluate((cell) => getComputedStyle(cell).textAlign);
   expect(valueCellAlign).toBe("right");
 
@@ -1549,7 +1549,7 @@ test("Element sort and filters are query overrides that re-run the governed quer
   // Filters: a list filter on a text column, built from the values on screen.
   await products.getByRole("button", { name: "Filters for Top products by revenue" }).click();
   await page.getByRole("button", { name: "Add filter…" }).click();
-  await page.getByRole("combobox", { name: "Column" }).selectOption("sales_analytics_product");
+  await page.getByRole("dialog", { name: "Filters for Top products by revenue" }).getByRole("combobox", { name: "Column", exact: true }).selectOption("sales_analytics_product");
   await page.getByRole("checkbox", { name: "Gravel bike hire" }).check();
   await page.getByRole("button", { name: "Apply" }).click();
   await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
@@ -1589,7 +1589,7 @@ test("Element properties requery the governed query in place and author the colu
   // Sigma's Properties: Truncate date is one deterministic requery. The
   // element keeps its chart while the server re-mints the recipe.
   await chart.getByRole("button", { name: "Properties for Revenue by week" }).click();
-  const properties = page.getByRole("dialog", { name: "Properties for Revenue by week" });
+  const properties = page.getByRole("complementary", { name: "Element editor for Revenue by week" });
   await expect(properties.getByRole("combobox", { name: "Truncate date" })).toHaveValue("week");
   await expect(properties.getByRole("combobox", { name: "Date range" })).toHaveValue("last 12 weeks");
   await properties.getByRole("combobox", { name: "Truncate date" }).selectOption("month");
@@ -1613,7 +1613,7 @@ test("Element properties requery the governed query in place and author the colu
   // result-set order; the column menu deletes a column from the query.
   const products = page.getByRole("region", { name: "Top products by revenue" });
   await products.getByRole("button", { name: "Properties for Top products by revenue" }).click();
-  const tableProperties = page.getByRole("dialog", { name: "Properties for Top products by revenue" });
+  const tableProperties = page.getByRole("complementary", { name: "Element editor for Top products by revenue" });
   await tableProperties.getByRole("button", { name: "Move Gross takings up" }).click();
   await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
     (entry as { endpoint?: string }).endpoint === "tile"

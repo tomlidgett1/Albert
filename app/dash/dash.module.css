@@ -74,6 +74,11 @@
   --dash-progress-fill: light-dark(#4d6681, #b8cada);
   --dash-preview-surface: light-dark(#f4f6ff, #20242e);
   --dash-preview-text: light-dark(#596b9b, #b5c3ee);
+  /* Sigma reference controls (ADR 0136): compact element shelves and grids. */
+  --dash-element-selection: light-dark(#2b63d9, #8ab1ff);
+  --dash-element-highlight: light-dark(#e8ecfd, #29354f);
+  --dash-table-header: light-dark(#ebebeb, #24262a);
+  --dash-table-grid: light-dark(#e6e6e6, #34363c);
   --dash-modal-backdrop: light-dark(rgba(20, 21, 23, 0.38), rgba(4, 5, 7, 0.72));
   --dash-content-inset: 8px;
   --dash-content-radius: 16px;
@@ -19432,3 +19437,7 @@
     --takeaways-panel-width: min(calc(100% - 8px), 480px);
   }
 }
+
+.chatShellDashboardExpanded .chatWorkspace,
+.chatShellDashboardExpanded .dashboardSplitHandle { display: none; }
+.chatShellDashboardExpanded .takeawaysPanel { width: 100%; flex-basis: 100%; transition: none; }

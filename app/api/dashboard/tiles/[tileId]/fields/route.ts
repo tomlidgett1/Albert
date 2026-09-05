@@ -11,10 +11,10 @@ import type { CubeQuery } from "@/packages/albert-v3/src/cube/types";
 import { loadDashboard } from "@/services/control-plane/src/dashboard-repository";
 import { ControlPlaneError, currentTenantContext } from "@/services/control-plane/src/web-repository";
 import { cachedCatalogue } from "@/services/dashboard/src/catalogue-cache";
+import { dashboardElementFields } from "@/services/dashboard/src/element-fields";
 
 const ulid = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
 const NO_STORE = { "Cache-Control": "no-store" } as const;
-const MAX_FIELDS = 400;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -53,18 +53,7 @@ export async function GET(request: Request, context: { params: Promise<{ tileId:
     }));
     const view = catalogue.views.find((candidate) => candidate.name === viewName);
     if (!view) return Response.json({ error: "This element's topic is no longer in the governed model." }, { status: 409, headers: NO_STORE });
-    const members = view.members
-      .filter((member) => !member.aiHidden && (member.kind === "measure" || member.kind === "dimension"))
-      .slice(0, MAX_FIELDS)
-      .map((member) => ({
-        name: member.name,
-        kind: member.kind,
-        title: member.title,
-        shortTitle: member.shortTitle,
-        ...(member.type ? { type: member.type } : {}),
-        ...(member.folder ? { folder: member.folder } : {}),
-        ...(member.description ? { description: member.description } : {}),
-      }));
+    const members = dashboardElementFields(view);
     return Response.json({
       view: {
         name: view.name,

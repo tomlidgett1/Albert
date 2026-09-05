@@ -111,7 +111,7 @@
   flex: 1 1 auto;
   overflow: auto;
   overscroll-behavior: contain;
-  border-top: 1px solid var(--dash-border-soft);
+  border-top: 0;
 }
 
 .tableScroll:focus-visible {
@@ -130,9 +130,11 @@
 .table th,
 .table td {
   min-width: 96px;
-  padding: 6px 10px;
-  border-right: 1px solid var(--dash-border-soft);
-  border-bottom: 1px solid var(--dash-border-soft);
+  height: 24px;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border-right: 1px solid var(--dash-table-grid);
+  border-bottom: 1px solid var(--dash-table-grid);
   text-align: left;
   white-space: nowrap;
   vertical-align: middle;
@@ -146,9 +148,9 @@
   z-index: 2;
   top: 0;
   color: var(--dash-text-heading);
-  background: var(--dash-surface-soft);
+  background: var(--dash-table-header);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -168,30 +170,10 @@
 
 .table th[data-selected="true"],
 .table td[data-selected="true"] {
-  background: color-mix(in srgb, var(--dash-info-surface) 70%, var(--dash-surface-soft));
+  background: var(--dash-element-highlight);
 }
 
 .table td[data-selected="true"] { cursor: default; }
-
-/* Pivot: the metric column is a frozen, shaded row header. */
-.table[data-pivot="true"] th:first-child,
-.table[data-pivot="true"] td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 3;
-  min-width: 150px;
-  color: var(--dash-text-heading);
-  background: var(--dash-surface-soft);
-  font-weight: 600;
-  box-shadow: 1px 0 0 var(--dash-border-soft);
-}
-
-.table[data-pivot="true"] th:first-child { z-index: 5; }
-
-.table[data-pivot="true"] tbody tr[data-total="true"] td {
-  background: var(--dash-surface-soft);
-  font-weight: 650;
-}
 
 .rowCount {
   position: sticky;
@@ -204,10 +186,10 @@
 /* Header-cell editing chrome shared by the editable workspace table. */
 .headerButton {
   display: block;
-  width: calc(100% + 20px);
+  width: 100%;
   min-height: 26px;
-  margin: -6px -10px;
-  padding: 6px 10px;
+  margin: 0;
+  padding: 0;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -260,3 +242,32 @@
   outline: none;
   box-shadow: 0 0 0 3px var(--dash-focus-ring);
 }
+
+.tableFrame { display: flex; min-height: 0; flex: 1; flex-direction: column; margin: 0 16px 8px; border: 1px solid var(--dash-table-grid); overflow: hidden; }
+.tableFooter { display: flex; flex: none; justify-content: flex-start; gap: 8px; min-height: 26px; align-items: center; padding: 0 8px; color: var(--dash-text-muted); background: var(--dash-table-header); border-top: 1px solid var(--dash-table-grid); font-size: 10px; font-variant-numeric: tabular-nums; }
+.table .rowNumber { position: sticky; top: auto; left: 0; z-index: 3; width: 34px; min-width: 34px; max-width: 34px; padding-right: 8px; color: var(--dash-text-muted); background: var(--dash-table-header); text-align: right; font-size: 10px; font-weight: 400; }
+.table thead .rowNumber { top: 0; z-index: 6; }
+.plainHeader { display: flex; align-items: center; gap: 6px; }
+.headerChevron { display: inline-block; margin-left: 8px; color: var(--dash-text-muted); font-size: 12px; font-weight: 400; }
+.tableFrame[data-vertical-grid="false"] td, .tableFrame[data-vertical-grid="false"] th { border-right-color: transparent; }
+.tableFrame[data-banded="true"] tbody tr:nth-child(even) td { background: var(--dash-surface-soft); }
+.tableFrame[data-density="medium"] td, .tableFrame[data-density="medium"] tbody th { height: 32px; padding-top: 7px; padding-bottom: 7px; }
+.tableFrame[data-density="large"] td, .tableFrame[data-density="large"] tbody th { height: 40px; padding-top: 11px; padding-bottom: 11px; }
+.tableFrame[data-preset="presentation"] thead th, .tableFrame[data-preset="presentation"] tbody th { background: var(--dash-surface); }
+.tableFrame[data-preset="presentation"] td, .tableFrame[data-preset="presentation"] th { border-right: 0; }
+.tableMessage { margin: 0; padding: 6px 8px; color: var(--dash-text-muted); font-size: 11px; border-top: 1px solid var(--dash-table-grid); }
+.pivotEmpty { display: grid; flex: 1; place-items: center; padding: 24px; color: var(--dash-text-muted); font-size: 12px; text-align: center; }
+.pivotTable td, .pivotTable tbody th { height: 20px; padding-top: 2px; padding-bottom: 2px; font-size: 12px; }
+.pivotTable thead th { height: 28px; font-size: 11px; font-weight: 500; top: var(--pivot-header-top, 0); }
+.pivotTable .pivotRowHeader { position: sticky; z-index: 3; top: auto; left: var(--pivot-left, 0); min-width: 160px; width: 160px; max-width: 260px; background: var(--dash-table-header); font-weight: 400; box-shadow: 1px 0 0 var(--dash-table-grid); }
+.pivotRowLabel { display: flex; align-items: center; gap: 6px; padding-left: var(--pivot-indent, 0); }
+.pivotRowLabel > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pivotDisclosure { display: inline-grid; flex: none; place-items: center; width: 12px; height: 12px; padding: 0; border: 1px solid var(--dash-border-input); border-radius: 0; color: var(--dash-text-muted); background: var(--dash-surface); font-size: 10px; line-height: 1; cursor: pointer; }
+.pivotTable .pivotCorner { left: 0; z-index: 5; text-align: left; min-width: 160px; }
+.pivotFixedHeaders th { text-align: left; }
+.pivotTable td[data-total="true"], .pivotTable tr[data-total="true"] td, .pivotTable tr[data-total="true"] th { font-weight: 600; }
+.pivotTable tr[data-total="true"] td, .pivotTable tr[data-total="true"] th { border-top: 1px solid var(--dash-border-input); }
+.pivotTable td[data-selected="true"] { outline: 1px solid var(--dash-element-selection); outline-offset: -1px; background: var(--dash-element-highlight); }
+.pivotTable td:focus-visible, .pivotDisclosure:focus-visible { outline: 2px solid var(--dash-element-selection); outline-offset: -2px; }
+
+.tableFooter > span + span::before { content: "·"; margin-right: 8px; }

@@ -55,7 +55,7 @@ function jsonError(message: string, status: number, correlationId: string): Resp
   return json({ error: message }, correlationId, status);
 }
 
-export function discoverFingerprint(input: Readonly<{
+function discoverFingerprint(input: Readonly<{
   connectors: readonly string[];
   contextRevision: string | null;
 }>): string {

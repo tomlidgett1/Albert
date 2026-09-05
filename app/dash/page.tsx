@@ -5,6 +5,7 @@ import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motio
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
+import { notifyThemePreferenceChanged } from "@/app/theme-preference";
 import {
   DEFAULT_AGENT_PREFERENCES,
   DEFAULT_OMNI_PREFERENCES,
@@ -309,6 +310,7 @@ function setThemePreference(nextTheme: Theme) {
   }
 
   themeListeners.forEach((listener) => listener());
+  notifyThemePreferenceChanged(nextTheme);
 }
 
 function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
@@ -1000,6 +1002,7 @@ export default function DashPage() {
   const [dashboardModeEnabled, setDashboardModeEnabled] = useState(false);
   const dashboardModeEnabledRef = useRef(false);
   const [dashboardPanelOpen, setDashboardPanelOpen] = useState(false);
+  const [dashboardPanelExpanded, setDashboardPanelExpanded] = useState(false);
   // Dashboards, plural (ADR 0134): the dashboard this mode is building, the
   // dashboard open in the Dashboards tab, and a reload key for the list.
   const [dashboardModeDashboardId, setDashboardModeDashboardId] = useState<string | null>(null);
@@ -5802,7 +5805,7 @@ export default function DashPage() {
         ) : activeItem === "Chat" ? (
           <div
             ref={chatShellRef}
-            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${dashboardPanelOpen ? styles.chatShellDashboardOpen : ""} ${swarmPanelResizing || dashboardPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
+            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${dashboardPanelOpen ? styles.chatShellDashboardOpen : ""} ${dashboardPanelOpen && dashboardPanelExpanded ? styles.chatShellDashboardExpanded : ""} ${swarmPanelResizing || dashboardPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
             style={dashboardPanelOpen && dashboardPanelWidth !== null
               ? { ["--takeaways-panel-width" as string]: `${dashboardPanelWidth}px` }
               : swarmPanelOpen && !dashboardPanelOpen
@@ -6622,6 +6625,8 @@ export default function DashPage() {
           >
             {dashboardPanelOpen ? (
               <DashboardBuildPanel
+                expanded={dashboardPanelExpanded}
+                onToggleExpanded={() => setDashboardPanelExpanded(value => !value)}
                 dashboardId={dashboardModeDashboardId ?? dashboardTurnMessage?.dashboardId ?? null}
                 events={dashboardTurnMessage?.events ?? []}
                 streaming={Boolean(dashboardTurnMessage?.isStreaming)}

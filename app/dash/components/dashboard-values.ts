@@ -150,7 +150,7 @@ export function computeKpiPresentation(input: Readonly<{
   // (the shared cell formatter's exceptZero sign is for delta columns).
   const rawValue = currentRow[valueColumn.key];
   const rawNumber = traceCellNumber((rawValue ?? null) as TraceCell);
-  const value = valueColumn.type === "percent" && rawNumber !== null
+  const value = (presentation?.format ?? valueColumn.type) === "percent" && rawNumber !== null
     ? new Intl.NumberFormat("en-AU", {
       style: "percent",
       minimumFractionDigits: presentation?.decimals,
@@ -169,7 +169,7 @@ export function computeKpiPresentation(input: Readonly<{
   let magnitude: string | null = null;
   if (rawNumber !== null && previousNumber !== null) {
     const change = rawNumber - previousNumber;
-    if (percentColumn) {
+    if (percentColumn && (comparison === "percent_difference" || comparison === "difference")) {
       const points = valueColumn.percentScale === "ratio" ? change * 100 : change;
       delta = points;
       magnitude = `${formatMagnitude(Math.abs(points))} pts`;

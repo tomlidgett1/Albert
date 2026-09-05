@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dashboardPivotSchema, dashboardTableStyleSchema } from "../../../packages/shared/src/dashboard-pivot.js";
 
 import { ControlPlaneError, requireUser } from "./web-repository.js";
 
@@ -180,6 +181,9 @@ export const dashboardTileDisplaySchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("table"),
     note: z.string().max(160).optional(),
+    /** null explicitly presents a composed pivot as a regular table. */
+    pivot: dashboardPivotSchema.nullable().optional(),
+    tableStyle: dashboardTableStyleSchema.optional(),
   }).strict(),
   z.object({
     mode: z.literal("kpi"),

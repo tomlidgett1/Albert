@@ -415,3 +415,8 @@
   margin: 0;
   padding: 10px 18px 0;
 }
+
+/* The same data-element canvas as the editable DashboardWorkspace. */
+.tile { border-radius: 0; border-color: transparent; box-shadow: none; }
+.tileHeader { min-height: 50px; padding: 8px 16px 6px; border-bottom: 0; }
+.tileTitle { font-size: 16px; font-weight: 450; }

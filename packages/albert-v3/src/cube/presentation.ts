@@ -97,7 +97,11 @@ export function cubeResultColumns(
   };
   for (const measure of query.measures ?? []) add(measure);
   for (const dimension of query.dimensions ?? []) add(dimension);
-  for (const timeDimension of query.timeDimensions ?? []) add(timeDimension.dimension);
+  // A dateRange without granularity filters the query; Cube does not return
+  // that column. Including it creates a blank table field and an empty axis.
+  for (const timeDimension of query.timeDimensions ?? []) {
+    if (timeDimension.granularity) add(timeDimension.dimension);
+  }
   const granularityByDimension = new Map(
     (query.timeDimensions ?? []).flatMap((entry) => entry.granularity ? [[entry.dimension, entry.granularity] as const] : []),
   );

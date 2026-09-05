@@ -93,6 +93,17 @@ function remapKeys<T extends Record<string, unknown>>(value: T, renamed: Readonl
 function remapDisplay(display: DashboardTileDisplay, renamed: ReadonlyMap<string, string>): DashboardTileDisplay {
   const rename = (key: string) => renamed.get(key) ?? key;
   switch (display.mode) {
+    case "table":
+      return display.pivot?.source === "result" ? {
+        ...display,
+        pivot: {
+          ...display.pivot,
+          rows: display.pivot.rows.map(rename),
+          columns: display.pivot.columns.map(rename),
+          values: display.pivot.values.map(value => ({ ...value, column: rename(value.column) })),
+          ...(display.pivot.sort ? { sort: display.pivot.sort.map(sort => ({ ...sort, column: rename(sort.column) })) } : {}),
+        },
+      } : display;
     case "kpi":
       return display.valueKey ? { ...display, valueKey: rename(display.valueKey) } : display;
     case "chart":

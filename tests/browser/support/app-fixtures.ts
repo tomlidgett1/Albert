@@ -1805,6 +1805,7 @@ export async function installAppApiRoutes(
   const dashboardBuildState = {
     /** Element editor state (ADR 0134): presentation, authored order, requeried granularity. */
     presentation: {} as Record<string, Record<string, unknown>>,
+    displays: {} as Record<string, Record<string, unknown>>,
     order: {} as Record<string, string[]>,
     granularity: null as string | null,
     recipeVersion: {} as Record<string, number>,
@@ -1834,7 +1835,7 @@ export async function installAppApiRoutes(
     rows,
     totalRowCount: rows.length,
     resultDigest: dashboardBuildDigest,
-    provenance: null,
+    provenance: columns[0]?.key === "metric" ? { dashboardPivot: { rowFormats: [{ type: "currency", currency: "AUD" }, { type: "currency", currency: "AUD" }, { type: "number" }] } } : null,
     sourceWatermarks: dashboardBuildWatermarks,
     queryTime: dashboardBuildStamp,
     refreshedAt: dashboardBuildStamp,
@@ -1871,7 +1872,7 @@ export async function installAppApiRoutes(
       }
       : snapshot,
     columnPresentation: dashboardBuildState.presentation[tileId] ?? {},
-    display,
+    display: dashboardBuildState.displays[tileId] ?? display,
     queryOverrides: dashboardBuildState.overrides[tileId] ?? {},
     refreshState: "current",
     lastErrorCode: null,
@@ -2162,6 +2163,7 @@ export async function installAppApiRoutes(
       if (body.queryOverrides) dashboardBuildState.overrides[tileId] = body.queryOverrides;
       if (body.columnPresentation) dashboardBuildState.presentation[tileId] = body.columnPresentation;
       if (body.columnOrder) dashboardBuildState.order[tileId] = body.columnOrder;
+      if (body.display && typeof body.display === "object") dashboardBuildState.displays[tileId] = body.display as Record<string, unknown>;
     }
     await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
   });

@@ -105,7 +105,7 @@ export function applyDashboardQueryEdits(
 ): ApplyEditsResult {
   const selectedView = catalogue.views.find((candidate) => candidate.name === view);
   if (!selectedView) return { ok: false, error: "This element's topic is no longer in the governed model." };
-  const members = new Map(selectedView.members.map((member) => [member.name, member] as const));
+  const members = new Map(selectedView.members.filter(member => !member.aiHidden).map((member) => [member.name, member] as const));
   let query: CubeQuery = base;
 
   for (const edit of edits) {
@@ -176,8 +176,12 @@ export function applyDashboardQueryEdits(
         if (!member || member.kind !== "dimension") {
           return { ok: false, error: `${memberTitle(member, edit.member)} is not a column of this element's topic.` };
         }
-        const alreadyTime = (query.timeDimensions ?? []).some((entry) => entry.dimension === edit.member);
-        if ((query.dimensions ?? []).includes(edit.member) || alreadyTime) break;
+        const alreadyTime = (query.timeDimensions ?? []).find((entry) => entry.dimension === edit.member);
+        if (alreadyTime) {
+          if (!alreadyTime.granularity) query = replaceTimeDimension(query, edit.member, current => ({ ...current, granularity: edit.granularity ?? "day" }));
+          break;
+        }
+        if ((query.dimensions ?? []).includes(edit.member)) break;
         if ((query.dimensions ?? []).length + (query.timeDimensions ?? []).length >= MAX_DIMENSIONS) {
           return { ok: false, error: `An element groups by at most ${MAX_DIMENSIONS} columns.` };
         }

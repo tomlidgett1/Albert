@@ -42,7 +42,9 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
   "img-src 'self' data: blob:",
   "object-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
+  // Next's development React refresh runtime requires eval. Production
+  // continues to forbid it; see the bundled Next CSP development guide.
+  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   ...(process.env.NODE_ENV === "production"
     ? ["upgrade-insecure-requests"]
@@ -79,6 +81,9 @@ const nextConfig: NextConfig = {
   // Plain Next/Vercel builds need TypeScript ESM extension rewriting and
   // Vite-style `?raw` imports that vinext already provides for Sites.
   webpack: (config) => {
+    // Constrained local QA can skip the regenerable filesystem cache without
+    // changing the application bundle or weakening the production CSP.
+    if (process.env.ALBERT_BUILD_NO_CACHE === "true") config.cache = false;
     config.resolve = config.resolve ?? {};
     config.resolve.extensionAlias = {
       ".js": [".ts", ".tsx", ".js", ".jsx"],

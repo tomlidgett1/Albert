@@ -237,7 +237,8 @@ test("The requery lane claims the lease, writes against the current revision and
   assert.match(route, /export const maxDuration = 120;/u);
   const fields = read("app/api/dashboard/tiles/[tileId]/fields/route.ts");
   assert.match(fields, /securityContext: \{ tenant_id: tenant\.tenant_id \}/u);
-  assert.match(fields, /!member\.aiHidden/u);
+  assert.match(fields, /dashboardElementFields\(view\)/u);
+  assert.match(read("services/dashboard/src/element-fields.ts"), /!member\.aiHidden/u);
   const apply = read("app/api/dashboard/build/apply/route.ts");
   assert.match(apply, /replaceDashboardElement\(\{/u);
   assert.match(apply, /tileId: "__replacement__"/u);
@@ -261,7 +262,7 @@ test("The editor is Sigma's — Properties | Format on the element toolbar, requ
   for (const label of ["Truncate date", "Date range", "Add column", "Show as", "Chart type", "Orientation", "Comparison", "Better when", "Value format", "Decimal places", "Note"]) {
     assert.ok(editor.includes(`aria-label="${label}"`), label);
   }
-  assert.match(editor, /role="tab"/u);
+  assert.match(read("app/dash/components/ElementEditorTabs.tsx"), /role="tab"/u);
   assert.match(editor, /op: "set_granularity"/u);
   assert.match(editor, /op: "set_date_range"/u);
   assert.match(editor, /op: "add_measure"/u);

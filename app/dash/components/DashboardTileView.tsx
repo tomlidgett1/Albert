@@ -19,9 +19,11 @@ import {
   type TraceTableColumn,
 } from "@/packages/shared/src";
 import type { DashboardColumnPresentationItem } from "@/services/control-plane/src/dashboard-repository";
+import { defaultPivot, type DashboardTableStyle } from "@/packages/shared/src/dashboard-pivot";
+import { composedPivotSource } from "../lib/dashboard-pivot-view";
+import { PivotTableView } from "./PivotTableView";
 import {
-  getServerThemePreference,
-  getThemePreference,
+  getThemeAppearance,
   subscribeToThemePreference,
 } from "@/app/theme-preference";
 import {
@@ -60,15 +62,11 @@ export type TileChartDisplay = Readonly<{
 }>;
 
 export function useChartAppearance(): "light" | "dark" {
-  const theme = useSyncExternalStore(
+  return useSyncExternalStore(
     subscribeToThemePreference,
-    getThemePreference,
-    getServerThemePreference,
+    getThemeAppearance,
+    () => "light",
   );
-  return theme === "dark"
-    || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
-    ? "dark"
-    : "light";
 }
 
 export function TileEmpty({ children }: Readonly<{ children: ReactNode }>) {
@@ -121,19 +119,24 @@ export function TileKpi({ data, valueKey, presentation, note, comparison, better
   );
 }
 
-export function TileChart({ data, display, title }: Readonly<{
+export function TileChart({ data, display, title, presentation }: Readonly<{
   data: TileData;
   display: TileChartDisplay;
   title: string;
+  presentation?: TileColumnPresentation;
 }>) {
   const appearance = useChartAppearance();
   const plan = useMemo(() => {
-    const xColumn = resolveDashboardColumn(data.columns, display.xKey);
-    const yColumn = resolveDashboardColumn(data.columns, display.yKey);
+    const columns = data.columns.map(column => {
+      const style = presentation?.[column.key];
+      return { ...column, label: style?.label ?? column.label, type: style?.format === "text" ? "string" as const : style?.format ?? column.type };
+    });
+    const xColumn = resolveDashboardColumn(columns, display.xKey);
+    const yColumn = resolveDashboardColumn(columns, display.yKey);
     if (!xColumn || !yColumn) return null;
     const series = (display.series ?? []).flatMap((entry) => {
-      const column = resolveDashboardColumn(data.columns, entry.key);
-      return column ? [{ key: column.key, label: entry.label }] : [];
+      const column = resolveDashboardColumn(columns, entry.key);
+      return column ? [{ key: column.key, label: presentation?.[column.key]?.label ?? entry.label }] : [];
     });
     try {
       return compileGroundedFlint({
@@ -144,13 +147,15 @@ export function TileChart({ data, display, title }: Readonly<{
         xKey: xColumn.key,
         yKey: yColumn.key,
         ...(series.length > 0 ? { series } : {}),
-        columns: data.columns,
+        ...(series.length > 1 ? { measureLabel: yColumn.type === "currency" ? `Amount (${yColumn.currency ?? "AUD"})` : yColumn.type === "percent" ? "Percentage" : "Value" } : {}),
+        columns,
+        valueDecimals: Object.fromEntries(Object.entries(presentation ?? {}).flatMap(([key, style]) => style.decimals === undefined ? [] : [[key, style.decimals]])),
         rows: data.rows as readonly Readonly<Record<string, TraceCell>>[],
       });
     } catch {
       return null;
     }
-  }, [data, display, title]);
+  }, [data, display, title, presentation]);
   if (data.rows.length === 0) return <TileEmpty>No data for the governed period.</TileEmpty>;
   if (!plan) return <TileEmpty>This result no longer fits its chart. Switch the tile to table view.</TileEmpty>;
   return (
@@ -160,12 +165,6 @@ export function TileChart({ data, display, title }: Readonly<{
       <FlintChartView plan={plan} appearance={appearance} title={title} fill />
     </div>
   );
-}
-
-function isTotalRow(row: Readonly<Record<string, unknown>>, firstKey: string | undefined): boolean {
-  if (!firstKey) return false;
-  const label = row[firstKey];
-  return typeof label === "string" && /^(grand )?total$/iu.test(label.trim());
 }
 
 /**
@@ -182,6 +181,7 @@ export function TileTable({
   onCellContextMenu,
   headerCell,
   ariaLabel,
+  tableStyle,
 }: Readonly<{
   data: TileData;
   presentation?: TileColumnPresentation | undefined;
@@ -192,54 +192,51 @@ export function TileTable({
   onCellContextMenu?: ((column: TraceTableColumn, value: unknown, event: React.MouseEvent<HTMLTableCellElement>) => void) | undefined;
   headerCell?: ((column: TraceTableColumn) => ReactNode) | undefined;
   ariaLabel?: string | undefined;
+  tableStyle?: DashboardTableStyle;
 }>) {
   if (data.rows.length === 0) return <TileEmpty>No data for the governed period.</TileEmpty>;
+  if (data.pivot) {
+    const source = composedPivotSource(data, data.rowFormats);
+    return <PivotTableView source={source} config={defaultPivot(source)} tableStyle={tableStyle} title={ariaLabel ?? "Pivot table"} />;
+  }
   const rows = maxRows ? data.rows.slice(0, maxRows) : data.rows;
   const totalRows = data.totalRowCount ?? data.rows.length;
-  const firstKey = data.columns[0]?.key;
-  const pivot = data.pivot === true;
+  const rowNumbers = tableStyle?.rowNumbers === true;
   return (
+    <div className={styles.tableFrame} data-density={tableStyle?.rowHeight ?? "small"} data-banded={tableStyle?.bandedRows || undefined} data-vertical-grid={tableStyle?.verticalGrid ?? true} data-preset={tableStyle?.preset ?? "spreadsheet"}>
     <div className={styles.tableScroll} tabIndex={0} aria-label={ariaLabel ?? "Scrollable governed table"}>
-      <table className={styles.table} data-pivot={pivot ? "true" : undefined}>
+      <table className={styles.table}>
         <thead>
           <tr>
-            {data.columns.map((column, index) => (
+            {rowNumbers ? <th className={styles.rowNumber} aria-label="Row number" /> : null}
+            {data.columns.map((column) => (
               <th
                 key={column.key}
-                data-numeric={!pivot || index > 0 ? NUMERIC_COLUMN_TYPES.has(column.type) : undefined}
+                data-numeric={NUMERIC_COLUMN_TYPES.has(column.type)}
                 data-selected={selectedColumnKey === column.key ? "true" : undefined}
               >
-                {headerCell ? headerCell(column) : (presentation?.[column.key]?.label ?? column.label)}
+                {headerCell ? headerCell(column) : <span className={styles.plainHeader}><span>{presentation?.[column.key]?.label ?? column.label}</span><span className={styles.headerChevron}>⌄</span></span>}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => {
-            const rowFormat = data.rowFormats?.[rowIndex] ?? undefined;
             return (
-              <tr key={rowIndex} data-total={pivot && isTotalRow(row, firstKey) ? "true" : undefined}>
-                {data.columns.map((column, index) => {
+              <tr key={rowIndex}>
+                {rowNumbers ? <th scope="row" className={styles.rowNumber}>{rowIndex + 1}</th> : null}
+                {data.columns.map((column) => {
                   const value = row[column.key];
                   const item = presentation?.[column.key];
-                  // Pivot value cells take the row's unit; everything else
-                  // formats by column, honouring the owner's presentation.
-                  // Always the dashboard formatter, so "$6,240.00" matches
-                  // the KPI cards rather than the trace's "AUD 6,240.00".
-                  const cellColumn = pivot && index > 0 && rowFormat
-                    ? { ...column, type: rowFormat.type, ...(rowFormat.currency ? { currency: rowFormat.currency } : {}) }
-                    : column;
-                  const text = formatDashboardCell(value, cellColumn, item);
-                  const numeric = pivot && index > 0
-                    ? true
-                    : NUMERIC_COLUMN_TYPES.has(item?.format === "text" ? "string" : (item?.format ?? column.type));
+                  const text = formatDashboardCell(value, column, item);
+                  const numeric = NUMERIC_COLUMN_TYPES.has(item?.format === "text" ? "string" : (item?.format ?? column.type));
                   return (
                     <td
                       key={column.key}
                       data-numeric={numeric}
                       data-selected={selectedColumnKey === column.key ? "true" : undefined}
                       onClick={onSelectColumn ? () => onSelectColumn(column.key) : undefined}
-                      onContextMenu={onCellContextMenu && !pivot
+                      onContextMenu={onCellContextMenu
                         ? (event) => onCellContextMenu(column, value, event)
                         : undefined}
                     >
@@ -252,9 +249,8 @@ export function TileTable({
           })}
         </tbody>
       </table>
-      {totalRows > rows.length ? (
-        <div className={styles.rowCount}>Showing {rows.length} of {totalRows.toLocaleString("en-AU")} rows</div>
-      ) : null}
+    </div>
+    <div className={styles.tableFooter} role="status"><span>{totalRows > rows.length ? `Showing ${rows.length} of ${totalRows.toLocaleString("en-AU")} rows` : `${totalRows.toLocaleString("en-AU")} rows`}</span><span>{data.columns.length} columns</span></div>
     </div>
   );
 }

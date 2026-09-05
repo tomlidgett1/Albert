@@ -174,6 +174,7 @@ export function paintAssembledSpec(
   config.background = tokens.canvas;
   next.config = config;
   preserveCategoryDomainOrder(next, plan);
+  normalizeNumericAxes(next, plan);
   if (plan.chart_spec.chartType === "Line Chart") {
     labelLinePointValues(next, plan, tokens.ink, plotWidth);
   }
@@ -252,12 +253,59 @@ function positionalEncodings(body: Record<string, unknown>): { x?: unknown; y?: 
   return {};
 }
 
-function semanticKind(value: unknown): { type?: string; unit?: string } {
+function semanticKind(value: unknown): { type?: string; unit?: string; percentScale?: "ratio" | "percent"; decimals?: number } {
   if (typeof value === "string") return { type: value };
   if (isRecord(value) && typeof value.semanticType === "string") {
-    return { type: value.semanticType, unit: typeof value.unit === "string" ? value.unit : undefined };
+    return {
+      type: value.semanticType,
+      unit: typeof value.unit === "string" ? value.unit : undefined,
+      ...(value.percentScale === "ratio" || value.percentScale === "percent" ? { percentScale: value.percentScale } : {}),
+      ...(typeof value.decimals === "number" && Number.isInteger(value.decimals) && value.decimals >= 0 && value.decimals <= 6 ? { decimals: value.decimals } : {}),
+    };
   }
   return {};
+}
+
+/** Use one currency prefix per tick and preserve explicit percentage units. */
+export function normalizeNumericAxes(spec: Record<string, unknown>, plan: AssemblableFlintPlan): void {
+  const visit = (node: Record<string, unknown>) => {
+    if (isRecord(node.encoding)) {
+      for (const axisKey of ["x", "y"]) {
+        const encoding = node.encoding[axisKey];
+        if (!isRecord(encoding) || typeof encoding.field !== "string") continue;
+        const key = rowFieldName(encoding.field);
+        const annotation = plan.semantic_types[key] ?? Object.entries(plan.semantic_types).find(([field]) => vegaSafeField(field) === key)?.[1];
+        const { type, unit, percentScale, decimals } = semanticKind(annotation);
+        if (encoding.type === "temporal" && (type === "Date" || type === "YearMonth")) {
+          encoding.scale = { ...(isRecord(encoding.scale) ? encoding.scale : {}), type: "utc" };
+          for (const rows of sourceValueRows(spec)) {
+            for (const row of rows) {
+              const value = row[key];
+              if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/u.test(value)) row[key] = `${value.slice(0, 10)}T00:00:00.000Z`;
+            }
+          }
+          continue;
+        }
+        if (encoding.type !== "quantitative") continue;
+        const axis = isRecord(encoding.axis) ? { ...encoding.axis } : {};
+        if (type === "Price" || type === "Amount") {
+          const prefix = unit === "USD" ? "US$" : !unit || unit === "AUD" ? "A$" : `${unit} `;
+          delete axis.format;
+          axis.labelExpr = `${JSON.stringify(prefix)} + format(datum.value, ',.${decimals ?? 2}f')`;
+        } else if (type === "Percentage" && percentScale) {
+          delete axis.format;
+          axis.labelExpr = `format(datum.value${percentScale === "percent" ? " / 100" : ""}, '.${decimals ?? 1}%')`;
+        } else if (decimals !== undefined) {
+          delete axis.labelExpr;
+          axis.format = `,.${decimals}f`;
+        }
+        if (Object.keys(axis).length) encoding.axis = axis;
+      }
+    }
+    if (isRecord(node.spec)) visit(node.spec);
+    if (Array.isArray(node.layer)) node.layer.filter(isRecord).forEach(visit);
+  };
+  visit(spec);
 }
 
 function numericValue(value: unknown): number | null {
@@ -281,17 +329,19 @@ function trimFloat(value: number): string {
 export function formatPointValue(value: unknown, semantic: unknown): string | null {
   const n = numericValue(value);
   if (n === null) return null;
-  const { type, unit } = semanticKind(semantic);
+  const { type, unit, percentScale, decimals } = semanticKind(semantic);
   if (type === "Percentage") {
-    return Math.abs(n) <= 1.5 ? `${(n * 100).toFixed(1)}%` : `${n.toFixed(1)}%`;
+    const percent = percentScale === "percent" ? n : percentScale === "ratio" ? n * 100 : Math.abs(n) <= 1.5 ? n * 100 : n;
+    return `${percent.toFixed(decimals ?? 1)}%`;
   }
-  if (type === "Count") {
+  if (type === "Count" && decimals === undefined) {
     return String(Math.round(n));
   }
   const money = type === "Price" || type === "Amount";
   const prefix = money
     ? (unit === "USD" ? "US$" : !unit || unit === "AUD" ? "A$" : `${unit} `)
     : "";
+  if (decimals !== undefined) return `${prefix}${n.toLocaleString("en-AU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
   if (Math.abs(n) >= 1_000_000_000) return `${prefix}${trimFloat(n / 1_000_000_000)}G`;
   if (Math.abs(n) >= 1_000_000) return `${prefix}${trimFloat(n / 1_000_000)}M`;
   if (Math.abs(n) >= 1000) return `${prefix}${trimFloat(n / 1000)}k`;

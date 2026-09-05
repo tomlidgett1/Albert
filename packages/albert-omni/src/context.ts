@@ -37,6 +37,10 @@ export function omniPriorResults(results: readonly PriorTurnResult[]): NonNullab
 /** Bound the serialized request, including multibyte text and all metadata. */
 export function boundOmniTurnContext(turn: OmniServiceTurn, maxBytes = ALBERT_OMNI_CONTEXT_MAX_BYTES): OmniServiceTurn {
   const bounded: OmniServiceTurn = { ...turn, priorConversation: [...turn.priorConversation], priorResults: structuredClone(turn.priorResults ?? []) };
+  // An absent optional context is not an empty new protocol field. Older
+  // deployed v1 runtimes reject unknown keys; retain real evidence whenever
+  // present, but do not break a new conversation by sending priorResults: [].
+  if (!bounded.priorResults?.length) delete bounded.priorResults;
   const bytes = () => Buffer.byteLength(JSON.stringify(bounded), "utf8");
   while (bytes() > maxBytes && bounded.priorConversation.length > 2) bounded.priorConversation.splice(0, 2);
   while (bytes() > maxBytes && (bounded.priorResults?.length ?? 0) > 1) bounded.priorResults!.pop();

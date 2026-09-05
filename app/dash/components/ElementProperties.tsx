@@ -13,7 +13,8 @@
  * the new result loads.
  */
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { ElementEditorTabs } from "./ElementEditorTabs";
 
 import type {
   DashboardColumnFormat,
@@ -169,6 +170,7 @@ export function ElementProperties({
   onRequery: (edits: readonly DashboardQueryEdit[]) => void;
 }>) {
   const [tab, setTab] = useState<"properties" | "format">("properties");
+  const tabsId = useId();
   const columns = tile.snapshot?.columns ?? [];
   const shownColumns = columns.filter((column) => column.key !== "compareDateRange");
   const [formatKey, setFormatKey] = useState<string>(shownColumns[0]?.key ?? "");
@@ -177,6 +179,14 @@ export function ElementProperties({
   const display = tile.display;
   const numericColumns = shownColumns.filter((column) => NUMERIC_TYPES.has(column.type));
   const labelOf = (key: string) => tile.columnPresentation[key]?.label ?? columns.find((column) => column.key === key)?.label ?? key;
+  const chartValueKeys = display.mode === "chart" ? display.series?.length ? display.series.map(series => series.key) : [display.yKey] : [];
+  const setChartValues = (keys: readonly string[]) => {
+    if (display.mode !== "chart" || !keys.length) return;
+    const next = { ...display };
+    delete next.series;
+    if (keys.length < 2) delete next.stacked;
+    onDisplayChange({ ...next, yKey: keys[0]!, ...(keys.length > 1 ? { series: keys.map(key => ({ key, label: labelOf(key) })) } : {}) });
+  };
 
   // ---- Governed query shape -------------------------------------------------
   const bucketed = fields?.inQuery.timeDimensions.find((entry) => entry.granularity);
@@ -217,12 +227,8 @@ export function ElementProperties({
 
   return (
     <div className={styles.propertiesPanel} aria-label={`Properties for ${tile.title}`} aria-busy={busy || undefined}>
-      <div className={styles.propertiesTabs}>
-        <span className={styles.segmented} role="tablist" aria-label="Element editor">
-          <button type="button" role="tab" aria-selected={tab === "properties"} onClick={() => setTab("properties")}>Properties</button>
-          <button type="button" role="tab" aria-selected={tab === "format"} onClick={() => setTab("format")}>Format</button>
-        </span>
-      </div>
+      <ElementEditorTabs value={tab} onChange={setTab} id={tabsId} />
+      <div id={`${tabsId}-content`} className={styles.propertiesContent} role="tabpanel" aria-labelledby={`${tabsId}-${tab}`}>
 
       {tab === "properties" ? (
         <>
@@ -243,14 +249,35 @@ export function ElementProperties({
                       <option value="line">Line</option>
                     </select>
                   </label>
-                  <label className={styles.propRow}>
+                  {display.chartType === "bar" ? <label className={styles.propRow}>
                     <span>Orientation</span>
                     <select aria-label="Orientation" value={display.orientation ?? "vertical"} disabled={busy} onChange={(event) => onDisplayChange({ ...display, orientation: event.target.value as "vertical" | "horizontal" })}>
                       <option value="vertical">Vertical</option>
                       <option value="horizontal">Horizontal</option>
                     </select>
+                  </label> : null}
+                  <label className={styles.propRow}>
+                    <span>{display.chartType === "bar" && display.orientation === "horizontal" ? "Y-axis" : "X-axis"}</span>
+                    <select aria-label={display.chartType === "bar" && display.orientation === "horizontal" ? "Y-axis" : "X-axis"} value={display.xKey} disabled={busy} onChange={event => onDisplayChange({ ...display, xKey: event.target.value })}>
+                      {shownColumns.filter(column => !chartValueKeys.includes(column.key)).map(column => <option key={column.key} value={column.key}>{labelOf(column.key)}</option>)}
+                    </select>
                   </label>
-                  {(display.series?.length ?? 0) >= 2 ? (
+                  <label className={styles.propRow}>
+                    <span>{display.chartType === "bar" && display.orientation === "horizontal" ? "X-axis" : "Y-axis"}</span>
+                    <select aria-label={display.chartType === "bar" && display.orientation === "horizontal" ? "X-axis" : "Y-axis"} value={display.yKey} disabled={busy} onChange={event => setChartValues([event.target.value])}>
+                      {numericColumns.filter(column => column.key !== display.xKey).map(column => <option key={column.key} value={column.key}>{labelOf(column.key)}</option>)}
+                    </select>
+                  </label>
+                  {numericColumns.length > 1 ? <div role="group" aria-label="Chart values" className={styles.propSection}>
+                    <span className={styles.menuSectionLabel}>Values</span>
+                    {numericColumns.filter(column => column.key !== display.xKey).map(column => {
+                      const primary = numericColumns.find(candidate => candidate.key === display.yKey);
+                      const sameUnit = primary?.type === column.type && primary?.currency === column.currency && primary?.percentScale === column.percentScale;
+                      const selected = chartValueKeys.includes(column.key);
+                      return <label className={styles.propRow} key={column.key}><span>{labelOf(column.key)}</span><input type="checkbox" aria-label={`Plot ${labelOf(column.key)}`} checked={selected} disabled={busy || column.key === display.yKey || !sameUnit || (!selected && chartValueKeys.length >= 6)} onChange={event => setChartValues(event.target.checked ? [...chartValueKeys, column.key] : chartValueKeys.filter(key => key !== column.key))} /></label>;
+                    })}
+                  </div> : null}
+                  {display.chartType === "bar" && (display.series?.length ?? 0) >= 2 ? (
                     <label className={styles.propRow}>
                       <span>Stacking</span>
                       <select aria-label="Stacking" value={display.stacked ? "stacked" : "none"} disabled={busy} onChange={(event) => onDisplayChange({ ...display, stacked: event.target.value === "stacked" })}>
@@ -511,6 +538,7 @@ export function ElementProperties({
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

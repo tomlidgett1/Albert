@@ -108,6 +108,8 @@ export default function DashboardBuildPanel({
   onClose,
   onOpenSource,
   onEditWithAlbert,
+  expanded = false,
+  onToggleExpanded,
 }: Readonly<{
   /** The dashboard this mode is building (ADR 0134); null until one exists. */
   dashboardId: string | null;
@@ -121,6 +123,8 @@ export default function DashboardBuildPanel({
   onOpenSource: (conversationId: string) => void;
   /** The Albert wand on a tile: rebuild that one element from a sentence. */
   onEditWithAlbert?: ((tile: DashboardElementRef, instruction: string) => void) | undefined;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }>) {
   const build = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
   const view = useMemo(() => buildDashboardBuildView(events, streaming, buildTurn), [events, streaming, buildTurn]);
@@ -230,6 +234,9 @@ export default function DashboardBuildPanel({
           </p>
         </div>
         {badge ? <span className={styles.badge} data-tone={badge.tone}>{badge.label}</span> : null}
+        {onToggleExpanded ? <button className={styles.close} type="button" aria-label={expanded ? "Return to dashboard chat" : "Expand dashboard"} aria-pressed={expanded} onClick={onToggleExpanded}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d={expanded ? "M4 9h5V4M20 15h-5v5M9 9 3 3M15 15l6 6" : "M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"} /></svg>
+        </button> : null}
         <button className={styles.close} type="button" aria-label="Hide dashboard preview" onClick={onClose}>
           <CloseIcon />
         </button>

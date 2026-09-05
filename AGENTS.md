@@ -199,6 +199,23 @@ Structure for hover/focus tooltips:
   (mouseup / keyboard settle), not while dragging
 - Honour `prefers-reduced-motion: reduce` with `transition: none`
 
+### Dashboard element editor (Sigma reference, ADR 0136)
+
+The owner requested Sigma's documented element appearance for Omni dashboards.
+Within dashboard elements, use a **320px** flat right editor rail, **40px**
+header and tab rows, **26px** draggable field rows, **12px** field text, and
+**10px** uppercase section labels. Field rows and data-element canvas edges
+are square; regular buttons and menus retain the shared radii above.
+The Properties / Format tabs use the measured **2px**, **260ms** underline.
+Use `--dash-element-selection`, `--dash-element-highlight`,
+`--dash-table-header`, and `--dash-table-grid` from `dash.module.css` for these
+surfaces. Table bodies use **12px** text; compact table rows are **24px**, pivot
+rows **20px**, and pivot header rows **28px**. Use **16px** inset around the grid.
+All tokens support light, dark and system themes. The docked editor must not
+change the dashboard's grid breakpoint. On narrow canvases it overlays the
+canvas and includes a close control. Existing controls remain 36px unless
+they are these intentionally compact field or element-toolbar controls.
+
 ### Implementation rule
 
 Before introducing a new button, tab, menu, search field, pill, popup, or
@@ -247,3 +264,13 @@ optimize / speed up a slow or memory-heavy pipeline — parallelism, workers, ba
 * DO NOT start data engineering work if no workflow toolkit is installed.
 
 - `init-dlthub-workspace`
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

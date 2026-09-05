@@ -69,12 +69,13 @@ test("result columns follow the query, once each, never Cube's row-key order or 
   // The bucketed time dimension keeps Cube's bucket annotation and type.
   assert.equal(columns.columns[1]?.label, "Checked in");
   assert.equal(columns.columns[1]?.type, "datetime");
-  // A compare query grows the synthetic label column at the end.
+  // A compare query grows the synthetic label column, but its ungrouped
+  // date filter is not a projected result column.
   const compared = cubeResultColumns(
     { measures: ["sales.gross"], timeDimensions: [{ dimension: "sales.at", compareDateRange: ["2026-08-01 to 2026-08-30", "2026-07-02 to 2026-07-31"] }] },
     { rows: [{ "sales.gross": 1, "sales.at": null, compareDateRange: "2026-08-01 - 2026-08-30" }], annotation: {} },
   );
-  assert.deepEqual(compared.columns.map((column) => column.key), ["sales_gross", "sales_at", "compareDateRange"]);
+  assert.deepEqual(compared.columns.map((column) => column.key), ["sales_gross", "compareDateRange"]);
   assert.equal(compared.members.at(-1), "compareDateRange");
 });
 

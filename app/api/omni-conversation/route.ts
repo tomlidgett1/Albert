@@ -96,6 +96,7 @@ function publicOmniFailure(error: unknown): string {
     const byCode: Readonly<Record<string, string>> = {
       omni_unavailable: "The Omni runtime is not configured on this environment.",
       omni_runtime_unavailable: "The Omni runtime is unavailable right now.",
+      invalid_request: "The deployed analysis runtime rejected this request. Its version may need updating.",
       omni_semantic_unavailable: "The governed semantic layer was unavailable.",
       omni_overloaded: "Albert is unusually busy right now. Try again in a minute.",
       omni_cancelled: "The analysis was cancelled before it finished.",
@@ -173,7 +174,10 @@ export async function POST(request: Request): Promise<Response> {
   }
   const reasoningEffort = preferences.reasoningEffort === "none" ? "low" : preferences.reasoningEffort;
 
-  const serviceUrl = omniRuntimeServiceUrl();
+  const serviceUrl = omniRuntimeServiceUrl({
+    NODE_ENV: process.env.NODE_ENV,
+    CODEX_RUNTIME_SERVICE_URL: process.env.CODEX_RUNTIME_SERVICE_URL,
+  });
   const serviceSigningSecret = process.env.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim()
     || (process.env.NODE_ENV === "production" ? "" : ALBERT_CODEX_LOCAL_SIGNING_SECRET);
   const cubeApiSecret = process.env.CUBEJS_API_SECRET?.trim() ?? "";
@@ -471,7 +475,7 @@ export async function POST(request: Request): Promise<Response> {
           turnId,
           message: parsed.message,
           priorConversation: [...priorConversation],
-          priorResults,
+          ...(priorResults.length ? { priorResults } : {}),
           activeConnectors: [...activeConnectors],
           connectorFreshness: [...connectorFreshness],
           ...(businessContext ? { businessContext } : {}),
@@ -608,6 +612,11 @@ export async function POST(request: Request): Promise<Response> {
           conversationId,
           turnId,
           ...safeErrorEvidence(error),
+          ...(error instanceof OmniRuntimeServiceError ? {
+            runtimeCode: error.code,
+            runtimeStatus: error.status,
+            runtimeTarget: serviceUrl.startsWith("http://127.0.0.1") ? "loopback" : "configured",
+          } : {}),
         }, correlationId);
         try {
           if (!disconnected) {

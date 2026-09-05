@@ -35,6 +35,8 @@ export type GroundedFlintSemantic =
 export type GroundedFlintAnnotation = Readonly<{
   semanticType: GroundedFlintSemantic;
   unit?: string;
+  percentScale?: "ratio" | "percent";
+  decimals?: number;
 }>;
 
 export type GroundedFlintEncoding = Readonly<{
@@ -76,11 +78,9 @@ export type GroundedFlintCompileInput = Readonly<{
   timeAxis?: boolean;
   /** Owner-facing measure name. Required when yKey is a pivoted series column. */
   measureLabel?: string;
+  /** Owner-authored number precision; presentation only. */
+  valueDecimals?: Readonly<Record<string, number>>;
 }>;
-
-function isBlank(value: TraceCell): boolean {
-  return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
-}
 
 function cellValue(value: TraceCell): string | number | null {
   if (value === null || value === undefined) return null;
@@ -99,7 +99,9 @@ export function semanticFromColumn(
   role: "time" | "category" | "measure",
 ): GroundedFlintSemantic | GroundedFlintAnnotation {
   if (role === "measure") {
-    if (column?.type === "percent") return "Percentage";
+    if (column?.type === "percent") return column.percentScale
+      ? { semanticType: "Percentage", percentScale: column.percentScale }
+      : "Percentage";
     if (column?.type === "currency") {
       return { semanticType: "Price", unit: column.currency ?? "AUD" };
     }
@@ -136,9 +138,10 @@ export function resolveGroundedFlintChartType(input: GroundedFlintCompileInput):
 }
 
 export function shouldDrawHorizontalBars(input: GroundedFlintCompileInput): boolean {
-  if (input.chartType === "line" || input.stacked) return false;
+  if (input.chartType === "line") return false;
   if (input.orientation === "horizontal") return true;
   if (input.orientation === "vertical") return false;
+  if (input.stacked) return false;
   if (input.timeAxis) return false;
   const longest = input.rows.reduce((max, row) => {
     const label = String(row[input.xKey] ?? "");
@@ -186,6 +189,11 @@ export function compileGroundedFlint(input: GroundedFlintCompileInput): Grounded
   const yLabel = input.measureLabel?.trim() || displayName(yColumn, input.yKey);
   const xRole = timeAxis ? "time" : "category";
   const measureColumn = yColumn ?? input.columns.find((column) => column.key === series[0]!.key);
+  const measureSemantic = (column: TraceTableColumn | undefined) => {
+    const semantic = semanticFromColumn(column, "measure");
+    const decimals = column ? input.valueDecimals?.[column.key] : undefined;
+    return decimals === undefined ? semantic : { ...(typeof semantic === "string" ? { semanticType: semantic } : semantic), decimals };
+  };
 
   const semantic_types: Record<string, GroundedFlintSemantic | GroundedFlintAnnotation> = {
     [input.xKey]: semanticFromColumn(xColumn, xRole),
@@ -199,7 +207,7 @@ export function compileGroundedFlint(input: GroundedFlintCompileInput): Grounded
 
   if (multi) {
     semantic_types[ALBERT_SERIES_FIELD] = "Category";
-    semantic_types[ALBERT_VALUE_FIELD] = semanticFromColumn(measureColumn, "measure");
+    semantic_types[ALBERT_VALUE_FIELD] = measureSemantic(measureColumn);
     field_display_names[ALBERT_SERIES_FIELD] = "Series";
     field_display_names[ALBERT_VALUE_FIELD] = yLabel;
     data = unpivotRows(input, series);
@@ -235,7 +243,7 @@ export function compileGroundedFlint(input: GroundedFlintCompileInput): Grounded
         };
     }
   } else {
-    semantic_types[input.yKey] = semanticFromColumn(yColumn, "measure");
+    semantic_types[input.yKey] = measureSemantic(yColumn);
     field_display_names[input.yKey] = yLabel;
     data = input.rows.flatMap((row) => {
       const x = cellValue(row[input.xKey] ?? null);

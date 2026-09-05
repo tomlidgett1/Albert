@@ -121,6 +121,8 @@ export function DashPopover({
     >
       {children}
     </div>,
-    document.body,
+    // Keep the dashboard's theme tokens on portalled menus. The outer dash
+    // is untransformed; the tile and grid ancestors still cannot clip us.
+    anchor?.closest("[data-theme]") ?? document.body,
   );
 }

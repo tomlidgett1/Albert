@@ -49,15 +49,10 @@ function runtimeRejectedError(status: number, body: string): OmniRuntimeServiceE
 /** The Omni runtime shares the agent-runtime service deployment with Codex. */
 export function omniRuntimeServiceUrl(source: NodeJS.ProcessEnv = process.env): string {
   const configured = source.CODEX_RUNTIME_SERVICE_URL?.trim().replace(/\/+$/u, "");
-  if (source.NODE_ENV === "production") return configured ?? "";
-  if (configured) {
-    try {
-      const url = new URL(configured);
-      if (["127.0.0.1", "localhost", "::1"].includes(url.hostname)) return configured;
-    } catch {
-      // The route will use the safe loopback default and fail closed there.
-    }
-  }
+  // A local web checkout uses the same deployed backends as production.
+  // Never discard an explicit Fly URL and silently target a local worker.
+  if (configured) return configured;
+  if (source.NODE_ENV === "production") return "";
   return "http://127.0.0.1:8792";
 }
 

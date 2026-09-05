@@ -60,8 +60,11 @@ import {
   resolveDashboardColumn,
 } from "./dashboard-values";
 import { DashPopover } from "./DashPopover";
-import { ElementProperties, memberForColumnKey, type ElementFields } from "./ElementProperties";
+import { memberForColumnKey, type ElementFields } from "./ElementProperties";
 import { TileChart, TileEmpty, TileKpi, TileTable, tileStyles, type TileData } from "./DashboardTileView";
+import { DashboardElementEditor } from "./DashboardElementEditor";
+import { PivotTableView } from "./PivotTableView";
+import { pivotConfigForTile, pivotSourceForTile, composedPivotMetadata } from "../lib/dashboard-pivot-view";
 import styles from "./dashboard-workspace.module.css";
 
 const NUMERIC_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
@@ -273,14 +276,14 @@ function tileData(tile: DashboardTile): TileData | null {
   // Sigma's "Hide column": hidden columns stay in the query and the contract
   // and leave only the element.
   const columns = (snapshot.columns as readonly TraceTableColumn[])
-    .filter((column) => tile.columnPresentation[column.key]?.hidden !== true);
-  const rows = applyOverridesToRows(columns, snapshot.rows, tile.queryOverrides);
+    .filter((column) => tile.display.mode !== "table" || tile.columnPresentation[column.key]?.hidden !== true);
+  const rows = applyOverridesToRows(snapshot.columns as readonly TraceTableColumn[], snapshot.rows, tile.queryOverrides);
   const narrowed = rows.length !== snapshot.rows.length;
   return {
     columns,
     rows,
     totalRowCount: narrowed ? rows.length : snapshot.totalRowCount,
-    pivot: tile.replayKind === "derived_v1",
+    pivot: tile.display.mode === "table" && tile.display.pivot === null ? false : composedPivotMetadata(tile) !== null,
   };
 }
 
@@ -390,6 +393,7 @@ function SnapshotTable({
     <>
       <TileTable
         data={data}
+        tableStyle={tile.display.mode === "table" ? tile.display.tableStyle : undefined}
         presentation={tile.columnPresentation}
         ariaLabel={tile.title}
         onCellContextMenu={supportsOverrides(tile) && !data.pivot
@@ -475,7 +479,7 @@ function ChartTileBody({ tile }: Readonly<{ tile: DashboardTile }>) {
   const display = tile.display.mode === "chart" ? tile.display : null;
   if (!data || !display) return <TileEmpty>Run refresh to load this governed result.</TileEmpty>;
   if (tile.snapshot?.empty) return <TileEmpty>No data for the governed period.</TileEmpty>;
-  return <TileChart data={data} display={display} title={tile.title} />;
+  return <TileChart data={data} display={display} title={tile.title} presentation={tile.columnPresentation} />;
 }
 
 /** The element being reworked by Albert, drawn in its own slot. */
@@ -540,10 +544,10 @@ function defaultDisplayForMode(
     const valueKey = resolveSnapshotColumn(snapshot.columns, existing)?.key ?? numeric.key;
     return { mode: "kpi", valueKey, ...(note ? { note } : {}) };
   }
-  if (tile.replayKind === "derived_v1") return null;
+  if (composedPivotMetadata(tile)) return null;
   const xColumn = snapshot.columns.find((column) => !NUMERIC_COLUMN_TYPES.has(column.type) && column.key !== "compareDateRange")
     ?? snapshot.columns[0];
-  if (!xColumn || xColumn.key === numeric.key || snapshot.rows.length < 2) return null;
+  if (!xColumn || xColumn.key === numeric.key) return null;
   const timeAxis = xColumn.type === "date" || xColumn.type === "datetime";
   return {
     mode: "chart",
@@ -1038,7 +1042,6 @@ async function dashboardRequest(url: string, init?: RequestInit): Promise<Dashbo
 type OpenSurface =
   | { kind: "more" }
   | { kind: "filters" }
-  | { kind: "properties" }
   | { kind: "edit" }
   | { kind: "column"; columnKey: string; anchor: HTMLElement }
   | { kind: "format"; columnKey: string; anchor: HTMLElement }
@@ -1051,6 +1054,7 @@ type OpenSurface =
  */
 type TileHandlers = Readonly<{
   select: (tileId: string) => void;
+  maximize: (tileId: string) => void;
   titleDraftChange: (tileId: string, value: string) => void;
   titleCommit: (tileId: string) => void;
   moveKeyboard: (tileId: string, event: React.KeyboardEvent<HTMLButtonElement>) => void;
@@ -1063,7 +1067,7 @@ type TileHandlers = Readonly<{
   /** Authored column order: the snapshot's column contract, rewritten (ADR 0134). */
   columnOrder: (tileId: string, order: readonly string[]) => void;
   /** One deterministic query-shape edit, run by the server (migration 0187). */
-  requery: (tileId: string, edits: readonly DashboardQueryEdit[]) => void;
+  requery: (tileId: string, edits: readonly DashboardQueryEdit[], display?: DashboardTileDisplay) => void;
   dismissEditError: (tileId: string) => void;
   editWithAlbert: ((tileId: string, instruction: string) => void) | null;
 }>;
@@ -1079,6 +1083,7 @@ const DashboardTileCard = memo(function DashboardTileCard({
   justApplied,
   busy,
   editError,
+  maximized = false,
 }: Readonly<{
   tile: DashboardTile;
   dashboardId: string;
@@ -1092,6 +1097,7 @@ const DashboardTileCard = memo(function DashboardTileCard({
   busy: boolean;
   /** The last edit's failure, shown inside the element until dismissed. */
   editError: string | null;
+  maximized?: boolean;
 }>) {
   const tileId = tile.tileId;
   const onSelect = () => handlers.select(tileId);
@@ -1102,7 +1108,6 @@ const DashboardTileCard = memo(function DashboardTileCard({
   const onRefresh = () => handlers.refresh(tileId);
   const onRemove = () => handlers.remove(tileId);
   const onColumnPresentationChange = (presentation: DashboardColumnPresentation) => handlers.presentation(tileId, presentation);
-  const onDisplayChange = (display: DashboardTileDisplay) => handlers.display(tileId, display);
   const onOverridesChange = (overrides: DashboardQueryOverrides) => handlers.overrides(tileId, overrides);
   const onEditWithAlbert = handlers.editWithAlbert
     ? (instruction: string) => handlers.editWithAlbert!(tileId, instruction)
@@ -1114,12 +1119,11 @@ const DashboardTileCard = memo(function DashboardTileCard({
   const [moreAnchor, setMoreAnchor] = useState<HTMLButtonElement | null>(null);
   const [filtersAnchor, setFiltersAnchor] = useState<HTMLButtonElement | null>(null);
   const [editAnchor, setEditAnchor] = useState<HTMLButtonElement | null>(null);
-  const [propertiesAnchor, setPropertiesAnchor] = useState<HTMLButtonElement | null>(null);
   // The governed view's fields, fetched when the editor or a column menu
   // opens and kept per recipe version (a requery re-mints the recipe).
   const [fields, setFields] = useState<Readonly<{ key: string; data: ElementFields | null; error: string | null }> | null>(null);
   const fieldsKey = `${tileId}:${tile.recipeVersion ?? 0}`;
-  const wantsFields = (open?.kind === "properties" || open?.kind === "column") && tile.replayKind === "cube_v3";
+  const wantsFields = (open?.kind === "column") && tile.replayKind === "cube_v3";
   useEffect(() => {
     if (!wantsFields || fields?.key === fieldsKey) return;
     let cancelled = false;
@@ -1139,7 +1143,6 @@ const DashboardTileCard = memo(function DashboardTileCard({
     return () => { cancelled = true; };
   }, [dashboardId, fields?.key, fieldsKey, tileId, wantsFields]);
   const elementFields = fields?.key === fieldsKey ? fields.data : null;
-  const elementFieldsError = fields?.key === fieldsKey ? fields.error : null;
   const close = useCallback(() => {
     setOpen(null);
     setFilterEditing(null);
@@ -1149,7 +1152,6 @@ const DashboardTileCard = memo(function DashboardTileCard({
   const filterCount = activeFilterCount(tile);
   const reworking = elementEdit !== null && elementEdit.phase !== "failed";
   const tileMode = tile.display.mode;
-  const modes = availableDisplayModes(tile);
 
   const openColumnMenu = (column: TraceTableColumn, anchor: HTMLElement) => {
     onSelect();
@@ -1182,7 +1184,12 @@ const DashboardTileCard = memo(function DashboardTileCard({
       data-just-applied={justApplied ? "true" : undefined}
       data-busy={busy ? "true" : undefined}
       aria-busy={busy || undefined}
-      onPointerDownCapture={onSelect}
+      onClick={onSelect}
+      onFocusCapture={event => {
+        // Pointer focus precedes click. Opening the rail there can move a
+        // column caret before pointer-up and swallow the intended click.
+        if (event.target instanceof HTMLElement && event.target.matches(":focus-visible")) onSelect();
+      }}
     >
       <header className={styles.tileHeader}>
         <button
@@ -1247,16 +1254,17 @@ const DashboardTileCard = memo(function DashboardTileCard({
             </button>
           ) : null}
           <button
-            ref={setPropertiesAnchor}
             type="button"
             className={styles.toolbarButton}
             aria-label={`Properties for ${tile.title}`}
-            aria-haspopup="dialog"
-            aria-expanded={open?.kind === "properties"}
-            data-active={open?.kind === "properties" ? "true" : undefined}
-            onClick={() => setOpen(open?.kind === "properties" ? null : { kind: "properties" })}
+            aria-expanded={selected}
+            data-active={selected ? "true" : undefined}
+            onClick={onSelect}
           >
             {SLIDERS_ICON}
+          </button>
+          <button type="button" className={styles.toolbarButton} aria-label={maximized ? "Minimize element" : "Maximize element"} aria-pressed={maximized} onClick={() => handlers.maximize(tileId)}>
+            {icon(<path d={maximized ? "M4 9h5V4M20 15h-5v5M9 9 3 3M15 15l6 6" : "M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"} />)}
           </button>
           {onEditWithAlbert ? (
             <button
@@ -1308,6 +1316,8 @@ const DashboardTileCard = memo(function DashboardTileCard({
             <KpiTileBody tile={tile} />
           ) : tile.display.mode === "chart" ? (
             <ChartTileBody tile={tile} />
+          ) : pivotConfigForTile(tile) ? (
+            <PivotTableView source={pivotSourceForTile(tile)} config={pivotConfigForTile(tile)!} tableStyle={tile.display.mode === "table" ? tile.display.tableStyle : undefined} title={tile.title} />
           ) : (
             <SnapshotTable
               tile={tile}
@@ -1349,26 +1359,6 @@ const DashboardTileCard = memo(function DashboardTileCard({
           onOverridesChange={onOverridesChange}
           editing={filterEditing}
           onEditingChange={setFilterEditing}
-        />
-      </DashPopover>
-
-      {/* Properties | Format (Sigma's element editor) */}
-      <DashPopover anchor={propertiesAnchor} open={open?.kind === "properties"} onClose={close} label={`Properties for ${tile.title}`} width={320}>
-        <ElementProperties
-          tile={tile}
-          busy={busy}
-          modes={modes}
-          fields={elementFields}
-          fieldsError={elementFieldsError}
-          onShowAs={(mode) => {
-            if (tile.display.mode === mode) return;
-            const next = defaultDisplayForMode(tile, mode);
-            if (next) onDisplayChange(next);
-          }}
-          onDisplayChange={onDisplayChange}
-          onPresentationChange={onColumnPresentationChange}
-          onColumnOrderChange={(order) => handlers.columnOrder(tileId, order)}
-          onRequery={(edits) => handlers.requery(tileId, edits)}
         />
       </DashPopover>
 
@@ -1503,6 +1493,9 @@ export default function DashboardWorkspace({
   const [announcement, setAnnouncement] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null);
+  const [maximizedTileId, setMaximizedTileId] = useState<string | null>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [frameWidth, setFrameWidth] = useState(0);
   // Elements with a requery in flight keep their data and show a bar
   // (stale-while-revalidate); a failed edit shows one line in the element.
   const [busyTiles, setBusyTiles] = useState<ReadonlySet<string>>(() => new Set());
@@ -1513,6 +1506,7 @@ export default function DashboardWorkspace({
   // Tile and layout mutations run in order too, so each carries the revision
   // the previous one returned instead of conflicting on it.
   const mutationChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const optimisticMutationsRef = useRef(new Map<symbol, { tileId: string; apply: (tile: DashboardTile) => DashboardTile }>());
   // Per-tile refresh locks: a forced single-tile refresh never waits on, or
   // is dropped by, the whole-dashboard refresh (and vice versa).
   const tilesInFlightRef = useRef(new Set<string>());
@@ -1535,16 +1529,33 @@ export default function DashboardWorkspace({
   // accidentally saving a tablet resize into the desktop layout (or vice versa).
   // The split panel is narrower than a tablet but is not a phone: it keeps
   // the saved geometry (tablet columns) instead of stacking tiles.
-  const breakpoint: Breakpoint = width >= 1100 ? "desktop" : width >= 680 || embedded ? "tablet" : "mobile";
+  // The editor changes canvas pixels, never the authored grid geometry.
+  const layoutWidth = frameWidth ? frameWidth - 48 : width;
+  const breakpoint: Breakpoint = layoutWidth >= 1100 ? "desktop" : layoutWidth >= 680 || embedded ? "tablet" : "mobile";
   const latestLayouts = useRef<ResponsiveLayouts<Breakpoint>>({});
   const revisionRef = useRef(0);
   const loadedDashboardId = dashboard?.dashboardId;
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const measure = () => setFrameWidth(frame.getBoundingClientRect().width);
+    const observer = new ResizeObserver(measure);
+    observer.observe(frame);
+    measure();
+    return () => observer.disconnect();
+  }, [loadedDashboardId]);
   const onDashboardChangeRef = useRef(onDashboardChange);
   useEffect(() => {
     onDashboardChangeRef.current = onDashboardChange;
   }, [onDashboardChange]);
 
-  const applyDashboard = useCallback((next: DashboardDocument) => {
+  const applyDashboard = useCallback((serverDocument: DashboardDocument) => {
+    const next = { ...serverDocument, tiles: serverDocument.tiles.map(tile => {
+      let current = tile;
+      for (const pending of optimisticMutationsRef.current.values()) if (pending.tileId === tile.tileId) current = pending.apply(current);
+      return current;
+    }) };
+    dashboardRef.current = next;
     setDashboard((previous) => mergeDashboard(previous, next));
     revisionRef.current = next.revision;
     setTitleDrafts(Object.fromEntries(next.tiles.map((tile) => [tile.tileId, tile.title])));
@@ -1642,7 +1653,7 @@ export default function DashboardWorkspace({
     // responsive — including the empty → filled transition a build causes.
     const frame = window.requestAnimationFrame(measureWidth);
     return () => window.cancelAnimationFrame(frame);
-  }, [loadedDashboardId, hasTiles, measureWidth]);
+  }, [loadedDashboardId, hasTiles, measureWidth, maximizedTileId]);
   useEffect(() => {
     if (!dashboard || dashboard.tiles.length === 0) return;
     const timer = window.setTimeout(() => void refresh(undefined, false), 0);
@@ -1703,21 +1714,33 @@ export default function DashboardWorkspace({
     /** Applied to the tile at once; the server's document replaces it when the change lands. */
     optimistic?: (tile: DashboardTile) => DashboardTile,
   ): Promise<boolean> => {
+    const mutationId = Symbol(tileId);
+    setEditErrors(current => {
+      if (!(tileId in current)) return current;
+      const next = { ...current };
+      delete next[tileId];
+      return next;
+    });
     if (optimistic) {
+      optimisticMutationsRef.current.set(mutationId, { tileId, apply: optimistic });
       setDashboard((previous) => previous
         ? { ...previous, tiles: previous.tiles.map((tile) => (tile.tileId === tileId ? optimistic(tile) : tile)) }
         : previous);
     }
     const run = mutationChainRef.current.then(async () => {
       try {
-        applyDashboard(await dashboardRequest(`/api/dashboard/tiles/${tileId}`, {
+        const document = await dashboardRequest(`/api/dashboard/tiles/${tileId}`, {
           method,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(withDashboardId({ ...values, expectedRevision: revisionRef.current })),
-        }));
+        });
+        optimisticMutationsRef.current.delete(mutationId);
+        applyDashboard(document);
         return true;
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Tile could not be changed.");
+        optimisticMutationsRef.current.delete(mutationId);
+        const message = caught instanceof Error ? caught.message : "Tile could not be changed.";
+        setEditErrors(current => ({ ...current, [tileId]: message }));
         await loadDashboard();
         return false;
       }
@@ -1731,9 +1754,10 @@ export default function DashboardWorkspace({
    * server patches the recipe, runs it once and stores the new recipe with
    * its snapshot; the element keeps its data until the new one lands.
    */
-  const requery = useCallback((tileId: string, edits: readonly DashboardQueryEdit[]) => {
+  const requery = useCallback((tileId: string, edits: readonly DashboardQueryEdit[], display?: DashboardTileDisplay) => {
     const previous = requeryChainRef.current.get(tileId) ?? Promise.resolve();
     const run = previous.then(async () => {
+      await mutationChainRef.current;
       const tile = dashboardRef.current?.tiles.find((candidate) => candidate.tileId === tileId);
       if (!tile) return;
       setBusyTiles((current) => new Set([...current, tileId]));
@@ -1749,6 +1773,7 @@ export default function DashboardWorkspace({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(withDashboardId({
             edits,
+            ...(display ? { display } : {}),
             expectedRevision: revisionRef.current,
             recipeVersion: tile.recipeVersion ?? 1,
           })),
@@ -1775,7 +1800,7 @@ export default function DashboardWorkspace({
    * the snapshot reflects the full result set, not just the 50 rows held.
    */
   const changeOverrides = useCallback(async (tileId: string, overrides: DashboardQueryOverrides) => {
-    const saved = await mutateTile(tileId, "PATCH", { queryOverrides: overrides });
+    const saved = await mutateTile(tileId, "PATCH", { queryOverrides: overrides }, tile => ({ ...tile, queryOverrides: overrides }));
     if (saved) void refresh([tileId], true);
   }, [mutateTile, refresh]);
 
@@ -1838,6 +1863,7 @@ export default function DashboardWorkspace({
   const tilesById = useMemo(() => new Map(dashboard?.tiles.map((tile) => [tile.tileId, tile]) ?? []), [dashboard]);
   const handlers = useMemo<TileHandlers>(() => ({
     select: (tileId) => setSelectedTileId(tileId),
+    maximize: (tileId) => { setSelectedTileId(tileId); setMaximizedTileId(current => current === tileId ? null : tileId); },
     titleDraftChange: (tileId, value) => setTitleDrafts((current) => ({ ...current, [tileId]: value })),
     titleCommit: (tileId) => {
       const tile = dashboardRef.current?.tiles.find((candidate) => candidate.tileId === tileId);
@@ -1862,7 +1888,7 @@ export default function DashboardWorkspace({
       const columns = [...tile.snapshot.columns].sort((left, right) => (rank.get(left.key) ?? order.length) - (rank.get(right.key) ?? order.length));
       return { ...tile, snapshot: { ...tile.snapshot, columns } };
     }),
-    requery: (tileId, edits) => requery(tileId, edits),
+    requery: (tileId, edits, display) => requery(tileId, edits, display),
     dismissEditError: (tileId) => setEditErrors((current) => {
       if (!(tileId in current)) return current;
       const rest = { ...current };
@@ -1876,6 +1902,8 @@ export default function DashboardWorkspace({
       }
       : null,
   }), [changeOverrides, moveWithKeyboard, mutateTile, onEditWithAlbert, onOpenSource, refresh, requery]);
+  const maximizedTile = maximizedTileId ? tilesById.get(maximizedTileId) ?? null : null;
+  const selectedTile = selectedTileId ? tilesById.get(selectedTileId) ?? null : null;
   const editingThisDashboard = build.dashboardId === dashboardId;
   const justAppliedTileId = build.phase === "applied" && editingThisDashboard ? build.appliedTileId : null;
 
@@ -1883,6 +1911,7 @@ export default function DashboardWorkspace({
   if (!dashboard) return <div className={styles.state}><p>{error ?? "Dashboard unavailable."}</p><button type="button" onClick={() => void loadDashboard()}>Retry</button></div>;
 
   return (
+    <div ref={frameRef} className={styles.workspaceShell} data-editor-open={selectedTile ? "true" : undefined} data-embedded={embedded || undefined} data-maximized={maximizedTile ? "true" : undefined}>
     <div className={styles.workspace} onPointerDown={(event) => { if (event.target === event.currentTarget) setSelectedTileId(null); }}>
       <div className={styles.toolbar} data-embedded={embedded ? "true" : undefined}>
         <div className={styles.toolbarIdentity}>
@@ -1954,6 +1983,13 @@ export default function DashboardWorkspace({
             )}
           </div>
         )
+      ) : maximizedTile ? (
+        <div className={styles.maximizedTile}>
+          <DashboardTileCard tile={maximizedTile} dashboardId={dashboardId} breakpoint={breakpoint} selected={selectedTileId === maximizedTile.tileId}
+            titleDraft={titleDrafts[maximizedTile.tileId] ?? maximizedTile.title} handlers={handlers}
+            elementEdit={elementEdit?.tileId === maximizedTile.tileId ? elementEdit : null}
+            justApplied={justAppliedTileId === maximizedTile.tileId} busy={busyTiles.has(maximizedTile.tileId)} editError={editErrors[maximizedTile.tileId] ?? null} maximized />
+        </div>
       ) : (
         <div ref={containerRef} className={styles.gridMeasure}>
           {mounted ? (
@@ -2025,6 +2061,17 @@ export default function DashboardWorkspace({
           ) : null}
         </div>
       )}
+    </div>
+    {selectedTile ? <DashboardElementEditor
+      key={selectedTile.tileId}
+      tile={selectedTile} dashboardId={dashboardId} busy={busyTiles.has(selectedTile.tileId)}
+      modes={availableDisplayModes(selectedTile)} onClose={() => setSelectedTileId(null)}
+      onDisplayChange={display => handlers.display(selectedTile.tileId, display)}
+      onPresentationChange={presentation => handlers.presentation(selectedTile.tileId, presentation)}
+      onColumnOrderChange={order => handlers.columnOrder(selectedTile.tileId, order)}
+      onShowAs={mode => { const display = defaultDisplayForMode(selectedTile, mode); if (display) handlers.display(selectedTile.tileId, display); }}
+      onRequery={(edits, display) => handlers.requery(selectedTile.tileId, edits, display)}
+    /> : null}
     </div>
   );
 }

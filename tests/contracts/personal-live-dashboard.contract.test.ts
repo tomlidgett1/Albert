@@ -439,11 +439,12 @@ test("dashboard UI follows responsive, accessible and visible-only refresh contr
   assert.match(workspace, /onDragStop/u);
   assert.match(workspace, /onResizeStop/u);
   assert.match(workspace, /window\.queueMicrotask/u);
-  assert.match(workspace, /const breakpoint: Breakpoint = width >= 1100/u);
+  assert.match(workspace, /const breakpoint: Breakpoint = layoutWidth >= 1100/u);
+  assert.match(workspace, /const layoutWidth = frameWidth \? frameWidth - 48 : width/u);
   assert.match(workspace, /useContainerWidth\(\{[\s\S]*measureBeforeMount: true/u);
   assert.match(workspace, /requestAnimationFrame\(measureWidth\)/u);
   const tileView = read("app/dash/components/DashboardTileView.tsx");
-  assert.match(tileView, /Showing \{rows\.length\} of/u);
+  assert.match(tileView, /Showing \$\{rows\.length\} of/u);
   // Sigma's column menu: a caret on every header, sort/filter/rename/format inside.
   assert.match(workspace, /onDoubleClick=\{\(\) => onRename\(column\)\}/u);
   assert.match(workspace, /aria-label=\{`\$\{label\} column\. Double-click or press Enter to rename\.`\}/u);
@@ -463,7 +464,7 @@ test("dashboard UI follows responsive, accessible and visible-only refresh contr
   // Sort and filters are element query overrides that re-run the governed query.
   assert.match(workspace, /queryOverrides: overrides/u);
   assert.match(workspace, /if \(saved\) void refresh\(\[tileId\], true\)/u);
-  assert.match(workspace, /applyOverridesToRows\(columns, snapshot\.rows, tile\.queryOverrides\)/u);
+  assert.match(workspace, /applyOverridesToRows\(snapshot\.columns as readonly TraceTableColumn\[\], snapshot\.rows, tile\.queryOverrides\)/u);
   assert.match(workspace, /aria-haspopup="dialog"/u);
   assert.match(workspace, /aria-label="Value format"/u);
   assert.match(workspace, /aria-label="Decimal places"/u);
