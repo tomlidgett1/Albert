@@ -1712,11 +1712,12 @@ test("Omni renders a composed pivot as an open pivot card and pins it", async ({
   await expect(pivotCard.getByRole("button", { name: /Weekly scorecard/u })).toHaveAttribute("aria-expanded", "true");
   const pivotTable = pivotCard.locator("table[data-pivot='true']");
   await expect(pivotTable).toBeVisible();
-  await expect(pivotTable.locator("thead th").first()).toHaveText("Metric");
-  await expect(pivotTable.locator("tbody tr").nth(1).locator("td").first()).toHaveText("Gross profit");
+  await expect(pivotTable.getByRole("columnheader", { name: /^Values/u })).toBeVisible();
+  await expect(pivotTable.getByRole("columnheader", { name: "27 Jul", exact: true })).toBeVisible();
+  await expect(pivotTable.getByRole("rowheader", { name: "Gross profit", exact: true })).toBeVisible();
   // Row units carry into the cells: currency down the Sales row.
-  await expect(pivotTable.locator("tbody tr").first().locator("td").nth(2)).toHaveText("$8,379.02");
-  const metricCell = await pivotTable.locator("tbody tr").first().locator("td").first()
+  await expect(pivotTable.getByRole("cell", { name: "Sales, 27 Jul: $8,379.02", exact: true })).toHaveText("$8,379.02");
+  const metricCell = await pivotTable.getByRole("rowheader", { name: "Sales", exact: true })
     .evaluate((cell) => getComputedStyle(cell).position);
   expect(metricCell).toBe("sticky");
 

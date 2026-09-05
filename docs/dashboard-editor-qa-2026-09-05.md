@@ -78,6 +78,10 @@ not account connectivity for every provider represented in the model.
   disk it used ALBERT_BUILD_NO_CACHE=true, which only disables build caching.
 - Migration 0190 was previously executed against a local PostgreSQL engine:
   syntax, 34 SQL/Zod cases and tenant-scoped metadata checks passed.
+- Full release CI exposed an older chat-pivot test tied to the previous
+  table structure. It now checks the accessible row/column headers, exact
+  currency values, sticky row labels and governed dashboard pinning; its
+  local rerun passed with authentication setup.
 
 Browser regressions use isolated fixtures; they do not substitute for the
 manual real-account checks above.
